@@ -9,6 +9,7 @@ import {
   convertMuxVideoToLocalMp4,
   pollUploadStatus,
   uploadDownloadedVideoToMux,
+  uploadLocalVideoAssetToMux,
 } from "./muxUpload";
 
 jest.mock("../../../api/providerStorage", () => ({
@@ -136,6 +137,40 @@ describe("church-scoped Mux upload and temporary conversion", () => {
     });
     expect(result).toMatchObject({ playbackId: "playback-1", name: "Sunday Opener" });
     expect(setCancelUpload).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("streams a linked local asset through native Mux transport without a renderer File", async () => {
+    type NativeUploadEvent = { jobId: string; stage: "uploading"; progress: number | null };
+    let progressListener: ((event: NativeUploadEvent) => void) | undefined;
+    const uploadLocalAsset = jest.fn(async ({ jobId }: { jobId: string }) => {
+      progressListener?.({ jobId, stage: "uploading", progress: 42 });
+    });
+    const unsubscribe = jest.fn();
+    const onProgress = jest.fn();
+    const onVideoDownloadProgress = jest.fn((callback: (event: NativeUploadEvent) => void) => {
+      progressListener = callback;
+      return unsubscribe;
+    });
+    window.electronAPI = {
+      uploadLocalVideoAssetToMux: uploadLocalAsset,
+      onVideoDownloadProgress,
+    } as unknown as typeof window.electronAPI;
+
+    const result = await uploadLocalVideoAssetToMux(
+      "local_video_link_1",
+      "welcome.mp4",
+      { churchId: "church-1", mediaId: "media-1", title: "Welcome" },
+      { onProgress },
+    );
+
+    expect(uploadLocalAsset).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: "local_video_link_1",
+      url: "https://upload",
+    }));
+    expect(onProgress).toHaveBeenCalledWith(42);
+    expect(onProgress).toHaveBeenCalledWith(100);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ playbackId: "playback-1", name: "welcome" });
   });
 
   it("cleans a newly-created Mux upload without starting disk streaming if cancellation arrived during upload creation", async () => {

@@ -163,4 +163,69 @@ describe("DownloadVideoDialog inspection lifecycle", () => {
     expect(screen.getByRole("textbox", { name: /video url/i })).toHaveValue("");
     expect(inspectVideoUrl).toHaveBeenCalledTimes(1);
   });
+
+  it("allows external saving and cloud upload together and restores both preferences", async () => {
+    let preferences = {
+      saveOutsideWorshipSync: false,
+      uploadToCloud: false,
+      hasDestinationDirectory: false,
+      destinationDirectoryAvailable: false,
+    };
+    const getVideoDownloadPreferences = jest.fn(async () => preferences);
+    const updateVideoDownloadPreferences = jest.fn(async (patch: Partial<typeof preferences>) => {
+      preferences = { ...preferences, ...patch };
+      return preferences;
+    });
+    const chooseVideoDownloadDirectory = jest.fn(async () => {
+      preferences = {
+        ...preferences,
+        hasDestinationDirectory: true,
+        destinationDirectoryAvailable: true,
+      };
+      return preferences;
+    });
+    window.electronAPI = {
+      inspectVideoUrl,
+      getVideoDownloadPreferences,
+      updateVideoDownloadPreferences,
+      chooseVideoDownloadDirectory,
+    } as unknown as typeof window.electronAPI;
+    inspectVideoUrl.mockResolvedValueOnce(makeInspection(
+      "Sunday Service",
+      "https://www.youtube.com/watch?v=S9EUEdnJQDA",
+    ));
+    mockStart.mockReturnValue("job-both-options");
+    render(<Harness />);
+    await settlePromises();
+
+    const externalSave = screen.getByRole("checkbox", { name: "Save outside WorshipSync" });
+    const cloudUpload = screen.getByRole("checkbox", { name: "Upload to WorshipSync cloud" });
+    expect(externalSave).not.toBeChecked();
+    expect(cloudUpload).not.toBeChecked();
+
+    fireEvent.change(screen.getByRole("textbox", { name: /video url/i }), {
+      target: { value: "https://www.youtube.com/watch?v=S9EUEdnJQDA" },
+    });
+    await advanceInspectionDebounce();
+    await settlePromises();
+    fireEvent.click(externalSave);
+    await settlePromises();
+    fireEvent.click(cloudUpload);
+    await settlePromises();
+    expect(externalSave).toBeChecked();
+    expect(cloudUpload).toBeChecked();
+    expect(chooseVideoDownloadDirectory).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Download" }));
+    await settlePromises();
+    expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({
+      saveOutsideWorshipSync: true,
+      uploadToCloud: true,
+    }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Reopen downloader" }));
+    await settlePromises();
+    expect(screen.getByRole("checkbox", { name: "Save outside WorshipSync" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Upload to WorshipSync cloud" })).toBeChecked();
+  });
 });

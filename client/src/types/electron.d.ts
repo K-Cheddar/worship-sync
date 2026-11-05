@@ -104,12 +104,15 @@ export interface ElectronLocalAsset {
   kind: "image" | "video" | "audio" | "pdf";
   fileName: string;
   contentType: string;
+  contentHash?: string;
+  storageMode?: "managed" | "linked";
   size: number;
   width?: number;
   height?: number;
   createdAt: string;
   updatedAt: string;
   url: string;
+  savedFileName?: string;
 }
 
 export type DesktopVideoInspection = {
@@ -128,6 +131,10 @@ export type DesktopVideoDownloadEvent = {
   progress: number | null;
   downloadedBytes?: number;
   totalBytes?: number;
+  speedBytesPerSecond?: number;
+  etaSeconds?: number;
+  streamId?: string;
+  streamLabel?: string;
   error?: string;
   result?: { width: number; height: number; duration: number; size: number };
 };
@@ -280,6 +287,8 @@ export interface ElectronAPI {
   ) => Promise<ElectronLocalAsset>;
   getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
+  linkLocalVideoFile: (workspaceId: string) => Promise<ElectronLocalAsset | undefined>;
+  relinkLocalVideoFile: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
 
   // Native desktop video download. Job output paths remain in the main process.
   isVideoDownloaderAvailable: () => Promise<boolean>;
@@ -297,7 +306,38 @@ export interface ElectronAPI {
     height: number;
   }) => Promise<ElectronLocalAsset>;
   uploadDownloadedVideoToMux: (jobId: string, url: string) => Promise<void>;
+  uploadLocalVideoAssetToMux: (input: {
+    jobId: string;
+    assetId: string;
+    url: string;
+  }) => Promise<void>;
   cleanupVideoDownload: (jobId: string) => Promise<boolean>;
+  getVideoDownloadPreferences: () => Promise<{
+    saveOutsideWorshipSync: boolean;
+    uploadToCloud: boolean;
+    hasDestinationDirectory: boolean;
+    destinationDirectoryAvailable: boolean;
+  }>;
+  updateVideoDownloadPreferences: (preferences: {
+    saveOutsideWorshipSync?: boolean;
+    uploadToCloud?: boolean;
+  }) => Promise<{
+    saveOutsideWorshipSync: boolean;
+    uploadToCloud: boolean;
+    hasDestinationDirectory: boolean;
+    destinationDirectoryAvailable: boolean;
+  }>;
+  chooseVideoDownloadDirectory: () => Promise<{
+    hasDestinationDirectory: boolean;
+    destinationDirectoryAvailable: boolean;
+  } | undefined>;
+  saveDownloadedVideoExternally: (input: {
+    jobId: string;
+    workspaceId: string;
+    displayName: string;
+    width: number;
+    height: number;
+  }) => Promise<ElectronLocalAsset>;
   onVideoDownloadProgress: (
     callback: (event: DesktopVideoDownloadEvent) => void,
   ) => () => void;
@@ -328,7 +368,7 @@ export interface ElectronAPI {
 
 declare global {
   interface Window {
-    electronAPI?: import("./electron").ElectronAPI;
+    electronAPI?: ElectronAPI;
     __ELECTRON__?: boolean;
   }
 }

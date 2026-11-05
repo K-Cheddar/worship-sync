@@ -192,6 +192,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("import-local-asset-bytes", { ...metadata, data }),
   getLocalAsset: (assetId: string) =>
     ipcRenderer.invoke("get-local-asset", assetId),
+  linkLocalVideoFile: (workspaceId: string) =>
+    ipcRenderer.invoke("link-local-video-file", { workspaceId }),
+  relinkLocalVideoFile: (assetId: string) =>
+    ipcRenderer.invoke("relink-local-video-file", assetId),
 
   // Screens and windows available to capture as live media on this computer.
   getDesktopCaptureSources: (options?: { withThumbnails?: boolean }) =>
@@ -210,7 +214,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("import-downloaded-video", input),
   uploadDownloadedVideoToMux: (jobId: string, url: string) =>
     ipcRenderer.invoke("upload-downloaded-video-to-mux", { jobId, url }),
+  uploadLocalVideoAssetToMux: (input: { jobId: string; assetId: string; url: string }) =>
+    ipcRenderer.invoke("upload-local-video-asset-to-mux", input),
   cleanupVideoDownload: (jobId: string) => ipcRenderer.invoke("cleanup-video-download", jobId),
+  getVideoDownloadPreferences: () => ipcRenderer.invoke("get-video-download-preferences"),
+  updateVideoDownloadPreferences: (preferences: { saveOutsideWorshipSync?: boolean; uploadToCloud?: boolean }) =>
+    ipcRenderer.invoke("update-video-download-preferences", preferences),
+  chooseVideoDownloadDirectory: () => ipcRenderer.invoke("choose-video-download-directory"),
+  saveDownloadedVideoExternally: (input: { jobId: string; workspaceId: string; displayName: string; width: number; height: number }) =>
+    ipcRenderer.invoke("save-downloaded-video-externally", input),
   onVideoDownloadProgress: (callback: (event: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value);
     ipcRenderer.on("video-download-progress", listener);

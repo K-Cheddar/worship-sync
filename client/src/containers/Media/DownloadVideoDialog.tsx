@@ -44,11 +44,111 @@ const DownloadVideoDialog = ({
   const [inspectedInputUrl, setInspectedInputUrl] = useState("");
   const [mediaName, setMediaName] = useState("");
   const [quality, setQuality] = useState<number | "best">("best");
-  const [destination, setDestination] = useState<"computer" | "cloud">("computer");
+  const [saveOutsideWorshipSync, setSaveOutsideWorshipSync] = useState(false);
+  const [uploadToCloud, setUploadToCloud] = useState(false);
+  const [destinationDirectoryAvailable, setDestinationDirectoryAvailable] = useState(false);
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
+  const [isSelectingFolder, setIsSelectingFolder] = useState(false);
   const [isInspecting, setIsInspecting] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState("");
   const [inspectionAttempt, setInspectionAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!open) {
+      setPreferencesLoaded(false);
+      setIsSelectingFolder(false);
+      return;
+    }
+    setPreferencesLoaded(false);
+    setDestinationDirectoryAvailable(false);
+    setSaveOutsideWorshipSync(false);
+    setUploadToCloud(false);
+    setIsSelectingFolder(false);
+    let active = true;
+    const loadPreferences = async () => {
+      const api = window.electronAPI;
+      if (!api?.getVideoDownloadPreferences) {
+        setPreferencesLoaded(true);
+        return;
+      }
+      try {
+        const preferences = await api.getVideoDownloadPreferences();
+        if (!active) return;
+        setSaveOutsideWorshipSync(preferences.saveOutsideWorshipSync);
+        setUploadToCloud(isGuestSession ? false : preferences.uploadToCloud);
+        setDestinationDirectoryAvailable(preferences.destinationDirectoryAvailable);
+        setPreferencesLoaded(true);
+        if (preferences.saveOutsideWorshipSync && !preferences.destinationDirectoryAvailable) {
+          setIsSelectingFolder(true);
+          const selected = await api.chooseVideoDownloadDirectory();
+          if (!active) return;
+          setIsSelectingFolder(false);
+          setDestinationDirectoryAvailable(Boolean(selected?.destinationDirectoryAvailable));
+          if (!selected?.destinationDirectoryAvailable) {
+            setError("Choose an available folder to save outside WorshipSync.");
+          }
+        }
+      } catch {
+        if (active) {
+          setPreferencesLoaded(true);
+          setError("Download preferences could not be loaded. Try again.");
+        }
+      }
+    };
+    void loadPreferences();
+    return () => { active = false; };
+  }, [open, isGuestSession]);
+
+  const chooseDestinationDirectory = async () => {
+    const api = window.electronAPI;
+    if (!api?.chooseVideoDownloadDirectory) {
+      setError("Choose a destination folder in the Windows desktop app.");
+      return;
+    }
+    setIsSelectingFolder(true);
+    setError("");
+    try {
+      const selected = await api.chooseVideoDownloadDirectory();
+      setDestinationDirectoryAvailable(Boolean(selected?.destinationDirectoryAvailable));
+      if (!selected?.destinationDirectoryAvailable) {
+        setError("Choose an available folder to save outside WorshipSync.");
+      }
+    } catch (selectionError) {
+      setError(videoDownloadErrorMessage(selectionError, "The destination folder could not be selected."));
+    } finally {
+      setIsSelectingFolder(false);
+    }
+  };
+
+  const updateDownloadPreference = async (
+    key: "saveOutsideWorshipSync" | "uploadToCloud",
+    enabled: boolean,
+  ) => {
+    const api = window.electronAPI;
+    if (!api?.updateVideoDownloadPreferences) {
+      setError("Download preferences are unavailable in this app.");
+      return;
+    }
+    const setValue = key === "saveOutsideWorshipSync"
+      ? setSaveOutsideWorshipSync
+      : setUploadToCloud;
+    const previous = key === "saveOutsideWorshipSync"
+      ? saveOutsideWorshipSync
+      : uploadToCloud;
+    setValue(enabled);
+    setError("");
+    try {
+      await api.updateVideoDownloadPreferences({ [key]: enabled });
+    } catch (preferenceError) {
+      setValue(previous);
+      setError(videoDownloadErrorMessage(preferenceError, "The download preference could not be saved."));
+      return;
+    }
+    if (key === "saveOutsideWorshipSync" && enabled && !destinationDirectoryAvailable) {
+      await chooseDestinationDirectory();
+    }
+  };
 
   useEffect(() => {
     if (!open) {
@@ -111,8 +211,12 @@ const DownloadVideoDialog = ({
       setError("Enter a name for this video.");
       return;
     }
-    if (destination === "cloud" && (isGuestSession || !churchId)) {
+    if (uploadToCloud && (isGuestSession || !churchId)) {
       setError("Cloud storage is unavailable for this account.");
+      return;
+    }
+    if (saveOutsideWorshipSync && !destinationDirectoryAvailable) {
+      setError("Choose an available folder before downloading this video.");
       return;
     }
     setError("");
@@ -123,7 +227,8 @@ const DownloadVideoDialog = ({
         inspectedUrl: inspection.videoUrl,
         displayName,
         quality,
-        destination,
+        saveOutsideWorshipSync,
+        uploadToCloud,
         owner: {
           churchId,
           workspaceId: churchId,
@@ -142,8 +247,9 @@ const DownloadVideoDialog = ({
 
   const selectedQualityExists = inspection?.heights.includes(Number(quality)) ?? false;
   const canDownload = Boolean(
-    inspection && inspectedInputUrl === url.trim() && !isInspecting && !isStarting &&
-    mediaName.trim() && (quality === "best" || selectedQualityExists) && !disabled,
+    inspection && inspectedInputUrl === url.trim() && !isInspecting && !isStarting && preferencesLoaded &&
+    mediaName.trim() && (quality === "best" || selectedQualityExists) &&
+    (!saveOutsideWorshipSync || destinationDirectoryAvailable) && !disabled,
   );
 
   return (
@@ -209,16 +315,42 @@ const DownloadVideoDialog = ({
           />
           <p className="mt-1 text-xs text-gray-400">Resolution · H.264 video and AAC audio in MP4</p>
         </div>
-        <fieldset>
-          <legend className="mb-2 text-sm font-medium">Destination</legend>
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <input type="radio" name="video-download-destination" value="computer" checked={destination === "computer"} onChange={() => setDestination("computer")} />
-            This computer
-          </label>
+        <fieldset className="space-y-3">
+          <legend className="mb-2 text-sm font-medium">Save options</legend>
+          <div>
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={saveOutsideWorshipSync}
+                onChange={(event) => void updateDownloadPreference("saveOutsideWorshipSync", event.currentTarget.checked)}
+                disabled={isStarting || isSelectingFolder || !preferencesLoaded}
+              />
+              <span>Save outside WorshipSync</span>
+            </label>
+            {saveOutsideWorshipSync ? (
+              <div className="ml-6 mt-1 space-y-1">
+                <p className="text-xs text-gray-400">
+                  {destinationDirectoryAvailable ? "The folder you selected is ready." : "Choose a folder on this computer."}
+                </p>
+                <Button
+                  variant="secondary"
+                  onClick={() => void chooseDestinationDirectory()}
+                  disabled={isSelectingFolder || isStarting}
+                >
+                  {isSelectingFolder ? "Choosing folder…" : destinationDirectoryAvailable ? "Change folder" : "Choose folder"}
+                </Button>
+              </div>
+            ) : null}
+          </div>
           {!isGuestSession ? (
-            <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm">
-              <input type="radio" name="video-download-destination" value="cloud" checked={destination === "cloud"} onChange={() => setDestination("cloud")} />
-              Upload to WorshipSync for other controllers
+            <label className="flex cursor-pointer items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={uploadToCloud}
+                onChange={(event) => void updateDownloadPreference("uploadToCloud", event.currentTarget.checked)}
+                disabled={isStarting || !preferencesLoaded}
+              />
+              <span>Upload to WorshipSync cloud</span>
             </label>
           ) : null}
         </fieldset>

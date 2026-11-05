@@ -65,16 +65,15 @@ export const validateLocalVideoFile = (file: File): string | null => {
 export const getLocalVideoContentType = (file: File) =>
   getVideoContentType(file);
 
-export const readVideoMetadata = (file: File) =>
+const readVideoMetadataFromUrl = (source: string, revokeSource?: () => void) =>
   new Promise<{ width: number; height: number; duration: number }>(
     (resolve, reject) => {
-      const url = URL.createObjectURL(file);
       const video = document.createElement("video");
       let settled = false;
       const cleanup = () => {
         video.removeAttribute("src");
         video.load();
-        URL.revokeObjectURL(url);
+        revokeSource?.();
       };
       let timeoutId = 0;
       const finish = (error?: Error) => {
@@ -113,11 +112,19 @@ export const readVideoMetadata = (file: File) =>
       video.onerror = () => {
         finish(new Error("The selected video could not be read."));
       };
-      if (!assignPlayableVideoSource(video, url, { path: "local-video-metadata" })) {
+      if (!assignPlayableVideoSource(video, source, { path: "local-video-metadata" })) {
         finish(new Error("The selected video could not be read."));
       }
     },
   );
+
+export const readVideoMetadata = (file: File) => {
+  const url = URL.createObjectURL(file);
+  return readVideoMetadataFromUrl(url, () => URL.revokeObjectURL(url));
+};
+
+export const readVideoMetadataFromLocalAsset = (url: string) =>
+  readVideoMetadataFromUrl(url);
 
 const waitForVideoEvent = (
   video: HTMLVideoElement,
@@ -463,6 +470,22 @@ export const deleteLocalVideoFile = async (assetId: string) => {
   notifyLocalVideoFileChange(assetId);
 };
 
+export const deleteLocalVideoThumbnail = async (assetId: string) => {
+  const db = await openLocalAssetDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(THUMBNAIL_STORE_NAME, "readwrite");
+      transaction.objectStore(THUMBNAIL_STORE_NAME).delete(assetId);
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error ?? new Error("The video thumbnail could not be refreshed."));
+      transaction.onabort = transaction.onerror;
+    });
+  } finally {
+    db.close();
+  }
+  notifyLocalVideoFileChange(assetId);
+};
+
 const pendingVideoThumbnailBackfills = new Map<
   string,
   Promise<StoredLocalImageThumbnail | undefined>
@@ -533,6 +556,10 @@ export const normalizeLocalVideoFileReference = (
     fileName: value.fileName?.trim() || "Local video",
     contentType: value.contentType?.trim() || "video/mp4",
     ownerLabel: value.ownerLabel?.trim() || "source device",
+    storageMode: value.storageMode === "linked" ? "linked" : "managed",
+    ...(typeof value.contentHash === "string" && /^[a-f0-9]{64}$/i.test(value.contentHash)
+      ? { contentHash: value.contentHash.toLowerCase() }
+      : { contentHash: undefined }),
     storagePolicy:
       value.storagePolicy === "local-and-cloud"
         ? "local-and-cloud"

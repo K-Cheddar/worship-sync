@@ -1,16 +1,19 @@
 # Feature Contract: Desktop video downloader
 
-**Contract status:** Phase 1 implemented and previously verified; the Deno-enabled reliability update is awaiting Windows packaging and live YouTube verification.
+**Contract status:** Confirmed expanded workflow implemented and packaged for Windows x64; live YouTube and first-run app verification remain unverified in this environment.
 
-**Approval source:** Phase 1 Desktop Video Downloader request, October 29, 2026.
+**Approval source:** Desktop Video Downloader request, October 29, 2026; linked local videos, external download storage and progress request, November 5, 2026.
 
-**Last reviewed:** November 4, 2026.
+**Last reviewed:** November 5, 2026.
 
 ## Purpose and operator workflow
 
 An operator can add an authorized online video to the Media Library from the
-Electron app, with an optional cloud upload for other controllers. The download
-and any necessary stream merge run on the operator's computer.
+Electron app, choose whether it stays in WorshipSync-managed storage or is
+saved and linked from another folder, and independently choose whether to
+upload a cloud copy. Operators can also link existing local videos without
+copying them. Downloads and any necessary stream merge run on the operator's
+computer.
 
 ## Expected behavior
 
@@ -19,15 +22,32 @@ and any necessary stream merge run on the operator's computer.
   duration, editable media name and available video resolutions. It defaults
   to 1080p when available, and offers lower resolutions and best available
   only when those selections can be fulfilled.
-- The default destination is this computer; an optional cloud destination
-  uses the existing upload, permission and quota workflows. Closing the dialog
-  after starting does not stop the job.
+- “Save outside WorshipSync” and “Upload to WorshipSync cloud” are independent,
+  initially-off checkboxes. With neither selected the video uses managed local
+  storage; external saving links the destination file instead of creating a
+  managed copy; cloud upload preserves the selected local mode. Both options
+  can be selected together. Cloud upload keeps the existing permission,
+  authentication and quota checks. Closing the dialog after starting does not
+  stop the job.
+- These two selections and the last external folder are remembered on this
+  computer. If that folder is no longer available, the operator can choose a
+  replacement without losing the other selections. Preferences are not shared
+  through church data.
 - Existing transfer activity shows the job, its stage and measurable progress,
   with cancellation, retry after failure and an action to view the result.
   Completion follows all required import and upload operations.
 - A successful download becomes a permanent local Media Library video, with
-  its name and duration preserved. Retry must not duplicate a completed record.
-  Incomplete or cancelled downloads must not appear as finished media items.
+  its name and duration preserved. An external save is finalized and linked
+  before it appears as a completed item. Retry must not duplicate a completed
+  file or record. Incomplete or cancelled downloads must not appear as finished
+  media items.
+- Existing local-video imports offer “Copy into WorshipSync (Recommended)” and
+  “Link to file”. A linked item keeps its Media Library identity, metadata and
+  thumbnail when its file is unavailable, offers “Relink file”, and may use a
+  valid cloud copy for playback. Relinking updates the existing item; a changed
+  file invalidates stale cloud playback metadata and thumbnails.
+- Deleting a linked item removes only WorshipSync's local reference and
+  application-owned metadata. It never deletes or changes the external file.
 
 ## Behavioral boundaries
 
@@ -49,8 +69,9 @@ and any necessary stream merge run on the operator's computer.
   batch, Media Library callbacks, Mux upload, cancellation and retry cleanup.
 - `client/src/containers/Media/localMediaImport.ts` creates local media records;
   `client/src/utils/localVideoFileAssets.ts` stores their local metadata and
-  thumbnail. `client/electron/localAssetStore.ts` copies and hashes native
-  files into permanent managed storage.
+  thumbnail. `client/electron/localAssetStore.ts` stores either a managed copy
+  or a device-local linked-file reference. Absolute paths and file identities
+  stay in the native asset index.
 - `client/src/context/transferContext.tsx` and `transferModel.ts` provide
   shared activity and actions. The upload input currently publishes the media
   aggregate to the existing Electron taskbar progress API.
@@ -76,11 +97,28 @@ download selector prefers these streams, uses FFmpeg for stream merging or
 remuxing, and checks the finished file with ffprobe. It reports a clear error
 if the file is not H.264/AAC MP4; it does not transcode.
 
-Completed files go through `LocalAssetStore.importFile`, then the existing
-local video metadata and thumbnail store. Optional cloud storage reuses the
+Completed files use `LocalAssetStore.importFile` in managed mode. External
+finalization verifies the completed MP4, safely creates a user-owned file in
+the selected folder, then registers it as linked; a failed Media Library write
+leaves the external file intact for retry. Optional cloud storage reuses the
 existing Mux upload-intent, quota, permission and registration workflow while
-streaming the managed download file from disk. Jobs use the existing media
+streaming the validated local asset from disk. Jobs use the existing media
 transfer activity and taskbar aggregation.
+
+Linked playback resolves through the existing `worshipsync-media:` protocol.
+The main process validates a registered asset and opens a file handle before
+serving ranges, so renderer requests cannot select arbitrary filesystem paths.
+Managed deletion keeps its existing reference-aware cleanup; linked deletion
+removes only the device-local registration. Linked file hashes and filesystem
+identity checks detect changed, replaced, missing and disconnected files.
+Relinking uses the native file picker and retains the stable Media Library
+asset ID. Both local modes use the existing thumbnail and playback surfaces.
+
+Download progress includes bytes, speed and ETA where yt-dlp provides reliable
+values. Separate audio/video streams are shown separately with an indeterminate
+overall bar when a combined percentage would jump backward. Cloud upload of a
+linked video streams from its native file handle rather than loading the full
+video into renderer memory.
 
 Windows x64 development and packaging prepare yt-dlp 2026.10.26, Deno 2.9.8,
 and FFmpeg 8.1.2 Essentials from pinned URLs and SHA-256 values in
@@ -152,3 +190,30 @@ continues to delete its same-ID thumbnail record.
   tool preparation stopped with `fetch failed` before Electron Builder ran.
   The Deno-enabled Windows resource layout and live YouTube downloads remain
   unverified in this environment.
+
+## Linked-video and storage workflow validation recorded November 5, 2026
+
+- Managed/linked asset storage, secure file-handle streaming, external-file
+  finalization and retry, preference persistence, native IPC authorization,
+  linked cloud upload, renderer metadata, downloader choices, local availability,
+  progress parsing, Media, DisplayBox, DisplayEditor, MonitorDisplayBox and HLS
+  playback passed 24 Jest suites (306 tests).
+- Client TypeScript, ESLint, renderer build and `electron-vite build` passed.
+  Builds retain the existing CSS parser warning for the test-only
+  `bg-[url(javascript:alert(1))]` class; the renderer build also reports its
+  existing large-chunk warning.
+- A Windows x64 NSIS installer and unpacked app were produced in a temporary
+  verification output folder and inspected. The regular combined
+  `electron:build:win` command hit an esbuild access error during its renderer
+  rebuild; the separate Electron build passed, then Electron Builder completed
+  using the installed Electron runtime as a local distribution after the
+  default directory rename was denied. Generated package output was removed
+  after verification. The package contained yt-dlp, Deno, FFmpeg, ffprobe and
+  their notices outside ASAR. All four packaged tools launched and reported
+  their pinned versions. Packaged FFmpeg and ffprobe encoded and inspected a
+  local H.264/AAC MP4 smoke fixture.
+- The new workflow's first-run UI, cloud upload against Mux and live public
+  YouTube downloads were not exercised in the packaged app. The prior live
+  YouTube diagnostics stopped at the initial source request with
+  `RemoteDisconnected`; that external-network failure does not establish a
+  downloader code failure.

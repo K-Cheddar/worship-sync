@@ -79,6 +79,7 @@ const makeHarness = (overrides: Partial<DesktopVideoDownloadDependencies> = {}) 
     cancelVideoDownload: jest.fn(async () => true),
     cleanupVideoDownload: jest.fn(async () => undefined),
     importDownloadedVideo: jest.fn(async () => asset),
+    saveDownloadedVideoExternally: jest.fn(async () => ({ ...asset, storageMode: "linked" as const })),
     deleteLocalAsset: jest.fn(async () => true),
     onVideoDownloadProgress: jest.fn((_callback: (event: DesktopVideoDownloadEvent) => void) => jest.fn()),
   };
@@ -115,12 +116,13 @@ const makeHarness = (overrides: Partial<DesktopVideoDownloadDependencies> = {}) 
     ...overrides,
   };
   const manager = new DesktopVideoDownloadManager(deps);
-  const start = (destination: "computer" | "cloud" = "computer") => manager.start({
+  const start = (destination: "computer" | "cloud" | "external" | "external-cloud" = "computer") => manager.start({
     inspection,
     inspectedUrl: "https://www.youtube.com/watch?v=S9EUEdnJQDA",
     displayName: "Sunday Service",
     quality: 1080,
-    destination,
+    saveOutsideWorshipSync: destination === "external" || destination === "external-cloud",
+    uploadToCloud: destination === "cloud" || destination === "external-cloud",
     owner: {
       churchId: "church-a",
       workspaceId: "church-a",
@@ -147,6 +149,93 @@ describe("desktop video download lifecycle manager", () => {
     expect(harness.deps.createLocalMedia).toHaveBeenCalledTimes(1);
     expect(harness.deps.registerLocalMedia).toHaveBeenCalledTimes(1);
     expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({ status: "complete", result: { actionKey: "view" } });
+  });
+
+  it("saves externally without importing a managed copy", async () => {
+    const harness = makeHarness();
+    const jobId = harness.start("external");
+
+    await harness.manager.handleProgress(completion(jobId));
+
+    expect(harness.deps.native.saveDownloadedVideoExternally).toHaveBeenCalledWith({
+      jobId,
+      workspaceId: "church-a",
+      displayName: "Sunday Service",
+      width: 1920,
+      height: 1080,
+    });
+    expect(harness.deps.native.importDownloadedVideo).not.toHaveBeenCalled();
+    expect(harness.deps.uploadToCloud).not.toHaveBeenCalled();
+    expect(harness.deps.registerLocalMedia).toHaveBeenCalledTimes(1);
+  });
+
+  it("supports external saving and cloud upload at the same time", async () => {
+    const harness = makeHarness();
+    const jobId = harness.start("external-cloud");
+
+    await harness.manager.handleProgress(completion(jobId));
+
+    expect(harness.deps.native.saveDownloadedVideoExternally).toHaveBeenCalledTimes(1);
+    expect(harness.deps.native.importDownloadedVideo).not.toHaveBeenCalled();
+    expect(harness.deps.uploadToCloud).toHaveBeenCalledTimes(1);
+    expect(harness.deps.registerCloudMedia).toHaveBeenCalledTimes(1);
+    expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({ status: "complete" });
+  });
+
+  it("keeps single-stream download progress monotonic", () => {
+    const harness = makeHarness();
+    const jobId = harness.start();
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: 58,
+      streamId: "video-1",
+      streamLabel: "Video",
+      downloadedBytes: 580,
+      totalBytes: 1000,
+    });
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: 42,
+      streamId: "video-1",
+      streamLabel: "Video",
+      downloadedBytes: 420,
+      totalBytes: 1000,
+    });
+
+    expect(harness.transfers.get(`video-download-${jobId}`)?.progress).toBe(58);
+  });
+
+  it("switches separate audio and video progress to an indeterminate overall bar", () => {
+    const harness = makeHarness();
+    const jobId = harness.start();
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: 100,
+      streamId: "video-137",
+      streamLabel: "Video",
+      downloadedBytes: 800,
+      totalBytes: 800,
+    });
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: 20,
+      streamId: "audio-140",
+      streamLabel: "Audio",
+      downloadedBytes: 200,
+      totalBytes: 1000,
+      speedBytesPerSecond: 400,
+      etaSeconds: 2,
+    });
+
+    expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({
+      progress: null,
+      detail: expect.stringContaining("Video 100%"),
+    });
+    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("Audio 20%");
   });
 
   it("refreshes the same canonical video identity on retry and imports its refreshed thumbnail", async () => {
@@ -183,7 +272,7 @@ describe("desktop video download lifecycle manager", () => {
 
     expect(harness.deps.createLocalMedia).toHaveBeenCalledWith(expect.objectContaining({
       thumbnail: inspection.thumbnail,
-      destination: "cloud",
+      uploadToCloud: true,
     }));
     expect(registerCloudMedia).toHaveBeenCalledWith(
       expect.objectContaining({ localVideoFile: expect.objectContaining({ id: asset.assetId }) }),

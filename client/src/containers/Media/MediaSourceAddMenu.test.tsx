@@ -20,12 +20,12 @@ it("keeps all Media source actions available while a shared upload is active", a
 
   await user.click(screen.getByRole("button", { name: "Start upload" }));
   await user.click(screen.getByRole("button", { name: "Add media" }));
-  expect(screen.getByRole("menuitem", { name: "Add files" })).toBeInTheDocument();
+  expect(screen.getByRole("menuitem", { name: "Copy into WorshipSync (Recommended)" })).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "Add video input" })).toBeInTheDocument();
   expect(screen.getByRole("menuitem", { name: "Import from Canva" })).toBeInTheDocument();
   expect(screen.queryByRole("menuitem", { name: "Download Video" })).not.toBeInTheDocument();
 
-  await user.click(screen.getByRole("menuitem", { name: "Add files" }));
+  await user.click(screen.getByRole("menuitem", { name: "Copy into WorshipSync (Recommended)" }));
   expect(onAddMedia).toHaveBeenCalledTimes(1);
 });
 
@@ -43,4 +43,13 @@ it("exposes Download Video only when the desktop caller provides the native acti
   await user.click(screen.getByRole("button", { name: "Add media" }));
   await user.click(screen.getByRole("menuitem", { name: "Download Video" }));
   expect(onDownloadVideo).toHaveBeenCalledTimes(1);
+});
+
+it("offers Link to file as a separate action when native linking is available", async () => {
+  const user = userEvent.setup();
+  const onLinkVideo = jest.fn();
+  render(<MemoryRouter><TransferProvider><MediaSourceAddMenu onLinkVideo={onLinkVideo} /></TransferProvider></MemoryRouter>);
+  await user.click(screen.getByRole("button", { name: "Add media" }));
+  await user.click(screen.getByRole("menuitem", { name: "Link to file" }));
+  expect(onLinkVideo).toHaveBeenCalledTimes(1);
 });

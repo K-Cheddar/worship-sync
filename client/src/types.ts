@@ -1064,6 +1064,9 @@ export type SlideMediaSource = LocalVideoInputMediaSource;
 export type LocalVideoFileReference = {
   id: string;
   contentRevision?: string;
+  /** Safe to share as metadata; native source paths remain in the device registry. */
+  storageMode?: "managed" | "linked";
+  contentHash?: string;
   ownerDeviceId: string;
   ownerLabel: string;
   fileName: string;

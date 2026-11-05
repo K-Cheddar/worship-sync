@@ -29,7 +29,8 @@ const StartPage = () => {
       inspectedUrl: "https://www.youtube.com/watch?v=S9EUEdnJQDA",
       displayName: "Test Video",
       quality: 1080,
-      destination: "computer",
+      saveOutsideWorshipSync: false,
+      uploadToCloud: false,
       owner: { churchId: "church-a", workspaceId: "church-a", controllerProfileId: "presentation", folderId: null, routePath: "/media" },
     })}>Start from dialog</button>
     <button type="button" onClick={() => navigate("/other")}>Close dialog and leave Media</button>

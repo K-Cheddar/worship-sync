@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream, type ReadStream } from "node:fs";
-import { access, mkdir, readdir, readFile, rm, stat, statfs } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, rm, stat, statfs, type FileHandle } from "node:fs/promises";
 import { type ClientRequest } from "node:http";
 import { request as requestHttps } from "node:https";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -27,6 +27,10 @@ export type VideoDownloadEvent = {
   progress: number | null;
   downloadedBytes?: number;
   totalBytes?: number;
+  speedBytesPerSecond?: number;
+  etaSeconds?: number;
+  streamId?: string;
+  streamLabel?: string;
   error?: string;
   result?: { width: number; height: number; duration: number; size: number };
 };
@@ -122,12 +126,33 @@ const parseNumber = (value: string | undefined) => {
 
 const isCancelled = (record: DownloadRecord) => record.status === "cancelled";
 
-const bytesFromLine = (line: string) => {
-  const match = line.match(/^WSYNC_PROGRESS:([^:]+):([^:]+):([^:]+)$/);
-  if (!match) return null;
-  const downloadedBytes = parseNumber(match[1]);
-  const totalBytes = parseNumber(match[2]) ?? parseNumber(match[3]);
-  return { downloadedBytes, totalBytes };
+export const parseYtDlpProgressLine = (line: string) => {
+  const match = line.match(/^WSYNC_PROGRESS:([^:]+):([^:]*):([^:]*):([^:]*):([^:]*):([^:]*):([^:]*):([^:]*)$/);
+  if (!match) {
+    // Keep accepting the former bytes/known-total/estimated-total template so
+    // existing native fixtures and cached job output still report progress.
+    const legacyMatch = line.match(/^WSYNC_PROGRESS:([^:]*):([^:]*):([^:]*)$/);
+    if (!legacyMatch) return null;
+    return {
+      downloadedBytes: parseNumber(legacyMatch[1]),
+      totalBytes: parseNumber(legacyMatch[2]) ?? parseNumber(legacyMatch[3]),
+    };
+  }
+  const [, rawStreamId, videoCodec, audioCodec] = match;
+  const streamId = rawStreamId.slice(0, 120) || "unknown";
+  const hasVideo = Boolean(videoCodec && videoCodec !== "NA" && videoCodec !== "none");
+  const hasAudio = Boolean(audioCodec && audioCodec !== "NA" && audioCodec !== "none");
+  const streamLabel = hasVideo && hasAudio ? "Video + audio" : hasAudio ? "Audio" : "Video";
+  const downloadedBytes = parseNumber(match[4]);
+  const totalBytes = parseNumber(match[5]) ?? parseNumber(match[6]);
+  return {
+    streamId,
+    streamLabel,
+    downloadedBytes,
+    totalBytes,
+    speedBytesPerSecond: parseNumber(match[7]),
+    etaSeconds: parseNumber(match[8]),
+  };
 };
 
 const readThumbnailMime = (bytes: Buffer) => {
@@ -541,13 +566,14 @@ export class VideoDownloader extends EventEmitter {
         "--ignore-config", "--no-plugin-dirs", "--no-playlist", "--ies", "youtube",
         "--js-runtimes", `deno:${this.options.denoPath}`,
         "--no-warnings", "--no-cache-dir", "--newline", "--downloader", "native",
+        "--progress-delta", "0.5",
         "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3",
         "--file-access-retries", "2", "--extractor-retries", "2",
         "--max-filesize", `${Math.floor(MAX_DOWNLOAD_BYTES / (1024 * 1024))}M`,
         "--format", format, "--merge-output-format", "mp4",
         "--ffmpeg-location", this.options.ffmpegPath,
         "--proxy", proxy.url,
-        "--progress-template", "download:WSYNC_PROGRESS:%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s",
+        "--progress-template", "download:WSYNC_PROGRESS:%(info.format_id)s:%(info.vcodec)s:%(info.acodec)s:%(progress.downloaded_bytes)s:%(progress.total_bytes)s:%(progress.total_bytes_estimate)s:%(progress.speed)s:%(progress.eta)s",
         "--progress-template", "postprocess:WSYNC_PROCESSING:%(progress.status)s",
         "--print", "after_move:WSYNC_FILE:%(filepath)s",
         "--output", join(record.directory, "video.%(ext)s"),
@@ -620,7 +646,7 @@ export class VideoDownloader extends EventEmitter {
       let sizeExceeded = false;
       let outputExceeded = false;
       const handleProgressLine = (line: string) => {
-        const bytes = bytesFromLine(line.trim());
+        const bytes = parseYtDlpProgressLine(line.trim());
         if (bytes) {
           if ((bytes.downloadedBytes ?? 0) > MAX_DOWNLOAD_BYTES || (bytes.totalBytes ?? 0) > MAX_DOWNLOAD_BYTES) {
             sizeExceeded = true;
@@ -726,7 +752,52 @@ export class VideoDownloader extends EventEmitter {
     }
   }
 
-  private async performMuxUpload(jobId: string, record: DownloadRecord, filePath: string, rawUploadUrl: unknown) {
+  async uploadLocalAssetToMux(
+    jobId: string,
+    fileHandle: FileHandle,
+    size: number,
+    rawUploadUrl: unknown,
+  ) {
+    if (!UUID_PATTERN.test(jobId) || !Number.isSafeInteger(size) || size <= 0 || size > MAX_DOWNLOAD_BYTES) {
+      await fileHandle.close().catch(() => undefined);
+      throw new Error("The local video upload request is invalid.");
+    }
+    if (this.jobs.has(jobId)) {
+      await fileHandle.close().catch(() => undefined);
+      throw new Error("This video upload is already running.");
+    }
+    const record: DownloadRecord = {
+      directory: join(this.options.rootDirectory, `asset-upload-${jobId}`),
+      inspectionId: "",
+      quality: "best",
+      status: "complete",
+    };
+    this.jobs.set(jobId, record);
+    record.uploadCancelled = false;
+    const uploadTask = this.performMuxUpload(
+      jobId,
+      record,
+      "",
+      rawUploadUrl,
+      { size, createReadStream: () => fileHandle.createReadStream({ autoClose: true }) },
+    );
+    record.uploadTask = uploadTask;
+    try {
+      await uploadTask;
+    } finally {
+      if (record.uploadTask === uploadTask) record.uploadTask = undefined;
+      if (this.jobs.get(jobId) === record) this.jobs.delete(jobId);
+      await fileHandle.close().catch(() => undefined);
+    }
+  }
+
+  private async performMuxUpload(
+    jobId: string,
+    record: DownloadRecord,
+    filePath: string,
+    rawUploadUrl: unknown,
+    fileSource?: { size: number; createReadStream: () => ReadStream },
+  ) {
     if (typeof rawUploadUrl !== "string" || rawUploadUrl.length > 8192) throw new Error("The cloud upload could not be started.");
     let uploadUrl: URL;
     try { uploadUrl = new URL(rawUploadUrl); }
@@ -736,10 +807,10 @@ export class VideoDownloader extends EventEmitter {
     }
     const validatedUpload = await validateSafeHttpUrl(uploadUrl.toString(), this.options.lookupAll);
     if (record.uploadCancelled || this.jobs.get(jobId) !== record) throw new Error("Upload cancelled.");
-    const size = (await stat(filePath)).size;
+    const size = fileSource?.size ?? (await stat(filePath)).size;
     if (record.uploadCancelled || this.jobs.get(jobId) !== record) throw new Error("Upload cancelled.");
     this.emitProgress({ jobId, stage: "uploading", progress: 0, downloadedBytes: 0, totalBytes: size });
-    const uploadStream = createReadStream(filePath);
+    const uploadStream = fileSource?.createReadStream() ?? createReadStream(filePath);
     record.uploadStream = uploadStream;
     const request = (this.options.requestMux ?? requestHttps)(validatedUpload.url, {
       method: "PUT",

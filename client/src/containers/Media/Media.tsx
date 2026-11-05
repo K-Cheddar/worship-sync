@@ -58,6 +58,10 @@ import DownloadVideoDialog from "./DownloadVideoDialog";
 import { useActiveControllerProfile } from "../../context/activeController";
 import { useLocation } from "react-router-dom";
 import { MEDIA_STORAGE_CHANGED_EVENT } from "./mediaStorageEvents";
+import { createLocalMediaFromLinkedVideo } from "./localMediaImport";
+import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
+import { useToast } from "../../context/toastContext";
+import { claimMediaUpload } from "../../utils/mediaOperationClaims";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -83,6 +87,7 @@ export const getMediaPanelClassName = ({
 
 const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const dispatch = useDispatch();
+  const { showToast } = useToast();
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
   const controllerProfile = useActiveControllerProfile();
   const { pathname } = useLocation();
@@ -94,6 +99,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const [isVideoInputOpen, setIsVideoInputOpen] = useState(false);
   const [isVideoDownloadOpen, setIsVideoDownloadOpen] = useState(false);
   const [isVideoDownloaderAvailable, setIsVideoDownloaderAvailable] = useState(false);
+  const [isLinkingLocalVideo, setIsLinkingLocalVideo] = useState(false);
   const [videoInputToEdit, setVideoInputToEdit] =
     useState<LocalVideoInputMediaSource>();
   const [videoInputMode, setVideoInputMode] =
@@ -268,6 +274,123 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     [addLocalMedia],
   );
 
+  const linkLocalVideo = useCallback(async () => {
+    const api = window.electronAPI;
+    if (c.isMediaReadOnly || !api?.linkLocalVideoFile) return;
+    setIsLinkingLocalVideo(true);
+    let assetId: string | undefined;
+    try {
+      const asset = await api.linkLocalVideoFile(churchId);
+      if (!asset) return;
+      assetId = asset.assetId;
+      const media = await createLocalMediaFromLinkedVideo({
+        asset,
+        workspaceId: churchId,
+        folderId: c.uploadTargetFolderId,
+      });
+      addLocalMedia(media);
+      notifyStorageUsageChanged();
+      showToast("Video linked to the Media Library.", "success");
+    } catch (error) {
+      if (assetId) await deleteLocalVideoFile(assetId).catch(() => undefined);
+      showToast(
+        error instanceof Error ? error.message : "Could not link this video file.",
+        "error",
+      );
+    } finally {
+      setIsLinkingLocalVideo(false);
+    }
+  }, [addLocalMedia, churchId, c.isMediaReadOnly, c.uploadTargetFolderId, notifyStorageUsageChanged, showToast]);
+
+  const relinkLocalVideoFile = useCallback(async (media: MediaType) => {
+    const api = window.electronAPI;
+    const reference = media.localVideoFile;
+    if (
+      c.isMediaReadOnly || !api?.relinkLocalVideoFile ||
+      !reference || reference.storageMode !== "linked"
+    ) return;
+    const claim = claimMediaUpload(media.id);
+    if (!claim) {
+      showToast("Wait for the current video upload to finish before relinking this file.", "error");
+      return;
+    }
+    setIsLinkingLocalVideo(true);
+    let relinkedAssetId: string | undefined;
+    let replacementSaved = false;
+    try {
+      const asset = await api.relinkLocalVideoFile(reference.id);
+      if (!asset) return;
+      relinkedAssetId = asset.assetId;
+      const linked = await createLocalMediaFromLinkedVideo({
+        asset,
+        workspaceId: churchId,
+        displayName: media.name,
+        folderId: media.folderId,
+      });
+      replacementSaved = true;
+      if (!claim.isCurrent()) return;
+      const contentChanged = Boolean(
+        reference.contentHash && asset.contentHash &&
+        reference.contentHash !== asset.contentHash,
+      );
+      const localVideoFile = {
+        ...linked.localVideoFile!,
+        ...(contentChanged
+          ? {
+              storagePolicy: "local-only" as const,
+              cloudUrl: undefined,
+              cloudMediaId: undefined,
+              preferCloudPlayback: undefined,
+            }
+          : {
+              storagePolicy: reference.storagePolicy,
+              cloudUrl: reference.cloudUrl,
+              cloudMediaId: reference.cloudMediaId,
+              preferCloudPlayback: reference.preferCloudPlayback,
+            }),
+      };
+      dispatch(updateMediaItemFields({
+        id: media.id,
+        patch: {
+          width: linked.width,
+          height: linked.height,
+          duration: linked.duration,
+          format: linked.format,
+          background: linked.background,
+          ...(contentChanged
+            ? {
+                thumbnail: "",
+                placeholderImage: "",
+                muxPlaybackId: undefined,
+                muxAssetId: undefined,
+                providerStorage: undefined,
+              }
+            : {}),
+          localVideoFile,
+          updatedAt: new Date().toISOString(),
+        },
+      }));
+      notifyStorageUsageChanged();
+      showToast(contentChanged ? "File relinked. Upload it again to restore its cloud copy." : "File relinked.", "success");
+    } catch (error) {
+      if (relinkedAssetId && relinkedAssetId !== reference.id) {
+        await deleteLocalVideoFile(relinkedAssetId).catch(() => undefined);
+      } else if (relinkedAssetId && !replacementSaved && api.deleteLocalAsset) {
+        // A replacement that cannot provide playable metadata must stay
+        // unavailable so the operator can try another file. This removes only
+        // the device-local registry entry; the selected file is untouched.
+        await api.deleteLocalAsset(relinkedAssetId).catch(() => undefined);
+      }
+      showToast(
+        error instanceof Error ? error.message : "Could not relink this video file.",
+        "error",
+      );
+    } finally {
+      claim.release();
+      setIsLinkingLocalVideo(false);
+    }
+  }, [churchId, c.isMediaReadOnly, dispatch, notifyStorageUsageChanged, showToast]);
+
   return (
     <ErrorBoundary>
       <div
@@ -308,7 +431,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                 onAddScreenShare={supportsDesktopCapture() ? () => openVideoInputPicker("desktop") : undefined}
                 onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
                 onDownloadVideo={isVideoDownloaderAvailable ? () => setIsVideoDownloadOpen(true) : undefined}
-                mediaUploadDisabled={c.isMediaReadOnly}
+                onLinkVideo={window.electronAPI?.linkLocalVideoFile ? () => void linkLocalVideo() : undefined}
+                mediaUploadDisabled={c.isMediaReadOnly || isLinkingLocalVideo}
                 isGuestSession={c.isGuestSession}
               />
             </MediaAddControl>
@@ -588,8 +712,10 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               : undefined
           }
           onRelinkVideoInput={relinkVideoInput}
+          onRelinkLocalVideoFile={relinkLocalVideoFile}
+          onLinkVideo={window.electronAPI?.linkLocalVideoFile ? () => void linkLocalVideo() : undefined}
           onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
-          mediaUploadDisabled={c.isMediaReadOnly}
+          mediaUploadDisabled={c.isMediaReadOnly || isLinkingLocalVideo}
           isGuestSession={c.isGuestSession}
           onStorageUsageRefreshReady={registerStorageUsageRefresh}
           onStorageUsageChanged={notifyStorageUsageChanged}

@@ -15,6 +15,11 @@ import {
   type NativeImage,
 } from "electron";
 import { join, dirname } from "node:path";
+import {
+  access as accessFile,
+  stat as statFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { cpus, freemem, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -62,6 +67,7 @@ import {
   type LocalAssetMetadata,
 } from "./localAssetStore";
 import { VideoDownloader } from "./videoDownloader";
+import { VideoDownloadPreferencesStore } from "./videoDownloadPreferences";
 import { resolveVideoToolPaths } from "./videoDownloaderBinaries";
 import { registerVideoDownloaderIpc } from "./videoDownloaderIpc";
 import {
@@ -104,6 +110,7 @@ import {
   registerResourceGovernorSubscriber,
   subscribeResourceGovernorToPreparedMetrics,
 } from "./resourceGovernor";
+import { SUPPORTED_VIDEO_EXTENSIONS } from "../src/utils/mediaFileTypes";
 
 const { autoUpdater } = updaterPkg;
 
@@ -322,6 +329,7 @@ const chatTaskbarController = createChatTaskbarController({
 let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;
 let localAssetStore: LocalAssetStore;
+let videoDownloadPreferencesStore: VideoDownloadPreferencesStore | null = null;
 let videoDownloader: VideoDownloader | null = null;
 let isVideoDownloaderShutdownPending = false;
 let localVideoCaptureHost: BrowserWindow | null = null;
@@ -343,11 +351,41 @@ const assertControllerIpcSender = (sender: WebContents): void => {
   }
 };
 
+const isDirectoryAvailable = async (path: string) => {
+  try {
+    await accessFile(path);
+    return (await statFile(path)).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
 registerVideoDownloaderIpc({
   ipcMain,
   assertControllerSender: assertControllerIpcSender,
   getDownloader: () => videoDownloader,
   getLocalAssetStore: () => localAssetStore ?? null,
+  getPreferencesStore: () => videoDownloadPreferencesStore,
+  selectVideoFile: async (sender) => {
+    const parent = BrowserWindow.fromWebContents(sender);
+    const result = await dialog.showOpenDialog(parent ?? undefined, {
+      title: "Link a video file",
+      properties: ["openFile"],
+      filters: [{ name: "Video files", extensions: [...SUPPORTED_VIDEO_EXTENSIONS] }],
+    });
+    return result.canceled ? undefined : result.filePaths[0];
+  },
+  selectVideoDirectory: async (sender, defaultPath) => {
+    const parent = BrowserWindow.fromWebContents(sender);
+    const defaultIsAvailable = defaultPath ? await isDirectoryAvailable(defaultPath) : false;
+    const result = await dialog.showOpenDialog(parent ?? undefined, {
+      title: "Choose video download folder",
+      ...(defaultIsAvailable && defaultPath ? { defaultPath } : {}),
+      properties: ["openDirectory", "createDirectory"],
+    });
+    return result.canceled ? undefined : result.filePaths[0];
+  },
+  isDirectoryAvailable,
 });
 
 app.on("before-quit", (event) => {
@@ -932,6 +970,9 @@ app.whenReady().then(() => {
   localAssetStore = new LocalAssetStore(
     join(app.getPath("userData"), "local-assets"),
   );
+  videoDownloadPreferencesStore = new VideoDownloadPreferencesStore(
+    join(app.getPath("userData"), "video-download-preferences.json"),
+  );
   const videoToolPaths = resolveVideoToolPaths({
     platform: process.platform,
     arch: process.arch,
@@ -1159,14 +1200,21 @@ app.whenReady().then(() => {
   void registerMediaCacheProtocol(appBrowserSession);
 
   const handleLocalAssetRequest = async (request: GlobalRequest) => {
+    let fileHandle: FileHandle | undefined;
     try {
       const requestUrl = new URL(request.url);
       if (requestUrl.hostname !== "asset") return notFound();
       const encodedAssetId = requestUrl.pathname.replace(/^\//, "");
       if (!encodedAssetId || encodedAssetId.includes("/")) return notFound();
       const assetId = decodeURIComponent(encodedAssetId);
-      const resolved = await localAssetStore.resolvePath(assetId);
+      const resolved = await localAssetStore.openForRead(assetId);
       if (!resolved) return notFound();
+      fileHandle = resolved.handle;
+      if (requestUrl.searchParams.get("v") !== resolved.descriptor.contentHash) {
+        await fileHandle.close();
+        fileHandle = undefined;
+        return notFound();
+      }
 
       const fileSize = resolved.descriptor.size;
       const rangeHeader = getRangeHeader(
@@ -1181,6 +1229,8 @@ app.whenReady().then(() => {
 
       if (rangeHeader && !range) {
         responseHeaders.set("Content-Range", `bytes */${fileSize}`);
+        await fileHandle.close();
+        fileHandle = undefined;
         return new Response(null, { status: 416, headers: responseHeaders });
       }
 
@@ -1193,7 +1243,8 @@ app.whenReady().then(() => {
           `bytes ${start}-${end}/${fileSize}`,
         );
       }
-      const nodeStream = createReadStream(resolved.path, { start, end });
+      const nodeStream = fileHandle.createReadStream({ start, end, autoClose: true });
+      fileHandle = undefined;
       const webStream = Readable.toWeb(nodeStream) as ReadableStream;
       return new Response(webStream, {
         status: range ? 206 : 200,
@@ -1201,6 +1252,7 @@ app.whenReady().then(() => {
         headers: responseHeaders,
       });
     } catch (error) {
+      await fileHandle?.close().catch(() => undefined);
       console.error("Local asset protocol error:", error);
       return new Response("Internal Server Error", { status: 500 });
     }

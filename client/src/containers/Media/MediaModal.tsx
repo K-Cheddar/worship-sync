@@ -25,6 +25,7 @@ import {
   ZoomIn,
   ZoomOut,
   ExternalLink,
+  Link2,
   Cable,
   LayoutGrid,
   MonitorSmartphone,
@@ -192,6 +193,8 @@ type MediaModalProps = {
   /** Screens and windows on this computer, offered next to hardware inputs. */
   onAddScreenShare?: () => void;
   onRelinkVideoInput?: (media: MediaType) => void;
+  onRelinkLocalVideoFile?: (media: MediaType) => void;
+  onLinkVideo?: () => void;
   onImportFromCanva?: (sourceMedia?: MediaType) => void;
   /** When true, adding media is blocked (library still loading or failed). */
   mediaUploadDisabled?: boolean;
@@ -234,6 +237,8 @@ const MediaModal = ({
   onAddVideoInput,
   onAddScreenShare,
   onRelinkVideoInput,
+  onRelinkLocalVideoFile,
+  onLinkVideo,
   onImportFromCanva,
   mediaUploadDisabled = false,
   isGuestSession = false,
@@ -301,6 +306,7 @@ const MediaModal = ({
       onAddVideoInput={onAddVideoInput}
       onAddScreenShare={onAddScreenShare}
       onImportFromCanva={onImportFromCanva ? () => onImportFromCanva() : undefined}
+      onLinkVideo={onLinkVideo}
       mediaUploadDisabled={mediaUploadDisabled}
       isGuestSession={isGuestSession}
     />
@@ -379,6 +385,9 @@ const MediaModal = ({
     filteredList,
     enableRangeSelection: true,
   });
+  const selectedLocalVideo = useLocalVideoFileUrl(
+    modalSelectedMedia.localVideoFile,
+  );
 
   const handleModalDeleteClick = useCallback(
     (mediaItem: MediaType) => {
@@ -640,6 +649,21 @@ const MediaModal = ({
         onClick: () => onRelinkVideoInput(modalSelectedMedia),
       });
     }
+    if (
+      modalSelectedMediaIds.size === 1 &&
+      modalSelectedMedia.localVideoFile?.storageMode === "linked" &&
+      selectedLocalVideo.isOwner &&
+      (selectedLocalVideo.localStatus === "unavailable" ||
+        selectedLocalVideo.status === "unavailable") &&
+      onRelinkLocalVideoFile
+    ) {
+      actions.push({
+        id: "relink-local-video-file",
+        label: "Relink file",
+        icon: <Link2 className="size-4" />,
+        onClick: () => onRelinkLocalVideoFile(modalSelectedMedia),
+      });
+    }
     const cloudShareAction = getLocalMediaCloudShareBarAction(
       modalSelectedMedia,
       modalSelectedMediaIds.size,
@@ -665,6 +689,8 @@ const MediaModal = ({
     triggerSlideBackgroundFeedback,
     onImportFromCanva,
     onRelinkVideoInput,
+    onRelinkLocalVideoFile,
+    selectedLocalVideo,
     getLocalMediaCloudShareBarAction,
   ]);
 

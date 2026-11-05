@@ -1,8 +1,11 @@
 import {
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  symlinkSync,
   truncateSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -43,12 +46,43 @@ describe("LocalAssetStore", () => {
     });
     const reopened = new LocalAssetStore(storeRoot);
     const resolved = await reopened.resolvePath("local_image_1");
+    const opened = await reopened.openForRead("local_image_1");
 
     expect(resolved?.descriptor).toEqual(imported);
     expect(readFileSync(resolved!.path, "utf8")).toBe("image-one");
+    expect(await opened?.handle.readFile("utf8")).toBe("image-one");
+    await opened?.handle.close();
     expect(buildLocalAssetProtocolUrl(imported)).toContain(
       imported.contentHash,
     );
+  });
+
+  it("does not follow a replacement symlink in managed storage", async () => {
+    const source = join(root, "selected.png");
+    const outside = join(root, "outside-secret.png");
+    writeFileSync(source, "image-one");
+    writeFileSync(outside, "image-one");
+    const store = new LocalAssetStore(join(root, "managed"));
+    const imported = await store.importFile({
+      assetId: "local_image_symlink",
+      kind: "image",
+      sourcePath: source,
+      fileName: "selected.png",
+      contentType: "image/png",
+    });
+    const storedPath = join(root, "managed", "files", imported.storedFileName!);
+    unlinkSync(storedPath);
+    try {
+      symlinkSync(outside, storedPath, "file");
+    } catch (error) {
+      // Creating symbolic links can require extra Windows privileges.
+      if (["EPERM", "EACCES", "ENOTSUP"].includes((error as NodeJS.ErrnoException).code ?? "")) return;
+      throw error;
+    }
+
+    await expect(store.get("local_image_symlink")).resolves.toBeUndefined();
+    await expect(store.openForRead("local_image_symlink")).resolves.toBeUndefined();
+    expect(readFileSync(outside, "utf8")).toBe("image-one");
   });
 
   it.each([
@@ -170,6 +204,98 @@ describe("LocalAssetStore", () => {
     );
     const resolved = await store.resolvePath("relinked");
     expect(readFileSync(resolved!.path, "utf8")).toBe("after");
+  });
+
+  it("links a selected video without making a managed copy and never deletes the source", async () => {
+    const source = join(root, "original.mp4");
+    writeFileSync(source, "linked-video-bytes");
+    const managed = join(root, "managed");
+    const store = new LocalAssetStore(managed);
+    const linked = await store.linkFile({
+      assetId: "linked-video",
+      workspaceId: "church-1",
+      kind: "video",
+      sourcePath: source,
+      fileName: "original.mp4",
+      contentType: "video/mp4",
+      width: 1920,
+      height: 1080,
+    });
+
+    expect(linked.storageMode).toBe("linked");
+    expect(linked).not.toHaveProperty("sourcePath");
+    expect(linked).not.toHaveProperty("storedFileName");
+    expect(readFileSync(source, "utf8")).toBe("linked-video-bytes");
+    expect(readdirSync(join(managed, "files"))).toEqual([]);
+    await expect(store.resolvePath("linked-video")).resolves.toEqual({
+      descriptor: linked,
+      path: source,
+    });
+
+    await expect(store.delete("linked-video")).resolves.toBe(true);
+    expect(readFileSync(source, "utf8")).toBe("linked-video-bytes");
+  });
+
+  it("marks a linked asset unavailable when its path is replaced, then relinks the same identity", async () => {
+    const source = join(root, "original.mp4");
+    const replacement = join(root, "replacement.mp4");
+    writeFileSync(source, "original-content");
+    writeFileSync(replacement, "replacement-content");
+    const store = new LocalAssetStore(join(root, "managed"));
+    const original = await store.linkFile({
+      assetId: "linked-video",
+      kind: "video",
+      sourcePath: source,
+      fileName: "original.mp4",
+      contentType: "video/mp4",
+    });
+    await rm(source);
+    writeFileSync(source, "replacement-content");
+
+    await expect(store.get("linked-video")).resolves.toBeUndefined();
+    const relinked = await store.relinkFile("linked-video", {
+      kind: "video",
+      sourcePath: replacement,
+      fileName: "replacement.mp4",
+      contentType: "video/mp4",
+      width: 1280,
+      height: 720,
+    });
+
+    expect(relinked.assetId).toBe(original.assetId);
+    expect(relinked.contentHash).not.toBe(original.contentHash);
+    expect(buildLocalAssetProtocolUrl(relinked)).not.toBe(
+      buildLocalAssetProtocolUrl(original),
+    );
+    await expect(store.resolvePath("linked-video")).resolves.toMatchObject({
+      path: replacement,
+      descriptor: { storageMode: "linked", fileName: "replacement.mp4" },
+    });
+  });
+
+  it("migrates the existing version 1 managed asset index", async () => {
+    const source = join(root, "legacy.png");
+    writeFileSync(source, "legacy-image");
+    const storeRoot = join(root, "managed");
+    const store = new LocalAssetStore(storeRoot);
+    const legacy = await store.importFile({
+      assetId: "legacy",
+      kind: "image",
+      sourcePath: source,
+      fileName: "legacy.png",
+      contentType: "image/png",
+    });
+    const indexPath = join(storeRoot, "index.json");
+    const parsed = JSON.parse(readFileSync(indexPath, "utf8"));
+    parsed.version = 1;
+    delete parsed.assets.legacy.storageMode;
+    writeFileSync(indexPath, JSON.stringify(parsed));
+
+    const reopened = new LocalAssetStore(storeRoot);
+    await expect(reopened.get("legacy")).resolves.toMatchObject({
+      assetId: legacy.assetId,
+      storageMode: "managed",
+    });
   });
 
   it("recovers metadata from the index backup", async () => {

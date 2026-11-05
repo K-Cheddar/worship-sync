@@ -11,7 +11,9 @@ import {
 } from "../../utils/localImageAssets";
 import {
   buildLocalVideoFileUrl,
+  deleteLocalVideoThumbnail,
   getLocalVideoContentType,
+  readVideoMetadataFromLocalAsset,
   readVideoMetadata,
   saveLocalVideoFile,
   validateLocalVideoFile,
@@ -129,7 +131,7 @@ export const createLocalMediaFromDownloadedVideo = async ({
     thumbnailBlob,
     deferThumbnail: true,
   });
-  const contentRevision = asset.updatedAt || now;
+  const contentRevision = asset.contentHash || asset.updatedAt || now;
   return {
     path: "",
     createdAt: now,
@@ -151,11 +153,90 @@ export const createLocalMediaFromDownloadedVideo = async ({
     localVideoFile: {
       id: asset.assetId,
       contentRevision,
+      storageMode: asset.storageMode === "linked" ? "linked" : "managed",
+      ...(asset.contentHash ? { contentHash: asset.contentHash } : {}),
       ownerDeviceId: getOrCreateDeviceId(),
       ownerLabel: getTrustedDeviceLabel(),
       fileName,
       contentType: "video/mp4",
       storagePolicy,
+      audioEnabled: true,
+    },
+  };
+};
+
+/** Add a native linked video to the shared Media Library and playback path. */
+export const createLocalMediaFromLinkedVideo = async ({
+  asset,
+  workspaceId,
+  displayName,
+  folderId,
+}: {
+  asset: ElectronLocalAsset;
+  workspaceId: string;
+  displayName?: string;
+  folderId?: string | null;
+}): Promise<MediaType> => {
+  if (
+    asset.kind !== "video" || asset.storageMode !== "linked" ||
+    !asset.assetId || !asset.url || !Number.isFinite(asset.size) || asset.size <= 0
+  ) {
+    throw new Error("The linked video details are invalid.");
+  }
+  let metadata: { width: number; height: number; duration: number };
+  try {
+    metadata = await readVideoMetadataFromLocalAsset(asset.url);
+  } catch (error) {
+    throw new LocalVideoPlaybackError(error);
+  }
+  const now = asset.createdAt || new Date().toISOString();
+  const name = normalizeMediaLibraryDisplayName(
+    displayName || asset.fileName.replace(/\.[^.]+$/, ""),
+  ) || "Linked video";
+  const contentRevision = asset.contentHash || asset.updatedAt || now;
+  await deleteLocalVideoThumbnail(asset.assetId);
+  await saveLocalVideoFile(
+    {
+      id: asset.assetId,
+      workspaceId,
+      fileName: asset.fileName,
+      contentType: asset.contentType,
+      size: asset.size,
+      width: metadata.width,
+      height: metadata.height,
+      duration: metadata.duration,
+      createdAt: now,
+    },
+    { deferThumbnail: true },
+  );
+  return {
+    path: "",
+    createdAt: now,
+    updatedAt: now,
+    format: asset.contentType.replace("video/", "") || "video",
+    height: metadata.height,
+    width: metadata.width,
+    name,
+    publicId: asset.assetId,
+    type: "video",
+    id: asset.assetId,
+    background: buildLocalVideoFileUrl(asset.assetId),
+    thumbnail: "",
+    placeholderImage: "",
+    duration: metadata.duration,
+    hasAudio: true,
+    source: "local",
+    folderId: folderId ?? null,
+    localVideoFile: {
+      id: asset.assetId,
+      contentRevision,
+      storageMode: "linked",
+      contentHash: asset.contentHash,
+      ownerDeviceId: getOrCreateDeviceId(),
+      ownerLabel: getTrustedDeviceLabel(),
+      fileName: asset.fileName,
+      contentType: asset.contentType,
+      storagePolicy: "local-only",
       audioEnabled: true,
     },
   };
@@ -283,6 +364,7 @@ const createLocalVideoMedia = async (
     localVideoFile: {
       id: assetId,
       contentRevision: now,
+      storageMode: "managed",
       ownerDeviceId: getOrCreateDeviceId(),
       ownerLabel: getTrustedDeviceLabel(),
       fileName: file.name,

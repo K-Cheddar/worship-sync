@@ -1,6 +1,6 @@
 import Button from "../../components/Button/Button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../components/ui/DropdownMenu";
-import { Download, HardDrive, ImageUp, MonitorUp, Plus, Video } from "lucide-react";
+import { Download, HardDrive, ImageUp, Link2, MonitorUp, Plus, Video } from "lucide-react";
 import { useOptionalTransfers } from "../../context/transferContext";
 import { getMediaTransferOverview } from "../../context/transferModel";
 import { MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES } from "./mediaLibraryOrigin";
@@ -12,6 +12,7 @@ type MediaSourceAddMenuProps = {
   onAddScreenShare?: () => void;
   onImportFromCanva?: () => void;
   onDownloadVideo?: () => void;
+  onLinkVideo?: () => void;
   mediaUploadDisabled?: boolean;
   isGuestSession?: boolean;
 };
@@ -22,6 +23,7 @@ export const MediaSourceAddMenu = ({
   onAddScreenShare,
   onImportFromCanva,
   onDownloadVideo,
+  onLinkVideo,
   mediaUploadDisabled = false,
   isGuestSession = false,
 }: MediaSourceAddMenuProps) => {
@@ -43,7 +45,12 @@ export const MediaSourceAddMenu = ({
         ) : null}
         {onAddMedia ? (
           <DropdownMenuItem disabled={mediaUploadDisabled} onSelect={onAddMedia}>
-            <HardDrive className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon} /> Add files
+            <HardDrive className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon} /> Copy into WorshipSync (Recommended)
+          </DropdownMenuItem>
+        ) : null}
+        {onLinkVideo ? (
+          <DropdownMenuItem disabled={mediaUploadDisabled} onSelect={onLinkVideo}>
+            <Link2 className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon} /> Link to file
           </DropdownMenuItem>
         ) : null}
         {onAddVideoInput ? (

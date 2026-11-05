@@ -16,6 +16,8 @@ export type LocalVideoFileResolution = {
   isLocalVideoFile: boolean;
   isOwner: boolean;
   status: "not-local" | "loading" | "ready" | "unavailable";
+  /** Availability of the device-local source, even when playback uses cloud fallback. */
+  localStatus?: "loading" | "ready" | "unavailable";
   url?: string;
 };
 
@@ -34,6 +36,8 @@ export const useLocalVideoFileUrl = (
   const contentRevision = value?.contentRevision;
   const contentType = value?.contentType;
   const fileName = value?.fileName;
+  const storageMode = value?.storageMode;
+  const contentHash = value?.contentHash;
   const id = value?.id;
   const ownerDeviceId = value?.ownerDeviceId;
   const ownerLabel = value?.ownerLabel;
@@ -52,6 +56,8 @@ export const useLocalVideoFileUrl = (
               ownerLabel: ownerLabel ?? "",
               fileName: fileName ?? "",
               contentType: contentType ?? "",
+              storageMode: storageMode ?? "managed",
+              contentHash,
               storagePolicy: storagePolicy ?? "local-only",
               audioEnabled,
               cloudUrl,
@@ -66,11 +72,13 @@ export const useLocalVideoFileUrl = (
       cloudUrl,
       contentRevision,
       contentType,
+      contentHash,
       fileName,
       id,
       ownerDeviceId,
       ownerLabel,
       preferCloudPlayback,
+      storageMode,
       storagePolicy,
     ],
   );
@@ -98,6 +106,8 @@ export const useLocalVideoFileUrl = (
         reference.id,
         reference.ownerDeviceId,
         reference.contentRevision ?? "legacy",
+        reference.storageMode ?? "managed",
+        reference.contentHash ?? "",
         referenceCloudUrl,
         useCloudPlayback,
       ])
@@ -108,7 +118,13 @@ export const useLocalVideoFileUrl = (
       return { isLocalVideoFile: false, isOwner: false, status: "not-local" };
     }
     if (useCloudPlayback) {
-      return { isLocalVideoFile: false, isOwner, status: "ready" };
+      return {
+        isLocalVideoFile: false,
+        isOwner,
+        status: "ready",
+        localStatus: isOwner ? "loading" : undefined,
+        url: reference.cloudUrl,
+      };
     }
     if (isOwner) {
       return {
@@ -153,11 +169,50 @@ export const useLocalVideoFileUrl = (
       return;
     }
     if (useCloudPlayback) {
+      if (!isOwner) {
+        setState({
+          key: referenceKey,
+          value: {
+            isLocalVideoFile: false,
+            isOwner: false,
+            status: "ready",
+            url: reference.cloudUrl,
+          },
+        });
+        return;
+      }
+      let active = true;
       setState({
         key: referenceKey,
-        value: { isLocalVideoFile: false, isOwner, status: "ready" },
+        value: {
+          isLocalVideoFile: false,
+          isOwner: true,
+          status: "ready",
+          localStatus: "loading",
+          url: reference.cloudUrl,
+        },
       });
-      return;
+      const lease = acquireLocalVideoFileUrl(
+        reference.id,
+        reference.contentRevision,
+      );
+      void lease.url.then((url) => {
+        if (!active) return;
+        setState({
+          key: referenceKey,
+          value: {
+            isLocalVideoFile: false,
+            isOwner: true,
+            status: "ready",
+            ...(!url ? { localStatus: "unavailable" as const } : {}),
+            url: reference.cloudUrl,
+          },
+        });
+      });
+      return () => {
+        active = false;
+        lease.release();
+      };
     }
     if (!isOwner) {
       if (purpose === "thumbnail") {
@@ -226,8 +281,11 @@ export const useLocalVideoFileUrl = (
         value: {
           isLocalVideoFile: true,
           isOwner: true,
-          status: url ? "ready" : "unavailable",
-          url,
+          status: url || reference.cloudUrl ? "ready" : "unavailable",
+          ...(!url && reference.cloudUrl
+            ? { localStatus: "unavailable" as const }
+            : {}),
+          url: url || (purpose === "display" ? reference.cloudUrl : undefined),
         },
       });
     });

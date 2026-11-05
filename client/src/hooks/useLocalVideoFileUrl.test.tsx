@@ -101,7 +101,7 @@ describe("useLocalVideoFileUrl", () => {
     expect(mockAcquireLocalVideoFileThumbnailUrl).not.toHaveBeenCalled();
   });
 
-  it("uses the cloud-transcoded playback URL when local decoding is unavailable", () => {
+  it("uses cloud playback while still detecting an unavailable local file", async () => {
     const { result } = renderHook(() =>
       useLocalVideoFileUrl({
         ...reference,
@@ -110,12 +110,14 @@ describe("useLocalVideoFileUrl", () => {
       }),
     );
 
-    expect(result.current).toEqual({
+    await waitFor(() => expect(result.current).toEqual({
       isLocalVideoFile: false,
       isOwner: true,
       status: "ready",
-    });
-    expect(mockAcquireLocalVideoFileUrl).not.toHaveBeenCalled();
+      localStatus: "unavailable",
+      url: "https://stream.mux.com/playback.m3u8",
+    }));
+    expect(mockAcquireLocalVideoFileUrl).toHaveBeenCalledWith("video-1", "revision-1");
   });
 
   it("keeps a peeked local URL while the lease refreshes", async () => {

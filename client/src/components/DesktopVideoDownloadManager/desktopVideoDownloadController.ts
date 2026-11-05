@@ -19,7 +19,8 @@ export type DesktopVideoDownloadInput = {
   inspectedUrl: string;
   displayName: string;
   quality: number | "best";
-  destination: "computer" | "cloud";
+  saveOutsideWorshipSync: boolean;
+  uploadToCloud: boolean;
   owner: Omit<DesktopVideoDownloadOwner, "dbAtStart">;
 };
 
@@ -29,6 +30,7 @@ export type DesktopVideoDownloadNative = {
   cancelVideoDownload: (jobId: string) => Promise<boolean>;
   cleanupVideoDownload: (jobId: string) => Promise<unknown>;
   importDownloadedVideo: (input: { jobId: string; workspaceId: string; width: number; height: number }) => Promise<ElectronLocalAsset>;
+  saveDownloadedVideoExternally: (input: { jobId: string; workspaceId: string; displayName: string; width: number; height: number }) => Promise<ElectronLocalAsset>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
   onVideoDownloadProgress: (callback: (event: DesktopVideoDownloadEvent) => void) => () => void;
 };
@@ -43,7 +45,7 @@ export type DesktopVideoDownloadDependencies = {
     displayName: string;
     duration: number;
     thumbnail: string;
-    destination: "computer" | "cloud";
+    uploadToCloud: boolean;
   }) => Promise<MediaType>;
   registerLocalMedia: (media: MediaType, owner: DesktopVideoDownloadOwner) => Promise<void>;
   registerCloudMedia: (media: MediaType, patch: Partial<MediaType>, owner: DesktopVideoDownloadOwner) => Promise<void>;
@@ -76,7 +78,7 @@ export type DesktopVideoDownloadDependencies = {
   makeJobId?: () => string;
 };
 
-type Stage = "Preparing" | "Downloading" | "Processing" | "Importing" | "Uploading" | "Complete" | "Failed" | "Cancelled";
+type Stage = "Preparing" | "Downloading" | "Processing" | "Saving" | "Importing" | "Uploading" | "Complete" | "Failed" | "Cancelled";
 type Runtime = {
   jobId: string;
   transferId: string;
@@ -85,7 +87,8 @@ type Runtime = {
   thumbnail: string;
   displayName: string;
   quality: number | "best";
-  destination: "computer" | "cloud";
+  saveOutsideWorshipSync: boolean;
+  uploadToCloud: boolean;
   owner: DesktopVideoDownloadOwner;
   downloadFinished: boolean;
   mediaInfo?: { width: number; height: number; duration: number; size: number };
@@ -104,7 +107,14 @@ type Runtime = {
   assetCleanupPromise?: Promise<void>;
   cancelCloudUpload?: () => Promise<void>;
   retryMuxCleanup?: () => Promise<void>;
-  lastBytes?: { downloadedBytes?: number; totalBytes?: number };
+  lastBytes?: { downloadedBytes?: number; totalBytes?: number; speedBytesPerSecond?: number; etaSeconds?: number };
+  downloadStreams?: Record<string, {
+    label: string;
+    downloadedBytes?: number;
+    totalBytes?: number;
+    progress: number | null;
+  }>;
+  currentDownloadStreamId?: string;
   progress: number | null;
   stage: Stage;
   status: Transfer["status"];
@@ -122,6 +132,13 @@ const friendlyBytes = (bytes?: number) => {
   if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 };
+const formatEta = (seconds: number) => {
+  const remaining = Math.max(0, Math.round(seconds));
+  if (remaining < 60) return `${remaining} seconds`;
+  const minutes = Math.floor(remaining / 60);
+  const secondsPart = remaining % 60;
+  return secondsPart ? `${minutes}m ${secondsPart}s` : `${minutes}m`;
+};
 
 /** Feature-specific owner for desktop video jobs. The instance is mounted with TransferProvider, above routes. */
 export class DesktopVideoDownloadManager {
@@ -134,7 +151,7 @@ export class DesktopVideoDownloadManager {
     const jobId = this.deps.makeJobId?.() ?? randomJobId();
     const owner: DesktopVideoDownloadOwner = { ...input.owner, dbAtStart: this.deps.getDatabase() };
     if (!this.deps.isOwnerCurrent(owner)) throw new Error("The active church changed. Reopen the downloader and try again.");
-    if (input.destination === "cloud" && !owner.churchId) throw new Error("Cloud storage is unavailable for this account.");
+    if (input.uploadToCloud && !owner.churchId) throw new Error("Cloud storage is unavailable for this account.");
     const runtime: Runtime = {
       jobId,
       transferId: `video-download-${jobId}`,
@@ -143,7 +160,8 @@ export class DesktopVideoDownloadManager {
       thumbnail: input.inspection.thumbnail,
       displayName: input.displayName,
       quality: input.quality,
-      destination: input.destination,
+      saveOutsideWorshipSync: input.saveOutsideWorshipSync,
+      uploadToCloud: input.uploadToCloud,
       owner,
       downloadFinished: false,
       localMediaRegistered: false,
@@ -176,12 +194,43 @@ export class DesktopVideoDownloadManager {
   handleProgress(event: DesktopVideoDownloadEvent): void | Promise<void> {
     const runtime = this.jobs.get(event.jobId);
     if (!runtime) return;
-    if (event.downloadedBytes !== undefined || event.totalBytes !== undefined) {
-      runtime.lastBytes = { downloadedBytes: event.downloadedBytes, totalBytes: event.totalBytes };
+    if (
+      event.downloadedBytes !== undefined || event.totalBytes !== undefined ||
+      event.speedBytesPerSecond !== undefined || event.etaSeconds !== undefined
+    ) {
+      const sameStream = !event.streamId || event.streamId === runtime.currentDownloadStreamId;
+      runtime.lastBytes = {
+        downloadedBytes: event.downloadedBytes ?? (sameStream ? runtime.lastBytes?.downloadedBytes : undefined),
+        totalBytes: event.totalBytes ?? (sameStream ? runtime.lastBytes?.totalBytes : undefined),
+        speedBytesPerSecond: event.speedBytesPerSecond,
+        etaSeconds: event.etaSeconds,
+      };
     }
-    runtime.progress = event.progress;
+    if (event.stage === "downloading" && event.streamId) {
+      const streamId = event.streamId.slice(0, 120);
+      runtime.currentDownloadStreamId = streamId;
+      const previous = runtime.downloadStreams?.[streamId];
+      const streamProgress = previous?.progress !== null && previous?.progress !== undefined &&
+        event.progress !== null
+        ? Math.max(previous.progress, event.progress)
+        : event.progress ?? previous?.progress ?? null;
+      runtime.downloadStreams = {
+        ...runtime.downloadStreams,
+        [streamId]: {
+          label: event.streamLabel || "Video",
+          downloadedBytes: event.downloadedBytes ?? previous?.downloadedBytes,
+          totalBytes: event.totalBytes ?? previous?.totalBytes,
+          progress: streamProgress,
+        },
+      };
+      runtime.progress = Object.keys(runtime.downloadStreams).length > 1
+        ? null
+        : streamProgress;
+    } else {
+      runtime.progress = event.progress;
+    }
     if (event.stage === "preparing") this.publish(runtime, "active", "Preparing", event.progress);
-    if (event.stage === "downloading") this.publish(runtime, "active", "Downloading", event.progress);
+    if (event.stage === "downloading") this.publish(runtime, "active", "Downloading", runtime.progress);
     if (event.stage === "processing") this.publish(runtime, "active", "Processing", null, "Merging video and audio");
     if (event.stage === "uploading") this.publish(runtime, "active", "Uploading", event.progress);
     if (event.stage === "complete" && event.result) {
@@ -221,7 +270,7 @@ export class DesktopVideoDownloadManager {
   }
 
   private isActive(runtime: Runtime) {
-    return runtime.busy || runtime.stage === "Preparing" || runtime.stage === "Downloading" || runtime.stage === "Processing" || runtime.stage === "Importing" || runtime.stage === "Uploading";
+    return runtime.busy || runtime.stage === "Preparing" || runtime.stage === "Downloading" || runtime.stage === "Processing" || runtime.stage === "Saving" || runtime.stage === "Importing" || runtime.stage === "Uploading";
   }
 
   private registerActions(runtime: Runtime) {
@@ -256,6 +305,25 @@ export class DesktopVideoDownloadManager {
     const downloaded = runtime.lastBytes?.downloadedBytes;
     const total = runtime.lastBytes?.totalBytes;
     const bytes = downloaded === undefined ? undefined : `${stage === "Uploading" ? "Uploaded" : "Downloaded"} ${friendlyBytes(downloaded)}${total === undefined ? "" : ` of ${friendlyBytes(total)}`}`;
+    const speed = runtime.lastBytes?.speedBytesPerSecond && runtime.lastBytes.speedBytesPerSecond > 0
+      ? `${friendlyBytes(runtime.lastBytes.speedBytesPerSecond)}/s`
+      : undefined;
+    const eta = runtime.lastBytes?.etaSeconds !== undefined && runtime.lastBytes.etaSeconds >= 0
+      ? `About ${formatEta(runtime.lastBytes.etaSeconds)} remaining`
+      : undefined;
+    const streams = Object.values(runtime.downloadStreams ?? {});
+    const streamBytes = streams.length > 1
+      ? streams.slice(0, 3).map((stream) => {
+          const percent = stream.progress === null ? "" : ` ${stream.progress}%`;
+          const amount = stream.downloadedBytes === undefined
+            ? ""
+            : ` (${friendlyBytes(stream.downloadedBytes)}${stream.totalBytes === undefined ? "" : ` of ${friendlyBytes(stream.totalBytes)}`})`;
+          return `${stream.label}${percent}${amount}`;
+        }).join(" · ")
+      : bytes;
+    const metrics = stage === "Downloading"
+      ? [streamBytes, speed, eta].filter(Boolean).join(" · ")
+      : bytes;
     const actions = explicitActions ?? (status === "active" || status === "queued"
       ? [{ key: "cancel", label: "Cancel" }]
       : status === "failed"
@@ -277,7 +345,7 @@ export class DesktopVideoDownloadManager {
       status,
       progress: progress === null ? null : Math.max(0, Math.min(100, Math.round(progress))),
       phase: { key: stage.toLowerCase(), label: stage },
-      ...(detail || bytes ? { detail: [detail, bytes].filter(Boolean).join(" · ") } : {}),
+      ...(detail || metrics ? { detail: [detail, metrics].filter(Boolean).join(" · ") } : {}),
       ...(runtime.media && runtime.localMediaRegistered && this.deps.isOwnerCurrent(runtime.owner)
         ? { result: { label: "View in Media Library", actionKey: "view" } }
         : {}),
@@ -333,26 +401,38 @@ export class DesktopVideoDownloadManager {
       if (!info) throw new Error("The downloaded video details are missing.");
       this.assertCurrentOwner(runtime);
       if (!runtime.asset) {
-        this.publish(runtime, "active", "Importing", null, "Validating the downloaded MP4");
-        runtime.asset = await this.deps.native.importDownloadedVideo({
-          jobId: runtime.jobId,
-          workspaceId: runtime.owner.workspaceId,
-          width: info.width,
-          height: info.height,
-        });
+        if (runtime.saveOutsideWorshipSync) {
+          this.publish(runtime, "active", "Saving", null, "Saving video to the selected folder");
+          runtime.asset = await this.deps.native.saveDownloadedVideoExternally({
+            jobId: runtime.jobId,
+            workspaceId: runtime.owner.workspaceId,
+            displayName: runtime.displayName,
+            width: info.width,
+            height: info.height,
+          });
+        } else {
+          this.publish(runtime, "active", "Importing", null, "Validating the downloaded MP4");
+          runtime.asset = await this.deps.native.importDownloadedVideo({
+            jobId: runtime.jobId,
+            workspaceId: runtime.owner.workspaceId,
+            width: info.width,
+            height: info.height,
+          });
+        }
       }
       if (runtime.cancelRequested && !runtime.localMediaRegistered) {
         await this.removeUnregisteredAsset(runtime);
         return this.finishCancellation(runtime);
       }
       if (!runtime.media) {
+        this.publish(runtime, "active", "Importing", null, "Adding video to the Media Library");
         runtime.media = await this.deps.createLocalMedia({
           asset: runtime.asset,
           owner: runtime.owner,
           displayName: runtime.displayName,
           duration: info.duration,
           thumbnail: runtime.thumbnail,
-          destination: runtime.destination,
+          uploadToCloud: runtime.uploadToCloud,
         });
       }
       if (runtime.cancelRequested && !runtime.localMediaRegistered) {
@@ -369,7 +449,7 @@ export class DesktopVideoDownloadManager {
         await this.cleanupNative(runtime);
         return this.finishCancellation(runtime);
       }
-      if (runtime.destination === "cloud" && !runtime.cloudMediaRegistered) {
+      if (runtime.uploadToCloud && !runtime.cloudMediaRegistered) {
         if (!runtime.cloudResult) {
           this.assertCurrentOwner(runtime);
           this.publish(runtime, "active", "Uploading", 0, "Uploading video to WorshipSync");
@@ -398,7 +478,7 @@ export class DesktopVideoDownloadManager {
       }
       if (runtime.cancelRequested) {
         await this.cleanupNative(runtime);
-        if (runtime.destination === "cloud" && runtime.cloudMediaRegistered) {
+        if (runtime.uploadToCloud && runtime.cloudMediaRegistered) {
           this.publish(runtime, "complete", "Complete", 100, "Upload finished and is available in Media Library");
         } else {
           return this.finishCancellation(runtime);
@@ -406,12 +486,12 @@ export class DesktopVideoDownloadManager {
         return;
       }
       await this.cleanupNative(runtime);
-      this.publish(runtime, "complete", "Complete", 100, runtime.destination === "cloud" ? "Uploaded and added to Media Library" : "Added to Media Library");
+      this.publish(runtime, "complete", "Complete", 100, runtime.uploadToCloud ? "Uploaded and added to Media Library" : "Added to Media Library");
     } catch (error) {
       const failedStage = runtime.stage;
       const cleanup = error && typeof error === "object" ? (error as { retryCleanup?: () => Promise<void> }).retryCleanup : undefined;
       if (cleanup) runtime.retryMuxCleanup = cleanup;
-      if (runtime.cancelRequested && runtime.destination === "cloud" && runtime.cloudResult && !runtime.cloudMediaRegistered) {
+      if (runtime.cancelRequested && runtime.uploadToCloud && runtime.cloudResult && !runtime.cloudMediaRegistered) {
         runtime.error = messageOf(error, "The uploaded video still needs to be registered in Media Library.");
         await this.cleanupNative(runtime).catch((cleanupError) => {
           runtime.cleanupError = messageOf(cleanupError, "Temporary download cleanup is pending.");
@@ -429,7 +509,7 @@ export class DesktopVideoDownloadManager {
           this.publish(runtime, "failed", "Failed", null, "The church changed while the video was being processed. Switch back to the original church to retry.", "This job belongs to a different church.");
         } else if (runtime.cleanupError) {
           this.publish(runtime, "failed", "Failed", null, "Cleanup failed", runtime.cleanupError);
-        } else if (runtime.destination === "cloud" && runtime.cloudMediaRegistered) {
+        } else if (runtime.uploadToCloud && runtime.cloudMediaRegistered) {
           this.publish(runtime, "complete", "Complete", 100, "Upload finished and is available in Media Library");
         } else {
           await this.finishCancellation(runtime);
@@ -437,13 +517,13 @@ export class DesktopVideoDownloadManager {
         return;
       }
       if (runtime.cleanupError && runtime.localMediaRegistered &&
-        (runtime.destination === "computer" || runtime.cloudMediaRegistered)) {
+        (!runtime.uploadToCloud || runtime.cloudMediaRegistered)) {
         this.publish(runtime, "complete", "Complete", 100,
           "Video is available in Media Library. Temporary download cleanup is pending.", runtime.cleanupError);
         return;
       }
       runtime.error = messageOf(error, "The video could not be imported.");
-      const uploadFailed = failedStage === "Uploading" || (runtime.localMediaRegistered && runtime.destination === "cloud");
+      const uploadFailed = failedStage === "Uploading" || (runtime.localMediaRegistered && runtime.uploadToCloud);
       this.publish(runtime, "failed", "Failed", null,
         uploadFailed
           ? "Upload failed. The local video remains available in Media Library."
@@ -479,6 +559,9 @@ export class DesktopVideoDownloadManager {
       this.publish(runtime, "failed", "Failed", null, undefined, "Switch back to the church where this download started to retry it.");
       return;
     }
+    runtime.downloadStreams = undefined;
+    runtime.currentDownloadStreamId = undefined;
+    runtime.lastBytes = undefined;
     this.publish(runtime, "active", "Preparing", 0, "Retrying video download");
     await this.startNativeDownload(runtime, true);
   }
@@ -502,11 +585,11 @@ export class DesktopVideoDownloadManager {
           runtime.mediaInfo = undefined;
         }
       }
-      if (runtime.localMediaRegistered && (runtime.destination === "computer" || runtime.cloudMediaRegistered || runtime.cloudResult)) {
+      if (runtime.localMediaRegistered && (!runtime.uploadToCloud || runtime.cloudMediaRegistered || runtime.cloudResult)) {
         await this.cleanupNative(runtime);
       }
       runtime.cleanupError = undefined;
-      if (runtime.localMediaRegistered && (runtime.destination === "computer" || runtime.cloudMediaRegistered)) {
+      if (runtime.localMediaRegistered && (!runtime.uploadToCloud || runtime.cloudMediaRegistered)) {
         this.publish(runtime, "complete", "Complete", 100, "Added to Media Library");
       } else {
         this.publish(runtime, "failed", "Failed", null,
@@ -532,7 +615,7 @@ export class DesktopVideoDownloadManager {
         runtime.cancelCloudUpload?.(),
       ].filter(Boolean) as Promise<unknown>[]);
       await runtime.operation?.catch(() => undefined);
-      if (runtime.destination === "cloud" && runtime.cloudResult && !runtime.cloudMediaRegistered && runtime.status === "failed") {
+      if (runtime.uploadToCloud && runtime.cloudResult && !runtime.cloudMediaRegistered && runtime.status === "failed") {
         return;
       }
       if (!runtime.localMediaRegistered) {
@@ -552,7 +635,7 @@ export class DesktopVideoDownloadManager {
       } else if (runtime.cleanupError) {
         this.publish(runtime, "failed", "Failed", null, "Cleanup failed", runtime.cleanupError);
       } else {
-        if (runtime.destination === "cloud" && runtime.cloudMediaRegistered) {
+        if (runtime.uploadToCloud && runtime.cloudMediaRegistered) {
           this.publish(runtime, "complete", "Complete", 100, "Upload finished and is available in Media Library");
         } else {
           await this.finishCancellation(runtime);

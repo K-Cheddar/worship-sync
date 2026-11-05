@@ -18,6 +18,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Media, { getMediaPanelClassName } from "../Media";
+import * as localMediaImport from "../localMediaImport";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { createNewFreeForm } from "../../../utils/itemUtil";
@@ -353,7 +354,17 @@ jest.mock("../../../components/Modal/DeleteModal", () => ({
 
 jest.mock("../MediaModal", () => ({
   __esModule: true,
-  default: () => null,
+  default: ({ selectedMedia, onRelinkLocalVideoFile }: any) =>
+    selectedMedia?.localVideoFile?.storageMode === "linked" && onRelinkLocalVideoFile
+      ? (
+          <button
+            type="button"
+            onClick={() => onRelinkLocalVideoFile(selectedMedia)}
+          >
+            test-relink-file
+          </button>
+        )
+      : null,
 }));
 
 jest.mock("../../../utils/mediaReferenceSweep", () => ({
@@ -874,12 +885,12 @@ describe("Media", () => {
       ).toBeInTheDocument();
     });
     expect(
-      screen.getByRole("menuitem", { name: /add files/i }),
+      screen.getByRole("menuitem", { name: /copy into worshipsync/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /add video input/i }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: /add files/i }));
+    await user.click(screen.getByRole("menuitem", { name: /copy into worshipsync/i }));
     expect(mockOpenModal).toHaveBeenCalledTimes(1);
   });
 
@@ -894,7 +905,7 @@ describe("Media", () => {
 
     await user.click(screen.getByTitle("Add Media"));
     expect(
-      screen.getByRole("menuitem", { name: /add files/i }),
+      screen.getByRole("menuitem", { name: /copy into worshipsync/i }),
     ).toBeInTheDocument();
     await waitFor(() => {
       expect(mockGetCanvaStatus).toHaveBeenCalled();
@@ -2741,6 +2752,63 @@ describe("Media", () => {
       type: "presentation/updateProjector",
       payload: expect.objectContaining({ type: "free", videoPlayback: expect.objectContaining({ loop: false, positionSeconds: 0 }) }),
     }));
+  });
+
+  it("removes only a failed replacement's local link so the operator can try again", async () => {
+    const media = {
+      ...makeBaseState().media.list[0],
+      type: "video",
+      localVideoFile: {
+        id: "linked-video-1",
+        ownerDeviceId: "device-1",
+        storageMode: "linked",
+        contentHash: "a".repeat(64),
+        contentRevision: "a".repeat(64),
+        fileName: "sermon.mp4",
+        contentType: "video/mp4",
+        storagePolicy: "local-only",
+      },
+    } as any;
+    mockState.media.list = [media];
+    mockSelectedMedia = media;
+    mockSelectedMediaIds = new Set([media.id]);
+    const deleteLocalAsset = jest.fn().mockResolvedValue(true);
+    const relinkLocalVideoFile = jest.fn().mockResolvedValue({
+      assetId: "linked-video-1",
+      kind: "video",
+      storageMode: "linked",
+      size: 100,
+      contentHash: "b".repeat(64),
+      fileName: "replacement.mp4",
+      contentType: "video/mp4",
+      url: "worshipsync-media://asset/linked-video-1?v=hash",
+    });
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { relinkLocalVideoFile, deleteLocalAsset },
+    });
+    const mediaImportSpy = jest
+      .spyOn(localMediaImport, "createLocalMediaFromLinkedVideo")
+      .mockRejectedValue(new Error("The selected video cannot be played."));
+
+    try {
+      await renderMedia();
+      await userEvent.setup().click(
+        screen.getByRole("button", { name: "test-relink-file" }),
+      );
+
+      await waitFor(() => {
+        expect(deleteLocalAsset).toHaveBeenCalledWith("linked-video-1");
+      });
+      expect(relinkLocalVideoFile).toHaveBeenCalledWith("linked-video-1");
+      expect(mockShowToast).toHaveBeenCalledWith(
+        "The selected video cannot be played.",
+        "error",
+      );
+    } finally {
+      mediaImportSpy.mockRestore();
+      delete (window as any).electronAPI;
+    }
   });
 
 });
