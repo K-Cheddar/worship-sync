@@ -226,6 +226,18 @@ describe("VideoDownloader job lifecycle", () => {
     }
   });
 
+  it("allows inspection to be retried after malformed metadata", async () => {
+    inspectionStdout = "{not-json}\n[]\n";
+    await expect(inspect()).rejects.toThrow(/video details could not be read/i);
+
+    inspectionStdout = undefined;
+    await expect(inspect()).resolves.toMatchObject({
+      title: "Test Sermon",
+      heights: [1080, 720],
+      defaultQuality: 1080,
+    });
+  });
+
   it("does not retain stdout after overflow and terminates the child once", async () => {
     inspectionStdout = Buffer.alloc(32, 0x78);
     const run = runInspectionCommand(downloader, nativeTools.ytDlpPath, 1000, {

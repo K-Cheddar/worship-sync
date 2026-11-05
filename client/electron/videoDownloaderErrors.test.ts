@@ -64,4 +64,23 @@ describe("video downloader error diagnostics", () => {
       warn.mockRestore();
     }
   });
+
+  it("preserves subprocess byte counts while redacting IDs from extractor diagnostics", () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      logVideoFailure(new VideoDownloaderCommandError(
+        "yt-dlp-extraction-failure",
+        "yt-dlp could not extract video details.",
+        "ERROR: [youtube] hujbT5BXyrl: failed; stdoutBytes=0; stdoutLimitBytes=4194304; stderrBytes=275; stderrLimitBytes=262144",
+      ), "inspection");
+      const payload = warn.mock.calls[0][1] as { diagnostics: string };
+      expect(payload.diagnostics).not.toContain("hujbT5BXyrl");
+      expect(payload.diagnostics).toContain("stdoutBytes=0");
+      expect(payload.diagnostics).toContain("stdoutLimitBytes=4194304");
+      expect(payload.diagnostics).toContain("stderrBytes=275");
+      expect(payload.diagnostics).toContain("stderrLimitBytes=262144");
+    } finally {
+      warn.mockRestore();
+    }
+  });
 });

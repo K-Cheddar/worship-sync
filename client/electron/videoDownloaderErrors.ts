@@ -142,7 +142,8 @@ const sanitizeDiagnostic = (value: string) => value
   .replace(/\b[A-Za-z]:\\Users\\[^\\\s]+/gi, "[user-profile]")
   .replace(/\/(?:home|Users)\/[^/\s]+/g, "/[user-profile]")
   .replace(/\b(cookie|authorization|token|signature|sig|api[_-]?key|client[_-]?secret)\b\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
-  .replace(/\b[A-Za-z0-9_-]{11}\b/g, "[video-id]")
+  .replace(/(\[youtube(?:-nocookie)?\]\s*)[A-Za-z0-9_-]{11}\b/gi, "$1[video-id]")
+  .replace(/\b((?:youtube[_ -]?)?video[_ -]?id\s*[:=]\s*)[A-Za-z0-9_-]{11}\b/gi, "$1[video-id]")
   .replace(/\s+/g, " ")
   .trim()
   .slice(0, 1200);
