@@ -26,6 +26,8 @@ The [Item document storage contract](item-document-storage.md) records document 
 
 The [Video background playback contract](video-background-playback.md) records slide-level looping defaults, final-frame retention, replay, and uninterrupted live preference changes confirmed October 30, 2026.
 
+The [Local video input thumbnails contract](local-video-input-thumbnails.md) records manual thumbnail capture, local/cloud image storage, static slide previews, and preserved live-input playback confirmed November 5, 2026.
+
 ## Feature inventory
 
 Only workflows specifically labeled as confirmed contracts are documented as owner-confirmed. All other registry workflows are **inventory only**: their broad labels are observed from current product surfaces and need product-owner validation before being treated as behavioral contracts. Implementation references help locate features; they are not requirements.

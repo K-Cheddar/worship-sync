@@ -87,6 +87,22 @@ export type LocalImageUploadJob = {
   providerUploadId?: string;
   providerExpectedPublicId?: string;
   cloudMedia?: MediaType;
+  /** Upload this image as a thumbnail on an existing local video-input row. */
+  localVideoInputThumbnail?: {
+    targetMediaId: string;
+    previousAssetId?: string;
+    previousCloudPublicId?: string;
+    previousLocalCleanupComplete?: boolean;
+    previousCloudCleanupComplete?: boolean;
+    staleLocalCleanupComplete?: boolean;
+    staleCloudCleanupComplete?: boolean;
+  };
+  /** Delete an old image after a thumbnail is removed; never uploads its bytes. */
+  cleanupOnly?: boolean;
+  cleanupReady?: boolean;
+  cleanupTargetMediaId?: string;
+  cleanupCloudPublicId?: string;
+  cleanupCloudComplete?: boolean;
   /** Cross-tab owner of the current processing attempt. */
   leaseOwnerId?: string;
   /** Epoch milliseconds after which another tab may recover this job. */
@@ -115,6 +131,7 @@ export type LocalImageReferencePatch = {
       | "storagePolicy"
       | "cloudUrl"
       | "cloudMediaId"
+      | "cloudPublicId"
     >
   >;
   media?: Partial<Pick<MediaType, "name" | "format" | "width" | "height">>;
@@ -777,6 +794,12 @@ type LeasedLocalImageUploadJobPatch = Partial<
     | "nextAttemptAt"
     | "lastError"
     | "lastErrorCode"
+    | "localVideoInputThumbnail"
+    | "cleanupOnly"
+    | "cleanupReady"
+    | "cleanupTargetMediaId"
+    | "cleanupCloudPublicId"
+    | "cleanupCloudComplete"
   > & {
     cloudMedia?: MediaType | null;
     providerUploadId?: string | null;
@@ -1359,5 +1382,6 @@ export const normalizeLocalImageReference = (
     storagePolicy,
     ...(cloudUrl ? { cloudUrl } : {}),
     ...(clean("cloudMediaId") ? { cloudMediaId: clean("cloudMediaId") } : {}),
+    ...(clean("cloudPublicId") ? { cloudPublicId: clean("cloudPublicId") } : {}),
   };
 };

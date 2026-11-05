@@ -13,7 +13,7 @@ type LocalVideoInputSlideBadgeProps = {
    * `overlay` fills the stage (thumbnails). `banner` sits at the bottom so the
    * editor stays readable while still naming the input.
    */
-  variant?: "overlay" | "banner";
+  variant?: "overlay" | "banner" | "indicator";
   /**
    * Thumbnail grids leave the slide title bar uncovered.
    * Only applies to `overlay`.
@@ -66,6 +66,25 @@ const LocalVideoInputSlideBadge = ({
         >
           <span className="font-semibold text-white/80">{kindLabel}:</span>{" "}
           {trimmedLabel}
+        </span>
+      </div>
+    );
+  }
+
+  if (variant === "indicator") {
+    return (
+      <div
+        className={cn(
+          "pointer-events-none absolute bottom-2 right-2 z-10 inline-flex max-w-[85%] items-center gap-1.5 rounded bg-black/75 px-2 py-1 text-white shadow",
+          className,
+        )}
+        data-testid="local-video-input-slide-badge"
+        aria-label={ariaLabel}
+        title={ariaLabel}
+      >
+        <Icon className="size-3.5 shrink-0" aria-hidden />
+        <span className="truncate text-[10px] font-medium">
+          Live input · {trimmedLabel}
         </span>
       </div>
     );

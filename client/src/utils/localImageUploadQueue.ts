@@ -23,12 +23,14 @@ export const enqueueLocalImageUpload = async ({
   workspaceId,
   uploadPreset,
   mediaId,
+  localVideoInputThumbnail,
 }: {
   assetId: string;
   itemId: string;
   workspaceId: string;
   uploadPreset: string;
   mediaId?: string;
+  localVideoInputThumbnail?: LocalImageUploadJob["localVideoInputThumbnail"];
 }) => {
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
@@ -39,6 +41,7 @@ export const enqueueLocalImageUpload = async ({
     workspaceId,
     uploadPreset,
     mediaId: mediaId || generateRandomId(),
+    ...(localVideoInputThumbnail ? { localVideoInputThumbnail } : {}),
     status: "pending",
     phase: "queued",
     progress: 0,
