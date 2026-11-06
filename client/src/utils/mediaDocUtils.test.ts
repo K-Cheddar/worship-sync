@@ -192,6 +192,78 @@ describe("v2 media repository", () => {
     expect(db.remove).toHaveBeenCalledWith(expect.objectContaining({ _id: mediaItemDocId("delete") }));
   });
 
+  it("merges thumbnail fields into the latest persisted Media metadata", async () => {
+    const beforeRow: MediaType = {
+      ...media("camera", "Main camera"),
+      type: "video",
+      format: "live",
+      background: "local-video-input://camera-a",
+      thumbnail: "https://res.cloudinary.com/example/old.webp",
+      folderId: "old-folder",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "camera-a",
+        deviceId: "device-a",
+        label: "Main camera",
+      },
+      localImage: {
+        id: "thumbnail-a",
+        ownerDeviceId: "device-a",
+        ownerLabel: "Booth PC",
+        fileName: "thumbnail-a.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+        cloudPublicId: "old-cloud-public-id",
+      },
+    };
+    const { db, docs } = makePersistedDb([], [beforeRow]);
+    const latestRow: MediaType = {
+      ...beforeRow,
+      name: "Renamed camera",
+      folderId: "new-folder",
+      localVideoInput: {
+        ...beforeRow.localVideoInput!,
+        deviceId: "device-b",
+        label: "Renamed camera",
+      },
+    };
+    docs.set(mediaItemDocId(beforeRow.id), {
+      ...latestRow,
+      _id: mediaItemDocId(beforeRow.id),
+      docType: "mediaItem",
+      _rev: "2",
+    });
+    const afterRow: MediaType = {
+      ...beforeRow,
+      updatedAt: "thumbnail-saved",
+      thumbnail: "",
+      localImage: {
+        id: "thumbnail-b",
+        ownerDeviceId: "device-a",
+        ownerLabel: "Booth PC",
+        fileName: "thumbnail-b.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-only",
+      },
+    };
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [beforeRow], folders: [] },
+      { list: [afterRow], folders: [] },
+    );
+
+    expect(docs.get(mediaItemDocId(beforeRow.id))).toEqual(
+      expect.objectContaining({
+        name: "Renamed camera",
+        folderId: "new-folder",
+        localVideoInput: latestRow.localVideoInput,
+        thumbnail: "",
+        localImage: afterRow.localImage,
+      }),
+    );
+  });
+
   it("aborts folder finalization when replicated media joins after its membership snapshot", async () => {
     const folder = { id: "folder", name: "Folder", parentId: null } as MediaFolder;
     const beforeItem = { ...media("known"), folderId: "folder" };

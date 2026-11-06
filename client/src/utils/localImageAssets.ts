@@ -694,6 +694,32 @@ const mutateLocalImageUploadJob = async (
   return result;
 };
 
+/** Stage cleanup only when no upload/reconciliation work still owns this asset. */
+export const stageLocalImageUploadCleanupJobAtomically = async (
+  candidate: LocalImageUploadJob,
+  now: number,
+) => {
+  let previous: LocalImageUploadJob | undefined;
+  let staged = false;
+  const job = await mutateLocalImageUploadJob(candidate.assetId, (current) => {
+    if (
+      current &&
+      current.status !== "complete" &&
+      current.status !== "cancelled"
+    ) {
+      return current;
+    }
+    previous = current;
+    staged = true;
+    return {
+      ...candidate,
+      createdAt: current?.createdAt ?? candidate.createdAt,
+      updatedAt: new Date(now).toISOString(),
+    };
+  });
+  return staged && job ? { job, previous } : undefined;
+};
+
 export const enqueueLocalImageUploadJobAtomically = async (
   candidate: LocalImageUploadJob,
   now: number,

@@ -262,6 +262,10 @@ jest.mock("../../../store/mediaSlice", () => ({
     type: "media/removeMediaItemFromRemote",
     payload,
   })),
+  removeItemFromMediaList: jest.fn((payload: string) => ({
+    type: "media/removeItemFromMediaList",
+    payload,
+  })),
   updateMediaList: jest.fn((payload: any) => ({
     type: "media/updateMediaList",
     payload,

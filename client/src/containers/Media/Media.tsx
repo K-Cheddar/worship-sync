@@ -40,7 +40,6 @@ import FloatingWindow, {
 import CanvaImportSheet from "./CanvaImportSheet";
 import { getCanvaStatus } from "../../api/canva";
 import { GlobalInfoContext } from "../../context/globalInfo";
-import { ControllerInfoContext } from "../../context/controllerInfo";
 import LocalVideoInputPicker, {
   type LocalVideoCaptureMode,
 } from "../../components/LocalVideoInputPicker/LocalVideoInputPicker";
@@ -52,24 +51,8 @@ import type { LocalVideoInputMediaSource } from "../../types";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import { supportsDesktopCapture } from "../../utils/desktopCapture";
-import {
-  deleteLocalImage,
-  deleteLocalImageUploadJob,
-  getLocalImageUploadJob,
-  getRememberedLocalImagePolicy,
-  putLocalImageUploadJob,
-  saveLocalImage,
-  type LocalImageUploadJob,
-  type StoredLocalImage,
-} from "../../utils/localImageAssets";
-import {
-  cancelLocalImageUpload,
-  enqueueLocalImageUpload,
-} from "../../utils/localImageUploadQueue";
-import { extractPublicId } from "../../utils/cloudinaryUtils";
-import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
-import generateRandomId from "../../utils/generateRandomId";
 import type { LocalVideoThumbnailFrame } from "../../utils/localVideoInputThumbnail";
+import { useLocalVideoInputThumbnailPersistence } from "../../hooks/useLocalVideoInputThumbnailPersistence";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { MediaAddControl } from "./MediaAddControl";
 import { MediaSourceAddMenu } from "./MediaSourceAddMenu";
@@ -99,7 +82,6 @@ export const getMediaPanelClassName = ({
 const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const dispatch = useDispatch();
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
-  const { db } = useContext(ControllerInfoContext) || {};
   const [isCanvaImportOpen, setIsCanvaImportOpen] = useState(false);
   const [canvaSourceMedia, setCanvaSourceMedia] = useState<MediaType | null>(
     null,
@@ -147,332 +129,14 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     showAll,
     navigateToFolder,
     getCurrentMediaList,
-    folders,
-    isGuestSession,
   } = c;
 
-  const writeVideoInputMedia = useCallback(
-    async (current: MediaType, next: MediaType) => {
-      if (!db) throw new Error("Media storage is unavailable. Try again.");
-      const list = getCurrentMediaList();
-      if (!list.some((item) => item.id === current.id)) {
-        throw new Error("This video input is no longer in Media.");
-      }
-      const nextList = list.map((item) =>
-        item.id === current.id ? next : item,
-      );
-      const result = await flushMediaLibraryDocToPouch(
-        db,
-        nextList,
-        folders,
-      );
-      if (!result.ok) {
-        throw new Error("The thumbnail change could not be saved to Media.");
-      }
-      dispatch(updateMediaItemFields({ id: next.id, patch: next }));
-    },
-    [folders, getCurrentMediaList, db, dispatch],
-  );
-
-  const createThumbnailCleanupJob = useCallback(
-    async ({
-      assetId,
-      mediaId,
-      workspaceId,
-      cloudPublicId,
-    }: {
-      assetId: string;
-      mediaId: string;
-      workspaceId: string;
-      cloudPublicId?: string;
-    }) => {
-      const previous = await getLocalImageUploadJob(assetId);
-      const now = new Date().toISOString();
-      const job: LocalImageUploadJob = {
-        ...(previous ?? {}),
-        id: assetId,
-        assetId,
-        itemId: "",
-        workspaceId,
-        uploadPreset: "bpqu4ma5",
-        mediaId: previous?.mediaId || generateRandomId(),
-        status: "failed",
-        phase: "failed",
-        progress: null,
-        cancelRequested: false,
-        attemptCount: 0,
-        nextAttemptAt: 0,
-        cleanupOnly: true,
-        cleanupReady: false,
-        cleanupTargetMediaId: mediaId,
-        cleanupCloudPublicId: cloudPublicId,
-        cleanupCloudComplete: !cloudPublicId,
-        leaseOwnerId: undefined,
-        leaseExpiresAt: undefined,
-        providerUploadId: undefined,
-        providerExpectedPublicId: undefined,
-        cloudMedia: undefined,
-        lastError: undefined,
-        lastErrorCode: undefined,
-        createdAt: previous?.createdAt || now,
-        updatedAt: now,
-      };
-      await putLocalImageUploadJob(job);
-      return { job, previous };
-    },
-    [],
-  );
-
-  const activateThumbnailCleanupJob = useCallback(
-    async (job: LocalImageUploadJob) => {
-      await putLocalImageUploadJob({
-        ...job,
-        status: "pending",
-        phase: "queued",
-        cleanupReady: true,
-        nextAttemptAt: 0,
-        updatedAt: new Date().toISOString(),
-      });
-    },
-    [],
-  );
-
-  const saveVideoInputThumbnail = useCallback(
-    async (mediaId: string, frame: LocalVideoThumbnailFrame) => {
-      const current = getCurrentMediaList()
-        .find((item) => item.id === mediaId);
-      if (!current?.localVideoInput) {
-        throw new Error("This video input is no longer in Media.");
-      }
-      const ownerDeviceId = getOrCreateDeviceId();
-      const workspaceId = churchId || ownerDeviceId;
-      const storagePolicy =
-        churchId && !isGuestSession
-          ? getRememberedLocalImagePolicy(ownerDeviceId)
-          : "local-only";
-      const now = new Date().toISOString();
-      const assetId = generateRandomId();
-      const contentType = frame.blob.type || "image/jpeg";
-      const fileName = `${current.name || "Video input"}-thumbnail.${contentType === "image/webp" ? "webp" : "jpg"}`;
-      const storedImage: StoredLocalImage = {
-        id: assetId,
-        workspaceId,
-        blob: frame.blob,
-        fileName,
-        contentType,
-        size: frame.blob.size,
-        width: frame.width,
-        height: frame.height,
-        createdAt: now,
-      };
-      await saveLocalImage(storedImage);
-
-      const previousCloudPublicId =
-        current.localImage?.cloudPublicId ||
-        (current.localImage?.cloudUrl
-          ? extractPublicId(current.localImage.cloudUrl)
-          : current.thumbnail
-            ? extractPublicId(current.thumbnail)
-            : undefined);
-      const next: MediaType = {
-        ...current,
-        updatedAt: now,
-        localImage: {
-          id: assetId,
-          ownerDeviceId,
-          ownerLabel: getTrustedDeviceLabel(),
-          fileName,
-          contentType,
-          storagePolicy,
-          ...(previousCloudPublicId
-            ? { cloudPublicId: previousCloudPublicId }
-            : {}),
-        },
-      };
-
-      try {
-        await writeVideoInputMedia(current, next);
-      } catch (error) {
-        await deleteLocalImage(assetId).catch(() => undefined);
-        throw error;
-      }
-
-      if (storagePolicy === "local-and-cloud") {
-        try {
-          await enqueueLocalImageUpload({
-            assetId,
-            itemId: "",
-            workspaceId,
-            uploadPreset: "bpqu4ma5",
-            localVideoInputThumbnail: {
-              targetMediaId: current.id,
-              ...(current.localImage?.id
-                ? { previousAssetId: current.localImage.id }
-                : {}),
-              ...(previousCloudPublicId ? { previousCloudPublicId } : {}),
-            },
-          });
-          notifyStorageUsageChanged();
-          return "Thumbnail saved here. Uploading its cloud copy.";
-        } catch {
-          const latest = getCurrentMediaList()
-            .find((item) => item.id === current.id);
-          if (latest?.localImage?.id === assetId) {
-            const localOnly = {
-              ...latest,
-              localImage: {
-                ...latest.localImage,
-                storagePolicy: "local-only" as const,
-              },
-            };
-            await writeVideoInputMedia(latest, localOnly).catch(() => undefined);
-          }
-          return "Thumbnail saved on this computer. Cloud upload could not be queued.";
-        }
-      }
-
-      if (current.localImage?.id) {
-        try {
-          if (churchId && !isGuestSession) {
-            const cleanup = await createThumbnailCleanupJob({
-              assetId: current.localImage.id,
-              mediaId: current.id,
-              workspaceId,
-            });
-            await activateThumbnailCleanupJob(cleanup.job);
-          } else {
-            await deleteLocalImage(current.localImage.id);
-          }
-        } catch {
-          // The media reference already points to the new saved image. Cleanup
-          // failures remain visible in the durable local-image job store.
-        }
-      }
-      return "Thumbnail saved on this computer.";
-    },
-    [
-      activateThumbnailCleanupJob,
-      getCurrentMediaList,
-      isGuestSession,
-      churchId,
-      createThumbnailCleanupJob,
-      notifyStorageUsageChanged,
-      writeVideoInputMedia,
-    ],
-  );
-
-  const removeVideoInputThumbnail = useCallback(
-    async (mediaId: string) => {
-      const current = getCurrentMediaList()
-        .find((item) => item.id === mediaId);
-      if (!current?.localVideoInput) {
-        throw new Error("This video input is no longer in Media.");
-      }
-      if (!current.localImage) {
-        if (current.thumbnail) {
-          await writeVideoInputMedia(current, {
-            ...current,
-            thumbnail: "",
-            updatedAt: new Date().toISOString(),
-          });
-        }
-        return;
-      }
-
-      const pendingJob = await getLocalImageUploadJob(current.localImage.id);
-      if (
-        pendingJob &&
-        pendingJob.status !== "complete" &&
-        pendingJob.status !== "cancelled" &&
-        !pendingJob.cleanupOnly
-      ) {
-        await cancelLocalImageUpload(current.localImage.id);
-      }
-      const latest = getCurrentMediaList()
-        .find((item) => item.id === mediaId);
-      if (!latest?.localImage) return;
-      const latestJob = await getLocalImageUploadJob(latest.localImage.id);
-      const workspaceId = churchId || getOrCreateDeviceId();
-      const cleanupAssets = new Map<
-        string,
-        { cloudPublicId?: string; workspaceId: string }
-      >();
-      const addCleanup = (assetId?: string, cloudPublicId?: string) => {
-        if (!assetId) return;
-        const previous = cleanupAssets.get(assetId);
-        cleanupAssets.set(assetId, {
-          workspaceId,
-          cloudPublicId: cloudPublicId || previous?.cloudPublicId,
-        });
-      };
-      const currentCloudPublicId =
-        latest.localImage.cloudPublicId ||
-        (latest.localImage.cloudUrl
-          ? extractPublicId(latest.localImage.cloudUrl)
-          : latest.thumbnail
-            ? extractPublicId(latest.thumbnail)
-            : undefined) ||
-        latestJob?.cloudMedia?.publicId;
-      addCleanup(latest.localImage.id, currentCloudPublicId);
-      addCleanup(
-        latestJob?.localVideoInputThumbnail?.previousAssetId,
-        latestJob?.localVideoInputThumbnail?.previousCloudPublicId,
-      );
-      const cloudCleanupIds = [...cleanupAssets.values()].flatMap((asset) =>
-        asset.cloudPublicId ? [asset.cloudPublicId] : [],
-      );
-      if (cloudCleanupIds.length > 0 && (!churchId || isGuestSession)) {
-        throw new Error("Cloud storage is unavailable. Reconnect and try again.");
-      }
-
-      const staged: Array<{
-        job: LocalImageUploadJob;
-        previous?: LocalImageUploadJob;
-      }> = [];
-      try {
-        for (const [assetId, cleanup] of cleanupAssets) {
-          staged.push(
-            await createThumbnailCleanupJob({
-              assetId,
-              mediaId: latest.id,
-              workspaceId: cleanup.workspaceId,
-              cloudPublicId: cleanup.cloudPublicId,
-            }),
-          );
-        }
-        await writeVideoInputMedia(latest, {
-          ...latest,
-          localImage: undefined,
-          thumbnail: "",
-          updatedAt: new Date().toISOString(),
-        });
-      } catch (error) {
-        await Promise.all(
-          staged.map(({ job, previous }) =>
-            previous
-              ? putLocalImageUploadJob(previous)
-              : deleteLocalImageUploadJob(job.assetId),
-          ),
-        );
-        throw error;
-      }
-
-      for (const { job } of staged) {
-        await activateThumbnailCleanupJob(job);
-      }
-      if (staged.length === 0) {
-        await deleteLocalImage(latest.localImage.id);
-      }
-    },
-    [
-      activateThumbnailCleanupJob,
-      getCurrentMediaList,
-      isGuestSession,
-      churchId,
-      createThumbnailCleanupJob,
-      writeVideoInputMedia,
-    ],
-  );
+  const {
+    persistVideoInputMediaPatch,
+    removeOptimisticVideoInputMediaRow,
+    saveVideoInputThumbnail,
+    removeVideoInputThumbnail,
+  } = useLocalVideoInputThumbnailPersistence(notifyStorageUsageChanged);
   const handleDroppedFiles = useCallback(
     (files: File[]) => c.mediaUploadInputRef.current?.openModalWithFiles(files),
     [c.mediaUploadInputRef],
@@ -572,29 +236,62 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       };
       const now = new Date().toISOString();
       const id = `local_input_${ownedSource.sourceId}`;
-      const media: MediaType = {
-        path: "",
-        createdAt: now,
-        updatedAt: now,
-        format: "live",
-        height: 1080,
-        width: 1920,
-        name: ownedSource.label,
-        publicId: id,
-        type: "video",
-        id,
-        background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
-        thumbnail: "",
-        placeholderImage: "",
-        source: "local",
-        localVideoInput: ownedSource,
-      };
-      addLocalMedia(media);
+      const existing = getCurrentMediaList().find((item) => item.id === id);
+      let optimisticRow: MediaType | undefined;
+      if (!existing) {
+        optimisticRow = {
+          path: "",
+          createdAt: now,
+          updatedAt: now,
+          format: "live",
+          height: 1080,
+          width: 1920,
+          name: ownedSource.label,
+          publicId: id,
+          type: "video",
+          id,
+          background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
+          thumbnail: "",
+          placeholderImage: "",
+          source: "local",
+          localVideoInput: ownedSource,
+          folderId: c.uploadTargetFolderId,
+        };
+        dispatch(
+          addItemToMediaList(optimisticRow),
+        );
+      }
+      try {
+        await persistVideoInputMediaPatch(
+          id,
+          ownedSource.sourceId,
+          {
+            name: ownedSource.label,
+            updatedAt: now,
+            localVideoInput: ownedSource,
+          },
+          !existing,
+        );
+      } catch (error) {
+        if (!existing) {
+          if (optimisticRow) {
+            removeOptimisticVideoInputMediaRow(id, optimisticRow);
+          }
+        }
+        throw error;
+      }
       if (initialThumbnail) {
-        await saveVideoInputThumbnail(media.id, initialThumbnail);
+        await saveVideoInputThumbnail(id, initialThumbnail);
       }
     },
-    [addLocalMedia, saveVideoInputThumbnail],
+    [
+      c.uploadTargetFolderId,
+      dispatch,
+      getCurrentMediaList,
+      persistVideoInputMediaPatch,
+      removeOptimisticVideoInputMediaRow,
+      saveVideoInputThumbnail,
+    ],
   );
 
   return (

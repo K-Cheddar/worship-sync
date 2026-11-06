@@ -24,6 +24,7 @@ import {
 import LocalImageUploadManager from "./LocalImageUploadManager";
 import type { MediaType } from "../../types";
 import store from "../../store/store";
+import { loadMediaLibrary } from "../../utils/mediaDocUtils";
 import {
   addItemToMediaList,
   updateMediaItemFields,
@@ -34,6 +35,10 @@ import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
 const mockDispatch = jest.fn();
 const mockState = {
   media: { list: [] as MediaType[], isInitialized: true },
+};
+const mockPouchState = {
+  list: [] as MediaType[],
+  folders: [] as Array<{ id: string; name: string; parentId: string | null }>,
 };
 jest.mock("../../hooks", () => ({
   useDispatch: () => mockDispatch,
@@ -57,6 +62,12 @@ jest.mock("../../utils/localImageAssets", () => ({
 }));
 jest.mock("../../utils/flushMediaLibraryDoc", () => ({
   flushMediaLibraryDocToPouch: jest.fn(() => Promise.resolve({ ok: true })),
+}));
+jest.mock("../../utils/mediaDocUtils", () => ({
+  loadMediaLibrary: jest.fn(async () => ({
+    list: mockPouchState.list,
+    folders: mockPouchState.folders,
+  })),
 }));
 jest.mock("../../containers/Media/utils/cloudinaryUpload", () => ({
   uploadImageToCloudinarySigned: jest.fn(),
@@ -106,6 +117,7 @@ const mockPersistCloudCopy = jest.mocked(persistLocalImageCloudCopy);
 const mockDeleteJob = jest.mocked(deleteLocalImageUploadJob);
 const mockDeleteLocalImage = jest.mocked(deleteLocalImage);
 const mockFlushMedia = jest.mocked(flushMediaLibraryDocToPouch);
+const mockLoadMediaLibrary = jest.mocked(loadMediaLibrary);
 const mockReleaseLease = jest.mocked(releaseLocalImageUploadJobLease);
 const mockRenewLease = jest.mocked(renewLocalImageUploadJobLease);
 const mockUpdateJob = jest.mocked(updateLeasedLocalImageUploadJob);
@@ -124,10 +136,30 @@ const interruptedJob: LocalImageUploadJob = {
   updatedAt: "2026-08-12T00:00:00.000Z",
 };
 
+const deferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
+
 describe("LocalImageUploadManager", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDispatch.mockReset();
     mockState.media.list = [];
+    mockPouchState.list = [];
+    mockPouchState.folders = [];
+    mockLoadMediaLibrary.mockImplementation(async () => ({
+      list: mockPouchState.list,
+      folders: mockPouchState.folders,
+    } as Awaited<ReturnType<typeof loadMediaLibrary>>));
+    mockFlushMedia.mockImplementation(async (_db, list, folders) => {
+      mockPouchState.list = list;
+      mockPouchState.folders = folders;
+      return { ok: true };
+    });
     store.dispatch(updateMediaList([]));
     mockListJobs.mockResolvedValueOnce([interruptedJob]).mockResolvedValue([]);
     mockGetLocalImage.mockResolvedValue({
@@ -169,7 +201,7 @@ describe("LocalImageUploadManager", () => {
     mockRenewLease.mockResolvedValue(true);
   });
 
-  it("updates the targeted video input in place and cleans its previous image", async () => {
+  it("merges cloud finalization into the latest Media row and cleans its previous image", async () => {
     const previousImage = {
       id: "old-thumbnail",
       ownerDeviceId: "device-1",
@@ -230,7 +262,9 @@ describe("LocalImageUploadManager", () => {
     };
     let latestJob = uploadJob;
     mockState.media.list = [input];
+    mockPouchState.list = [input];
     store.dispatch(updateMediaList([input]));
+    mockDispatch.mockImplementation((action) => store.dispatch(action));
     mockListJobs.mockReset().mockResolvedValueOnce([uploadJob]).mockResolvedValue([]);
     mockClaimJob.mockResolvedValue({
       ...uploadJob,
@@ -247,6 +281,36 @@ describe("LocalImageUploadManager", () => {
       width: 640,
       height: 360,
       createdAt: "2026-11-05T00:00:00.000Z",
+    });
+    const allowFinalization = deferred<void>();
+    mockFlushMedia.mockImplementationOnce(async (_db, list, folders, _getLatest, changeBase) => {
+      await allowFinalization.promise;
+      if (!changeBase) {
+        mockPouchState.list = list;
+        mockPouchState.folders = folders;
+        return { ok: true };
+      }
+      const before = changeBase.list.find((item) => item.id === input.id);
+      const requested = list.find((item) => item.id === input.id);
+      const current = mockPouchState.list.find((item) => item.id === input.id);
+      if (before && requested && current) {
+        const merged = { ...current } as Record<string, unknown>;
+        const currentFields = current as unknown as Record<string, unknown>;
+        const beforeFields = before as unknown as Record<string, unknown>;
+        const requestedFields = requested as unknown as Record<string, unknown>;
+        for (const key of new Set([...Object.keys(before), ...Object.keys(requested)])) {
+          if (JSON.stringify(beforeFields[key]) === JSON.stringify(requestedFields[key])) continue;
+          if (
+            JSON.stringify(currentFields[key]) === JSON.stringify(beforeFields[key]) ||
+            JSON.stringify(currentFields[key]) === JSON.stringify(requestedFields[key])
+          ) {
+            merged[key] = requestedFields[key];
+          }
+        }
+        mockPouchState.list = [merged as unknown as MediaType];
+      }
+      mockPouchState.folders = folders;
+      return { ok: true };
     });
     mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => {
       latestJob = {
@@ -268,6 +332,19 @@ describe("LocalImageUploadManager", () => {
     );
 
     await waitFor(() => expect(mockFlushMedia).toHaveBeenCalled());
+    const latestMetadata = {
+      name: "Renamed during cloud finalization",
+      folderId: "camera-folder-2",
+      localVideoInput: {
+        ...input.localVideoInput!,
+        label: "Renamed during cloud finalization",
+        deviceId: "camera-device-2",
+      },
+    };
+    mockPouchState.list = [{ ...input, ...latestMetadata }];
+    mockState.media.list = [{ ...input, ...latestMetadata }];
+    store.dispatch(updateMediaItemFields({ id: input.id, patch: latestMetadata }));
+    allowFinalization.resolve();
     await waitFor(() =>
       expect(mockUpdateJob).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -300,6 +377,9 @@ describe("LocalImageUploadManager", () => {
     expect(mockDispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: addItemToMediaList.type }),
     );
+    expect(mockFlushMedia.mock.calls[0][4]).toEqual(
+      expect.objectContaining({ list: expect.any(Array) }),
+    );
     const persistedList = mockFlushMedia.mock.calls[0][1];
     expect(persistedList[0]).toEqual(
       expect.objectContaining({
@@ -308,6 +388,18 @@ describe("LocalImageUploadManager", () => {
         localVideoInput: input.localVideoInput,
         localImage: expect.objectContaining({ id: "new-thumbnail" }),
       }),
+    );
+    expect(mockPouchState.list[0]).toEqual(
+      expect.objectContaining({
+        name: "Renamed during cloud finalization",
+        folderId: "camera-folder-2",
+        localVideoInput: latestMetadata.localVideoInput,
+        thumbnail: "https://res.cloudinary.com/example/welcome.png",
+        localImage: expect.objectContaining({ id: "new-thumbnail" }),
+      }),
+    );
+    expect(store.getState().media.list[0]).toEqual(
+      expect.objectContaining({ ...latestMetadata, thumbnail: "https://res.cloudinary.com/example/welcome.png" }),
     );
     view.unmount();
   });
@@ -359,7 +451,7 @@ describe("LocalImageUploadManager", () => {
     view.unmount();
   });
 
-  it("discards an upload superseded by a rapid retake without adding Media", async () => {
+  it("cleans a completed upload after a local-only thumbnail replacement", async () => {
     const input: MediaType = {
       path: "",
       createdAt: "2026-11-01T00:00:00.000Z",
@@ -367,20 +459,21 @@ describe("LocalImageUploadManager", () => {
       format: "live",
       height: 1080,
       width: 1920,
-      name: "Main camera",
+      name: "Camera B saved locally",
       publicId: "local_input_camera-1",
       type: "video",
       id: "local_input_camera-1",
       background: "local-video-input://camera-1",
-      thumbnail: "https://res.cloudinary.com/example/old.webp",
+      thumbnail: "",
       source: "local",
+      folderId: "camera-folder-b",
       localImage: {
         id: "latest-thumbnail",
         ownerDeviceId: "device-1",
         ownerLabel: "Booth PC",
         fileName: "latest.webp",
         contentType: "image/webp",
-        storagePolicy: "local-and-cloud",
+        storagePolicy: "local-only",
       },
       localVideoInput: {
         kind: "local-video-input",
@@ -422,6 +515,7 @@ describe("LocalImageUploadManager", () => {
       },
     };
     mockState.media.list = [input];
+    mockPouchState.list = [input];
     store.dispatch(updateMediaList([input]));
     mockListJobs.mockReset().mockResolvedValueOnce([staleJob]).mockResolvedValue([]);
     mockClaimJob.mockResolvedValue({
@@ -469,7 +563,29 @@ describe("LocalImageUploadManager", () => {
     expect(mockDispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: addItemToMediaList.type }),
     );
-    expect(store.getState().media.list[0].localVideoInput?.sourceId).toBe("camera-1");
+    expect(store.getState().media.list[0]).toEqual(
+      expect.objectContaining({
+        name: "Camera B saved locally",
+        folderId: "camera-folder-b",
+        thumbnail: "",
+        localImage: expect.objectContaining({
+          id: "latest-thumbnail",
+          storagePolicy: "local-only",
+        }),
+        localVideoInput: expect.objectContaining({ sourceId: "camera-1" }),
+      }),
+    );
+    expect(mockPouchState.list[0]).toEqual(
+      expect.objectContaining({
+        name: "Camera B saved locally",
+        folderId: "camera-folder-b",
+        thumbnail: "",
+        localImage: expect.objectContaining({
+          id: "latest-thumbnail",
+          storagePolicy: "local-only",
+        }),
+      }),
+    );
     view.unmount();
   });
 

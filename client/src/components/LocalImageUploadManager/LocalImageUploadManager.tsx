@@ -43,6 +43,7 @@ import {
 } from "../../utils/localImageUploadQueue";
 import { dispatchLocalImageCloudCopy } from "../../utils/localImageRedux";
 import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
+import { loadMediaLibrary } from "../../utils/mediaDocUtils";
 import store from "../../store/store";
 import {
   getLocalImageUploadRetryDelay,
@@ -444,30 +445,67 @@ const LocalImageUploadManager = () => {
           return;
         }
         const thumbnailTarget = job.localVideoInputThumbnail;
+        const authoritativeMedia = thumbnailTarget
+          ? await loadMediaLibrary(db)
+          : undefined;
         const currentMediaList: MediaType[] = store.getState().media.list;
         const localMedia = thumbnailTarget
-          ? currentMediaList.find((item) => item.id === thumbnailTarget.targetMediaId)
+          ? authoritativeMedia?.list.find((item) => item.id === thumbnailTarget.targetMediaId)
           : currentMediaList.find((item) => item.id === job.assetId) ??
             currentMediaList.find(
               (item) => item.localImage?.id === job.assetId,
             );
         if (thumbnailTarget) {
-          if (
-            !localMedia?.localVideoInput ||
-            localMedia.localImage?.id !== job.assetId
-          ) {
+          const thumbnailCloudMedia = cloudMedia;
+          if (!thumbnailCloudMedia) {
+            await updateClaimedJob({
+              status: "failed",
+              phase: "failed",
+              progress: null,
+              nextAttemptAt: 0,
+              lastError: "The uploaded thumbnail result is missing.",
+            });
+            return;
+          }
+          const recordStaleThumbnailCleanup = async (
+            patch: Partial<typeof thumbnailTarget>,
+          ) => {
+            const nextTarget = { ...thumbnailTarget, ...patch };
+            if (!(await updateClaimedJob({ localVideoInputThumbnail: nextTarget }))) {
+              return false;
+            }
+            Object.assign(thumbnailTarget, nextTarget);
+            return true;
+          };
+          const cleanupStaleThumbnailUpload = async () => {
             try {
               if (
-                cloudMedia.publicId &&
+                thumbnailCloudMedia.publicId &&
                 !thumbnailTarget.staleCloudCleanupComplete
               ) {
-                await deleteCloudinaryMediaAsset(churchId, cloudMedia.publicId);
-                await updateClaimedJob({
-                  localVideoInputThumbnail: {
-                    ...thumbnailTarget,
-                    staleCloudCleanupComplete: true,
-                  },
-                });
+                await deleteCloudinaryMediaAsset(churchId, thumbnailCloudMedia.publicId);
+                if (!(await recordStaleThumbnailCleanup({ staleCloudCleanupComplete: true }))) {
+                  return;
+                }
+              }
+              const previousAssetId = thumbnailTarget.previousAssetId;
+              if (
+                previousAssetId &&
+                previousAssetId !== job.assetId &&
+                !thumbnailTarget.previousLocalCleanupComplete
+              ) {
+                const previousJob = await getLocalImageUploadJob(previousAssetId);
+                const previousUploadIsUnsettled = Boolean(
+                  previousJob &&
+                    previousJob.status !== "complete" &&
+                    previousJob.status !== "cancelled",
+                );
+                if (!previousUploadIsUnsettled) {
+                  await deleteLocalImage(previousAssetId);
+                  if (!(await recordStaleThumbnailCleanup({ previousLocalCleanupComplete: true }))) {
+                    return;
+                  }
+                }
               }
               if (!thumbnailTarget.staleLocalCleanupComplete) {
                 await deleteLocalImage(job.assetId);
@@ -483,6 +521,12 @@ const LocalImageUploadManager = () => {
                   : "The replaced thumbnail could not be cleaned up.",
               });
             }
+          };
+          if (
+            !localMedia?.localVideoInput ||
+            localMedia.localImage?.id !== job.assetId
+          ) {
+            await cleanupStaleThumbnailUpload();
             return;
           }
 
@@ -500,25 +544,15 @@ const LocalImageUploadManager = () => {
             thumbnail: cloudMedia.background,
             localImage: cloudThumbnailRef,
           };
-          const currentState = store.getState();
-          const mediaList: MediaType[] = currentState.media.list.map((item: MediaType) =>
+          const mediaList: MediaType[] = authoritativeMedia!.list.map((item: MediaType) =>
             item.id === updatedMedia.id ? updatedMedia : item,
           );
           const persisted = await flushMediaLibraryDocToPouch(
             db,
             mediaList,
-            currentState.media.folders,
-            () => {
-              const latest = store.getState();
-              const latestMediaList: MediaType[] = latest.media.list.map(
-                (item: MediaType) =>
-                  item.id === updatedMedia.id &&
-                  item.localImage?.id === job.assetId
-                    ? updatedMedia
-                    : item,
-              );
-              return { list: latestMediaList, folders: latest.media.folders };
-            },
+            authoritativeMedia!.folders,
+            undefined,
+            authoritativeMedia,
           );
           if (!persisted.ok) {
             await updateClaimedJob({
@@ -532,49 +566,32 @@ const LocalImageUploadManager = () => {
             return;
           }
 
-          const stillCurrent = store
-            .getState()
-            .media.list.find((item: MediaType) => item.id === updatedMedia.id)
-            ?.localImage?.id === job.assetId;
-          if (!stillCurrent) {
-            try {
-              if (
-                cloudMedia.publicId &&
-                !thumbnailTarget.staleCloudCleanupComplete
-              ) {
-                await deleteCloudinaryMediaAsset(churchId, cloudMedia.publicId);
-                await updateClaimedJob({
-                  localVideoInputThumbnail: {
-                    ...thumbnailTarget,
-                    staleCloudCleanupComplete: true,
-                  },
-                });
-              }
-              if (!thumbnailTarget.staleLocalCleanupComplete) {
-                await deleteLocalImage(job.assetId);
-              }
-            } catch (error) {
-              await updateClaimedJob({
-                status: "failed",
-                phase: "failed",
-                progress: null,
-                nextAttemptAt: Date.now() + OUTLINE_RETRY_MS,
-                lastError: error instanceof Error
-                  ? error.message
-                  : "The replaced thumbnail could not be cleaned up.",
-              });
-            }
+          const committedState = await loadMediaLibrary(db);
+          const committedMedia = committedState.list.find(
+            (item) => item.id === updatedMedia.id,
+          );
+          const thumbnailWasCommitted =
+            committedMedia?.localImage?.id === job.assetId &&
+            committedMedia.thumbnail === cloudMedia.background &&
+            committedMedia.localImage.cloudPublicId === cloudMedia.publicId;
+          if (!thumbnailWasCommitted) {
+            await cleanupStaleThumbnailUpload();
             return;
           }
 
-          dispatch(updateMediaItemFields({
-            id: localMedia.id,
-            patch: {
-              updatedAt,
-              thumbnail: cloudMedia.background,
-              localImage: cloudThumbnailRef,
-            },
-          }));
+          const latestReduxMedia = store
+            .getState()
+            .media.list.find((item: MediaType) => item.id === updatedMedia.id);
+          if (latestReduxMedia?.localImage?.id === job.assetId) {
+            dispatch(updateMediaItemFields({
+              id: updatedMedia.id,
+              patch: {
+                updatedAt,
+                thumbnail: cloudMedia.background,
+                localImage: cloudThumbnailRef,
+              },
+            }));
+          }
 
           if (
             thumbnailTarget.previousCloudPublicId &&
