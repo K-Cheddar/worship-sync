@@ -30,6 +30,7 @@ type StaticSlideThumbnailProps = {
   timerInfo?: TimerInfo;
   bibleInfo?: { title: string; text: string };
   scaleFactor?: number;
+  localVideoInputThumbnailUrl?: string;
 };
 
 const getFormattedTextDisplayInfo = (
@@ -62,6 +63,7 @@ const StaticSlideThumbnail = ({
   timerInfo,
   bibleInfo,
   scaleFactor = 0,
+  localVideoInputThumbnailUrl,
 }: StaticSlideThumbnailProps) => {
   if (previewMode === "monitor") {
     return (
@@ -75,6 +77,7 @@ const StaticSlideThumbnail = ({
         }
         timerInfo={timerInfo}
         scaleFactor={scaleFactor}
+        localVideoInputThumbnailUrl={localVideoInputThumbnailUrl}
       />
     );
   }
@@ -106,14 +109,31 @@ const StaticSlideThumbnail = ({
           isolation: "isolate",
         }}
       >
+        {localVideoInputThumbnailUrl ? (
+          <img
+            src={localVideoInputThumbnailUrl}
+            alt=""
+            aria-hidden
+            data-testid="static-video-input-thumbnail"
+            className={`absolute inset-0 h-full w-full ${
+              slide.mediaSource?.fit === "cover" ? "object-cover" : "object-contain"
+            }`}
+            style={{
+              filter: `brightness(${profile.backgroundBrightness ?? slide.boxes[0]?.brightness ?? 100}%)`,
+            }}
+          />
+        ) : null}
         {!isStreamFormat ? (
           slide.boxes.map((box, index) => (
             <DisplayBox
               key={box.id || index}
               box={box}
               width={100}
-              showBackground={profile.supportsBackground}
+              showBackground={
+                profile.supportsBackground || Boolean(localVideoInputThumbnailUrl)
+              }
               index={index}
+              paintBackground={!(localVideoInputThumbnailUrl && index === 0)}
               timerInfo={timerInfo}
               shouldAnimate={false}
               brightness={

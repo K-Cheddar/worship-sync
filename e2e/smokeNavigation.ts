@@ -1,4 +1,14 @@
 import { expect, type Page, type Response } from "@playwright/test";
+import { allowedE2EAuthOrigins } from "./authOrigins";
+import { redactControllerDiagnosticText } from "./controllerRuntime";
+import { E2E_CHURCH_ID } from "./testChurch";
+
+type AuthRequestDiagnostic = {
+  method: string;
+  path: string;
+  status: number | null;
+  outcome: string;
+};
 
 export type E2EAuthFlags = {
   bootstrapStatus: number | null;
@@ -12,6 +22,10 @@ export type E2EAuthFlags = {
   teamScopeCount: number | null;
   canViewTeams: boolean | null;
   canViewServices: boolean | null;
+  matchesConfiguredAccount: boolean | null;
+  recoveryOutcome: string | null;
+  authenticatedHomeReached: boolean;
+  authRequests: AuthRequestDiagnostic[];
 };
 
 const unavailableAuthFlags: E2EAuthFlags = {
@@ -26,6 +40,10 @@ const unavailableAuthFlags: E2EAuthFlags = {
   teamScopeCount: null,
   canViewTeams: null,
   canViewServices: null,
+  matchesConfiguredAccount: null,
+  recoveryOutcome: null,
+  authenticatedHomeReached: false,
+  authRequests: [],
 };
 
 const summarizeAuthBootstrap = (bootstrap: any, status: number): E2EAuthFlags => {
@@ -53,6 +71,17 @@ const summarizeAuthBootstrap = (bootstrap: any, status: number): E2EAuthFlags =>
       isAdmin ||
       servicesPermission === "view" ||
       servicesPermission === "edit",
+    matchesConfiguredAccount: (() => {
+      const user = bootstrap?.user ?? {};
+      const authenticatedEmail = String(user.primaryEmail || user.email || "").trim();
+      const expectedEmail = process.env.E2E_TEST_EMAIL?.trim();
+      return authenticatedEmail && expectedEmail
+        ? authenticatedEmail.toLowerCase() === expectedEmail.toLowerCase()
+        : null;
+    })(),
+    recoveryOutcome: null,
+    authenticatedHomeReached: false,
+    authRequests: [],
   };
 };
 
@@ -72,17 +101,69 @@ export async function homeNavigationDiagnostics(
     .locator("main [aria-busy='true'], main [role='status']")
     .allTextContents()
     .catch(() => [] as string[]);
-  const sanitize = (value: string) =>
-    value
-      .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[redacted-email]")
-      .replace(/https?:\/\/\S+/gi, "[redacted-url]")
-      .replace(
-        /((?:one[- ]time|verification|authentication|auth|login|sign[- ]?in|email|sms|2fa|mfa)\s+(?:verification\s+)?(?:code|passcode|otp)\s*(?:is|:|=|#)?\s*)\d{4,8}\b/gi,
-        "$1[redacted-code]",
-      );
+  const runtime = await page.evaluate(async () => {
+    const safeStatus = (window as any).__controllerE2EFirebaseStatus?.();
+    if (safeStatus) delete safeStatus.churchId;
+    return {
+      firebase: safeStatus ?? null,
+      startup: (window as any).__controllerE2EStartupSnapshot?.() ?? null,
+      isolation: (window as any).__controllerE2EIsolation ?? null,
+      isolationMetrics: await (window as any).__controllerE2EIsolationMetrics?.() ?? null,
+      events: ((window as any).__controllerE2ESafeDiagnostics ?? []).slice(-20),
+    };
+  }).catch(() => ({ firebase: null, startup: null, isolation: null, isolationMetrics: null, events: [] as any[] }));
+  const sanitize = redactControllerDiagnosticText;
+  const safeEvents = runtime.events.map((event: any) => ({
+    kind: event.kind,
+    ...(typeof event.category === "string" ? { category: event.category } : {}),
+    ...(typeof event.method === "string" ? { method: event.method } : {}),
+    ...(typeof event.status === "number" ? { status: event.status } : {}),
+    ...(typeof event.message === "string" ? { message: sanitize(event.message) } : {}),
+  }));
+  const tokenEvents = safeEvents.filter((event: any) => event.category === "shared_data_token");
+  const firebaseErrors = safeEvents
+    .filter((event: any) => ["console_error", "page_error", "request_failed"].includes(event.kind))
+    .map((event: any) => String(event.message ?? "").toLowerCase());
+  const hasPermissionDenied = firebaseErrors.some((message: string) =>
+    message.includes("permission_denied") || message.includes("permission denied") || message.includes("permission to access"),
+  );
+  const startup = runtime.startup;
+  const firebase = runtime.firebase;
+  let startupDiagnosis: string;
+  if (auth.authenticated !== true) {
+    startupDiagnosis = "Shared-data token and Firebase startup were downstream and are not the primary authentication failure.";
+  } else if (!startup || !runtime.isolation) {
+    startupDiagnosis = "Controller startup instrumentation is unavailable; Firebase startup state cannot be inferred.";
+  } else if (tokenEvents.some((event: any) => event.kind === "request_failed" || (typeof event.status === "number" && event.status >= 400))) {
+    const failedToken = tokenEvents.find((event: any) => event.status >= 400);
+    startupDiagnosis = `Shared-data token request failed${failedToken?.status ? ` (HTTP ${failedToken.status})` : ""}.`;
+  } else if (!firebase?.sharedDataAuthenticated) {
+    startupDiagnosis = tokenEvents.some((event: any) => typeof event.status === "number" && event.status < 400)
+      ? "The shared-data token request succeeded, but Firebase authentication did not complete."
+      : "The shared-data token request did not complete, so Firebase authentication could not start.";
+  } else if (!firebase?.databaseAvailable || !firebase?.connected) {
+    startupDiagnosis = "Firebase Realtime Database did not reach its connected state.";
+  } else if (hasPermissionDenied) {
+    startupDiagnosis = "Firebase denied one or more startup subscriptions (permission_denied).";
+  } else if (!startup?.controllerProfiles?.loaded || !startup?.controllerProfiles?.syncedToCurrentChurch) {
+    startupDiagnosis = "The controller profile registry did not load for the authenticated church.";
+  } else if (!startup?.displayOutputs?.loaded || !startup?.displayOutputs?.syncedToCurrentChurch) {
+    startupDiagnosis = "The display output registry did not load for the authenticated church.";
+  } else if (!startup?.controllerProfiles?.presentationFound || !startup?.controllerProfiles?.presentationEnabled) {
+    startupDiagnosis = startup?.controllerProfiles?.presentationFound
+      ? "The Presentation Controller profile is disabled."
+      : "The Presentation Controller profile is missing.";
+  } else {
+    startupDiagnosis = "Firebase configuration loaded; Home failed to render the Controllers section or its Presentation Controller link.";
+  }
+  const safeAuth = { ...auth, churchId: auth.churchId ? "[present]" : null };
   return [
     reason,
-    `Application auth flags: ${JSON.stringify(auth)}`,
+    `Authentication state: ${JSON.stringify({ authenticatedHomeReached: auth.authenticatedHomeReached, recoveryOutcome: auth.recoveryOutcome, requests: auth.authRequests })}`,
+    `Startup diagnosis: ${startupDiagnosis}`,
+    `Application auth flags: ${JSON.stringify(safeAuth)}`,
+    `Safe controller startup state: ${JSON.stringify({ isolation: runtime.isolation, isolationMetrics: runtime.isolationMetrics, firebase, startup })}`,
+    `Sanitized browser diagnostics: ${JSON.stringify(safeEvents)}`,
     `Pending Home UI: ${JSON.stringify(pendingStates.map(sanitize))}`,
     "Sanitized Home accessibility snapshot:",
     sanitize(snapshot),
@@ -90,20 +171,60 @@ export async function homeNavigationDiagnostics(
 }
 
 export async function openHome(page: Page): Promise<E2EAuthFlags> {
+  const allowedOrigins = process.env.E2E_BASE_URL
+    ? allowedE2EAuthOrigins(process.env.E2E_BASE_URL)
+    : new Set<string>();
+  const authRequests: AuthRequestDiagnostic[] = [];
+  const authRequestByRequest = new Map<object, AuthRequestDiagnostic>();
+  const safeAuthPath = (pathname: string) =>
+    ["/api/auth/me", "/api/auth/session", "/api/auth/shared-data-token"].includes(pathname)
+      ? pathname
+      : "/api/auth/[other]";
+  const onAuthRequest = (request: any) => {
+    let url: URL;
+    try { url = new URL(request.url()); } catch { return; }
+    if (!allowedOrigins.has(url.origin) || !url.pathname.startsWith("/api/auth/")) return;
+    const diagnostic: AuthRequestDiagnostic = {
+      method: request.method(),
+      path: safeAuthPath(url.pathname),
+      status: null,
+      outcome: request.method() === "POST" && url.pathname === "/api/auth/session"
+        ? "attempted"
+        : "requested",
+    };
+    authRequests.push(diagnostic);
+    authRequestByRequest.set(request, diagnostic);
+  };
+  const onAuthRequestFailed = (request: any) => {
+    const diagnostic = authRequestByRequest.get(request);
+    if (!diagnostic) return;
+    diagnostic.outcome = request.failure()?.errorText?.includes("BLOCKED_BY_CLIENT")
+      ? "blocked_unsafe_request"
+      : "network_error";
+  };
+  const onAuthNetworkResponse = (response: Response) => {
+    const diagnostic = authRequestByRequest.get(response.request());
+    if (!diagnostic) return;
+    diagnostic.status = response.status();
+    diagnostic.outcome = response.headers()["x-e2e-auth-recovery-outcome"] || "response";
+  };
+  page.on("request", onAuthRequest);
+  page.on("requestfailed", onAuthRequestFailed);
+  page.on("response", onAuthNetworkResponse);
+
   const authResponses: Array<
-    Promise<{ bootstrap: any; status: number } | null>
+    Promise<{ bootstrap: any; status: number; recoveryOutcome: string | null } | null>
   > = [];
   const onAuthResponse = (response: Response) => {
     let pathname: string;
     try {
-      pathname = new URL(response.url()).pathname;
+      const responseURL = new URL(response.url());
+      if (!allowedOrigins.has(responseURL.origin)) return;
+      pathname = responseURL.pathname;
     } catch {
       return;
     }
-    if (
-      !pathname.endsWith("/api/auth/me") &&
-      !pathname.endsWith("/api/auth/session")
-    ) {
+    if (pathname !== "/api/auth/me" && pathname !== "/api/auth/session") {
       return;
     }
     authResponses.push(
@@ -115,7 +236,11 @@ export async function openHome(page: Page): Promise<E2EAuthFlags> {
               ? payload.bootstrap
               : payload;
           return bootstrap && typeof bootstrap === "object"
-            ? { bootstrap, status: response.status() }
+            ? {
+                bootstrap,
+                status: response.status(),
+                recoveryOutcome: response.headers()["x-e2e-auth-recovery-outcome"] || null,
+              }
             : null;
         } catch {
           return null;
@@ -127,7 +252,8 @@ export async function openHome(page: Page): Promise<E2EAuthFlags> {
   const authResponsePromise = page
     .waitForResponse((response) => {
       try {
-        return new URL(response.url()).pathname.endsWith("/api/auth/me");
+        return allowedOrigins.has(new URL(response.url()).origin) &&
+          new URL(response.url()).pathname === "/api/auth/me";
       } catch {
         return false;
       }
@@ -169,6 +295,9 @@ export async function openHome(page: Page): Promise<E2EAuthFlags> {
   const firstAuthResponse = await authResponsePromise;
   const observedAuthResponses = await Promise.all(authResponses);
   page.off("response", onAuthResponse);
+  page.off("request", onAuthRequest);
+  page.off("requestfailed", onAuthRequestFailed);
+  page.off("response", onAuthNetworkResponse);
   const authenticatedBootstrap = observedAuthResponses
     .filter(
       (candidate) =>
@@ -186,15 +315,61 @@ export async function openHome(page: Page): Promise<E2EAuthFlags> {
         ...unavailableAuthFlags,
         bootstrapStatus: firstAuthResponse?.status() ?? null,
       };
+  const sessionEvents = authRequests.filter(
+    (event) => event.path === "/api/auth/session" && event.method === "POST",
+  );
+  auth.authRequests = authRequests;
+  auth.recoveryOutcome = sessionEvents.at(-1)?.outcome ?? (
+    authRequests.some((event) => event.outcome === "blocked_unsafe_request")
+      ? "blocked_unsafe_request"
+      : null
+  );
+  if (sessionEvents.length && auth.recoveryOutcome === "response") {
+    const sessionResponse = observedAuthResponses
+      .filter((candidate) => candidate?.recoveryOutcome)
+      .at(-1);
+    auth.recoveryOutcome = sessionResponse?.recoveryOutcome ?? "server_response";
+  }
 
   if (homeState !== "home") {
-    const reason = homeState === "verification"
-      ? "The saved session reached an explicit email-verification screen. No verification email or code was requested; complete the existing sign-in flow before running authenticated E2E tests."
-      : homeState === "sign-in"
-        ? "The saved session did not reach authenticated Home; the application is asking for sign-in. No password or email-code flow was submitted."
-        : "Home is still showing authentication/bootstrap loading UI. Identity and permission flags from the initial auth response are provisional until Home finishes loading.";
+    const outcome = auth.recoveryOutcome;
+    const reason = outcome === "email_verification_required"
+      ? "The server requires email verification for saved-session recovery. No verification email or code was requested. Refresh the saved E2E session explicitly with npm run test:e2e:auth:refresh."
+      : outcome === "wrong_account"
+        ? "Silent recovery returned a different account than E2E_TEST_EMAIL; the response was rejected before Home could use it."
+        : outcome === "wrong_tenant"
+          ? `Silent recovery returned a tenant other than ${E2E_CHURCH_ID}; the response was rejected before Home could use it.`
+          : outcome === "invalid_authenticated_session"
+            ? "Silent recovery did not return a complete authenticated human session; the response was rejected before Home could use it. No verification code was requested. Refresh the saved E2E session explicitly with npm run test:e2e:auth:refresh if verification is now required."
+            : outcome === "server_rejected"
+              ? "The server rejected silent session recovery. The saved E2E session must be refreshed explicitly if the account now requires verification."
+              : outcome === "network_error"
+                ? "Silent session recovery could not reach the server."
+                : outcome === "blocked_unsafe_request"
+                  ? "Silent session recovery was blocked because its request did not meet the saved-session safety policy."
+                  : outcome === "authenticated"
+                    ? "Silent recovery was safely allowed for the saved account and demo tenant, but authenticated Home did not finish loading."
+                    : homeState === "verification"
+                      ? "The saved session reached an email-verification screen. No verification email or code was requested; refresh the saved E2E session explicitly with npm run test:e2e:auth:refresh."
+                      : homeState === "sign-in"
+                        ? "The saved session is missing or invalid; Home is asking for sign-in. No password or email-code flow was submitted."
+                        : "The saved session did not reach authenticated Home.";
     throw new Error(await homeNavigationDiagnostics(page, auth, reason));
   }
+
+  if (
+    auth.authenticated !== true ||
+    auth.sessionKind !== "human" ||
+    auth.churchId !== E2E_CHURCH_ID ||
+    auth.matchesConfiguredAccount === false
+  ) {
+    throw new Error(await homeNavigationDiagnostics(
+      page,
+      auth,
+      "Home loaded, but the authenticated session did not match the configured E2E human account for the demo tenant.",
+    ));
+  }
+  auth.authenticatedHomeReached = true;
 
   return auth;
 }

@@ -31,6 +31,7 @@ An operator imports or refreshes a plan, reviews the proposed item changes, sele
 
 ## Expected behavior
 
+- HTML-based Service Planning imports preserve explicit AM/PM and 24-hour times. Resolve ambiguous times against the plan's source start-time header, adjacent known times, item durations, and chronological order across section boundaries. Keep the existing interpretation when that evidence is insufficient or contradictory; do not create timestamps for untimed rows or recalculate the imported schedule. Controller URL and Service Plan imports use the same HTML interpretation. Planning Center account API timestamps remain authoritative and are not inferred. (Confirmed by current user request, 2026-11-05.)
 - A uniquely identified external item can match an existing item across sections. If no current item has that external identity, a template-origin item can match when normalized title and compatible type identify one item on each side, even when the incoming row has an external identity.
 - An unmarked legacy item can be suggested as a match only when normalized title and compatible type identify exactly one current item and one incoming item. The suggestion is unchecked and must be confirmed individually in review, even when other plan items are source-tracked. Cross-section suggestions are shown as **Moved**.
 - Two different nonempty external identities are never equivalent through title or position. The existing item and its local information remain intact; the incoming row is handled separately.

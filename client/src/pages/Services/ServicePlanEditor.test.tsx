@@ -296,6 +296,8 @@ type RenderEditorProps = {
   templateResource?: ServicePlanTemplateResource;
   planningCenterConnected?: boolean;
   planningCenterAccountLabel?: string;
+  planningCenterAccountId?: string;
+  planningCenterConnectionRevision?: string;
 };
 
 const editorTree = ({
@@ -317,6 +319,8 @@ const editorTree = ({
   templateResource,
   planningCenterConnected = false,
   planningCenterAccountLabel = "Example Church",
+  planningCenterAccountId = "",
+  planningCenterConnectionRevision = "",
 }: RenderEditorProps = {}) => {
   const globalInfo = createMockGlobalContext({ churchId: "church-1", userId });
   if (planningCenterConnected) {
@@ -327,6 +331,8 @@ const editorTree = ({
         enabled: true,
         connected: true,
         accountLabel: planningCenterAccountLabel,
+        accountId: planningCenterAccountId,
+        connectionRevision: planningCenterConnectionRevision,
       },
     };
   }
@@ -5729,7 +5735,7 @@ SMC Worship Experience
     expect(mockGetPlanningCenterPlanImport).not.toHaveBeenCalled();
   });
 
-  it("releases import controls when a Planning Center connection change invalidates the result", async () => {
+  it("releases import controls when a same-label Planning Center reconnect invalidates the result", async () => {
     localStorage.setItem("worshipsyncServicePlanImportSource", "planningCenter");
     mockListPlanningCenterServiceTypes.mockResolvedValue({
       items: [{ id: "pco-type-1", name: "Sunday Worship" }],
@@ -5743,7 +5749,10 @@ SMC Worship Experience
     }));
 
     const user = userEvent.setup();
-    const view = renderEditor({ planningCenterConnected: true });
+    const view = renderEditor({
+      planningCenterConnected: true,
+      planningCenterConnectionRevision: "connect-a",
+    });
     await user.click(await screen.findByRole("button", { name: /Import from Planning Center/i }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Import plan" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Import plan" }));
@@ -5751,7 +5760,7 @@ SMC Worship Experience
 
     view.rerender(editorTree({
       planningCenterConnected: true,
-      planningCenterAccountLabel: "Another Church",
+      planningCenterConnectionRevision: "connect-b",
     }));
     await act(async () => {
       resolveStaleImport(planningCenterImport("pco-plan-1", "pco-type-1", "Stale account item"));

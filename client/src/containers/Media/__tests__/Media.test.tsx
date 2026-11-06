@@ -23,8 +23,13 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { createNewFreeForm } from "../../../utils/itemUtil";
 import { claimMediaUpload } from "../../../utils/mediaOperationClaims";
 import { MEDIA_LIBRARY_ROOT_VIEW } from "../../../utils/mediaFolderMutations";
+import { VideoInputMediaWriteOutcomeUnknownError } from "../../../hooks/useLocalVideoInputThumbnailPersistence";
 
 const mockDispatch = jest.fn();
+const mockPersistVideoInputMediaPatch = jest.fn();
+const mockSaveVideoInputThumbnail = jest.fn();
+const mockRemoveOptimisticVideoInputMediaRow = jest.fn();
+const mockRemoveVideoInputThumbnail = jest.fn();
 const mockDeleteMediaItemsFromPouch = jest.fn();
 const mockDeleteMediaItemAtRevisionFromPouch = jest.fn();
 const mockReadMediaItemForDeletion = jest.fn();
@@ -262,6 +267,10 @@ jest.mock("../../../store/mediaSlice", () => ({
     type: "media/removeMediaItemFromRemote",
     payload,
   })),
+  removeItemFromMediaList: jest.fn((payload: string) => ({
+    type: "media/removeItemFromMediaList",
+    payload,
+  })),
   updateMediaList: jest.fn((payload: any) => ({
     type: "media/updateMediaList",
     payload,
@@ -278,6 +287,52 @@ jest.mock("../../../store/mediaSlice", () => ({
     type: "media/updateMediaItemFields",
     payload,
   })),
+}));
+
+jest.mock("../../../hooks/useLocalVideoInputThumbnailPersistence", () => {
+  const actual = jest.requireActual(
+    "../../../hooks/useLocalVideoInputThumbnailPersistence",
+  ) as Record<string, unknown>;
+  return {
+    ...actual,
+    useLocalVideoInputThumbnailPersistence: () => ({
+      persistVideoInputMediaPatch: (...args: unknown[]) =>
+        mockPersistVideoInputMediaPatch(...args),
+      removeOptimisticVideoInputMediaRow: (...args: unknown[]) =>
+        mockRemoveOptimisticVideoInputMediaRow(...args),
+      saveVideoInputThumbnail: (...args: unknown[]) =>
+        mockSaveVideoInputThumbnail(...args),
+      removeVideoInputThumbnail: (...args: unknown[]) =>
+        mockRemoveVideoInputThumbnail(...args),
+    }),
+  };
+});
+
+jest.mock("../../../components/LocalVideoInputPicker/LocalVideoInputPicker", () => ({
+  __esModule: true,
+  default: (props: Record<string, any>) =>
+    props.open ? (
+      <button
+        type="button"
+        onClick={() =>
+          void props.onLinked(
+            {
+              kind: "local-video-input",
+              sourceId: "initial-camera",
+              deviceId: "camera-device",
+              label: "Initial camera",
+            },
+            {
+              blob: new Blob(["frame"], { type: "image/webp" }),
+              width: 640,
+              height: 360,
+            },
+          ).catch(() => undefined)
+        }
+      >
+        Link mock video input
+      </button>
+    ) : null,
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
@@ -611,6 +666,10 @@ const renderMedia = async ({
 describe("Media", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPersistVideoInputMediaPatch.mockResolvedValue(undefined);
+    mockSaveVideoInputThumbnail.mockResolvedValue("Thumbnail saved.");
+    mockRemoveOptimisticVideoInputMediaRow.mockReset();
+    mockRemoveVideoInputThumbnail.mockResolvedValue(undefined);
     setActiveContentDatabase(null);
     mockUpdateTransfer.mockClear();
     mockTransfers.clear();
@@ -881,6 +940,45 @@ describe("Media", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: /add files/i }));
     expect(mockOpenModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an uncertain initial video add in Media so the thumbnail save can be retried", async () => {
+    mockState = makeBaseState({ media: { list: [], folders: [] } });
+    mockSaveVideoInputThumbnail.mockRejectedValueOnce(
+      new VideoInputMediaWriteOutcomeUnknownError(
+        "The thumbnail could not be saved to Media. Try again.",
+      ),
+    );
+    const user = userEvent.setup();
+    await renderMedia();
+
+    await user.click(screen.getByTitle("Add Media"));
+    await user.click(screen.getByRole("menuitem", { name: /add video input/i }));
+    const linkButton = await screen.findByRole("button", {
+      name: "Link mock video input",
+    });
+    await user.click(linkButton);
+    await waitFor(() =>
+      expect(mockSaveVideoInputThumbnail).toHaveBeenCalledTimes(1),
+    );
+
+    expect(mockRemoveOptimisticVideoInputMediaRow).not.toHaveBeenCalled();
+    const mediaId = "local_input_initial-camera";
+    mockState.media.list.push({
+      id: mediaId,
+      name: "Initial camera",
+      localVideoInput: { sourceId: "initial-camera" },
+    });
+
+    await user.click(linkButton);
+    await waitFor(() =>
+      expect(mockSaveVideoInputThumbnail).toHaveBeenCalledTimes(2),
+    );
+    expect(mockSaveVideoInputThumbnail.mock.calls[1][0]).toBe(mediaId);
+    expect(mockSaveVideoInputThumbnail.mock.calls[1][2]).toEqual(
+      expect.objectContaining({ allowCreate: true }),
+    );
+    expect(mockRemoveOptimisticVideoInputMediaRow).not.toHaveBeenCalled();
   });
 
   it("hides Canva import when Canva OAuth is not configured", async () => {
@@ -2400,6 +2498,53 @@ describe("Media", () => {
     );
   });
 
+  it("deletes a Cloudinary thumbnail independently from its Mux video asset", async () => {
+    const video = {
+      ...makeBaseState().media.list[0],
+      id: "local-input-with-mux-thumbnail",
+      type: "video",
+      source: "local",
+      background: "https://stream.mux.com/playback-id.m3u8",
+      thumbnail: "https://res.cloudinary.com/demo/image/upload/thumb-asset.webp",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "camera-source",
+        label: "Booth camera",
+      },
+      localImage: {
+        id: "local-thumb",
+        ownerDeviceId: "device-a",
+        ownerLabel: "Camera owner",
+        fileName: "thumbnail.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+        cloudPublicId: "thumb-asset",
+        cloudUrl: "https://res.cloudinary.com/demo/image/upload/thumb-asset.webp",
+      },
+      providerStorage: {
+        provider: "mux",
+        assetId: "mux-asset-1",
+        churchId: "church-1",
+        permanent: true,
+      },
+    };
+    mockState = makeBaseState({ media: { list: [video], folders: [] } });
+    mockSelectedMedia = video as typeof emptySelectedMedia;
+    mockSelectedMediaIds = new Set([video.id]);
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() =>
+      expect(mockDeleteMuxAsset).toHaveBeenCalledWith("church-1", "mux-asset-1"),
+    );
+    await waitFor(() =>
+      expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "thumb-asset"),
+    );
+    expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledTimes(1);
+  });
+
   const mountFolderQueue = () => {
     const base = makeBaseState().media.list[0];
     const persisted = {
@@ -2471,6 +2616,37 @@ describe("Media", () => {
     expect(mockFlushMediaLibraryDocToPouch.mock.calls.at(-1)?.[1]).toContainEqual(expect.objectContaining({ id: "moved", folderId: "outside" }));
     expect(mockGetTransfer(bId).files ?? []).not.toContainEqual(expect.objectContaining({ id: "moved" }));
     expect(mockNavigate).not.toHaveBeenCalled();
+  });
+
+  it("keeps a folder when a new member appears during deletion and retries that member", async () => {
+    const { result, persisted } = mountFolderQueue();
+    const heldProviderDelete = deferred<void>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(heldProviderDelete.promise);
+
+    await act(async () => { await result.current.handleDeleteFolderSubtree("a"); });
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "asset-a"));
+    const lateMember = { ...persisted.list[0], id: "late-member", folderId: "a", publicId: "asset-late" };
+    persisted.list.push(lateMember);
+
+    await act(async () => { heldProviderDelete.resolve(); });
+    const id = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockGetTransfer(id)).toMatchObject({
+      status: "partial",
+      actions: expect.arrayContaining([{ key: "retry-delete", label: "Retry deletion" }]),
+    }));
+    expect(persisted.folders).toContainEqual(expect.objectContaining({ id: "a" }));
+    expect(persisted.list).toContainEqual(expect.objectContaining({ id: "late-member", folderId: "a" }));
+    expect(mockGetTransfer(id)?.files).toContainEqual(expect.objectContaining({
+      id: "late-member",
+      status: "failed",
+    }));
+
+    await act(async () => { await mockTransferActionHandlers.get(`${id}:retry-delete`)?.(); });
+    await waitFor(() => expect(mockGetTransfer(id)?.status).toBe("complete"));
+    expect(persisted.list).not.toContainEqual(expect.objectContaining({ id: "late-member" }));
+    expect(mockFlushMediaLibraryDocToPouch.mock.calls.at(-1)?.[2]).not.toContainEqual(
+      expect.objectContaining({ id: "a" }),
+    );
   });
 
   it.each(["delete", "keep"])("skips a removed folder after navigation for %s", async (mode) => {

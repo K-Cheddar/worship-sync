@@ -30,6 +30,21 @@ const createDatabase = (snapshot: Promise<unknown>) => {
 };
 
 describe("item cache lifecycle", () => {
+  it("hydrates a new empty IndexedDB database when its snapshot omits update_seq", async () => {
+    const songDocument = { ...song("First local write"), _id: "first-local-write" };
+    const { db, calls, handles } = createDatabase(Promise.resolve({ rows: [] }));
+    const store = configureStore({ reducer: { allDocs } });
+    const stop = startItemCacheSync(db, store.dispatch);
+
+    await settle();
+
+    expect(store.getState().allDocs.isInitialized).toBe(true);
+    expect(calls.changes).toHaveBeenCalledWith({ since: 0, live: true, include_docs: true });
+    handles[0].emit("change", { seq: 1, id: songDocument._id, doc: songDocument });
+    expect(store.getState().allDocs.allSongDocs).toEqual([songDocument]);
+    stop();
+  });
+
   it("hydrates item categories only and replays writes and tombstones from the snapshot sequence", async () => {
     const load = deferred<unknown>();
     const { db, calls, handles } = createDatabase(load.promise);

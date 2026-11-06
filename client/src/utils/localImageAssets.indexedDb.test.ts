@@ -20,6 +20,7 @@ import {
   retryLocalImageUploadJobAtomically,
   saveLocalImage,
   saveLocalImageThumbnail,
+  stageLocalImageUploadCleanupJobAtomically,
   updateLeasedLocalImageUploadJob,
   type LocalImageUploadJob,
 } from "./localImageAssets";
@@ -150,6 +151,11 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       uploadPreset: "preset",
       mediaId: "media-1",
       status: "pending",
+      localVideoInputThumbnail: {
+        targetMediaId: "local_input_camera-1",
+        previousAssetId: "previous-thumbnail",
+        previousCloudPublicId: "previous-cloud-public-id",
+      },
       attemptCount: 0,
       nextAttemptAt: 0,
       createdAt: "2026-08-12T00:00:00.000Z",
@@ -271,6 +277,47 @@ describe("localImageAssets IndexedDB lifecycle", () => {
     await expect(getLocalImageUploadJob(leased.assetId)).resolves.toEqual(
       leased,
     );
+  });
+
+  it("does not stage cleanup over an active upload lease or provider checkpoint", async () => {
+    const active: LocalImageUploadJob = {
+      id: "thumbnail-a",
+      assetId: "thumbnail-a",
+      itemId: "",
+      workspaceId: "church-1",
+      uploadPreset: "preset",
+      mediaId: "thumbnail-a-cloud-media",
+      status: "uploading",
+      phase: "uploading",
+      attemptCount: 1,
+      nextAttemptAt: 0,
+      providerUploadId: "upload-intent-a",
+      providerExpectedPublicId: "thumbnail-a-public-id",
+      leaseOwnerId: "tab-a",
+      leaseExpiresAt: 20_000,
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+    };
+    await putLocalImageUploadJob(active);
+
+    await expect(
+      stageLocalImageUploadCleanupJobAtomically(
+        {
+          ...active,
+          status: "failed",
+          phase: "failed",
+          cleanupOnly: true,
+          cleanupReady: false,
+          cleanupTargetMediaId: "local_input_camera-1",
+          providerUploadId: undefined,
+          providerExpectedPublicId: undefined,
+          leaseOwnerId: undefined,
+          leaseExpiresAt: undefined,
+        },
+        10_000,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(getLocalImageUploadJob(active.assetId)).resolves.toEqual(active);
   });
 
   it("repairs a legacy unsigned ownership failure only on explicit retry", async () => {

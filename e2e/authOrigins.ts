@@ -23,3 +23,18 @@ export const isObservedSharedDataSignIn = (pathname: string, body: unknown, toke
   pathname === "/v1/accounts:signInWithCustomToken" && Boolean(body && typeof body === "object" &&
     typeof (body as Record<string, unknown>).token === "string" &&
     tokens.includes((body as Record<string, unknown>).token as string));
+
+export const isTrustedFirebaseAuthOrigin = (
+  rawUrl: string,
+  provider: "identitytoolkit" | "securetoken",
+) => {
+  try {
+    const url = new URL(rawUrl);
+    const hostname = provider === "identitytoolkit"
+      ? "identitytoolkit.googleapis.com"
+      : "securetoken.googleapis.com";
+    return url.protocol === "https:" && url.hostname === hostname;
+  } catch {
+    return false;
+  }
+};

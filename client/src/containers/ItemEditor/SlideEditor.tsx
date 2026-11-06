@@ -17,6 +17,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useStore } from "react-redux";
 import {
   borderColorMap,
   getItemTypeLabel,
@@ -44,6 +45,7 @@ import {
 import {
   flushPendingItemMutations,
   getItemMutationOwner,
+  sameItemMutationOwner,
   scheduleOwnedItemMutation,
   type PendingItemMutationHandle,
   type ItemMutationOwner,
@@ -56,7 +58,7 @@ import {
   getSelectionHint,
 } from "../../utils/selectionHint";
 import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
-import { DBItem, ItemSlideType, LocalVideoInputMediaSource, SongMetadata } from "../../types";
+import { DBItem, ItemSlideType, LocalVideoInputMediaSource, MediaType, SongMetadata } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
@@ -99,13 +101,17 @@ import {
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
 import {
   addItemToMediaList,
-  updateMediaItemFields,
 } from "../../store/mediaSlice";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import {
   buildLocalVideoInputPresentation,
 } from "../../utils/localVideoInput";
+import type { LocalVideoThumbnailFrame } from "../../utils/localVideoInputThumbnail";
+import {
+  useLocalVideoInputThumbnailPersistence,
+  VideoInputMediaWriteOutcomeUnknownError,
+} from "../../hooks/useLocalVideoInputThumbnailPersistence";
 import type { PresentationControllerMode } from "../../context/presentationControllerMode";
 import { resolveOutlineForScope } from "../../utils/outlineScope";
 import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
@@ -150,6 +156,7 @@ const resolveFormattedSlideIndex = ({
 
 const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessType; presentationMode?: PresentationControllerMode }) => {
   const dispatch = useDispatch();
+  const reduxStore = useStore<RootState>();
 
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const {
@@ -1255,10 +1262,41 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       ? "desktop"
       : "device";
   const mediaList = useSelector((state: RootState) => state.media.list);
+  const {
+    persistVideoInputMediaPatch,
+    removeOptimisticVideoInputMediaRow,
+    saveVideoInputThumbnail,
+    removeVideoInputThumbnail,
+  } = useLocalVideoInputThumbnailPersistence();
+  const pendingInitialVideoRowsRef = useRef(new Map<string, MediaType>());
 
   const handleVideoInputRelinked = useCallback(
-    (source: LocalVideoInputMediaSource) => {
-      const previous = selectedSlideMediaSource;
+    async (
+      source: LocalVideoInputMediaSource,
+      initialThumbnail?: LocalVideoThumbnailFrame,
+    ) => {
+      const startState = reduxStore.getState();
+      const startItem = startState.undoable.present.item;
+      const expectedOwner = getItemMutationOwner(startItem);
+      const targetArrangementId = startItem.type === "song"
+        ? startItem.arrangements[startItem.selectedArrangement]?.id
+        : undefined;
+      const startArrangement = targetArrangementId
+        ? startItem.arrangements.find(
+            (candidate) => candidate.id === targetArrangementId,
+          )
+        : undefined;
+      const startSlides = startArrangement?.slides ?? startItem.slides;
+      const targetSlide = startSlides[startItem.selectedSlide];
+      if (
+        !targetSlide?.mediaSource ||
+        targetSlide.mediaSource.kind !== "local-video-input"
+      ) {
+        throw new Error("The selected slide changed. Reopen it and try again.");
+      }
+      const targetSlideId = targetSlide.id;
+      const expectedSlideSource = JSON.stringify(targetSlide.mediaSource);
+      const previous = targetSlide.mediaSource;
       const ownedSource: LocalVideoInputMediaSource = {
         ...source,
         ownerDeviceId: getOrCreateDeviceId(),
@@ -1266,29 +1304,31 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       };
       const now = new Date().toISOString();
       const mediaId = `local_input_${ownedSource.sourceId}`;
-      const mediaPatch = {
-        path: "",
-        createdAt: now,
-        updatedAt: now,
-        format: "live",
-        height: 1080,
-        width: 1920,
-        name: ownedSource.label,
-        publicId: mediaId,
-        type: "video" as const,
-        id: mediaId,
-        background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
-        thumbnail: "",
-        placeholderImage: "",
-        source: "local" as const,
-        localVideoInput: ownedSource,
-      };
-      const existing = mediaList.find((m) => m.id === mediaId);
-      if (existing) {
-        dispatch(updateMediaItemFields({ id: mediaId, patch: mediaPatch }));
-      } else {
-        dispatch(addItemToMediaList(mediaPatch));
+      const existing = startState.media.list.find((m) => m.id === mediaId);
+      const pendingInitialRow = pendingInitialVideoRowsRef.current.get(mediaId);
+      let optimisticRow: MediaType | undefined;
+      if (!existing) {
+        optimisticRow = {
+          path: "",
+          createdAt: now,
+          updatedAt: now,
+          format: "live",
+          height: 1080,
+          width: 1920,
+          name: ownedSource.label,
+          publicId: mediaId,
+          type: "video",
+          id: mediaId,
+          background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
+          thumbnail: "",
+          placeholderImage: "",
+          source: "local",
+          localVideoInput: ownedSource,
+        };
+        dispatch(addItemToMediaList(optimisticRow));
       }
+      const rowToRetainOrRollback = optimisticRow ?? pendingInitialRow;
+      const allowCreate = !existing || Boolean(pendingInitialRow);
 
       const applySource = (slide: ItemSlideType): ItemSlideType => {
         const nextName = shouldAdoptVideoInputSlideName(
@@ -1309,38 +1349,127 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         };
       };
 
-      if (type === "song" && arrangement?.slides) {
-        const updatedArrangements = item.arrangements.map((arr, idx) => {
-          if (idx !== item.selectedArrangement) return arr;
+      try {
+        const mediaPatch = {
+          name: ownedSource.label,
+          updatedAt: now,
+          localVideoInput: ownedSource,
+        };
+        if (initialThumbnail) {
+          await saveVideoInputThumbnail(mediaId, initialThumbnail, {
+            mediaPatch,
+            allowCreate,
+          });
+        } else {
+          await persistVideoInputMediaPatch(
+            mediaId,
+            ownedSource.sourceId,
+            mediaPatch,
+            allowCreate,
+          );
+        }
+        pendingInitialVideoRowsRef.current.delete(mediaId);
+      } catch (error) {
+        if (error instanceof VideoInputMediaWriteOutcomeUnknownError) {
+          // Keep the slide on its previous source until a retry confirms the
+          // Media row. The picker stays open and reuses this logical source ID.
+          if ((!existing || pendingInitialRow) && rowToRetainOrRollback) {
+            pendingInitialVideoRowsRef.current.set(
+              mediaId,
+              rowToRetainOrRollback,
+            );
+          }
+          throw error;
+        }
+        if ((!existing || pendingInitialRow) && rowToRetainOrRollback) {
+          removeOptimisticVideoInputMediaRow(
+            mediaId,
+            rowToRetainOrRollback,
+          );
+        }
+        pendingInitialVideoRowsRef.current.delete(mediaId);
+        throw error;
+      }
+      const latestItem = reduxStore.getState().undoable.present.item;
+      const latestOwner = getItemMutationOwner(latestItem);
+      const sameOwner = expectedOwner
+        ? sameItemMutationOwner(latestOwner, expectedOwner)
+        : latestOwner === null;
+      if (
+        latestItem._id !== startItem._id ||
+        latestItem.type !== startItem.type ||
+        !sameOwner
+      ) {
+        throw new Error(
+          "The active item changed while the video input was saving. Reopen it and try again.",
+        );
+      }
+
+      if (targetArrangementId) {
+        const targetArrangementIndex = latestItem.arrangements.findIndex(
+          (candidate) => candidate.id === targetArrangementId,
+        );
+        const latestTargetArrangement =
+          latestItem.arrangements[targetArrangementIndex];
+        const targetSlideIndex = latestTargetArrangement?.slides.findIndex(
+          (slide) => slide.id === targetSlideId,
+        ) ?? -1;
+        const latestTargetSlide = latestTargetArrangement?.slides[targetSlideIndex];
+        if (
+          !latestTargetArrangement ||
+          !latestTargetSlide ||
+          JSON.stringify(latestTargetSlide.mediaSource) !== expectedSlideSource
+        ) {
+          throw new Error(
+            "The target slide changed while the video input was saving. Reopen it and try again.",
+          );
+        }
+        const updatedArrangements = latestItem.arrangements.map((arr, idx) => {
+          if (idx !== targetArrangementIndex) return arr;
           return {
             ...arr,
             slides: arr.slides.map((slide, slideIndex) =>
-              slideIndex === selectedSlide ? applySource(slide) : slide,
+              slideIndex === targetSlideIndex ? applySource(slide) : slide,
             ),
           };
         });
-        dispatch(updateArrangements({ arrangements: updatedArrangements }));
+        dispatch(
+          updateArrangements({
+            arrangements: updatedArrangements,
+            expectedOwner: expectedOwner ?? undefined,
+          }),
+        );
       } else {
+        const targetSlideIndex = latestItem.slides.findIndex(
+          (slide) => slide.id === targetSlideId,
+        );
+        const latestTargetSlide = latestItem.slides[targetSlideIndex];
+        if (
+          !latestTargetSlide ||
+          JSON.stringify(latestTargetSlide.mediaSource) !== expectedSlideSource
+        ) {
+          throw new Error(
+            "The target slide changed while the video input was saving. Reopen it and try again.",
+          );
+        }
+        const updatedSlides = latestItem.slides.map((slide, slideIndex) =>
+          slideIndex === targetSlideIndex ? applySource(slide) : slide,
+        );
         dispatch(
           updateSlides({
-            slides: slides.map((slide, slideIndex) =>
-              slideIndex === selectedSlide ? applySource(slide) : slide,
-            ),
+            slides: updatedSlides,
+            expectedOwner: expectedOwner ?? undefined,
           }),
         );
       }
       setIsVideoInputRelinkOpen(false);
     },
     [
-      arrangement?.slides,
       dispatch,
-      item.arrangements,
-      item.selectedArrangement,
-      mediaList,
-      selectedSlide,
-      selectedSlideMediaSource,
-      slides,
-      type,
+      persistVideoInputMediaPatch,
+      reduxStore,
+      removeOptimisticVideoInputMediaRow,
+      saveVideoInputThumbnail,
     ],
   );
 
@@ -1694,10 +1823,40 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           open
           captureMode={videoInputCaptureMode}
           source={selectedSlideMediaSource}
+          hasThumbnail={Boolean(
+            mediaList.find(
+              (media) =>
+                media.id === `local_input_${selectedSlideMediaSource.sourceId}` &&
+                (media.localImage || media.thumbnail),
+            ),
+          )}
           onOpenChange={(open) => {
             if (!open) setIsVideoInputRelinkOpen(false);
           }}
           onLinked={handleVideoInputRelinked}
+          onSaveThumbnail={
+            mediaList.some(
+              (media) =>
+                media.id === `local_input_${selectedSlideMediaSource.sourceId}`,
+            )
+              ? (frame) =>
+                  saveVideoInputThumbnail(
+                    `local_input_${selectedSlideMediaSource.sourceId}`,
+                    frame,
+                  )
+              : undefined
+          }
+          onRemoveThumbnail={
+            mediaList.some(
+              (media) =>
+                media.id === `local_input_${selectedSlideMediaSource.sourceId}`,
+            )
+              ? () =>
+                  removeVideoInputThumbnail(
+                    `local_input_${selectedSlideMediaSource.sourceId}`,
+                  )
+              : undefined
+          }
         />
       ) : null}
     </ErrorBoundary>

@@ -21,6 +21,7 @@ type StaticMonitorThumbnailProps = {
   settings: ResolvedDisplaySettings;
   timerInfo?: TimerInfo;
   scaleFactor: number;
+  localVideoInputThumbnailUrl?: string;
 };
 
 // Representative samples keep thumbnail chrome static without per-slide clocks.
@@ -41,6 +42,7 @@ const StaticMonitorThumbnail = ({
   settings,
   timerInfo,
   scaleFactor,
+  localVideoInputThumbnailUrl,
 }: StaticMonitorThumbnailProps) => {
   const showNextSlide =
     isMonitorNextSlideType(itemType) &&
@@ -134,12 +136,22 @@ const StaticMonitorThumbnail = ({
       >
         {showNextSlide ? (
           <div
-            className="relative isolate bg-black w-full h-full flex flex-col px-4"
+            className={`relative isolate ${localVideoInputThumbnailUrl ? "bg-transparent" : "bg-black"} w-full h-full flex flex-col px-4`}
             data-testid="monitor-preview-next-slide-layout"
           >
-            {settings.showBackground && (
+            {localVideoInputThumbnailUrl ? (
+              <div className="pointer-events-none absolute inset-0 z-0" aria-hidden>
+                <img
+                  src={localVideoInputThumbnailUrl}
+                  alt=""
+                  className={`h-full w-full ${slide.mediaSource?.fit === "cover" ? "object-cover" : "object-contain"}`}
+                  data-testid="static-video-input-thumbnail"
+                />
+                <div className="absolute inset-0 bg-black/60" />
+              </div>
+            ) : settings.showBackground ? (
               <MonitorBandBackground box={monitorSlide.boxes[0]} />
-            )}
+            ) : null}
             <div
               className="relative z-10 flex justify-center overflow-hidden shrink-0"
               style={{ height: MONITOR_BAND_CURRENT_PX }}
@@ -192,7 +204,7 @@ const StaticMonitorThumbnail = ({
           </div>
         ) : (
           <div
-            className="bg-black w-full flex flex-col px-4"
+            className={`w-full flex flex-col px-4 ${localVideoInputThumbnailUrl ? "bg-transparent" : "bg-black"}`}
             style={{ height: REFERENCE_HEIGHT }}
             data-testid="monitor-preview-single-slide-layout"
           >
@@ -207,6 +219,15 @@ const StaticMonitorThumbnail = ({
                   transformOrigin: "top center",
                 }}
               >
+                {localVideoInputThumbnailUrl ? (
+                  <img
+                    src={localVideoInputThumbnailUrl}
+                    alt=""
+                    aria-hidden
+                    data-testid="static-video-input-thumbnail"
+                    className={`absolute inset-0 h-full w-full ${slide.mediaSource?.fit === "cover" ? "object-cover" : "object-contain"}`}
+                  />
+                ) : null}
                 {monitorSlide.boxes.map((box, index) => (
                   <DisplayBox
                     key={box.id || index}
@@ -215,6 +236,9 @@ const StaticMonitorThumbnail = ({
                     showBackground={settings.showBackground}
                     index={index}
                     timerInfo={timerInfo}
+                    paintBackground={
+                      !(localVideoInputThumbnailUrl && index === 0)
+                    }
                   />
                 ))}
               </div>

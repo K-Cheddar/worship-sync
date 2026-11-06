@@ -3,6 +3,7 @@ import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage
 import type { MediaType } from "../../types";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import { isLocalImageUrl } from "../../utils/localImageAssets";
 import { isMediaLibraryDesktopShare } from "./mediaLibraryOrigin";
 
 type MediaLibraryMediaVisualProps = {
@@ -23,10 +24,13 @@ const MediaLibraryMediaVisual = ({
     mediaItem.localVideoFile,
     "thumbnail",
   );
+  const thumbnailFallback = mediaItem.thumbnail && !isLocalImageUrl(mediaItem.thumbnail)
+    ? mediaItem.thumbnail
+    : undefined;
   const resolvedThumbnail = localImage.isLocalImage
-    ? localImage.url
+    ? localImage.url || thumbnailFallback
     : localVideo.isLocalVideoFile
-      ? localVideo.url
+      ? localVideo.url || mediaItem.thumbnail
       : mediaItem.thumbnail;
   const shownName = mediaItem.name.includes("/")
     ? mediaItem.name.split("/").slice(1).join("/")
@@ -34,13 +38,29 @@ const MediaLibraryMediaVisual = ({
 
   if (resolvedThumbnail) {
     return (
-      <CachedMediaImage
-        className={imageClassName}
-        alt={imageAlt}
-        src={resolvedThumbnail}
-        loading={imageLoading}
-        draggable={false}
-      />
+      <>
+        <CachedMediaImage
+          className={imageClassName}
+          alt={imageAlt}
+          src={resolvedThumbnail}
+          loading={imageLoading}
+          draggable={false}
+        />
+        {mediaItem.localVideoInput ? (
+          <span
+            className="pointer-events-none absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 rounded bg-black/75 px-1.5 py-1 text-[10px] font-semibold text-white shadow"
+            title="Live video input"
+            aria-label="Live video input"
+          >
+            {isMediaLibraryDesktopShare(mediaItem) ? (
+              <MonitorUp className="size-3" aria-hidden />
+            ) : (
+              <Video className="size-3" aria-hidden />
+            )}
+            Live input
+          </span>
+        ) : null}
+      </>
     );
   }
 
