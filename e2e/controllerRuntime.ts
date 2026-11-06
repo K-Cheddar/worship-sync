@@ -24,11 +24,12 @@ const emptyIsolationMetrics = (): ControllerFirebaseIsolationMetrics => ({
   suppressedSdkWrites: {},
 });
 
-const redactDiagnosticText = (value: string) => value
+export const redactControllerDiagnosticText = (value: string) => value
   .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[redacted-email]")
   .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted-token]")
   .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{5,})?\b/g, "[redacted-token]")
-  .replace(/((?:id[_-]?token|access[_-]?token|refresh[_-]?token|auth[_-]?token|firebase[_-]?token|token|cookie|password|credential|private[_-]?key|api[_-]?key|firebaseUid|churchId|userId)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^,\s;}]+)/gi, "$1[redacted]")
+  .replace(/((?:["']?)(?:id[_-]?token|access[_-]?token|refresh[_-]?token|auth[_-]?token|firebase[_-]?token|token|cookie|password|credential|private[_-]?key|api[_-]?key|firebaseUid|churchId|userId)(?:["']?)\s*[=:]\s*)("[^"]*"|'[^']*'|[^,\s;}]+)/gi, (_match, prefix: string, secret: string) =>
+    `${prefix}${secret.startsWith("\"") ? '"[redacted]"' : secret.startsWith("'") ? "'[redacted]'" : "[redacted]"}`)
   .replace(/churches\/[^/\s,"'}]+/gi, "churches/[redacted]")
   .replace(/\b(?:verification|authentication|auth|login|sign[- ]?in|email|sms|2fa|mfa)\s+(?:verification\s+)?(?:code|passcode|otp)\s*(?:is|:|=|#)?\s*\d{4,8}\b/gi, "[redacted-code]")
   .replace(/https?:\/\/[^\s"']+/gi, (rawUrl) => {
@@ -41,7 +42,7 @@ const redactDiagnosticText = (value: string) => value
   })
   .slice(0, 1_000);
 
-const safeConsoleMessage = (value: string) => redactDiagnosticText(value);
+const safeConsoleMessage = (value: string) => redactControllerDiagnosticText(value);
 
 const startupRequestCategory = (rawUrl: string) => {
   try {
@@ -59,7 +60,7 @@ const startupRequestCategory = (rawUrl: string) => {
   return null;
 };
 
-const realtimeDatabaseRoutePattern = /(?:firebaseio\.com|firebasedatabase\.app|\/\.lp(?:[/?#]|$)|\/\.ws(?:[/?#]|$)|\.json(?:[?#]|$))/i;
+const realtimeDatabaseRoutePattern = /https?:\/\/(?:[\w-]+\.)*(?:firebaseio\.com|firebasedatabase\.app)(?=[:/])/i;
 
 /** Install test-only Firebase transport and network guards before any page opens. */
 export async function installControllerRuntime(context: BrowserContext) {
@@ -72,7 +73,7 @@ export async function installControllerRuntime(context: BrowserContext) {
     const request = route.request();
     const decision = firewall.inspectRequest(request.method(), request.url());
     if (decision.action === "ignore") {
-      await route.continue();
+      await route.fallback();
       return;
     }
     if (decision.action === "block") {
@@ -83,7 +84,7 @@ export async function installControllerRuntime(context: BrowserContext) {
       return;
     }
     metrics.allowedRealtimeReads += 1;
-    await route.continue();
+    await route.fallback();
   });
 
   // If the app or Firebase SDK escapes the forced long-poll transport, close
@@ -132,7 +133,10 @@ if (typeof window !== 'undefined' && window.__controllerE2ENetworkGuardInstalled
     return { cancel: () => Promise.resolve(), remove: () => Promise.resolve(), set: () => Promise.resolve(), update: () => Promise.resolve() };
   };
   remove = () => { controllerE2ERecordBlockedWrite('remove'); return Promise.resolve(); };
-  runTransaction = () => { controllerE2ERecordBlockedWrite('runTransaction'); return Promise.resolve({ committed: false, snapshot: null }); };
+  runTransaction = (reference) => {
+    controllerE2ERecordBlockedWrite('runTransaction');
+    return get(reference).then((snapshot) => ({ committed: false, snapshot }));
+  };
   set = () => { controllerE2ERecordBlockedWrite('set'); return Promise.resolve(); };
   setPriority = () => { controllerE2ERecordBlockedWrite('setPriority'); return Promise.resolve(); };
   setWithPriority = () => { controllerE2ERecordBlockedWrite('setWithPriority'); return Promise.resolve(); };
@@ -201,7 +205,7 @@ if (typeof window !== 'undefined' && window.__controllerE2ENetworkGuardInstalled
         kind: "request_failed",
         category,
         method: request.method(),
-        message: redactDiagnosticText(request.failure()?.errorText ?? "Request failed"),
+        message: redactControllerDiagnosticText(request.failure()?.errorText ?? "Request failed"),
       });
     });
   });
@@ -274,7 +278,7 @@ if (typeof window !== 'undefined' && window.__controllerE2ENetworkGuardInstalled
       if (!firebaseModule) {
         throw new Error("Controller E2E requires the local Vite Firebase module; read/write isolation was not installed.");
       }
-      source = `import { forceLongPolling as controllerE2EForceLongPolling, get as controllerE2EGet } from ${JSON.stringify(firebaseModule)};\nif (!window.__controllerE2EIsolation?.longPollingConfigured) controllerE2EForceLongPolling();\n${source}`;
+      source = `import { forceLongPolling as controllerE2EForceLongPolling, get as controllerE2EGet, runTransaction as controllerE2ERunTransaction } from ${JSON.stringify(firebaseModule)};\nif (!window.__controllerE2EIsolation?.longPollingConfigured) controllerE2EForceLongPolling();\n${source}`;
       source += `\nconst controllerE2EBlockedWriteCapabilities = Object.freeze({
           presentation: false, timers: false, serviceRuntime: false, serviceManagement: false
         });
@@ -315,6 +319,20 @@ if (typeof window !== 'undefined' && window.__controllerE2ENetworkGuardInstalled
           if (!globalFireDbInfo.db) throw new Error('Shared Realtime Database is unavailable');
           const snapshot = await controllerE2EGet(ref(globalFireDbInfo.db, path));
           return snapshot.exists() ? snapshot.val() : null;
+        };
+        window.__controllerE2ERunTransactionProbe = async (path) => {
+          if (!globalFireDbInfo.db) throw new Error('Shared Realtime Database is unavailable');
+          let mutationInvoked = false;
+          const result = await controllerE2ERunTransaction(
+            ref(globalFireDbInfo.db, path),
+            (current) => { mutationInvoked = true; return current; },
+          );
+          return {
+            committed: result.committed,
+            snapshotExists: result.snapshot.exists(),
+            snapshotValue: result.snapshot.exists() ? result.snapshot.val() : null,
+            mutationInvoked,
+          };
         };
         window.__controllerE2EDirectFirebaseWrite = (path, value) => {
           if (!globalFireDbInfo.db) throw new Error('Shared Realtime Database is unavailable');
@@ -378,6 +396,12 @@ declare global {
     __controllerE2EFirebaseStatus?: () => any;
     __controllerE2EReadFirebasePath?: (path: string) => Promise<unknown>;
     __controllerE2EDirectFirebaseWrite?: (path: string, value: unknown) => Promise<void>;
+    __controllerE2ERunTransactionProbe?: (path: string) => Promise<{
+      committed: boolean;
+      snapshotExists: boolean;
+      snapshotValue: unknown;
+      mutationInvoked: boolean;
+    }>;
     __controllerE2EStartupSnapshot?: () => any;
     __controllerE2ENetworkGuardInstalled?: boolean;
     __controllerE2ESafeDiagnostics?: Array<Record<string, unknown>>;

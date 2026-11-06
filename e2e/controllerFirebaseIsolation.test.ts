@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { redactControllerDiagnosticText } from "./controllerRuntime";
 import {
   assertControllerFirebaseTargetSupported,
   assertControllerIsolationInstalled,
   ControllerFirebaseWriteFirewall,
   isLongPollingWritePacket,
+  isRealtimeDatabaseUrl,
 } from "./controllerFirebaseIsolation";
 
 const encodePacket = (action: string, data: unknown = null) => Buffer
@@ -72,6 +74,13 @@ test("blocks continuation segments after the first segment identifies a write", 
 
 test("blocks unknown long-poll commands and ignores unrelated CouchDB traffic", () => {
   const firewall = new ControllerFirebaseWriteFirewall();
+  assert.equal(isRealtimeDatabaseUrl("https://example.firebaseio.com/.lp?id=read"), true);
+  assert.equal(isRealtimeDatabaseUrl("https://example.firebasedatabase.app/data.json"), true);
+  assert.equal(isRealtimeDatabaseUrl("https://couch.example.net/fixture.json"), false);
+  assert.deepEqual(
+    firewall.inspectRequest("PUT", "https://couch.example.net/fixture.json"),
+    { action: "ignore" },
+  );
   assert.deepEqual(
     firewall.inspectRequest("GET", "https://couch.example.net/demo/_bulk_docs"),
     { action: "ignore" },
@@ -93,4 +102,14 @@ test("fails closed when the test isolation boundary is incomplete", () => {
     writeCapabilitiesDisabled: true,
     databaseUrlSupported: true,
   }));
+});
+
+test("redacts secrets in JSON diagnostics without dropping safe context", () => {
+  const diagnostic = redactControllerDiagnosticText(
+    '{"refreshToken":"example-secret","status":403,"message":"Firebase denied access"}',
+  );
+  assert.doesNotMatch(diagnostic, /example-secret/);
+  assert.match(diagnostic, /"refreshToken":"\[redacted\]"/);
+  assert.match(diagnostic, /"status":403/);
+  assert.match(diagnostic, /Firebase denied access/);
 });

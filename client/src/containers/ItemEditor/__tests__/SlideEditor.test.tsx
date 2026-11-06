@@ -18,6 +18,10 @@ const mockDispatch = jest.fn();
 let mockState: any;
 let mockActiveControllerType = "presentation";
 let mockUseRealPanels = false;
+let mockLocalVideoInputPickerProps: Record<string, any> | undefined;
+const mockPersistVideoInputMediaPatch = jest.fn().mockResolvedValue(undefined);
+const mockSaveVideoInputThumbnail = jest.fn().mockResolvedValue("Saved.");
+const mockRemoveVideoInputThumbnail = jest.fn().mockResolvedValue(undefined);
 
 const mockSetIsLyricsEditorOpen = jest.fn((value: boolean) => ({
   type: "item/setIsLyricsEditorOpen",
@@ -283,7 +287,22 @@ jest.mock("../../../components/LocalVideoInputDetails/LocalVideoInputDetails", (
 
 jest.mock("../../../components/LocalVideoInputPicker/LocalVideoInputPicker", () => ({
   __esModule: true,
-  default: () => <div data-testid="local-video-input-picker" />,
+  default: (props: Record<string, any>) => {
+    mockLocalVideoInputPickerProps = props;
+    return <div data-testid="local-video-input-picker" />;
+  },
+}));
+
+jest.mock("../../../hooks/useLocalVideoInputThumbnailPersistence", () => ({
+  useLocalVideoInputThumbnailPersistence: () => ({
+    persistVideoInputMediaPatch: (...args: unknown[]) =>
+      mockPersistVideoInputMediaPatch(...args),
+    removeOptimisticVideoInputMediaRow: jest.fn(),
+    saveVideoInputThumbnail: (...args: unknown[]) =>
+      mockSaveVideoInputThumbnail(...args),
+    removeVideoInputThumbnail: (...args: unknown[]) =>
+      mockRemoveVideoInputThumbnail(...args),
+  }),
 }));
 
 jest.mock("../BibleItemActions", () => ({
@@ -455,6 +474,13 @@ describe("SlideEditor", () => {
     );
     mockActiveControllerType = "presentation";
     mockUseRealPanels = false;
+    mockLocalVideoInputPickerProps = undefined;
+    mockPersistVideoInputMediaPatch.mockClear();
+    mockPersistVideoInputMediaPatch.mockResolvedValue(undefined);
+    mockSaveVideoInputThumbnail.mockClear();
+    mockSaveVideoInputThumbnail.mockResolvedValue("Saved.");
+    mockRemoveVideoInputThumbnail.mockClear();
+    mockRemoveVideoInputThumbnail.mockResolvedValue(undefined);
     displayWindowCapture.className = undefined;
     displayWindowCapture.showBorder = undefined;
     displayWindowCapture.onChange = null;
@@ -836,6 +862,105 @@ describe("SlideEditor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     expect(screen.getByTestId("local-video-input-picker")).toBeInTheDocument();
+  });
+
+  it("preserves an existing input row and exposes thumbnail save and remove in Slide Editor", async () => {
+    const source = {
+      kind: "local-video-input" as const,
+      sourceId: "local_video_1",
+      label: "Booth camera",
+    };
+    const mediaId = "local_input_local_video_1";
+    mockState = makeBaseState({
+      media: {
+        list: [
+          {
+            id: mediaId,
+            name: "Original camera name",
+            createdAt: "created-before-relink",
+            updatedAt: "updated-before-relink",
+            format: "live",
+            height: 1080,
+            width: 1920,
+            publicId: mediaId,
+            type: "video",
+            background: "local-video-input://local_video_1",
+            thumbnail: "https://images.example.com/original.jpg",
+            localImage: {
+              id: "existing-image",
+              ownerDeviceId: "device-owner",
+              ownerLabel: "Owner",
+              fileName: "original.jpg",
+              contentType: "image/jpeg",
+              storagePolicy: "local-only",
+            },
+            folderId: "existing-folder",
+            localVideoInput: source,
+            customField: "preserved",
+          },
+        ],
+        folders: [{ id: "existing-folder", name: "Existing", parentId: null }],
+      },
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Section",
+                name: "Booth camera",
+                mediaSource: source,
+                boxes: [{ width: 100, height: 100, words: "", x: 0, y: 0 }],
+              },
+            ],
+          },
+        },
+      },
+    });
+    const frame = {
+      blob: new Blob(["new frame"], { type: "image/webp" }),
+      width: 640,
+      height: 360,
+    };
+
+    render(<SlideEditor access="full" presentationMode="present" />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(mockLocalVideoInputPickerProps?.hasThumbnail).toBe(true);
+    expect(mockLocalVideoInputPickerProps?.onSaveThumbnail).toEqual(
+      expect.any(Function),
+    );
+    expect(mockLocalVideoInputPickerProps?.onRemoveThumbnail).toEqual(
+      expect.any(Function),
+    );
+    await act(async () => {
+      await mockLocalVideoInputPickerProps?.onLinked(
+        { ...source, label: "Relinked camera" },
+        frame,
+      );
+    });
+
+    expect(mockPersistVideoInputMediaPatch).not.toHaveBeenCalled();
+    expect(mockSaveVideoInputThumbnail).toHaveBeenCalledWith(
+      mediaId,
+      frame,
+      expect.objectContaining({
+        mediaPatch: expect.objectContaining({
+          name: "Relinked camera",
+          localVideoInput: expect.objectContaining({
+            sourceId: source.sourceId,
+            label: "Relinked camera",
+          }),
+        }),
+        allowCreate: false,
+      }),
+    );
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "media/updateMediaItemFields" }),
+    );
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "media/addItemToMediaList" }),
+    );
   });
 
   it("shows video input details left of the preview instead of section text", () => {

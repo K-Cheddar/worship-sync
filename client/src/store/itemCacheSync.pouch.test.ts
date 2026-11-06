@@ -8,6 +8,34 @@ import { startItemCacheSync } from "./itemCacheSync";
 import type { DBItem } from "../types";
 
 describe("item cache with real local PouchDB and replication", () => {
+  it("replays a write after an empty snapshot that omits update_seq", async () => {
+    const local = new PouchDB(`cache-empty-gap-${Date.now()}`);
+    const database = {
+      allDocs: jest.fn(async () => {
+        const snapshot = await local.allDocs({ include_docs: true, update_seq: true });
+        expect(snapshot.rows).toHaveLength(0);
+        await local.put({ _id: "first-write", type: "song", name: "Captured after empty snapshot" });
+        // PouchDB's new-empty-database response may omit this property.
+        return { rows: snapshot.rows };
+      }),
+      changes: local.changes.bind(local),
+    };
+    const store = configureStore({ reducer: { allDocs } });
+    const stop = startItemCacheSync(database as unknown as PouchDB.Database, store.dispatch);
+    try {
+      await waitFor(() => expect(store.getState().allDocs.allSongDocs).toEqual([
+        expect.objectContaining({
+          _id: "first-write",
+          name: "Captured after empty snapshot",
+        }),
+      ]));
+      expect(database.allDocs).toHaveBeenCalledTimes(1);
+    } finally {
+      stop();
+      await local.destroy();
+    }
+  });
+
   it("replays real writes committed between the snapshot and live feed installation", async () => {
     const local = new PouchDB(`cache-gap-${Date.now()}`);
     await local.put({ _id: "song", type: "song", name: "Old" });

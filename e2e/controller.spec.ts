@@ -275,6 +275,30 @@ test("keeps Firebase configuration reads while blocking direct SDK writes across
   expect(metricsBefore.suppressedSdkWrites.onDisconnect ?? 0).toBeGreaterThan(0);
   expect(metricsBefore.suppressedSdkWrites.set ?? 0).toBeGreaterThan(0);
 
+  const transactionPath = await page.evaluate(() => {
+    const churchId = window.__controllerE2EFirebaseStatus?.().churchId;
+    if (!churchId) throw new Error("Firebase church scope is unavailable for the transaction read probe.");
+    return `churches/${churchId}/data/controllerProfiles`;
+  });
+  const currentTransactionValue = await page.evaluate(
+    (path) => window.__controllerE2E.readFirebasePath(path),
+    transactionPath,
+  );
+  const transactionResult = await page.evaluate(
+    (path) => window.__controllerE2ERunTransactionProbe?.(path),
+    transactionPath,
+  );
+  expect(transactionResult).toEqual({
+    committed: false,
+    snapshotExists: currentTransactionValue !== null,
+    snapshotValue: currentTransactionValue,
+    mutationInvoked: false,
+  });
+  await expect.poll(async () =>
+    (await page.evaluate(() => window.__controllerE2EIsolationMetrics?.()))
+      ?.suppressedSdkWrites.runTransaction ?? 0,
+  ).toBeGreaterThan(metricsBefore.suppressedSdkWrites.runTransaction ?? 0);
+
   const blockedLongPollWrite = page.waitForEvent("requestfailed", (request) => isLongPollingWritePacket(request.url()));
   await page.evaluate(({ path, marker }) => {
     void window.__controllerE2E.directFirebaseWrite(path, { e2eIsolationProbe: marker }).catch(() => undefined);

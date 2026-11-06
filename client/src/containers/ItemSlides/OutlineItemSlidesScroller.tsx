@@ -245,11 +245,20 @@ const OutlineVirtualSlide = memo(
     ]);
     const monitorSlide = monitorSlides[index] ?? slide;
     const nextSlide = monitorSlides[index + 1];
+    const localVideoInputThumbnail = useSelector((state) =>
+      slide.mediaSource?.kind === "local-video-input"
+        ? state.media.list.find(
+            (media) =>
+              media.localVideoInput?.sourceId === slide.mediaSource?.sourceId,
+          )
+        : undefined,
+    );
 
     if (!isActive) {
       return (
         <ContinuousStaticItemSlide
           slide={slide}
+          localVideoInputThumbnail={localVideoInputThumbnail}
           index={index}
           itemType={section.type}
           previewMode={previewMode}
@@ -275,6 +284,7 @@ const OutlineVirtualSlide = memo(
         key={`${section.listId}-${slide.id || index}`}
         timerInfo={timerInfo}
         slide={slide}
+        localVideoInputThumbnail={localVideoInputThumbnail}
         index={index}
         selectSlide={selectSlide}
         isSelected={index === selectedSlide}

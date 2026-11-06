@@ -90,8 +90,17 @@ export type LocalImageUploadJob = {
     targetMediaId: string;
     previousAssetId?: string;
     previousCloudPublicId?: string;
+    previousAssets?: Array<{
+      assetId: string;
+      cloudPublicId?: string;
+      cloudCleanupComplete?: boolean;
+      cloudCleanupScheduled?: boolean;
+      localCleanupScheduled?: boolean;
+    }>;
     previousLocalCleanupComplete?: boolean;
+    previousLocalCleanupScheduled?: boolean;
     previousCloudCleanupComplete?: boolean;
+    previousCloudCleanupScheduled?: boolean;
     staleLocalCleanupComplete?: boolean;
     staleCloudCleanupComplete?: boolean;
   };

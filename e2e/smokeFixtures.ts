@@ -1,6 +1,7 @@
 import { type BrowserContext } from "@playwright/test";
 import { test as diagnosticTest } from "./fixtures";
 import { getE2EChurchId } from "./testChurch";
+import { installControllerRuntime } from "./controllerRuntime";
 
 /**
  * Keep one authenticated browser context for the smoke project. PouchDB's
@@ -33,6 +34,7 @@ export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>(
         }
         await route.fallback();
       });
+      await installControllerRuntime(context);
       context.setDefaultTimeout(options.actionTimeout ?? 15_000);
       context.setDefaultNavigationTimeout(options.navigationTimeout ?? 30_000);
       try {

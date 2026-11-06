@@ -56,7 +56,7 @@ import {
   getSelectionHint,
 } from "../../utils/selectionHint";
 import { resolveFormattedCursorPosition } from "../../utils/cursorPosition";
-import { DBItem, ItemSlideType, LocalVideoInputMediaSource, SongMetadata } from "../../types";
+import { DBItem, ItemSlideType, LocalVideoInputMediaSource, MediaType, SongMetadata } from "../../types";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { setShouldShowItemEditor } from "../../store/preferencesSlice";
@@ -99,13 +99,14 @@ import {
 import SongAudioPlayer from "../../components/SongAudioPlayer/SongAudioPlayer";
 import {
   addItemToMediaList,
-  updateMediaItemFields,
 } from "../../store/mediaSlice";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import {
   buildLocalVideoInputPresentation,
 } from "../../utils/localVideoInput";
+import type { LocalVideoThumbnailFrame } from "../../utils/localVideoInputThumbnail";
+import { useLocalVideoInputThumbnailPersistence } from "../../hooks/useLocalVideoInputThumbnailPersistence";
 import type { PresentationControllerMode } from "../../context/presentationControllerMode";
 import { resolveOutlineForScope } from "../../utils/outlineScope";
 import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
@@ -1255,9 +1256,18 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       ? "desktop"
       : "device";
   const mediaList = useSelector((state: RootState) => state.media.list);
+  const {
+    persistVideoInputMediaPatch,
+    removeOptimisticVideoInputMediaRow,
+    saveVideoInputThumbnail,
+    removeVideoInputThumbnail,
+  } = useLocalVideoInputThumbnailPersistence();
 
   const handleVideoInputRelinked = useCallback(
-    (source: LocalVideoInputMediaSource) => {
+    async (
+      source: LocalVideoInputMediaSource,
+      initialThumbnail?: LocalVideoThumbnailFrame,
+    ) => {
       const previous = selectedSlideMediaSource;
       const ownedSource: LocalVideoInputMediaSource = {
         ...source,
@@ -1266,28 +1276,27 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       };
       const now = new Date().toISOString();
       const mediaId = `local_input_${ownedSource.sourceId}`;
-      const mediaPatch = {
-        path: "",
-        createdAt: now,
-        updatedAt: now,
-        format: "live",
-        height: 1080,
-        width: 1920,
-        name: ownedSource.label,
-        publicId: mediaId,
-        type: "video" as const,
-        id: mediaId,
-        background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
-        thumbnail: "",
-        placeholderImage: "",
-        source: "local" as const,
-        localVideoInput: ownedSource,
-      };
       const existing = mediaList.find((m) => m.id === mediaId);
-      if (existing) {
-        dispatch(updateMediaItemFields({ id: mediaId, patch: mediaPatch }));
-      } else {
-        dispatch(addItemToMediaList(mediaPatch));
+      let optimisticRow: MediaType | undefined;
+      if (!existing) {
+        optimisticRow = {
+          path: "",
+          createdAt: now,
+          updatedAt: now,
+          format: "live",
+          height: 1080,
+          width: 1920,
+          name: ownedSource.label,
+          publicId: mediaId,
+          type: "video",
+          id: mediaId,
+          background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
+          thumbnail: "",
+          placeholderImage: "",
+          source: "local",
+          localVideoInput: ownedSource,
+        };
+        dispatch(addItemToMediaList(optimisticRow));
       }
 
       const applySource = (slide: ItemSlideType): ItemSlideType => {
@@ -1329,6 +1338,31 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           }),
         );
       }
+      try {
+        const mediaPatch = {
+          name: ownedSource.label,
+          updatedAt: now,
+          localVideoInput: ownedSource,
+        };
+        if (initialThumbnail) {
+          await saveVideoInputThumbnail(mediaId, initialThumbnail, {
+            mediaPatch,
+            allowCreate: !existing,
+          });
+        } else {
+          await persistVideoInputMediaPatch(
+            mediaId,
+            ownedSource.sourceId,
+            mediaPatch,
+            !existing,
+          );
+        }
+      } catch (error) {
+        if (!existing && optimisticRow) {
+          removeOptimisticVideoInputMediaRow(mediaId, optimisticRow);
+        }
+        throw error;
+      }
       setIsVideoInputRelinkOpen(false);
     },
     [
@@ -1337,6 +1371,9 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       item.arrangements,
       item.selectedArrangement,
       mediaList,
+      persistVideoInputMediaPatch,
+      removeOptimisticVideoInputMediaRow,
+      saveVideoInputThumbnail,
       selectedSlide,
       selectedSlideMediaSource,
       slides,
@@ -1694,10 +1731,40 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           open
           captureMode={videoInputCaptureMode}
           source={selectedSlideMediaSource}
+          hasThumbnail={Boolean(
+            mediaList.find(
+              (media) =>
+                media.id === `local_input_${selectedSlideMediaSource.sourceId}` &&
+                (media.localImage || media.thumbnail),
+            ),
+          )}
           onOpenChange={(open) => {
             if (!open) setIsVideoInputRelinkOpen(false);
           }}
           onLinked={handleVideoInputRelinked}
+          onSaveThumbnail={
+            mediaList.some(
+              (media) =>
+                media.id === `local_input_${selectedSlideMediaSource.sourceId}`,
+            )
+              ? (frame) =>
+                  saveVideoInputThumbnail(
+                    `local_input_${selectedSlideMediaSource.sourceId}`,
+                    frame,
+                  )
+              : undefined
+          }
+          onRemoveThumbnail={
+            mediaList.some(
+              (media) =>
+                media.id === `local_input_${selectedSlideMediaSource.sourceId}`,
+            )
+              ? () =>
+                  removeVideoInputThumbnail(
+                    `local_input_${selectedSlideMediaSource.sourceId}`,
+                  )
+              : undefined
+          }
         />
       ) : null}
     </ErrorBoundary>

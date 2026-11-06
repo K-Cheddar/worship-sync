@@ -262,16 +262,24 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         );
       }
       try {
-        await persistVideoInputMediaPatch(
-          id,
-          ownedSource.sourceId,
-          {
-            name: ownedSource.label,
-            updatedAt: now,
-            localVideoInput: ownedSource,
-          },
-          !existing,
-        );
+        const mediaPatch = {
+          name: ownedSource.label,
+          updatedAt: now,
+          localVideoInput: ownedSource,
+        };
+        if (initialThumbnail) {
+          await saveVideoInputThumbnail(id, initialThumbnail, {
+            mediaPatch,
+            allowCreate: !existing,
+          });
+        } else {
+          await persistVideoInputMediaPatch(
+            id,
+            ownedSource.sourceId,
+            mediaPatch,
+            !existing,
+          );
+        }
       } catch (error) {
         if (!existing) {
           if (optimisticRow) {
@@ -279,9 +287,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           }
         }
         throw error;
-      }
-      if (initialThumbnail) {
-        await saveVideoInputThumbnail(id, initialThumbnail);
       }
     },
     [

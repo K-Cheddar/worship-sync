@@ -44,10 +44,13 @@ export const captureLocalVideoInputThumbnail = async (
     const context = canvas.getContext("2d", { alpha: false });
     if (!context) throw new Error("The thumbnail image could not be prepared.");
     context.drawImage(source, 0, 0, outputWidth, outputHeight);
-    const blob =
-      (await encodeCanvas(canvas, "image/webp", 0.86)) ??
-      (await encodeCanvas(canvas, "image/jpeg", 0.9));
-    if (!blob) throw new Error("The video frame could not be encoded.");
+    const webpBlob = await encodeCanvas(canvas, "image/webp", 0.86);
+    const blob = webpBlob?.type === "image/webp"
+      ? webpBlob
+      : await encodeCanvas(canvas, "image/jpeg", 0.9);
+    if (blob?.type !== "image/webp" && blob?.type !== "image/jpeg") {
+      throw new Error("The video frame could not be encoded as WebP or JPEG.");
+    }
     return { blob, width: outputWidth, height: outputHeight };
   } finally {
     canvas.width = 0;

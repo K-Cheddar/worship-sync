@@ -181,12 +181,13 @@ const renderPersistenceHook = (
   (controllerInfo as unknown as { globalDb: PouchDB.Database }).globalDb =
     db as unknown as PouchDB.Database;
   let scopeDb = db;
+  let activeChurchId = scope.churchId;
   const wrapper = ({ children }: { children: React.ReactNode }) => (
     <Provider store={store}>
       <controllerInfo.ControllerInfoContext.Provider
         value={{ db: scopeDb, isGuestSession: scope.isGuestSession } as never}
       >
-        <GlobalInfoContext.Provider value={{ churchId: scope.churchId } as never}>
+        <GlobalInfoContext.Provider value={{ churchId: activeChurchId } as never}>
           {children}
         </GlobalInfoContext.Provider>
       </controllerInfo.ControllerInfoContext.Provider>
@@ -196,8 +197,9 @@ const renderPersistenceHook = (
     () => useLocalVideoInputThumbnailPersistence(),
     { wrapper },
   );
-  const switchScope = (nextDb: typeof db) => {
+  const switchScope = (nextDb: typeof db, nextChurchId = activeChurchId) => {
     scopeDb = nextDb;
+    activeChurchId = nextChurchId;
     (controllerInfo as unknown as { globalDb: PouchDB.Database }).globalDb =
       nextDb as unknown as PouchDB.Database;
     view.rerender();
@@ -587,6 +589,34 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     expect(store.getState().media.list[0].name).toBe("Booth camera");
   });
 
+  it("does not publish an old church completion when the database handle is reused", async () => {
+    const { result, db, store, switchScope } = renderPersistenceHook(
+      createMediaRow(),
+      true,
+      createMediaRow(),
+      { churchId: "church-a", isGuestSession: false },
+    );
+    db.deferNextRowPut();
+    let saving!: Promise<void>;
+    act(() => {
+      saving = result.current.persistVideoInputMediaPatch(
+        mediaId,
+        source.sourceId,
+        { name: "Saved in church A" },
+      );
+    });
+    await waitFor(() => expect(db.put).toHaveBeenCalled());
+    switchScope(db as ReturnType<typeof createPouchDb>, "church-b");
+
+    await act(async () => {
+      db.commitDeferredPut();
+      await saving;
+    });
+
+    expect((db.readRow() as MediaType).name).toBe("Saved in church A");
+    expect(store.getState().media.list[0].name).toBe("Booth camera");
+  });
+
   it("creates a newly added input only when the caller explicitly allows it", async () => {
     const row = createMediaRow();
     const { result, db } = renderPersistenceHook(row, false);
@@ -610,6 +640,101 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
         localVideoInput: source,
       }),
     );
+  });
+
+  it("commits a new input and its captured still in the same Media write", async () => {
+    const optimisticRow = {
+      ...createMediaRow(),
+      name: "New booth input",
+      createdAt: "new-input",
+      updatedAt: "new-input",
+      thumbnail: "",
+      localImage: undefined,
+      providerStorage: undefined,
+    } as MediaType;
+    const { result, db, store } = renderPersistenceHook(
+      optimisticRow,
+      false,
+      optimisticRow,
+      { churchId: "", isGuestSession: true },
+    );
+    const frame = {
+      blob: new Blob(["still"], { type: "image/webp" }),
+      width: 640,
+      height: 360,
+    };
+    expect(store.getState().media.list[0]).toEqual(
+      expect.objectContaining({ localVideoInput: source }),
+    );
+
+    await act(async () => {
+      await result.current.saveVideoInputThumbnail(mediaId, frame, {
+        mediaPatch: {
+          name: "New booth input",
+          localVideoInput: source,
+        },
+        allowCreate: true,
+      });
+    });
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(db.readRow()).toEqual(expect.objectContaining({
+      name: "New booth input",
+      localVideoInput: source,
+      localImage: expect.objectContaining({ contentType: "image/webp" }),
+    }));
+    expect(store.getState().media.list[0]).toEqual(expect.objectContaining({
+      localImage: expect.objectContaining({ contentType: "image/webp" }),
+    }));
+  });
+
+  it("leaves no persisted source row when the combined initial still write fails", async () => {
+    const optimisticRow = {
+      ...createMediaRow(),
+      thumbnail: "",
+      localImage: undefined,
+    } as MediaType;
+    const { result, db } = renderPersistenceHook(optimisticRow, false, optimisticRow);
+    db.rejectNextRowPut();
+
+    await expect(result.current.saveVideoInputThumbnail(mediaId, {
+      blob: new Blob(["still"], { type: "image/webp" }),
+      width: 640,
+      height: 360,
+    }, {
+      mediaPatch: { name: "New camera", localVideoInput: source },
+      allowCreate: true,
+    })).rejects.toThrow("The thumbnail could not be saved to Media. Try again.");
+
+    expect(db.readRow()).toBeUndefined();
+    const { deleteLocalImage } = jest.requireMock("../utils/localImageAssets") as {
+      deleteLocalImage: jest.Mock;
+    };
+    expect(deleteLocalImage).toHaveBeenCalled();
+  });
+
+  it("removes a guest local-only thumbnail without staging an unserviceable cleanup job", async () => {
+    const row = {
+      ...createMediaRow(),
+      thumbnail: "",
+      localImage: { ...oldLocalImage, storagePolicy: "local-only" as const },
+    };
+    const { result, db } = renderPersistenceHook(row, true, row, {
+      churchId: "",
+      isGuestSession: true,
+    });
+
+    await act(async () => {
+      await result.current.removeVideoInputThumbnail(mediaId);
+    });
+
+    expect(db.readRow()).toEqual(expect.objectContaining({ thumbnail: "" }));
+    const assets = jest.requireMock("../utils/localImageAssets") as {
+      deleteLocalImage: jest.Mock;
+      stageLocalImageUploadCleanupJobAtomically: jest.Mock;
+    };
+    expect(assets.deleteLocalImage).toHaveBeenCalledWith(oldLocalImage.id);
+    expect(assets.stageLocalImageUploadCleanupJobAtomically).not.toHaveBeenCalled();
   });
 
   it("restores existing persisted metadata when Redux only has a new-row placeholder", async () => {

@@ -3,6 +3,7 @@ import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage
 import type { MediaType } from "../../types";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import { isLocalImageUrl } from "../../utils/localImageAssets";
 import { isMediaLibraryDesktopShare } from "./mediaLibraryOrigin";
 
 type MediaLibraryMediaVisualProps = {
@@ -23,8 +24,11 @@ const MediaLibraryMediaVisual = ({
     mediaItem.localVideoFile,
     "thumbnail",
   );
+  const thumbnailFallback = mediaItem.thumbnail && !isLocalImageUrl(mediaItem.thumbnail)
+    ? mediaItem.thumbnail
+    : undefined;
   const resolvedThumbnail = localImage.isLocalImage
-    ? localImage.url || mediaItem.thumbnail
+    ? localImage.url || thumbnailFallback
     : localVideo.isLocalVideoFile
       ? localVideo.url || mediaItem.thumbnail
       : mediaItem.thumbnail;

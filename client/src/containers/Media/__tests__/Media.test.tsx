@@ -2404,6 +2404,53 @@ describe("Media", () => {
     );
   });
 
+  it("deletes a Cloudinary thumbnail independently from its Mux video asset", async () => {
+    const video = {
+      ...makeBaseState().media.list[0],
+      id: "local-input-with-mux-thumbnail",
+      type: "video",
+      source: "local",
+      background: "https://stream.mux.com/playback-id.m3u8",
+      thumbnail: "https://res.cloudinary.com/demo/image/upload/thumb-asset.webp",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "camera-source",
+        label: "Booth camera",
+      },
+      localImage: {
+        id: "local-thumb",
+        ownerDeviceId: "device-a",
+        ownerLabel: "Camera owner",
+        fileName: "thumbnail.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+        cloudPublicId: "thumb-asset",
+        cloudUrl: "https://res.cloudinary.com/demo/image/upload/thumb-asset.webp",
+      },
+      providerStorage: {
+        provider: "mux",
+        assetId: "mux-asset-1",
+        churchId: "church-1",
+        permanent: true,
+      },
+    };
+    mockState = makeBaseState({ media: { list: [video], folders: [] } });
+    mockSelectedMedia = video as typeof emptySelectedMedia;
+    mockSelectedMediaIds = new Set([video.id]);
+    await renderMedia();
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+    await waitFor(() =>
+      expect(mockDeleteMuxAsset).toHaveBeenCalledWith("church-1", "mux-asset-1"),
+    );
+    await waitFor(() =>
+      expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "thumb-asset"),
+    );
+    expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledTimes(1);
+  });
+
   const mountFolderQueue = () => {
     const base = makeBaseState().media.list[0];
     const persisted = {

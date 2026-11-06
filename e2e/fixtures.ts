@@ -1,6 +1,7 @@
 import { test as base, type Page } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 import { allowedE2EAuthOrigins } from "./authOrigins";
+import { redactControllerDiagnosticText } from "./controllerRuntime";
 
 type BrowserDiagnostic = {
   kind: "console_error" | "page_error" | "request_failed" | "http_error";
@@ -41,7 +42,7 @@ const redact = (value: string) => {
         return "[redacted-url]";
       }
     });
-  return safe.slice(0, 1_000);
+  return redactControllerDiagnosticText(safe).slice(0, 1_000);
 };
 
 const safeUrl = (rawUrl: string) => {

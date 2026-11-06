@@ -18,6 +18,7 @@ import {
   persistLocalImageCloudCopy,
   releaseLocalImageUploadJobLease,
   renewLocalImageUploadJobLease,
+  stageLocalImageUploadCleanupJobAtomically,
   updateLeasedLocalImageUploadJob,
   type LocalImageUploadJob,
 } from "../../utils/localImageAssets";
@@ -58,6 +59,7 @@ jest.mock("../../utils/localImageAssets", () => ({
   releaseLocalImageUploadJobLease: jest.fn(),
   renewLocalImageUploadJobLease: jest.fn(),
   subscribeLocalImageUploadJobChanges: jest.fn(() => jest.fn()),
+  stageLocalImageUploadCleanupJobAtomically: jest.fn(async (job) => ({ job, previous: undefined })),
   updateLeasedLocalImageUploadJob: jest.fn(),
 }));
 jest.mock("../../utils/flushMediaLibraryDoc", () => ({
@@ -120,6 +122,7 @@ const mockFlushMedia = jest.mocked(flushMediaLibraryDocToPouch);
 const mockLoadMediaLibrary = jest.mocked(loadMediaLibrary);
 const mockReleaseLease = jest.mocked(releaseLocalImageUploadJobLease);
 const mockRenewLease = jest.mocked(renewLocalImageUploadJobLease);
+const mockStageCleanup = jest.mocked(stageLocalImageUploadCleanupJobAtomically);
 const mockUpdateJob = jest.mocked(updateLeasedLocalImageUploadJob);
 
 const interruptedJob: LocalImageUploadJob = {
@@ -199,6 +202,7 @@ describe("LocalImageUploadManager", () => {
     }));
     mockReleaseLease.mockResolvedValue(true);
     mockRenewLease.mockResolvedValue(true);
+    mockStageCleanup.mockReset().mockImplementation(async (job) => ({ job, previous: undefined }));
   });
 
   it("merges cloud finalization into the latest Media row and cleans its previous image", async () => {
@@ -352,11 +356,20 @@ describe("LocalImageUploadManager", () => {
         }),
       ),
     );
-    expect(mockDeleteCloudinaryAsset).toHaveBeenCalledWith(
+    expect(mockStageCleanup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assetId: "old-thumbnail",
+        cleanupCloudPublicId: "old-cloud-public-id",
+        cleanupOnly: true,
+        cleanupReady: true,
+      }),
+      expect.any(Number),
+    );
+    expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalledWith(
       "church-1",
       "old-cloud-public-id",
     );
-    expect(mockDeleteLocalImage).toHaveBeenCalledWith("old-thumbnail");
+    expect(mockDeleteLocalImage).not.toHaveBeenCalledWith("old-thumbnail");
     const updatedAction = mockDispatch.mock.calls
       .map(([action]) => action)
       .find((action) => action.type === updateMediaItemFields.type);
@@ -448,6 +461,62 @@ describe("LocalImageUploadManager", () => {
     );
     expect(mockUpload).not.toHaveBeenCalled();
     expect(mockCreateCloudinaryUpload).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("preserves a replaced thumbnail's predecessor cleanup before deleting its upload job", async () => {
+    const cleanupJob: LocalImageUploadJob = {
+      ...interruptedJob,
+      assetId: "thumbnail-b",
+      id: "thumbnail-b",
+      itemId: "",
+      status: "pending",
+      cleanupOnly: true,
+      cleanupReady: true,
+      cleanupCloudPublicId: "cloud-b",
+      cleanupCloudComplete: false,
+      cleanupTargetMediaId: "local_input_camera-1",
+      localVideoInputThumbnail: {
+        targetMediaId: "local_input_camera-1",
+        previousAssetId: "thumbnail-a",
+        previousCloudPublicId: "cloud-a",
+      },
+    };
+    mockListJobs.mockReset().mockResolvedValueOnce([cleanupJob]).mockResolvedValue([]);
+    mockClaimJob.mockResolvedValue({
+      ...cleanupJob,
+      leaseOwnerId: "lease-owner",
+      leaseExpiresAt: Date.now() + 300_000,
+    });
+    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => ({
+      ...cleanupJob,
+      ...patch,
+      leaseOwnerId,
+      leaseExpiresAt: now + leaseDurationMs,
+      updatedAt: new Date(now).toISOString(),
+    } as LocalImageUploadJob));
+
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockDeleteLocalImage).toHaveBeenCalledWith("thumbnail-b"));
+    expect(mockStageCleanup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assetId: "thumbnail-a",
+        cleanupCloudPublicId: "cloud-a",
+        cleanupOnly: true,
+      }),
+      expect.any(Number),
+    );
+    expect(mockStageCleanup.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteLocalImage.mock.invocationCallOrder[0],
+    );
+    expect(mockDeleteCloudinaryAsset).toHaveBeenCalledWith("church-1", "cloud-b");
     view.unmount();
   });
 

@@ -40,11 +40,10 @@ export const isRealtimeDatabaseUrl = (rawUrl: string | URL) => {
     return false;
   }
 
-  const path = url.pathname.toLowerCase();
-  return isRealtimeDatabaseHost(url.hostname) ||
-    /(?:^|\/)\.lp$/.test(path) ||
-    /(?:^|\/)\.ws$/.test(path) ||
-    path.endsWith(".json");
+  // A `.json` suffix is common for ordinary HTTP APIs and CouchDB documents.
+  // Firebase RTDB endpoints are identified by their host; protocol paths alone
+  // are not sufficient to classify a request as Firebase traffic.
+  return isRealtimeDatabaseHost(url.hostname);
 };
 
 export const isLongPollingWritePacket = (rawUrl: string | URL) => {

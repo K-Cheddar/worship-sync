@@ -1,4 +1,5 @@
 import { expect, type Page, type Response } from "@playwright/test";
+import { redactControllerDiagnosticText } from "./controllerRuntime";
 
 export type E2EAuthFlags = {
   bootstrapStatus: number | null;
@@ -83,18 +84,7 @@ export async function homeNavigationDiagnostics(
       events: ((window as any).__controllerE2ESafeDiagnostics ?? []).slice(-20),
     };
   }).catch(() => ({ firebase: null, startup: null, isolation: null, isolationMetrics: null, events: [] as any[] }));
-  const sanitize = (value: string) =>
-    value
-      .replace(/[\w.+-]+@[\w.-]+\.[a-z]{2,}/gi, "[redacted-email]")
-      .replace(/https?:\/\/\S+/gi, "[redacted-url]")
-      .replace(
-        /((?:one[- ]time|verification|authentication|auth|login|sign[- ]?in|email|sms|2fa|mfa)\s+(?:verification\s+)?(?:code|passcode|otp)\s*(?:is|:|=|#)?\s*)\d{4,8}\b/gi,
-        "$1[redacted-code]",
-      )
-      .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [redacted-token]")
-      .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_-]{5,})?\b/g, "[redacted-token]")
-      .replace(/((?:id[_-]?token|access[_-]?token|refresh[_-]?token|auth[_-]?token|firebase[_-]?token|token|cookie|password|credential|private[_-]?key|api[_-]?key|firebaseUid|churchId|userId)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^,\s;}]+)/gi, "$1[redacted]")
-      .replace(/churches\/[^/\s,"'}]+/gi, "churches/[redacted]");
+  const sanitize = redactControllerDiagnosticText;
   const safeEvents = runtime.events.map((event: any) => ({
     kind: event.kind,
     ...(typeof event.category === "string" ? { category: event.category } : {}),
@@ -112,7 +102,9 @@ export async function homeNavigationDiagnostics(
   const startup = runtime.startup;
   const firebase = runtime.firebase;
   let startupDiagnosis: string;
-  if (tokenEvents.some((event: any) => event.kind === "request_failed" || (typeof event.status === "number" && event.status >= 400))) {
+  if (!startup || !runtime.isolation) {
+    startupDiagnosis = "Controller startup instrumentation is unavailable; Firebase startup state cannot be inferred.";
+  } else if (tokenEvents.some((event: any) => event.kind === "request_failed" || (typeof event.status === "number" && event.status >= 400))) {
     const failedToken = tokenEvents.find((event: any) => event.status >= 400);
     startupDiagnosis = `Shared-data token request failed${failedToken?.status ? ` (HTTP ${failedToken.status})` : ""}.`;
   } else if (!firebase?.sharedDataAuthenticated) {
