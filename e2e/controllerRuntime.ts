@@ -1,5 +1,5 @@
 import { expect, type BrowserContext, type Page } from "@playwright/test";
-import { allowedE2EAuthOrigins } from "./authOrigins";
+import { installSavedSessionAuthRequestGuard } from "./authRequestPolicy";
 import {
   assertControllerFirebaseTargetSupported,
   ControllerFirebaseWriteFirewall,
@@ -353,25 +353,7 @@ if (typeof window !== 'undefined' && window.__controllerE2ENetworkGuardInstalled
 }
 
 export async function installControllerAuthRequestGuard(context: BrowserContext, baseURL: string) {
-  let blockedRequests = 0;
-  const trustedOrigins = allowedE2EAuthOrigins(baseURL);
-  await context.route(/\/api\/auth(?:\/|$)|mailslurp\.com/i, async (route) => {
-    const request = route.request();
-    const url = new URL(request.url());
-    let renewal = false;
-    try {
-      renewal = url.pathname === "/api/auth/session" && request.postDataJSON()?.requestNewCode === false;
-    } catch {
-      // An unreadable session request is unsafe.
-    }
-    if (/mailslurp\.com/i.test(url.hostname) || !trustedOrigins.has(url.origin) || (request.method() === "POST" && !renewal)) {
-      blockedRequests += 1;
-      await route.abort("blockedbyclient");
-    } else {
-      await route.continue();
-    }
-  });
-  return { blockedRequests: () => blockedRequests };
+  return installSavedSessionAuthRequestGuard(context, baseURL);
 }
 
 // Browser-side types are intentionally kept here; the app has no E2E globals.
