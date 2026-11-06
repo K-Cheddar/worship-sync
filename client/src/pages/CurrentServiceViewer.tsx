@@ -365,22 +365,17 @@ const useCurrentServiceViewerData = (
           scopeKeyRef.current !== scopeKey ||
           activePlanKeyRef.current !== activePlanKey
         ) return;
-        const currentState = planStateRef.current;
-        const previousSnapshot =
-          response.plan &&
-          currentState.kind !== "idle" &&
-          currentState.scopeKey === scopeKey &&
-          currentState.planKey === activePlanKey &&
-          (currentState.kind === "loaded" || currentState.kind === "error")
-            ? currentState.publicSnapshot
-            : null;
         if (requiresDetailedSnapshot && response.plan && !response.snapshot) {
+          planCacheRef.current.set(activePlanKey, {
+            plan: response.plan,
+            publicSnapshot: null,
+          });
           setPlanState({
             kind: "error",
             scopeKey,
             planKey: activePlanKey,
             plan: response.plan,
-            publicSnapshot: previousSnapshot,
+            publicSnapshot: null,
             message: "Detailed service information is unavailable.",
           });
           return;

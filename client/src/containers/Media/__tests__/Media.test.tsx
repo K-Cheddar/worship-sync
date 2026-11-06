@@ -2477,6 +2477,37 @@ describe("Media", () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
+  it("keeps a folder when a new member appears during deletion and retries that member", async () => {
+    const { result, persisted } = mountFolderQueue();
+    const heldProviderDelete = deferred<void>();
+    mockDeleteCloudinaryMediaAsset.mockReturnValueOnce(heldProviderDelete.promise);
+
+    await act(async () => { await result.current.handleDeleteFolderSubtree("a"); });
+    await waitFor(() => expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "asset-a"));
+    const lateMember = { ...persisted.list[0], id: "late-member", folderId: "a", publicId: "asset-late" };
+    persisted.list.push(lateMember);
+
+    await act(async () => { heldProviderDelete.resolve(); });
+    const id = mockEnqueueMediaFolderDeletion.mock.calls[0][0].id;
+    await waitFor(() => expect(mockGetTransfer(id)).toMatchObject({
+      status: "partial",
+      actions: expect.arrayContaining([{ key: "retry-delete", label: "Retry deletion" }]),
+    }));
+    expect(persisted.folders).toContainEqual(expect.objectContaining({ id: "a" }));
+    expect(persisted.list).toContainEqual(expect.objectContaining({ id: "late-member", folderId: "a" }));
+    expect(mockGetTransfer(id)?.files).toContainEqual(expect.objectContaining({
+      id: "late-member",
+      status: "failed",
+    }));
+
+    await act(async () => { await mockTransferActionHandlers.get(`${id}:retry-delete`)?.(); });
+    await waitFor(() => expect(mockGetTransfer(id)?.status).toBe("complete"));
+    expect(persisted.list).not.toContainEqual(expect.objectContaining({ id: "late-member" }));
+    expect(mockFlushMediaLibraryDocToPouch.mock.calls.at(-1)?.[2]).not.toContainEqual(
+      expect.objectContaining({ id: "a" }),
+    );
+  });
+
   it.each(["delete", "keep"])("skips a removed folder after navigation for %s", async (mode) => {
     const { result, unmount, persisted } = mountFolderQueue();
     const read = deferred<void>();

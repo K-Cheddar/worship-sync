@@ -203,7 +203,7 @@ describe("v2 media repository", () => {
       localVideoInput: {
         kind: "local-video-input",
         sourceId: "camera-a",
-        deviceId: "device-a",
+        ownerDeviceId: "device-a",
         label: "Main camera",
       },
       localImage: {
@@ -223,7 +223,7 @@ describe("v2 media repository", () => {
       folderId: "new-folder",
       localVideoInput: {
         ...beforeRow.localVideoInput!,
-        deviceId: "device-b",
+        ownerDeviceId: "device-b",
         label: "Renamed camera",
       },
     };
