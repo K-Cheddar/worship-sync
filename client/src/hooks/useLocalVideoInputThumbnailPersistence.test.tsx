@@ -110,23 +110,48 @@ const createPouchDb = (initialRow: MediaType, persistInitialRow = true) => {
   const pendingPut = deferred<PouchDB.Core.Response>();
   let deferNextRowPut = false;
   let rejectNextRowPut = false;
+  let rowPatchOnNextGet:
+    | { patch: Partial<MediaType>; onRead?: () => void }
+    | undefined;
+  let allDocsFailuresAfterNextRowPut = 0;
+  let pendingAllDocsFailures = 0;
   const db = {
     name: "thumbnail-persistence-test",
     get: jest.fn(async (id: string) => {
-      const doc = docs.get(id);
+      let doc = docs.get(id);
       if (!doc) throw Object.assign(new Error("missing"), { status: 404 });
+      if (id === mediaItemDocId(mediaId) && rowPatchOnNextGet) {
+        const { patch, onRead } = rowPatchOnNextGet;
+        rowPatchOnNextGet = undefined;
+        doc = { ...doc, ...patch, _rev: "2-concurrent" };
+        docs.set(id, doc);
+        onRead?.();
+      }
       return { ...doc };
     }),
-    allDocs: jest.fn(async () => ({
-      rows: [...docs.entries()]
-        .filter(([id]) => id.startsWith("media-item:"))
-        .map(([id, doc]) => ({ id, doc: { ...doc } })),
-    })),
+    allDocs: jest.fn(async () => {
+      if (pendingAllDocsFailures > 0) {
+        pendingAllDocsFailures -= 1;
+        throw new Error("temporary media read failure");
+      }
+      return {
+        rows: [...docs.entries()]
+          .filter(([id]) => id.startsWith("media-item:"))
+          .map(([id, doc]) => ({ id, doc: { ...doc } })),
+      };
+    }),
     put: jest.fn((input: Record<string, unknown>) => {
       const id = String(input._id);
       const response = { ok: true, id, rev: "2-updated" } as PouchDB.Core.Response;
       const persist = () => {
         docs.set(id, { ...input, _rev: response.rev });
+        if (
+          id === mediaItemDocId(mediaId) &&
+          allDocsFailuresAfterNextRowPut > 0
+        ) {
+          pendingAllDocsFailures = allDocsFailuresAfterNextRowPut;
+          allDocsFailuresAfterNextRowPut = 0;
+        }
         return response;
       };
       if (id === mediaItemDocId(mediaId) && rejectNextRowPut) {
@@ -161,6 +186,15 @@ const createPouchDb = (initialRow: MediaType, persistInitialRow = true) => {
       const row = docs.get(mediaItemDocId(mediaId));
       if (!row) return;
       docs.set(mediaItemDocId(mediaId), { ...row, ...patch });
+    },
+    updateRowOnNextGet: (
+      patch: Partial<MediaType>,
+      onRead?: () => void,
+    ) => {
+      rowPatchOnNextGet = { patch, onRead };
+    },
+    failReadAfterNextRowPut: (count = 1) => {
+      allDocsFailuresAfterNextRowPut = count;
     },
   };
   return db;
@@ -400,6 +434,238 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     );
     expect(store.getState().media.list[0]).toEqual(
       expect.objectContaining({ ...latestPatch, thumbnail: "" }),
+    );
+  });
+
+  it("keeps a thumbnail when a concurrent updatedAt edit wins during persistence", async () => {
+    const { result, db, store } = renderPersistenceHook();
+    const concurrentUpdatedAt = "updated-by-another-controller";
+    db.updateRowOnNextGet({ updatedAt: concurrentUpdatedAt }, () => {
+      store.dispatch(
+        updateMediaItemFields({
+          id: mediaId,
+          patch: { updatedAt: concurrentUpdatedAt },
+        }),
+      );
+    });
+
+    let saving!: Promise<string>;
+    await act(async () => {
+      saving = result.current.saveVideoInputThumbnail(mediaId, {
+        blob: new Blob(["replacement"], { type: "image/webp" }),
+        width: 640,
+        height: 360,
+      });
+      await saving;
+    });
+
+    const { saveLocalImage, deleteLocalImage } = jest.requireMock(
+      "../utils/localImageAssets",
+    ) as { saveLocalImage: jest.Mock; deleteLocalImage: jest.Mock };
+    const savedAssetId = saveLocalImage.mock.calls[0][0].id as string;
+    expect(db.readRow()).toEqual(
+      expect.objectContaining({
+        updatedAt: concurrentUpdatedAt,
+        localImage: expect.objectContaining({ id: savedAssetId }),
+      }),
+    );
+    expect(store.getState().media.list[0]).toEqual(
+      expect.objectContaining({
+        updatedAt: concurrentUpdatedAt,
+        localImage: expect.objectContaining({ id: savedAssetId }),
+      }),
+    );
+    expect(deleteLocalImage).not.toHaveBeenCalledWith(savedAssetId);
+  });
+
+  it("recovers a committed thumbnail when the verification read fails once", async () => {
+    const { result, db, store } = renderPersistenceHook();
+    db.failReadAfterNextRowPut();
+
+    let saving!: Promise<string>;
+    await act(async () => {
+      saving = result.current.saveVideoInputThumbnail(mediaId, {
+        blob: new Blob(["replacement"], { type: "image/webp" }),
+        width: 640,
+        height: 360,
+      });
+      await saving;
+    });
+
+    const { saveLocalImage, deleteLocalImage } = jest.requireMock(
+      "../utils/localImageAssets",
+    ) as { saveLocalImage: jest.Mock; deleteLocalImage: jest.Mock };
+    const savedAssetId = saveLocalImage.mock.calls[0][0].id as string;
+    expect(db.readRow()).toEqual(
+      expect.objectContaining({
+        localImage: expect.objectContaining({ id: savedAssetId }),
+      }),
+    );
+    expect(store.getState().media.list[0].localImage?.id).toBe(savedAssetId);
+    expect(deleteLocalImage).not.toHaveBeenCalledWith(savedAssetId);
+  });
+
+  it("preserves a new asset when neither post-write read can establish its outcome", async () => {
+    const { result, db } = renderPersistenceHook();
+    db.failReadAfterNextRowPut(2);
+
+    await expect(
+      result.current.saveVideoInputThumbnail(mediaId, {
+        blob: new Blob(["replacement"], { type: "image/webp" }),
+        width: 640,
+        height: 360,
+      }),
+    ).rejects.toThrow("The thumbnail could not be saved to Media. Try again.");
+
+    const { saveLocalImage, deleteLocalImage } = jest.requireMock(
+      "../utils/localImageAssets",
+    ) as { saveLocalImage: jest.Mock; deleteLocalImage: jest.Mock };
+    const savedAssetId = saveLocalImage.mock.calls[0][0].id as string;
+    expect(db.readRow()).toEqual(
+      expect.objectContaining({
+        localImage: expect.objectContaining({ id: savedAssetId }),
+      }),
+    );
+    expect(deleteLocalImage).not.toHaveBeenCalledWith(savedAssetId);
+  });
+
+  it("does not remove a replacement thumbnail after removal starts for an older asset", async () => {
+    const row = { ...createMediaRow(), thumbnail: "" };
+    const { result, db } = renderPersistenceHook(row, true, row);
+    const activeJob: LocalImageUploadJob = {
+      id: oldLocalImage.id,
+      assetId: oldLocalImage.id,
+      itemId: "",
+      workspaceId: "device-a",
+      uploadPreset: "preset",
+      mediaId: "thumbnail-cloud-media",
+      status: "uploading",
+      phase: "uploading",
+      attemptCount: 1,
+      nextAttemptAt: 0,
+      createdAt: "created-a",
+      updatedAt: "updated-a",
+    };
+    const assets = jest.requireMock("../utils/localImageAssets") as {
+      getLocalImageUploadJob: jest.Mock;
+      deleteLocalImage: jest.Mock;
+    };
+    let currentJob: LocalImageUploadJob | undefined = activeJob;
+    assets.getLocalImageUploadJob.mockImplementation(async (assetId: string) =>
+      assetId === oldLocalImage.id ? currentJob : undefined,
+    );
+    const replacement = {
+      ...oldLocalImage,
+      id: "replacement-thumbnail-asset",
+      fileName: "replacement.webp",
+    };
+    const cancellation = deferred<void>();
+    jest.mocked(uploadQueue.cancelLocalImageUpload).mockImplementationOnce(
+      async () => {
+        await cancellation.promise;
+        currentJob = { ...activeJob, status: "cancelled", phase: "cancelled" };
+        db.updatePersistedRow({
+          localImage: replacement,
+          updatedAt: "updated-with-replacement",
+        });
+      },
+    );
+
+    let removing!: Promise<void>;
+    act(() => {
+      removing = result.current.removeVideoInputThumbnail(mediaId);
+    });
+    await waitFor(() =>
+      expect(uploadQueue.cancelLocalImageUpload).toHaveBeenCalledWith(
+        oldLocalImage.id,
+      ),
+    );
+
+    await act(async () => {
+      cancellation.resolve();
+      await expect(removing).rejects.toThrow("This thumbnail changed.");
+    });
+
+    expect(db.readRow()).toEqual(
+      expect.objectContaining({ localImage: replacement }),
+    );
+    expect(db.put).not.toHaveBeenCalled();
+    expect(assets.deleteLocalImage).not.toHaveBeenCalledWith(replacement.id);
+  });
+
+  it("reports failure when cloud queue recovery cannot persist local-only policy", async () => {
+    const { result, db } = renderPersistenceHook(
+      createMediaRow(),
+      true,
+      createMediaRow(),
+      { churchId: "church-1", isGuestSession: false },
+    );
+    const assets = jest.requireMock("../utils/localImageAssets") as {
+      getRememberedLocalImagePolicy: jest.Mock;
+      saveLocalImage: jest.Mock;
+      deleteLocalImage: jest.Mock;
+    };
+    assets.getRememberedLocalImagePolicy.mockReturnValue("local-and-cloud");
+    jest.mocked(uploadQueue.enqueueLocalImageUpload).mockImplementationOnce(
+      async () => {
+        db.rejectNextRowPut();
+        throw new Error("queue storage unavailable");
+      },
+    );
+
+    await expect(
+      result.current.saveVideoInputThumbnail(mediaId, {
+        blob: new Blob(["replacement"], { type: "image/webp" }),
+        width: 640,
+        height: 360,
+      }),
+    ).rejects.toThrow("The thumbnail could not be saved to Media. Try again.");
+
+    const savedAssetId = assets.saveLocalImage.mock.calls[0][0].id as string;
+    expect(db.readRow()).toEqual(
+      expect.objectContaining({
+        localImage: expect.objectContaining({
+          id: savedAssetId,
+          storagePolicy: "local-and-cloud",
+        }),
+      }),
+    );
+    expect(assets.deleteLocalImage).not.toHaveBeenCalledWith(savedAssetId);
+  });
+
+  it("reports the local-only fallback only after its policy is persisted", async () => {
+    const row = createMediaRow();
+    const { result, db } = renderPersistenceHook(
+      row,
+      true,
+      row,
+      { churchId: "church-1", isGuestSession: false },
+    );
+    const assets = jest.requireMock("../utils/localImageAssets") as {
+      getRememberedLocalImagePolicy: jest.Mock;
+      saveLocalImage: jest.Mock;
+    };
+    assets.getRememberedLocalImagePolicy.mockReturnValue("local-and-cloud");
+    jest.mocked(uploadQueue.enqueueLocalImageUpload).mockRejectedValueOnce(
+      new Error("queue storage unavailable"),
+    );
+
+    await expect(
+      result.current.saveVideoInputThumbnail(mediaId, {
+        blob: new Blob(["replacement"], { type: "image/webp" }),
+        width: 640,
+        height: 360,
+      }),
+    ).resolves.toBe("Thumbnail saved on this computer. Cloud upload could not be queued.");
+
+    const savedAssetId = assets.saveLocalImage.mock.calls[0][0].id as string;
+    expect(db.readRow()).toEqual(
+      expect.objectContaining({
+        localImage: expect.objectContaining({
+          id: savedAssetId,
+          storagePolicy: "local-only",
+        }),
+      }),
     );
   });
 

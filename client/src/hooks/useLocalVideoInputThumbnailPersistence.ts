@@ -148,6 +148,7 @@ export const useLocalVideoInputThumbnailPersistence = (
       patchOrCreate: Partial<MediaType> | ((current: MediaType) => Partial<MediaType>),
       failureMessage = "The video input could not be saved to Media. Try again.",
       allowCreate = false,
+      verifyPersisted?: (item: MediaType) => boolean,
     ) => {
       const isActiveScope = () =>
         activeScopeRef.current.db === db &&
@@ -222,12 +223,14 @@ export const useLocalVideoInputThumbnailPersistence = (
         throw new Error(failureMessage);
       }
       const persistedItem = persisted.list.find((item) => item.id === mediaId);
-      const patchWasPersisted = persistedItem && Object.entries(patch).every(
-        ([key, value]) =>
-          JSON.stringify(
-            (persistedItem as unknown as Record<string, unknown>)[key],
-          ) === JSON.stringify(value),
-      );
+      const patchWasPersisted = persistedItem && (verifyPersisted
+        ? verifyPersisted(persistedItem)
+        : Object.entries(patch).every(
+            ([key, value]) =>
+              JSON.stringify(
+                (persistedItem as unknown as Record<string, unknown>)[key],
+              ) === JSON.stringify(value),
+          ));
       if (!patchWasPersisted) {
         throw new Error(failureMessage);
       }
@@ -237,22 +240,25 @@ export const useLocalVideoInputThumbnailPersistence = (
       );
       if (
         isActiveScope() &&
-        latest?.localVideoInput?.sourceId === expectedSourceId &&
-        Object.entries(patch).every(([key, value]) => {
-          const latestValue = (latest as unknown as Record<string, unknown>)[key];
-          const previousValue =
-            (currentRedux as unknown as Record<string, unknown>)[key];
-          return (
-            JSON.stringify(latestValue) === JSON.stringify(previousValue) ||
-            JSON.stringify(latestValue) === JSON.stringify(value)
-          );
-        })
+        latest?.localVideoInput?.sourceId === expectedSourceId
       ) {
         const reduxPatch = { ...patch } as Record<string, unknown>;
+        const latestFields = latest as unknown as Record<string, unknown>;
+        const initialFields = currentRedux as unknown as Record<string, unknown>;
+        const persistedFields = persistedItem as unknown as Record<string, unknown>;
+        for (const key of Object.keys(reduxPatch)) {
+          if (
+            JSON.stringify(latestFields[key]) !== JSON.stringify(initialFields[key]) &&
+            JSON.stringify(latestFields[key]) !== JSON.stringify(reduxPatch[key])
+          ) {
+            delete reduxPatch[key];
+            continue;
+          }
+          // PouchDB may have kept a concurrent field edit while committing
+          // this patch's other fields. Keep Redux aligned with that row.
+          reduxPatch[key] = persistedFields[key];
+        }
         if (allowCreate && persistedCurrent) {
-          const latestFields = latest as unknown as Record<string, unknown>;
-          const initialFields = currentRedux as unknown as Record<string, unknown>;
-          const persistedFields = persistedItem as unknown as Record<string, unknown>;
           for (const key of new Set([
             ...Object.keys(currentRedux),
             ...Object.keys(persistedFields),
@@ -266,12 +272,14 @@ export const useLocalVideoInputThumbnailPersistence = (
             }
           }
         }
-        dispatch(
-          updateMediaItemFields({
-            id: mediaId,
-            patch: reduxPatch as Partial<MediaType>,
-          }),
-        );
+        if (Object.keys(reduxPatch).length > 0) {
+          dispatch(
+            updateMediaItemFields({
+              id: mediaId,
+              patch: reduxPatch as Partial<MediaType>,
+            }),
+          );
+        }
       }
       return { previous: current, next };
     },
@@ -352,6 +360,7 @@ export const useLocalVideoInputThumbnailPersistence = (
 
       let previousCloudPublicId: string | undefined;
       let savedRow: { previous: MediaType; next: MediaType };
+      let latestBeforeWrite: MediaType | undefined;
       const stagedCleanup: Array<{
         job: LocalImageUploadJob;
         previous?: LocalImageUploadJob;
@@ -374,6 +383,7 @@ export const useLocalVideoInputThumbnailPersistence = (
         if (latest.localVideoInput.sourceId !== expectedSourceId) {
           throw new Error("This video input changed. Reopen it and try again.");
         }
+        latestBeforeWrite = latest;
         const expectedPreviousAssetId = latest.localImage?.id;
         if (latest.localImage?.id) {
           previousUploadJob = await getLocalImageUploadJob(latest.localImage.id);
@@ -486,17 +496,70 @@ export const useLocalVideoInputThumbnailPersistence = (
           },
           "The thumbnail could not be saved to Media. Try again.",
           allowCreate,
+          (persistedItem) =>
+            persistedItem.localVideoInput?.sourceId === expectedSourceId &&
+            persistedItem.localImage?.id === assetId,
         );
       } catch (error) {
-        await Promise.all(
-          stagedCleanup.map(({ job, previous }) =>
-            previous
-              ? putLocalImageUploadJob(previous)
-              : deleteLocalImageUploadJob(job.assetId),
-          ),
-        );
-        await deleteLocalImage(assetId).catch(() => undefined);
-        throw error;
+        let authoritativeReadSucceeded = false;
+        let persistedTarget: MediaType | undefined;
+        let assetIsReferenced = false;
+        try {
+          const authoritative = await loadMediaLibrary(db!);
+          authoritativeReadSucceeded = true;
+          persistedTarget = authoritative.list.find((item) => item.id === mediaId);
+          assetIsReferenced = authoritative.list.some(
+            (item) => item.localImage?.id === assetId,
+          );
+        } catch {
+          // The write outcome is unknown. Preserve the blob until a later
+          // authoritative read can prove that no Media row references it.
+        }
+        if (
+          persistedTarget?.localVideoInput?.sourceId === expectedSourceId &&
+          persistedTarget.localImage?.id === assetId
+        ) {
+          // A concurrent edit may have won an unrelated field, or the
+          // verification read may have failed after PouchDB committed. The
+          // new asset is adopted, so continue the upload/cleanup lifecycle.
+          savedRow = {
+            previous: latestBeforeWrite ?? current,
+            next: persistedTarget,
+          };
+          const confirmedPatch = Object.fromEntries(
+            Object.entries(mediaPatch).filter(([key, value]) =>
+              JSON.stringify(
+                (persistedTarget as unknown as Record<string, unknown>)[key],
+              ) === JSON.stringify(value),
+            ),
+          ) as Partial<MediaType>;
+          confirmedPatch.localImage = persistedTarget.localImage;
+          if (storagePolicy === "local-only") {
+            confirmedPatch.thumbnail = persistedTarget.thumbnail;
+          }
+          await writeVideoInputPatch(
+            mediaId,
+            expectedSourceId,
+            confirmedPatch,
+            "The thumbnail could not be saved to Media. Try again.",
+            false,
+            (item) =>
+              item.localVideoInput?.sourceId === expectedSourceId &&
+              item.localImage?.id === assetId,
+          ).catch(() => undefined);
+        } else {
+          await Promise.all(
+            stagedCleanup.map(({ job, previous }) =>
+              previous
+                ? putLocalImageUploadJob(previous)
+                : deleteLocalImageUploadJob(job.assetId),
+            ),
+          );
+          if (authoritativeReadSucceeded && !assetIsReferenced) {
+            await deleteLocalImage(assetId).catch(() => undefined);
+          }
+          throw error;
+        }
       }
       const previous = savedRow.previous;
 
@@ -521,18 +584,27 @@ export const useLocalVideoInputThumbnailPersistence = (
           onStorageUsageChanged?.();
           return "Thumbnail saved here. Uploading its cloud copy.";
         } catch {
-          const latestMedia = getMediaState().list.find(
-            (item) => item.id === mediaId,
+          await writeVideoInputPatch(
+            mediaId,
+            expectedSourceId,
+            (latest) => {
+              if (latest.localImage?.id !== assetId) {
+                throw new Error("This thumbnail changed. Reopen it and try again.");
+              }
+              return {
+                localImage: {
+                  ...latest.localImage,
+                  storagePolicy: "local-only",
+                },
+              };
+            },
+            "The thumbnail could not be saved to Media. Try again.",
+            false,
+            (persistedItem) =>
+              persistedItem.localVideoInput?.sourceId === expectedSourceId &&
+              persistedItem.localImage?.id === assetId &&
+              persistedItem.localImage.storagePolicy === "local-only",
           );
-          if (latestMedia?.localImage?.id === assetId) {
-            const localOnly = {
-              ...latestMedia.localImage,
-              storagePolicy: "local-only" as const,
-            };
-            await writeVideoInputPatch(mediaId, expectedSourceId, {
-              localImage: localOnly,
-            }).catch(() => undefined);
-          }
           return "Thumbnail saved on this computer. Cloud upload could not be queued.";
         }
       }
@@ -634,6 +706,7 @@ export const useLocalVideoInputThumbnailPersistence = (
         throw new Error("This video input is no longer in Media.");
       }
       const expectedSourceId = current.localVideoInput.sourceId;
+      const expectedAssetId = current.localImage?.id;
       if (!current.localImage) {
         const cloudPublicId = current.thumbnail
           ? extractPublicId(current.thumbnail)
@@ -680,6 +753,9 @@ export const useLocalVideoInputThumbnailPersistence = (
         (item) => item.id === mediaId,
       );
       if (!latest?.localImage) return;
+      if (latest.localImage.id !== expectedAssetId) {
+        throw new Error("This thumbnail changed. Reopen it and try again.");
+      }
       const latestJob = await getLocalImageUploadJob(latest.localImage.id);
       const workspaceId = churchId || getOrCreateDeviceId();
       const cleanupAssets = new Map<
@@ -767,11 +843,21 @@ export const useLocalVideoInputThumbnailPersistence = (
             );
           }
         }
-        await writeVideoInputPatch(mediaId, expectedSourceId, {
-          localImage: undefined,
-          thumbnail: "",
-          updatedAt: new Date().toISOString(),
-        }, "The thumbnail could not be removed from Media. Try again.");
+        await writeVideoInputPatch(
+          mediaId,
+          expectedSourceId,
+          (persistedLatest) => {
+            if (persistedLatest.localImage?.id !== expectedAssetId) {
+              throw new Error("This thumbnail changed. Reopen it and try again.");
+            }
+            return {
+              localImage: undefined,
+              thumbnail: "",
+              updatedAt: new Date().toISOString(),
+            };
+          },
+          "The thumbnail could not be removed from Media. Try again.",
+        );
       } catch (error) {
         await Promise.all(
           staged.map(({ job, previous }) =>
