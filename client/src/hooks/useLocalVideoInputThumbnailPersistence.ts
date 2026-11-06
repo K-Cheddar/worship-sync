@@ -13,16 +13,18 @@ import {
   deleteLocalImage,
   deleteLocalImageUploadJob,
   getLocalImageUploadJob,
+  activateStagedLocalVideoInputThumbnailUploadJobAtomically,
+  discardStagedLocalVideoInputThumbnailUploadJobAtomically,
   getRememberedLocalImagePolicy,
   putLocalImageUploadJob,
   saveLocalImage,
+  stageLocalVideoInputThumbnailUploadJobAtomically,
   stageLocalImageUploadCleanupJobAtomically,
   type LocalImageUploadJob,
   type StoredLocalImage,
 } from "../utils/localImageAssets";
 import {
   cancelLocalImageUpload,
-  enqueueLocalImageUpload,
 } from "../utils/localImageUploadQueue";
 import { extractPublicId } from "../utils/cloudinaryUtils";
 import { flushMediaLibraryDocToPouch } from "../utils/flushMediaLibraryDoc";
@@ -341,10 +343,12 @@ export const useLocalVideoInputThumbnailPersistence = (
       const expectedSourceId = current.localVideoInput.sourceId;
       const ownerDeviceId = getOrCreateDeviceId();
       const workspaceId = churchId || ownerDeviceId;
-      const storagePolicy =
+      const requestedStoragePolicy =
         churchId && !isGuestSession
           ? getRememberedLocalImagePolicy(ownerDeviceId)
           : "local-only";
+      let storagePolicy = requestedStoragePolicy;
+      let cloudUploadFellBack = false;
       const now = new Date().toISOString();
       const assetId = generateRandomId();
       const contentType = frame.blob.type;
@@ -373,6 +377,7 @@ export const useLocalVideoInputThumbnailPersistence = (
         previous?: LocalImageUploadJob;
       }> = [];
       let previousUploadJob: LocalImageUploadJob | undefined;
+      let stagedUploadJob: LocalImageUploadJob | undefined;
       let previousThumbnailAssets: Array<{
         assetId: string;
         cloudPublicId?: string;
@@ -427,6 +432,59 @@ export const useLocalVideoInputThumbnailPersistence = (
               ? extractPublicId(latest.thumbnail)
               : undefined) ||
           previousUploadJob?.cloudMedia?.publicId;
+
+        if (storagePolicy === "local-and-cloud") {
+          const candidate: LocalImageUploadJob = {
+            id: assetId,
+            assetId,
+            itemId: "",
+            workspaceId,
+            uploadPreset: "bpqu4ma5",
+            mediaId: generateRandomId(),
+            status: "staged",
+            phase: "queued",
+            progress: 0,
+            attemptCount: 0,
+            nextAttemptAt: 0,
+            localVideoInputThumbnail: {
+              targetMediaId: mediaId,
+              targetSourceId: expectedSourceId,
+              mediaReferencePending: true,
+              ...(latest.localImage?.id
+                ? { previousAssetId: latest.localImage.id }
+                : {}),
+              ...(previousCloudPublicId ? { previousCloudPublicId } : {}),
+              ...(previousThumbnailAssets.length > 0
+                ? { previousAssets: previousThumbnailAssets }
+                : {}),
+            },
+            createdAt: now,
+            updatedAt: now,
+          };
+          try {
+            const staged = await stageLocalVideoInputThumbnailUploadJobAtomically(
+              candidate,
+              Date.now(),
+            );
+            if (
+              staged?.status === "staged" &&
+              staged.workspaceId === workspaceId &&
+              staged.localVideoInputThumbnail?.mediaReferencePending &&
+              staged.localVideoInputThumbnail.targetMediaId === mediaId &&
+              staged.localVideoInputThumbnail.targetSourceId === expectedSourceId
+            ) {
+              stagedUploadJob = staged;
+            } else {
+              storagePolicy = "local-only";
+              cloudUploadFellBack = true;
+            }
+          } catch {
+            // Preserve the existing local-only fallback, but choose it before
+            // the Media commit so no cloud reference can exist without a job.
+            storagePolicy = "local-only";
+            cloudUploadFellBack = true;
+          }
+        }
 
         if (storagePolicy === "local-only") {
           const hasUnsettledPreviousUpload = Boolean(
@@ -505,7 +563,8 @@ export const useLocalVideoInputThumbnailPersistence = (
           allowCreate,
           (persistedItem) =>
             persistedItem.localVideoInput?.sourceId === expectedSourceId &&
-            persistedItem.localImage?.id === assetId,
+            persistedItem.localImage?.id === assetId &&
+            persistedItem.localImage.storagePolicy === storagePolicy,
         );
       } catch (error) {
         let authoritativeReadSucceeded = false;
@@ -524,7 +583,8 @@ export const useLocalVideoInputThumbnailPersistence = (
         }
         if (
           persistedTarget?.localVideoInput?.sourceId === expectedSourceId &&
-          persistedTarget.localImage?.id === assetId
+          persistedTarget.localImage?.id === assetId &&
+          persistedTarget.localImage.storagePolicy === storagePolicy
         ) {
           // A concurrent edit may have won an unrelated field, or the
           // verification read may have failed after PouchDB committed. The
@@ -563,6 +623,13 @@ export const useLocalVideoInputThumbnailPersistence = (
             ),
           );
           if (authoritativeReadSucceeded && !assetIsReferenced) {
+            if (stagedUploadJob) {
+              await discardStagedLocalVideoInputThumbnailUploadJobAtomically({
+                assetId,
+                workspaceId,
+                targetMediaId: mediaId,
+              }).catch(() => undefined);
+            }
             await deleteLocalImage(assetId).catch(() => undefined);
           }
           const initialRowMayBeCommitted =
@@ -593,144 +660,30 @@ export const useLocalVideoInputThumbnailPersistence = (
 
       if (storagePolicy === "local-and-cloud") {
         try {
-          await enqueueLocalImageUpload({
+          const activated = await activateStagedLocalVideoInputThumbnailUploadJobAtomically(
             assetId,
-            itemId: "",
-            workspaceId,
-            uploadPreset: "bpqu4ma5",
-            localVideoInputThumbnail: {
-              targetMediaId: mediaId,
-              ...(previous.localImage?.id
-                ? { previousAssetId: previous.localImage.id }
-                : {}),
-              ...(previousCloudPublicId ? { previousCloudPublicId } : {}),
-              ...(previousThumbnailAssets.length > 0
-                ? { previousAssets: previousThumbnailAssets }
-                : {}),
-            },
-          });
-          onStorageUsageChanged?.();
-          return "Thumbnail saved here. Uploading its cloud copy.";
-        } catch {
-          const fallbackCleanup: Array<{
-            job: LocalImageUploadJob;
-            previous?: LocalImageUploadJob;
-          }> = [];
-          const previousUploadIsUnsettled = Boolean(
-            previousUploadJob &&
-              previousUploadJob.status !== "complete" &&
-              previousUploadJob.status !== "cancelled",
+            Date.now(),
           );
-          if (previousUploadIsUnsettled && previousCloudPublicId) {
-            fallbackCleanup.push(
-              await createThumbnailCleanupJob({
-                assetId: `thumbnail-cloud-cleanup-${generateRandomId()}`,
-                mediaId,
-                workspaceId,
-                cloudPublicId: previousCloudPublicId,
-              }),
-            );
-          } else {
-            const cleanupAssets = new Map<string, string | undefined>(
-              previousThumbnailAssets.map(({ assetId: oldAssetId, cloudPublicId }) => [
-                oldAssetId,
-                cloudPublicId,
-              ]),
-            );
-            if (
-              previousCloudPublicId &&
-              ![...cleanupAssets.values()].includes(previousCloudPublicId)
-            ) {
-              cleanupAssets.set(
-                `thumbnail-cloud-cleanup-${generateRandomId()}`,
-                previousCloudPublicId,
-              );
-            }
-            for (const [oldAssetId, cloudPublicId] of cleanupAssets) {
-              fallbackCleanup.push(
-                await createThumbnailCleanupJob({
-                  assetId: oldAssetId,
-                  mediaId,
-                  workspaceId,
-                  cloudPublicId,
-                }),
-              );
-            }
-          }
-
-          const isLocalOnlyFallbackPersisted = (item: MediaType | undefined) =>
-            item?.localVideoInput?.sourceId === expectedSourceId &&
-            item.localImage?.id === assetId &&
-            item.localImage.storagePolicy === "local-only" &&
-            !item.localImage.cloudPublicId &&
-            !item.localImage.cloudUrl &&
-            !item.localImage.cloudMediaId &&
-            item.thumbnail === "";
-          let fallbackWasPersisted = false;
-          try {
-            await writeVideoInputPatch(
-              mediaId,
-              expectedSourceId,
-              (latest) => {
-                if (latest.localImage?.id !== assetId) {
-                  throw new Error("This thumbnail changed. Reopen it and try again.");
-                }
-                const {
-                  cloudPublicId: _cloudPublicId,
-                  cloudUrl: _cloudUrl,
-                  cloudMediaId: _cloudMediaId,
-                  ...localImage
-                } = latest.localImage;
-                return {
-                  thumbnail: "",
-                  localImage: {
-                    ...localImage,
-                    storagePolicy: "local-only",
-                  },
-                };
-              },
-              "The thumbnail could not be saved to Media. Try again.",
-              false,
-              isLocalOnlyFallbackPersisted,
-            );
-            fallbackWasPersisted = true;
-          } catch (error) {
-            let authoritativeReadSucceeded = false;
-            let persistedItem: MediaType | undefined;
-            try {
-              const authoritative = await loadMediaLibrary(db!);
-              authoritativeReadSucceeded = true;
-              persistedItem = authoritative.list.find((item) => item.id === mediaId);
-            } catch {
-              // Keep staged cleanup jobs unready until the persisted reference
-              // can be checked. Activating them while the old URL may remain
-              // would delete an image another controller still uses.
-            }
-            if (isLocalOnlyFallbackPersisted(persistedItem)) {
-              fallbackWasPersisted = true;
-            } else {
-              if (authoritativeReadSucceeded) {
-                await Promise.all(
-                  fallbackCleanup.map(({ job, previous }) =>
-                    previous
-                      ? putLocalImageUploadJob(previous)
-                      : deleteLocalImageUploadJob(job.assetId),
-                  ),
-                );
-              }
-              throw error;
-            }
-          }
-          if (fallbackWasPersisted) {
-            for (const { job } of fallbackCleanup) {
-              await activateThumbnailCleanupJob(job);
-            }
-          }
-          return "Thumbnail saved on this computer. Cloud upload could not be queued.";
+          onStorageUsageChanged?.();
+          return activated?.status === "pending" || activated?.status === "uploaded"
+            ? "Thumbnail saved here. Uploading its cloud copy."
+            : "Thumbnail saved here. Cloud upload will resume after recovery.";
+        } catch {
+          // The staged record remains durable and non-runnable. The manager's
+          // recovery scan activates it after confirming the Media reference.
+          onStorageUsageChanged?.();
+          return "Thumbnail saved here. Cloud upload will resume after recovery.";
         }
       }
 
       if (storagePolicy === "local-only") {
+        if (cloudUploadFellBack) {
+          await discardStagedLocalVideoInputThumbnailUploadJobAtomically({
+            assetId,
+            workspaceId,
+            targetMediaId: mediaId,
+          }).catch(() => undefined);
+        }
         for (const { job } of stagedCleanup) {
           await activateThumbnailCleanupJob(job);
         }
@@ -809,7 +762,9 @@ export const useLocalVideoInputThumbnailPersistence = (
           }
         }
         onStorageUsageChanged?.();
-        return "Thumbnail saved on this computer.";
+        return cloudUploadFellBack
+          ? "Thumbnail saved on this computer. Cloud upload could not be queued."
+          : "Thumbnail saved on this computer.";
       }
 
       onStorageUsageChanged?.();

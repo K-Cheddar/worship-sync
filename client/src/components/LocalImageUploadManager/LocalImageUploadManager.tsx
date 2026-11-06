@@ -19,12 +19,16 @@ import {
 import {
   claimLocalImageUploadJob,
   getLocalImageUploadJob,
+  activateStagedLocalVideoInputThumbnailUploadJobAtomically,
   cleanupOrphanedLocalImages,
+  discardStagedLocalVideoInputThumbnailUploadJobAtomically,
   deleteLocalImage,
   getLocalImage,
   listLocalImageUploadJobs,
   persistLocalImageCloudCopy,
   putLocalImageUploadJob,
+  isLocalImageUploadStagingSessionActive,
+  registerLocalImageUploadManagerSession,
   releaseLocalImageUploadJobLease,
   renewLocalImageUploadJobLease,
   subscribeLocalImageUploadJobChanges,
@@ -58,6 +62,24 @@ import {
 } from "../../utils/localImageUploadScheduling";
 
 const OUTLINE_RETRY_MS = 5_000;
+
+const isCloudinaryAssetReferenced = (
+  media: MediaType[],
+  cloudAsset: { publicId?: string; url?: string },
+) => {
+  if (!cloudAsset.publicId && !cloudAsset.url) return false;
+  return media.some((item) => {
+    const urls = [item.background, item.thumbnail, item.localImage?.cloudUrl].filter(
+      (value): value is string => Boolean(value),
+    );
+    if (cloudAsset.url && urls.includes(cloudAsset.url)) return true;
+    if (!cloudAsset.publicId) return false;
+    return (
+      item.localImage?.cloudPublicId === cloudAsset.publicId ||
+      urls.some((url) => extractPublicId(url) === cloudAsset.publicId)
+    );
+  });
+};
 
 const stageThumbnailAssetCleanup = async ({
   assetId,
@@ -163,6 +185,8 @@ const LocalImageUploadManager = () => {
   }
   const retryTimer = useRef<number | undefined>(undefined);
   const hasSweptWorkspace = useRef<{ db: PouchDB.Database; workspaceId: string } | null>(null);
+
+  useEffect(() => registerLocalImageUploadManagerSession(), []);
 
   const processJob = useCallback(
     async (claimedJob: LocalImageUploadJob) => {
@@ -313,14 +337,9 @@ const LocalImageUploadManager = () => {
             const assetIsReferenced = latestBeforeCleanup.list.some(
               (item) => item.localImage?.id === job.assetId,
             );
-            const cloudIsReferenced = Boolean(
-              job.cleanupCloudPublicId && latestBeforeCleanup.list.some((item) => {
-                const image = item.localImage;
-                return image?.cloudPublicId === job.cleanupCloudPublicId ||
-                  (image?.cloudUrl && extractPublicId(image.cloudUrl) === job.cleanupCloudPublicId) ||
-                  (item.localVideoInput && item.thumbnail &&
-                    extractPublicId(item.thumbnail) === job.cleanupCloudPublicId);
-              }),
+            const cloudIsReferenced = isCloudinaryAssetReferenced(
+              latestBeforeCleanup.list,
+              { publicId: job.cleanupCloudPublicId },
             );
             if (assetIsReferenced || cloudIsReferenced) {
               await updateClaimedJob({
@@ -333,6 +352,11 @@ const LocalImageUploadManager = () => {
               return;
             }
             if (job.cleanupCloudPublicId && !job.cleanupCloudComplete) {
+              if (
+                job.workspaceId !== churchId ||
+                activeScopeRef.current.db !== db ||
+                activeScopeRef.current.churchId !== churchId
+              ) return;
               await deleteCloudinaryMediaAsset(churchId, job.cleanupCloudPublicId);
               await updateClaimedJob({ cleanupCloudComplete: true });
             }
@@ -347,6 +371,11 @@ const LocalImageUploadManager = () => {
               });
               return;
             }
+            if (
+              job.workspaceId !== churchId ||
+              activeScopeRef.current.db !== db ||
+              activeScopeRef.current.churchId !== churchId
+            ) return;
             await deleteLocalImage(job.assetId);
           } catch (error) {
             await updateClaimedJob({
@@ -626,6 +655,22 @@ const LocalImageUploadManager = () => {
                 thumbnailCloudMedia.publicId &&
                 !thumbnailTarget.staleCloudCleanupComplete
               ) {
+                if (
+                  job.workspaceId !== churchId ||
+                  activeScopeRef.current.db !== db ||
+                  activeScopeRef.current.churchId !== churchId
+                ) return;
+                const latestMedia = await loadMediaLibrary(db);
+                if (isCloudinaryAssetReferenced(latestMedia.list, {
+                  publicId: thumbnailCloudMedia.publicId,
+                  url: thumbnailCloudMedia.background,
+                })) {
+                  throw new Error("The uploaded thumbnail is still referenced by Media; cloud cleanup will retry.");
+                }
+                if (
+                  activeScopeRef.current.db !== db ||
+                  activeScopeRef.current.churchId !== churchId
+                ) return;
                 await deleteCloudinaryMediaAsset(churchId, thumbnailCloudMedia.publicId);
                 if (!(await recordStaleThumbnailCleanup({ staleCloudCleanupComplete: true }))) {
                   return;
@@ -682,6 +727,11 @@ const LocalImageUploadManager = () => {
                 }))) return;
               }
               if (!thumbnailTarget.staleLocalCleanupComplete) {
+                if (
+                  job.workspaceId !== churchId ||
+                  activeScopeRef.current.db !== db ||
+                  activeScopeRef.current.churchId !== churchId
+                ) return;
                 await deleteLocalImage(job.assetId);
               }
             } catch (error) {
@@ -982,6 +1032,77 @@ const LocalImageUploadManager = () => {
         await putLocalImageUploadJob(readyJob);
         jobs[index] = readyJob;
       }
+      for (let index = 0; index < jobs.length; index += 1) {
+        const job = jobs[index];
+        const intent = job.localVideoInputThumbnail;
+        if (
+          !intent?.mediaReferencePending ||
+          job.workspaceId !== churchId ||
+          activeScopeRef.current.db !== db ||
+          activeScopeRef.current.churchId !== churchId
+        ) continue;
+        try {
+          const authoritative = await loadMediaLibrary(db);
+          if (
+            activeScopeRef.current.db !== db ||
+            activeScopeRef.current.churchId !== churchId
+          ) continue;
+          const target = authoritative.list.find(
+            (item) => item.id === intent.targetMediaId,
+          );
+          const referenceCommitted = Boolean(
+            intent.targetSourceId &&
+            target?.localVideoInput?.sourceId === intent.targetSourceId &&
+            target.localImage?.id === job.assetId &&
+            target.localImage.storagePolicy === "local-and-cloud",
+          );
+          if (referenceCommitted) {
+            const activated = await activateStagedLocalVideoInputThumbnailUploadJobAtomically(
+              job.assetId,
+              Date.now(),
+            );
+            if (activated && activated.status !== "staged") {
+              jobs[index] = activated;
+            }
+            continue;
+          }
+
+          if (isLocalImageUploadStagingSessionActive(intent.stagingSessionId)) {
+            // Another active tab may still be writing this Media row. It can
+            // be retired after that session exits and its heartbeat expires.
+            continue;
+          }
+
+          const assetIsReferenced = authoritative.list.some(
+            (item) => item.localImage?.id === job.assetId,
+          );
+          const discarded = await discardStagedLocalVideoInputThumbnailUploadJobAtomically({
+            assetId: job.assetId,
+            workspaceId: churchId,
+            targetMediaId: intent.targetMediaId,
+          });
+          if (!discarded) continue;
+          if (!assetIsReferenced) {
+            if (
+              activeScopeRef.current.db !== db ||
+              activeScopeRef.current.churchId !== churchId
+            ) continue;
+            const latest = await loadMediaLibrary(db);
+            if (
+              activeScopeRef.current.db === db &&
+              activeScopeRef.current.churchId === churchId &&
+              !latest.list.some((item) => item.localImage?.id === job.assetId)
+            ) {
+              await deleteLocalImage(job.assetId);
+            }
+          }
+          jobs.splice(index, 1);
+          index -= 1;
+        } catch (error) {
+          // A staged image is never made runnable on an uncertain Media read.
+          console.warn("A staged thumbnail upload could not be reconciled:", error);
+        }
+      }
       const now = Date.now();
       const ready = getRunnableLocalImageUploadJobs(jobs, now);
       for (let index = 0; index < ready.length; index += 2) {
@@ -1019,6 +1140,10 @@ const LocalImageUploadManager = () => {
         if (!job) return;
         if (job.cancelRequested) {
           signalLocalImageUploadCancellation(assetId);
+          return;
+        }
+        if (job.localVideoInputThumbnail?.mediaReferencePending) {
+          void drainQueue();
           return;
         }
         if (isLocalImageUploadJobRunnable(job, Date.now())) void drainQueue();

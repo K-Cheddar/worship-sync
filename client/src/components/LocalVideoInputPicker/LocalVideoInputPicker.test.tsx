@@ -543,7 +543,7 @@ describe("LocalVideoInputPicker", () => {
     }
   });
 
-  it("keeps the picker open and shows the thumbnail persistence error", async () => {
+  it("retains the captured frame for retry after a failed link save", async () => {
     enumerateDevices.mockResolvedValue([
       createDevice("videoinput", "camera-1", "USB Capture"),
     ]);
@@ -558,17 +558,28 @@ describe("LocalVideoInputPicker", () => {
     const restoreCanvas = installEncodedThumbnailCanvas(frameBlob);
     const onLinked = jest
       .fn()
-      .mockRejectedValue(new Error("The thumbnail could not be saved to Media. Try again."));
-
-    try {
-      render(
+      .mockRejectedValueOnce(new Error("The thumbnail could not be saved to Media. Try again."))
+      .mockResolvedValue(undefined);
+    const PickerHost = () => {
+      const [open, setOpen] = useState(false);
+      return open ? (
         <LocalVideoInputPicker
           open
           hideTrigger
           source={source}
+          onOpenChange={setOpen}
           onLinked={onLinked}
-        />,
+        />
+      ) : (
+        <button type="button" onClick={() => setOpen(true)}>
+          Relink input
+        </button>
       );
+    };
+
+    try {
+      render(<PickerHost />);
+      fireEvent.click(screen.getByRole("button", { name: "Relink input" }));
       const video = (await screen.findByLabelText(
         "Input preview",
       )) as HTMLVideoElement;
@@ -590,6 +601,21 @@ describe("LocalVideoInputPicker", () => {
       ).toHaveAttribute("role", "alert");
       expect(screen.getByRole("button", { name: "Save local link" })).toBeInTheDocument();
       expect(onLinked).toHaveBeenCalledTimes(1);
+      await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+      expect(screen.getByAltText("Captured video input thumbnail")).toBeInTheDocument();
+      expect(URL.revokeObjectURL).not.toHaveBeenCalledWith("blob:captured-thumbnail");
+
+      fireEvent.click(screen.getByRole("button", { name: "Save local link" }));
+      await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(2));
+      expect(getUserMedia).toHaveBeenCalledTimes(2);
+      expect(onLinked.mock.calls[0][1]?.blob).toBe(frameBlob);
+      expect(onLinked.mock.calls[1][1]?.blob).toBe(frameBlob);
+      await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+      await waitFor(() => expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:captured-thumbnail"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Relink input" }));
+      await screen.findByLabelText("Input preview");
+      expect(screen.queryByAltText("Captured video input thumbnail")).not.toBeInTheDocument();
     } finally {
       restoreCanvas();
     }
@@ -730,6 +756,46 @@ describe("LocalVideoInputPicker", () => {
           originalToBlob,
         );
       }
+    }
+  });
+
+  it("clears a completed captured frame when the selected camera changes", async () => {
+    const user = userEvent.setup();
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "First Camera"),
+      createDevice("videoinput", "camera-2", "Second Camera"),
+    ]);
+    bindLocalVideoInput("live-source", "camera-1", "First Camera");
+    const frameBlob = new Blob(["camera one"], { type: "image/webp" });
+    const restoreCanvas = installEncodedThumbnailCanvas(frameBlob);
+    try {
+      render(
+        <LocalVideoInputPicker
+          open
+          hideTrigger
+          source={{
+            kind: "local-video-input",
+            sourceId: "live-source",
+            label: "First Camera",
+          }}
+          onLinked={jest.fn()}
+        />,
+      );
+      const video = (await screen.findByLabelText("Input preview")) as HTMLVideoElement;
+      await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(1));
+      markPreviewFrame(video);
+      await waitFor(() => expect(
+        screen.getByRole("button", { name: "Capture thumbnail" }),
+      ).toBeEnabled());
+      fireEvent.click(screen.getByRole("button", { name: "Capture thumbnail" }));
+      expect(await screen.findByAltText("Captured video input thumbnail")).toBeInTheDocument();
+
+      await user.click(screen.getByRole("combobox", { name: "Video input:" }));
+      await user.click(await screen.findByRole("option", { name: "Second Camera" }));
+      await waitFor(() => expect(getUserMedia).toHaveBeenCalledTimes(2));
+      expect(screen.queryByAltText("Captured video input thumbnail")).not.toBeInTheDocument();
+    } finally {
+      restoreCanvas();
     }
   });
 

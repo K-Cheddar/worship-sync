@@ -22,9 +22,23 @@ jest.mock("../utils/localImageAssets", () => {
     saveLocalImage: jest.fn().mockResolvedValue(undefined),
     deleteLocalImage: jest.fn().mockResolvedValue(undefined),
     deleteLocalImageUploadJob: jest.fn().mockResolvedValue(undefined),
+    discardStagedLocalVideoInputThumbnailUploadJobAtomically: jest.fn().mockResolvedValue(true),
     getLocalImageUploadJob: jest.fn().mockResolvedValue(undefined),
     getRememberedLocalImagePolicy: jest.fn(() => "local-only"),
     putLocalImageUploadJob: jest.fn().mockResolvedValue(undefined),
+    stageLocalVideoInputThumbnailUploadJobAtomically: jest.fn(async (job) => ({
+      ...job,
+      status: "staged",
+      localVideoInputThumbnail: {
+        ...job.localVideoInputThumbnail,
+        mediaReferencePending: true,
+      },
+    })),
+    activateStagedLocalVideoInputThumbnailUploadJobAtomically: jest.fn(async (assetId) => ({
+      id: assetId,
+      assetId,
+      status: "pending",
+    })),
     stageLocalImageUploadCleanupJobAtomically: jest.fn(async (job) => ({
       job,
       previous: undefined,
@@ -34,7 +48,6 @@ jest.mock("../utils/localImageAssets", () => {
 
 jest.mock("../utils/localImageUploadQueue", () => ({
   cancelLocalImageUpload: jest.fn().mockResolvedValue(undefined),
-  enqueueLocalImageUpload: jest.fn().mockResolvedValue(undefined),
 }));
 
 const mediaId = "local_input_camera-source";
@@ -249,27 +262,48 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     const assets = jest.requireMock("../utils/localImageAssets") as {
       deleteLocalImage: jest.Mock;
       deleteLocalImageUploadJob: jest.Mock;
+      discardStagedLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
       getLocalImageUploadJob: jest.Mock;
       getRememberedLocalImagePolicy: jest.Mock;
       putLocalImageUploadJob: jest.Mock;
       saveLocalImage: jest.Mock;
+      stageLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
+      activateStagedLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
       stageLocalImageUploadCleanupJobAtomically: jest.Mock;
     };
     assets.deleteLocalImage.mockReset().mockResolvedValue(undefined);
     assets.deleteLocalImageUploadJob.mockReset().mockResolvedValue(undefined);
+    assets.discardStagedLocalVideoInputThumbnailUploadJobAtomically
+      .mockReset()
+      .mockResolvedValue(true);
     assets.getLocalImageUploadJob.mockReset().mockResolvedValue(undefined);
     assets.getRememberedLocalImagePolicy.mockReset().mockReturnValue("local-only");
     assets.putLocalImageUploadJob.mockReset().mockResolvedValue(undefined);
     assets.saveLocalImage.mockReset().mockResolvedValue(undefined);
+    assets.stageLocalVideoInputThumbnailUploadJobAtomically
+      .mockReset()
+      .mockImplementation(async (job) => ({
+        ...job,
+        status: "staged",
+        localVideoInputThumbnail: {
+          ...job.localVideoInputThumbnail,
+          mediaReferencePending: true,
+        },
+      }));
+    assets.activateStagedLocalVideoInputThumbnailUploadJobAtomically
+      .mockReset()
+      .mockImplementation(async (assetId) => ({
+        id: assetId,
+        assetId,
+        status: "pending",
+      }));
     assets.stageLocalImageUploadCleanupJobAtomically
       .mockReset()
       .mockImplementation(async (job) => ({ job, previous: undefined }));
     const queue = jest.requireMock("../utils/localImageUploadQueue") as {
       cancelLocalImageUpload: jest.Mock;
-      enqueueLocalImageUpload: jest.Mock;
     };
     queue.cancelLocalImageUpload.mockReset().mockResolvedValue(undefined);
-    queue.enqueueLocalImageUpload.mockReset().mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -684,25 +718,25 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     expect(assets.deleteLocalImage).not.toHaveBeenCalledWith(replacement.id);
   });
 
-  it("reports failure when cloud queue recovery cannot persist local-only policy", async () => {
+  it("preserves the prior thumbnail when the cloud intent and local-only fallback cannot be persisted", async () => {
+    const original = createMediaRow();
     const { result, db } = renderPersistenceHook(
-      createMediaRow(),
+      original,
       true,
-      createMediaRow(),
+      original,
       { churchId: "church-1", isGuestSession: false },
     );
     const assets = jest.requireMock("../utils/localImageAssets") as {
       getRememberedLocalImagePolicy: jest.Mock;
       saveLocalImage: jest.Mock;
       deleteLocalImage: jest.Mock;
+      stageLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
     };
     assets.getRememberedLocalImagePolicy.mockReturnValue("local-and-cloud");
-    jest.mocked(uploadQueue.enqueueLocalImageUpload).mockImplementationOnce(
-      async () => {
-        db.rejectNextRowPut();
-        throw new Error("queue storage unavailable");
-      },
+    assets.stageLocalVideoInputThumbnailUploadJobAtomically.mockRejectedValueOnce(
+      new Error("queue storage unavailable"),
     );
+    db.rejectNextRowPut();
 
     await expect(
       result.current.saveVideoInputThumbnail(mediaId, {
@@ -713,15 +747,8 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     ).rejects.toThrow("The thumbnail could not be saved to Media. Try again.");
 
     const savedAssetId = assets.saveLocalImage.mock.calls[0][0].id as string;
-    expect(db.readRow()).toEqual(
-      expect.objectContaining({
-        localImage: expect.objectContaining({
-          id: savedAssetId,
-          storagePolicy: "local-and-cloud",
-        }),
-      }),
-    );
-    expect(assets.deleteLocalImage).not.toHaveBeenCalledWith(savedAssetId);
+    expect(db.readRow()).toMatchObject(original);
+    expect(assets.deleteLocalImage).toHaveBeenCalledWith(savedAssetId);
   });
 
   it("reports the local-only fallback only after its policy is persisted", async () => {
@@ -747,10 +774,11 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
       getRememberedLocalImagePolicy: jest.Mock;
       saveLocalImage: jest.Mock;
       putLocalImageUploadJob: jest.Mock;
+      stageLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
       stageLocalImageUploadCleanupJobAtomically: jest.Mock;
     };
     assets.getRememberedLocalImagePolicy.mockReturnValue("local-and-cloud");
-    jest.mocked(uploadQueue.enqueueLocalImageUpload).mockRejectedValueOnce(
+    assets.stageLocalVideoInputThumbnailUploadJobAtomically.mockRejectedValueOnce(
       new Error("queue storage unavailable"),
     );
 
@@ -790,6 +818,141 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
         cleanupReady: true,
       }),
     );
+  });
+
+  it("stages a non-runnable cloud intent before Media adopts the thumbnail", async () => {
+    const original = createMediaRow();
+    const { result, db } = renderPersistenceHook(
+      original,
+      true,
+      original,
+      { churchId: "church-1", isGuestSession: false },
+    );
+    const assets = jest.requireMock("../utils/localImageAssets") as {
+      getRememberedLocalImagePolicy: jest.Mock;
+      stageLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
+      activateStagedLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
+    };
+    assets.getRememberedLocalImagePolicy.mockReturnValue("local-and-cloud");
+    db.deferNextRowPut();
+
+    let saving!: Promise<string>;
+    act(() => {
+      saving = result.current.saveVideoInputThumbnail(mediaId, {
+        blob: new Blob(["replacement"], { type: "image/webp" }),
+        width: 640,
+        height: 360,
+      });
+    });
+    await waitFor(() => expect(db.put).toHaveBeenCalled());
+
+    const stagedJob = assets.stageLocalVideoInputThumbnailUploadJobAtomically.mock.results[0]?.value;
+    expect(stagedJob).toBeDefined();
+    expect(assets.stageLocalVideoInputThumbnailUploadJobAtomically.mock.invocationCallOrder[0]).toBeLessThan(
+      db.put.mock.invocationCallOrder[0],
+    );
+    expect(assets.activateStagedLocalVideoInputThumbnailUploadJobAtomically).not.toHaveBeenCalled();
+    expect(db.readRow()).toMatchObject(original);
+
+    await act(async () => {
+      db.commitDeferredPut();
+      await saving;
+    });
+
+    const savedAssetId = (assets.stageLocalVideoInputThumbnailUploadJobAtomically.mock.calls[0][0] as LocalImageUploadJob).assetId;
+    expect(assets.stageLocalVideoInputThumbnailUploadJobAtomically).toHaveBeenCalledWith(
+      expect.objectContaining({
+        assetId: savedAssetId,
+        status: "staged",
+        localVideoInputThumbnail: expect.objectContaining({
+          targetMediaId: mediaId,
+          targetSourceId: source.sourceId,
+          mediaReferencePending: true,
+        }),
+      }),
+      expect.any(Number),
+    );
+    expect(assets.activateStagedLocalVideoInputThumbnailUploadJobAtomically).toHaveBeenCalledWith(
+      savedAssetId,
+      expect.any(Number),
+    );
+    expect(db.readRow()).toEqual(expect.objectContaining({
+      localImage: expect.objectContaining({
+        id: savedAssetId,
+        storagePolicy: "local-and-cloud",
+      }),
+    }));
+    expect(await saving).toBe("Thumbnail saved here. Uploading its cloud copy.");
+  });
+
+  it("keeps a staged intent recoverable when the Media write committed but both verification reads fail", async () => {
+    const original = createMediaRow();
+    const { result, db } = renderPersistenceHook(
+      original,
+      true,
+      original,
+      { churchId: "church-1", isGuestSession: false },
+    );
+    const assets = jest.requireMock("../utils/localImageAssets") as {
+      getRememberedLocalImagePolicy: jest.Mock;
+      saveLocalImage: jest.Mock;
+      deleteLocalImage: jest.Mock;
+      stageLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
+      activateStagedLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
+    };
+    assets.getRememberedLocalImagePolicy.mockReturnValue("local-and-cloud");
+    db.failReadAfterNextRowPut(2);
+
+    await expect(result.current.saveVideoInputThumbnail(mediaId, {
+      blob: new Blob(["replacement"], { type: "image/webp" }),
+      width: 640,
+      height: 360,
+    })).rejects.toThrow("The thumbnail could not be saved to Media. Try again.");
+
+    const stagedJob = assets.stageLocalVideoInputThumbnailUploadJobAtomically.mock.calls[0][0] as LocalImageUploadJob;
+    expect(db.readRow()).toEqual(expect.objectContaining({
+      localImage: expect.objectContaining({
+        id: stagedJob.assetId,
+        storagePolicy: "local-and-cloud",
+      }),
+    }));
+    expect(stagedJob.localVideoInputThumbnail?.mediaReferencePending).toBe(true);
+    expect(assets.activateStagedLocalVideoInputThumbnailUploadJobAtomically).not.toHaveBeenCalled();
+    expect(assets.deleteLocalImage).not.toHaveBeenCalledWith(stagedJob.assetId);
+  });
+
+  it("retires a staged cloud intent and its bytes after a definitive Media write failure", async () => {
+    const original = createMediaRow();
+    const { result, db } = renderPersistenceHook(
+      original,
+      true,
+      original,
+      { churchId: "church-1", isGuestSession: false },
+    );
+    const assets = jest.requireMock("../utils/localImageAssets") as {
+      getRememberedLocalImagePolicy: jest.Mock;
+      saveLocalImage: jest.Mock;
+      deleteLocalImage: jest.Mock;
+      stageLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
+      discardStagedLocalVideoInputThumbnailUploadJobAtomically: jest.Mock;
+    };
+    assets.getRememberedLocalImagePolicy.mockReturnValue("local-and-cloud");
+    db.rejectNextRowPut();
+
+    await expect(result.current.saveVideoInputThumbnail(mediaId, {
+      blob: new Blob(["replacement"], { type: "image/webp" }),
+      width: 640,
+      height: 360,
+    })).rejects.toThrow("The thumbnail could not be saved to Media. Try again.");
+
+    const stagedJob = assets.stageLocalVideoInputThumbnailUploadJobAtomically.mock.calls[0][0] as LocalImageUploadJob;
+    expect(assets.discardStagedLocalVideoInputThumbnailUploadJobAtomically).toHaveBeenCalledWith({
+      assetId: stagedJob.assetId,
+      workspaceId: "church-1",
+      targetMediaId: mediaId,
+    });
+    expect(assets.deleteLocalImage).toHaveBeenCalledWith(stagedJob.assetId);
+    expect(db.readRow()).toMatchObject(original);
   });
 
   it("keeps an active thumbnail upload checkpoint when a local-only replacement commits", async () => {

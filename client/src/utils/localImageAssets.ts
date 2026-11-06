@@ -20,11 +20,68 @@ export const THUMBNAIL_STORE_NAME = "imageThumbnails";
 const UPLOAD_JOB_STORE_NAME = "uploadJobs";
 const WORKSPACE_INDEX_NAME = "workspaceId";
 const POLICY_KEY_PREFIX = "worshipsync_local_media_upload_policy_v2";
+const LOCAL_IMAGE_UPLOAD_SESSION_PREFIX = "worshipsync_local_media_upload_session_v1:";
+const LOCAL_IMAGE_UPLOAD_SESSION_HEARTBEAT_MS = 30_000;
+const LOCAL_IMAGE_UPLOAD_SESSION_LEASE_MS = 5 * 60_000;
 const LOCAL_IMAGE_URL_PREFIX = "local-image://";
 const MAX_LOCAL_IMAGE_BYTES = 25 * 1024 * 1024;
 const THUMBNAIL_MAX_WIDTH = 160;
 const THUMBNAIL_MAX_HEIGHT = 90;
 const THUMBNAIL_QUALITY = 0.78;
+const localImageUploadSessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+let localImageUploadSessionUsers = 0;
+let localImageUploadSessionHeartbeat: number | undefined;
+
+const writeLocalImageUploadSessionHeartbeat = () => {
+  try {
+    window.localStorage.setItem(
+      `${LOCAL_IMAGE_UPLOAD_SESSION_PREFIX}${localImageUploadSessionId}`,
+      String(Date.now() + LOCAL_IMAGE_UPLOAD_SESSION_LEASE_MS),
+    );
+  } catch {
+    // Without storage, readers fail closed and preserve staged intents.
+  }
+};
+
+export const getLocalImageUploadStagingSessionId = () => localImageUploadSessionId;
+
+/** Keep staged intents from another active tab out of restart reconciliation. */
+export const isLocalImageUploadStagingSessionActive = (sessionId?: string) => {
+  if (!sessionId) return false;
+  try {
+    const expiresAt = Number(
+      window.localStorage.getItem(`${LOCAL_IMAGE_UPLOAD_SESSION_PREFIX}${sessionId}`),
+    );
+    return expiresAt > Date.now();
+  } catch {
+    // If session state is unavailable, preserve the intent rather than risk
+    // deleting an asset while another tab may still be committing its Media row.
+    return true;
+  }
+};
+
+/** Register this tab as active while the upload manager is mounted. */
+export const registerLocalImageUploadManagerSession = () => {
+  localImageUploadSessionUsers += 1;
+  writeLocalImageUploadSessionHeartbeat();
+  if (localImageUploadSessionHeartbeat === undefined) {
+    localImageUploadSessionHeartbeat = window.setInterval(
+      writeLocalImageUploadSessionHeartbeat,
+      LOCAL_IMAGE_UPLOAD_SESSION_HEARTBEAT_MS,
+    );
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    localImageUploadSessionUsers = Math.max(0, localImageUploadSessionUsers - 1);
+    if (localImageUploadSessionUsers === 0 && localImageUploadSessionHeartbeat !== undefined) {
+      window.clearInterval(localImageUploadSessionHeartbeat);
+      localImageUploadSessionHeartbeat = undefined;
+    }
+  };
+};
+
 const normalizeCloudinaryUrl = (value: string) => {
   if (!value) return "";
   try {
@@ -60,6 +117,7 @@ export type StoredLocalImageThumbnail = {
 };
 
 export type LocalImageUploadJobStatus =
+  | "staged"
   | "pending"
   | "uploading"
   | "failed"
@@ -88,6 +146,11 @@ export type LocalImageUploadJob = {
   /** Upload this image as a thumbnail on an existing local video-input row. */
   localVideoInputThumbnail?: {
     targetMediaId: string;
+    targetSourceId?: string;
+    /** Session that owns the Media commit while the intent is staged. */
+    stagingSessionId?: string;
+    /** A durable upload intent that cannot run until Media adopts this asset. */
+    mediaReferencePending?: boolean;
     previousAssetId?: string;
     previousCloudPublicId?: string;
     previousAssets?: Array<{
@@ -734,6 +797,7 @@ export const enqueueLocalImageUploadJobAtomically = async (
   now: number,
 ) =>
   mutateLocalImageUploadJob(candidate.assetId, (current) => {
+    if (current?.localVideoInputThumbnail?.mediaReferencePending) return current;
     if (current?.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now) {
       return current;
     }
@@ -759,6 +823,103 @@ export const enqueueLocalImageUploadJobAtomically = async (
       createdAt: current?.createdAt ?? candidate.createdAt,
     };
   });
+
+/**
+ * Persist a thumbnail upload intent before its Media reference is committed.
+ * The staged status is deliberately not runnable, including to older clients
+ * that only recognize the existing upload statuses.
+ */
+export const stageLocalVideoInputThumbnailUploadJobAtomically = async (
+  candidate: LocalImageUploadJob,
+  now: number,
+) =>
+  mutateLocalImageUploadJob(candidate.assetId, (current) => {
+    if (current) return current;
+    if (!candidate.localVideoInputThumbnail) return undefined;
+    return {
+      ...candidate,
+      status: "staged",
+      phase: "queued",
+      localVideoInputThumbnail: {
+        ...candidate.localVideoInputThumbnail,
+        mediaReferencePending: true,
+        stagingSessionId: localImageUploadSessionId,
+      },
+      createdAt: candidate.createdAt || new Date(now).toISOString(),
+      updatedAt: new Date(now).toISOString(),
+    };
+  });
+
+/** Activate a staged intent without replacing provider or lease checkpoints. */
+export const activateStagedLocalVideoInputThumbnailUploadJobAtomically = async (
+  assetId: string,
+  now: number,
+) =>
+  mutateLocalImageUploadJob(assetId, (current) => {
+    if (
+      !current ||
+      current.status === "complete" ||
+      current.status === "cancelled" ||
+      current.cleanupOnly ||
+      !current.localVideoInputThumbnail?.mediaReferencePending
+    ) return current;
+    const localVideoInputThumbnail = { ...current.localVideoInputThumbnail };
+    delete localVideoInputThumbnail.mediaReferencePending;
+    return {
+      ...current,
+      localVideoInputThumbnail,
+      status: current.cloudMedia ? "uploaded" : "pending",
+      phase: current.cloudMedia ? "committing" : "queued",
+      progress: current.cloudMedia ? (current.progress ?? 90) : 0,
+      nextAttemptAt: 0,
+      updatedAt: new Date(now).toISOString(),
+    };
+  });
+
+/** Retire only an unclaimed staged intent for the expected target and scope. */
+export const discardStagedLocalVideoInputThumbnailUploadJobAtomically = async ({
+  assetId,
+  workspaceId,
+  targetMediaId,
+}: {
+  assetId: string;
+  workspaceId: string;
+  targetMediaId: string;
+}) => {
+  const db = await openLocalAssetDb();
+  let deleted = false;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(UPLOAD_JOB_STORE_NAME, "readwrite");
+      const store = transaction.objectStore(UPLOAD_JOB_STORE_NAME);
+      const request = store.get(assetId);
+      request.onsuccess = () => {
+        const current = request.result as LocalImageUploadJob | undefined;
+        if (
+          current?.workspaceId !== workspaceId ||
+          (current.status !== "staged" && current.status !== "pending") ||
+          !current.localVideoInputThumbnail?.mediaReferencePending ||
+          current.localVideoInputThumbnail.targetMediaId !== targetMediaId ||
+          current.leaseOwnerId ||
+          current.providerUploadId ||
+          current.cloudMedia
+        ) return;
+        store.delete(assetId);
+        deleted = true;
+      };
+      request.onerror = () =>
+        reject(request.error ?? new Error("The upload job could not be read."));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () =>
+        reject(transaction.error ?? new Error("The staged upload could not be retired."));
+      transaction.onabort = transaction.onerror;
+    });
+  } finally {
+    db.close();
+  }
+  if (deleted) notifyLocalImageChange(assetId, "upload-job");
+  return deleted;
+};
 
 export const retryLocalImageUploadJobAtomically = async (
   assetId: string,

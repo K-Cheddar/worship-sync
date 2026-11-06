@@ -373,6 +373,8 @@ const LocalVideoInputPicker = ({
   const pickerSourceId = source?.sourceId;
   const runningInElectron = isElectron();
 
+  // A preview restart can follow a failed save; keep the captured still while
+  // the selected source remains the same so the operator can retry it.
   useEffect(() => {
     captureGenerationRef.current += 1;
     thumbnailActionRequestRef.current += 1;
@@ -388,7 +390,6 @@ const LocalVideoInputPicker = ({
     browserShare?.stream,
     desktopSourceId,
     open,
-    previewRefreshKey,
     source?.sourceId,
     videoDeviceId,
   ]);
