@@ -339,6 +339,9 @@ const LocalVideoInputPicker = ({
   const [isRemovingThumbnail, setIsRemovingThumbnail] = useState(false);
   const [thumbnailRemoved, setThumbnailRemoved] = useState(false);
   const previewPausedRef = useRef(false);
+  const pendingNewSourceRef = useRef<LocalVideoInputMediaSource | undefined>(
+    undefined,
+  );
   const refreshRequestRef = useRef(0);
   const desktopRequestRef = useRef(0);
   const linkedShareRef = useRef<MediaStream | undefined>(undefined);
@@ -899,6 +902,7 @@ const LocalVideoInputPicker = ({
       );
       return false;
     }
+    if (!source) pendingNewSourceRef.current = undefined;
     setOpen(false);
     return true;
   };
@@ -992,12 +996,12 @@ const LocalVideoInputPicker = ({
   };
 
   const link = async () => {
-    const nextSource =
-      source ??
+    const nextSource = source ?? pendingNewSourceRef.current ??
       createLocalVideoInputMediaSource(
         label,
         isDesktopMode ? captureKind : "device",
       );
+    if (!source) pendingNewSourceRef.current = nextSource;
     setIsLoading(true);
     setError("");
     let linked = false;
@@ -1254,7 +1258,12 @@ const LocalVideoInputPicker = ({
           variant="tertiary"
           svg={triggerIcon}
           className={className}
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            // Reopening Add starts a deliberate new input attempt. Failed saves
+            // within the open picker retain their source ID for retry.
+            if (!source) pendingNewSourceRef.current = undefined;
+            setOpen(true);
+          }}
         >
           {triggerLabel}
         </Button>

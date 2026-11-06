@@ -13,6 +13,7 @@ import {
   createMockGlobalContext,
   createMockPouchDB,
 } from "../../../test/mocks";
+import { VideoInputMediaWriteOutcomeUnknownError } from "../../../hooks/useLocalVideoInputThumbnailPersistence";
 
 const mockDispatch = jest.fn();
 let mockState: any;
@@ -870,7 +871,7 @@ describe("SlideEditor", () => {
     expect(screen.getByTestId("local-video-input-picker")).toBeInTheDocument();
   });
 
-  it("preserves an existing input row and exposes thumbnail save and remove in Slide Editor", async () => {
+  it("waits for Media before updating a relinked slide and exposes thumbnail controls", async () => {
     const source = {
       kind: "local-video-input" as const,
       sourceId: "local_video_1",
@@ -928,6 +929,13 @@ describe("SlideEditor", () => {
       width: 640,
       height: 360,
     };
+    mockSaveVideoInputThumbnail
+      .mockRejectedValueOnce(
+        new VideoInputMediaWriteOutcomeUnknownError(
+          "The thumbnail could not be saved to Media. Try again.",
+        ),
+      )
+      .mockResolvedValueOnce("Thumbnail saved.");
 
     render(<SlideEditor access="full" presentationMode="present" />);
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
@@ -940,6 +948,19 @@ describe("SlideEditor", () => {
       expect.any(Function),
     );
     await act(async () => {
+      await expect(
+        mockLocalVideoInputPickerProps?.onLinked(
+          { ...source, label: "Relinked camera" },
+          frame,
+        ),
+      ).rejects.toBeInstanceOf(VideoInputMediaWriteOutcomeUnknownError);
+    });
+
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+    expect(mockUpdateArrangements).not.toHaveBeenCalled();
+    expect(mockLocalVideoInputPickerProps?.open).toBe(true);
+
+    await act(async () => {
       await mockLocalVideoInputPickerProps?.onLinked(
         { ...source, label: "Relinked camera" },
         frame,
@@ -947,6 +968,7 @@ describe("SlideEditor", () => {
     });
 
     expect(mockPersistVideoInputMediaPatch).not.toHaveBeenCalled();
+    expect(mockSaveVideoInputThumbnail).toHaveBeenCalledTimes(2);
     expect(mockSaveVideoInputThumbnail).toHaveBeenCalledWith(
       mediaId,
       frame,
@@ -967,6 +989,14 @@ describe("SlideEditor", () => {
     expect(mockDispatch).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: "media/addItemToMediaList" }),
     );
+    expect(mockUpdateSlides).toHaveBeenCalledWith({
+      slides: [expect.objectContaining({
+        mediaSource: expect.objectContaining({
+          sourceId: source.sourceId,
+          label: "Relinked camera",
+        }),
+      })],
+    });
   });
 
   it("shows video input details left of the preview instead of section text", () => {

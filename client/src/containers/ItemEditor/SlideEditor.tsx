@@ -1325,26 +1325,6 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         };
       };
 
-      if (type === "song" && arrangement?.slides) {
-        const updatedArrangements = item.arrangements.map((arr, idx) => {
-          if (idx !== item.selectedArrangement) return arr;
-          return {
-            ...arr,
-            slides: arr.slides.map((slide, slideIndex) =>
-              slideIndex === selectedSlide ? applySource(slide) : slide,
-            ),
-          };
-        });
-        dispatch(updateArrangements({ arrangements: updatedArrangements }));
-      } else {
-        dispatch(
-          updateSlides({
-            slides: slides.map((slide, slideIndex) =>
-              slideIndex === selectedSlide ? applySource(slide) : slide,
-            ),
-          }),
-        );
-      }
       try {
         const mediaPatch = {
           name: ownedSource.label,
@@ -1366,26 +1346,45 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         }
         pendingInitialVideoRowsRef.current.delete(mediaId);
       } catch (error) {
-        if (!existing || pendingInitialRow) {
-          if (
-            error instanceof VideoInputMediaWriteOutcomeUnknownError &&
-            rowToRetainOrRollback
-          ) {
+        if (error instanceof VideoInputMediaWriteOutcomeUnknownError) {
+          // Keep the slide on its previous source until a retry confirms the
+          // Media row. The picker stays open and reuses this logical source ID.
+          if ((!existing || pendingInitialRow) && rowToRetainOrRollback) {
             pendingInitialVideoRowsRef.current.set(
               mediaId,
               rowToRetainOrRollback,
             );
-          } else {
-            if (rowToRetainOrRollback) {
-              removeOptimisticVideoInputMediaRow(
-                mediaId,
-                rowToRetainOrRollback,
-              );
-            }
-            pendingInitialVideoRowsRef.current.delete(mediaId);
           }
+          throw error;
         }
+        if ((!existing || pendingInitialRow) && rowToRetainOrRollback) {
+          removeOptimisticVideoInputMediaRow(
+            mediaId,
+            rowToRetainOrRollback,
+          );
+        }
+        pendingInitialVideoRowsRef.current.delete(mediaId);
         throw error;
+      }
+      if (type === "song" && arrangement?.slides) {
+        const updatedArrangements = item.arrangements.map((arr, idx) => {
+          if (idx !== item.selectedArrangement) return arr;
+          return {
+            ...arr,
+            slides: arr.slides.map((slide, slideIndex) =>
+              slideIndex === selectedSlide ? applySource(slide) : slide,
+            ),
+          };
+        });
+        dispatch(updateArrangements({ arrangements: updatedArrangements }));
+      } else {
+        dispatch(
+          updateSlides({
+            slides: slides.map((slide, slideIndex) =>
+              slideIndex === selectedSlide ? applySource(slide) : slide,
+            ),
+          }),
+        );
       }
       setIsVideoInputRelinkOpen(false);
     },

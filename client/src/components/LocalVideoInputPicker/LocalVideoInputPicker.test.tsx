@@ -595,6 +595,45 @@ describe("LocalVideoInputPicker", () => {
     }
   });
 
+  it("reuses an unsaved source ID on retry and creates a new ID for a new add", async () => {
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    mockWarmVideoLink();
+    const onLinked = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("Temporary Media write failure."))
+      .mockResolvedValue(undefined);
+
+    openPickerWithConditionalMount(onLinked);
+    await screen.findByLabelText("Input preview");
+    const addButton = await screen.findByRole("button", {
+      name: "Add to Media",
+    });
+    fireEvent.click(addButton);
+    await screen.findByRole("alert");
+    const firstSourceId = onLinked.mock.calls[0][0].sourceId as string;
+
+    fireEvent.click(screen.getByRole("button", { name: "Add to Media" }));
+    await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(2));
+    expect(onLinked.mock.calls[1][0].sourceId).toBe(firstSourceId);
+
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Add video input" }),
+    );
+    await screen.findByLabelText("Input preview");
+    const nextAddButton = await screen.findByRole("button", {
+      name: "Add to Media",
+    });
+    await waitFor(() => expect(nextAddButton).toBeEnabled());
+    fireEvent.click(nextAddButton);
+    await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(3));
+    expect(onLinked.mock.calls[2][0].sourceId).not.toBe(firstSourceId);
+  });
+
   it("ignores a frame that finishes encoding after the selected input changes", async () => {
     const user = userEvent.setup();
     enumerateDevices.mockResolvedValue([
