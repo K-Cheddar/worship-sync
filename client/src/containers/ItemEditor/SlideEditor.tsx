@@ -106,7 +106,10 @@ import {
   buildLocalVideoInputPresentation,
 } from "../../utils/localVideoInput";
 import type { LocalVideoThumbnailFrame } from "../../utils/localVideoInputThumbnail";
-import { useLocalVideoInputThumbnailPersistence } from "../../hooks/useLocalVideoInputThumbnailPersistence";
+import {
+  useLocalVideoInputThumbnailPersistence,
+  VideoInputMediaWriteOutcomeUnknownError,
+} from "../../hooks/useLocalVideoInputThumbnailPersistence";
 import type { PresentationControllerMode } from "../../context/presentationControllerMode";
 import { resolveOutlineForScope } from "../../utils/outlineScope";
 import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
@@ -1262,6 +1265,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     saveVideoInputThumbnail,
     removeVideoInputThumbnail,
   } = useLocalVideoInputThumbnailPersistence();
+  const pendingInitialVideoRowsRef = useRef(new Map<string, MediaType>());
 
   const handleVideoInputRelinked = useCallback(
     async (
@@ -1277,6 +1281,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       const now = new Date().toISOString();
       const mediaId = `local_input_${ownedSource.sourceId}`;
       const existing = mediaList.find((m) => m.id === mediaId);
+      const pendingInitialRow = pendingInitialVideoRowsRef.current.get(mediaId);
       let optimisticRow: MediaType | undefined;
       if (!existing) {
         optimisticRow = {
@@ -1298,6 +1303,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         };
         dispatch(addItemToMediaList(optimisticRow));
       }
+      const rowToRetainOrRollback = optimisticRow ?? pendingInitialRow;
+      const allowCreate = !existing || Boolean(pendingInitialRow);
 
       const applySource = (slide: ItemSlideType): ItemSlideType => {
         const nextName = shouldAdoptVideoInputSlideName(
@@ -1347,19 +1354,36 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         if (initialThumbnail) {
           await saveVideoInputThumbnail(mediaId, initialThumbnail, {
             mediaPatch,
-            allowCreate: !existing,
+            allowCreate,
           });
         } else {
           await persistVideoInputMediaPatch(
             mediaId,
             ownedSource.sourceId,
             mediaPatch,
-            !existing,
+            allowCreate,
           );
         }
+        pendingInitialVideoRowsRef.current.delete(mediaId);
       } catch (error) {
-        if (!existing && optimisticRow) {
-          removeOptimisticVideoInputMediaRow(mediaId, optimisticRow);
+        if (!existing || pendingInitialRow) {
+          if (
+            error instanceof VideoInputMediaWriteOutcomeUnknownError &&
+            rowToRetainOrRollback
+          ) {
+            pendingInitialVideoRowsRef.current.set(
+              mediaId,
+              rowToRetainOrRollback,
+            );
+          } else {
+            if (rowToRetainOrRollback) {
+              removeOptimisticVideoInputMediaRow(
+                mediaId,
+                rowToRetainOrRollback,
+              );
+            }
+            pendingInitialVideoRowsRef.current.delete(mediaId);
+          }
         }
         throw error;
       }

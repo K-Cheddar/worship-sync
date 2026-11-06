@@ -10,7 +10,10 @@ import { MEDIA_LIBRARY_META_ID, MEDIA_FOLDERS_ID, mediaItemDocId } from "../util
 import { updateMediaItemFields } from "../store/mediaSlice";
 import type { LocalImageUploadJob } from "../utils/localImageAssets";
 import * as uploadQueue from "../utils/localImageUploadQueue";
-import { useLocalVideoInputThumbnailPersistence } from "./useLocalVideoInputThumbnailPersistence";
+import {
+  useLocalVideoInputThumbnailPersistence,
+  VideoInputMediaWriteOutcomeUnknownError,
+} from "./useLocalVideoInputThumbnailPersistence";
 
 jest.mock("../utils/localImageAssets", () => {
   const actual = jest.requireActual("../utils/localImageAssets") as Record<string, unknown>;
@@ -529,6 +532,94 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     expect(deleteLocalImage).not.toHaveBeenCalledWith(savedAssetId);
   });
 
+  it("marks a combined initial add as uncertain when both post-write reads fail", async () => {
+    const optimisticRow = {
+      ...createMediaRow(),
+      thumbnail: "",
+      localImage: undefined,
+    } as MediaType;
+    const { result, db } = renderPersistenceHook(
+      optimisticRow,
+      false,
+      optimisticRow,
+    );
+    db.failReadAfterNextRowPut(2);
+
+    await expect(
+      result.current.saveVideoInputThumbnail(
+        mediaId,
+        {
+          blob: new Blob(["still"], { type: "image/webp" }),
+          width: 640,
+          height: 360,
+        },
+        {
+          mediaPatch: { name: "New camera", localVideoInput: source },
+          allowCreate: true,
+        },
+      ),
+    ).rejects.toBeInstanceOf(VideoInputMediaWriteOutcomeUnknownError);
+
+    const { saveLocalImage, deleteLocalImage } = jest.requireMock(
+      "../utils/localImageAssets",
+    ) as { saveLocalImage: jest.Mock; deleteLocalImage: jest.Mock };
+    const savedAssetId = saveLocalImage.mock.calls[0][0].id as string;
+    expect(db.readRow()).toEqual(
+      expect.objectContaining({
+        name: "New camera",
+        localVideoInput: source,
+        localImage: expect.objectContaining({ id: savedAssetId }),
+      }),
+    );
+    expect(deleteLocalImage).not.toHaveBeenCalledWith(savedAssetId);
+  });
+
+  it("does not clear a newer cloud-only thumbnail while removal cleanup is staged", async () => {
+    const firstUrl = "https://res.cloudinary.com/demo/image/upload/v1/thumbnail-a.webp";
+    const secondUrl = "https://res.cloudinary.com/demo/image/upload/v1/thumbnail-b.webp";
+    const row = {
+      ...createMediaRow(),
+      thumbnail: firstUrl,
+      localImage: undefined,
+    } as MediaType;
+    const { result, db } = renderPersistenceHook(
+      row,
+      true,
+      row,
+      { churchId: "church-1", isGuestSession: false },
+    );
+    const assets = jest.requireMock("../utils/localImageAssets") as {
+      deleteLocalImageUploadJob: jest.Mock;
+      putLocalImageUploadJob: jest.Mock;
+      stageLocalImageUploadCleanupJobAtomically: jest.Mock;
+    };
+    const staging = deferred<{ job: LocalImageUploadJob; previous: undefined }>();
+    assets.stageLocalImageUploadCleanupJobAtomically.mockImplementationOnce(
+      () => staging.promise,
+    );
+
+    let removing!: Promise<void>;
+    act(() => {
+      removing = result.current.removeVideoInputThumbnail(mediaId);
+    });
+    await waitFor(() =>
+      expect(assets.stageLocalImageUploadCleanupJobAtomically).toHaveBeenCalled(),
+    );
+    db.updatePersistedRow({ thumbnail: secondUrl });
+    const stagedJob = assets.stageLocalImageUploadCleanupJobAtomically.mock
+      .calls[0][0] as LocalImageUploadJob;
+
+    await act(async () => {
+      staging.resolve({ job: stagedJob, previous: undefined });
+      await expect(removing).rejects.toThrow("This thumbnail changed.");
+    });
+
+    expect(db.readRow()).toEqual(expect.objectContaining({ thumbnail: secondUrl }));
+    expect(db.put).not.toHaveBeenCalled();
+    expect(assets.deleteLocalImageUploadJob).toHaveBeenCalledWith(stagedJob.assetId);
+    expect(assets.putLocalImageUploadJob).not.toHaveBeenCalled();
+  });
+
   it("does not remove a replacement thumbnail after removal starts for an older asset", async () => {
     const row = { ...createMediaRow(), thumbnail: "" };
     const { result, db } = renderPersistenceHook(row, true, row);
@@ -634,7 +725,18 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
   });
 
   it("reports the local-only fallback only after its policy is persisted", async () => {
-    const row = createMediaRow();
+    const previousCloudUrl = "https://res.cloudinary.com/demo/image/upload/v1/previous-thumbnail.webp";
+    const row = {
+      ...createMediaRow(),
+      thumbnail: previousCloudUrl,
+      localImage: {
+        ...oldLocalImage,
+        storagePolicy: "local-and-cloud" as const,
+        cloudPublicId: "previous-cloud-public-id",
+        cloudUrl: previousCloudUrl,
+        cloudMediaId: "previous-cloud-media-id",
+      },
+    } as MediaType;
     const { result, db } = renderPersistenceHook(
       row,
       true,
@@ -644,6 +746,8 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     const assets = jest.requireMock("../utils/localImageAssets") as {
       getRememberedLocalImagePolicy: jest.Mock;
       saveLocalImage: jest.Mock;
+      putLocalImageUploadJob: jest.Mock;
+      stageLocalImageUploadCleanupJobAtomically: jest.Mock;
     };
     assets.getRememberedLocalImagePolicy.mockReturnValue("local-and-cloud");
     jest.mocked(uploadQueue.enqueueLocalImageUpload).mockRejectedValueOnce(
@@ -661,10 +765,29 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     const savedAssetId = assets.saveLocalImage.mock.calls[0][0].id as string;
     expect(db.readRow()).toEqual(
       expect.objectContaining({
+        thumbnail: "",
         localImage: expect.objectContaining({
           id: savedAssetId,
           storagePolicy: "local-only",
         }),
+      }),
+    );
+    expect(db.readRow()?.localImage).not.toHaveProperty("cloudPublicId");
+    expect(db.readRow()?.localImage).not.toHaveProperty("cloudUrl");
+    expect(db.readRow()?.localImage).not.toHaveProperty("cloudMediaId");
+    expect(assets.stageLocalImageUploadCleanupJobAtomically).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cleanupCloudPublicId: "previous-cloud-public-id",
+        cleanupOnly: true,
+        cleanupReady: false,
+      }),
+      expect.any(Number),
+    );
+    expect(assets.putLocalImageUploadJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        cleanupCloudPublicId: "previous-cloud-public-id",
+        cleanupOnly: true,
+        cleanupReady: true,
       }),
     );
   });

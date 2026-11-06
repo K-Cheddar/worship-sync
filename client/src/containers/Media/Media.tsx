@@ -52,7 +52,10 @@ import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import { supportsDesktopCapture } from "../../utils/desktopCapture";
 import type { LocalVideoThumbnailFrame } from "../../utils/localVideoInputThumbnail";
-import { useLocalVideoInputThumbnailPersistence } from "../../hooks/useLocalVideoInputThumbnailPersistence";
+import {
+  useLocalVideoInputThumbnailPersistence,
+  VideoInputMediaWriteOutcomeUnknownError,
+} from "../../hooks/useLocalVideoInputThumbnailPersistence";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { MediaAddControl } from "./MediaAddControl";
 import { MediaSourceAddMenu } from "./MediaSourceAddMenu";
@@ -91,6 +94,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const [videoInputToEdit, setVideoInputToEdit] = useState<MediaType>();
   const [videoInputMode, setVideoInputMode] =
     useState<LocalVideoCaptureMode>("device");
+  const pendingInitialVideoRowsRef = useRef(new Map<string, MediaType>());
   const storageUsageRefreshRef = useRef<() => void>(() => undefined);
   const notifyStorageUsageChanged = useCallback(
     () => storageUsageRefreshRef.current(),
@@ -237,6 +241,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       const now = new Date().toISOString();
       const id = `local_input_${ownedSource.sourceId}`;
       const existing = getCurrentMediaList().find((item) => item.id === id);
+      const pendingInitialRow = pendingInitialVideoRowsRef.current.get(id);
       let optimisticRow: MediaType | undefined;
       if (!existing) {
         optimisticRow = {
@@ -261,6 +266,8 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           addItemToMediaList(optimisticRow),
         );
       }
+      const rowToRetainOrRollback = optimisticRow ?? pendingInitialRow;
+      const allowCreate = !existing || Boolean(pendingInitialRow);
       try {
         const mediaPatch = {
           name: ownedSource.label,
@@ -270,20 +277,29 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         if (initialThumbnail) {
           await saveVideoInputThumbnail(id, initialThumbnail, {
             mediaPatch,
-            allowCreate: !existing,
+            allowCreate,
           });
         } else {
           await persistVideoInputMediaPatch(
             id,
             ownedSource.sourceId,
             mediaPatch,
-            !existing,
+            allowCreate,
           );
         }
+        pendingInitialVideoRowsRef.current.delete(id);
       } catch (error) {
-        if (!existing) {
-          if (optimisticRow) {
-            removeOptimisticVideoInputMediaRow(id, optimisticRow);
+        if (!existing || pendingInitialRow) {
+          if (
+            error instanceof VideoInputMediaWriteOutcomeUnknownError &&
+            rowToRetainOrRollback
+          ) {
+            pendingInitialVideoRowsRef.current.set(id, rowToRetainOrRollback);
+          } else {
+            if (rowToRetainOrRollback) {
+              removeOptimisticVideoInputMediaRow(id, rowToRetainOrRollback);
+            }
+            pendingInitialVideoRowsRef.current.delete(id);
           }
         }
         throw error;

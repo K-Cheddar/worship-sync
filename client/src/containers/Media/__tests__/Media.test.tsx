@@ -23,8 +23,13 @@ import { GlobalInfoContext } from "../../../context/globalInfo";
 import { createNewFreeForm } from "../../../utils/itemUtil";
 import { claimMediaUpload } from "../../../utils/mediaOperationClaims";
 import { MEDIA_LIBRARY_ROOT_VIEW } from "../../../utils/mediaFolderMutations";
+import { VideoInputMediaWriteOutcomeUnknownError } from "../../../hooks/useLocalVideoInputThumbnailPersistence";
 
 const mockDispatch = jest.fn();
+const mockPersistVideoInputMediaPatch = jest.fn();
+const mockSaveVideoInputThumbnail = jest.fn();
+const mockRemoveOptimisticVideoInputMediaRow = jest.fn();
+const mockRemoveVideoInputThumbnail = jest.fn();
 const mockDeleteMediaItemsFromPouch = jest.fn();
 const mockDeleteMediaItemAtRevisionFromPouch = jest.fn();
 const mockReadMediaItemForDeletion = jest.fn();
@@ -282,6 +287,52 @@ jest.mock("../../../store/mediaSlice", () => ({
     type: "media/updateMediaItemFields",
     payload,
   })),
+}));
+
+jest.mock("../../../hooks/useLocalVideoInputThumbnailPersistence", () => {
+  const actual = jest.requireActual(
+    "../../../hooks/useLocalVideoInputThumbnailPersistence",
+  ) as Record<string, unknown>;
+  return {
+    ...actual,
+    useLocalVideoInputThumbnailPersistence: () => ({
+      persistVideoInputMediaPatch: (...args: unknown[]) =>
+        mockPersistVideoInputMediaPatch(...args),
+      removeOptimisticVideoInputMediaRow: (...args: unknown[]) =>
+        mockRemoveOptimisticVideoInputMediaRow(...args),
+      saveVideoInputThumbnail: (...args: unknown[]) =>
+        mockSaveVideoInputThumbnail(...args),
+      removeVideoInputThumbnail: (...args: unknown[]) =>
+        mockRemoveVideoInputThumbnail(...args),
+    }),
+  };
+});
+
+jest.mock("../../../components/LocalVideoInputPicker/LocalVideoInputPicker", () => ({
+  __esModule: true,
+  default: (props: Record<string, any>) =>
+    props.open ? (
+      <button
+        type="button"
+        onClick={() =>
+          void props.onLinked(
+            {
+              kind: "local-video-input",
+              sourceId: "initial-camera",
+              deviceId: "camera-device",
+              label: "Initial camera",
+            },
+            {
+              blob: new Blob(["frame"], { type: "image/webp" }),
+              width: 640,
+              height: 360,
+            },
+          ).catch(() => undefined)
+        }
+      >
+        Link mock video input
+      </button>
+    ) : null,
 }));
 
 jest.mock("../../../store/preferencesSlice", () => ({
@@ -615,6 +666,10 @@ const renderMedia = async ({
 describe("Media", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPersistVideoInputMediaPatch.mockResolvedValue(undefined);
+    mockSaveVideoInputThumbnail.mockResolvedValue("Thumbnail saved.");
+    mockRemoveOptimisticVideoInputMediaRow.mockReset();
+    mockRemoveVideoInputThumbnail.mockResolvedValue(undefined);
     setActiveContentDatabase(null);
     mockUpdateTransfer.mockClear();
     mockTransfers.clear();
@@ -885,6 +940,45 @@ describe("Media", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("menuitem", { name: /add files/i }));
     expect(mockOpenModal).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an uncertain initial video add in Media so the thumbnail save can be retried", async () => {
+    mockState = makeBaseState({ media: { list: [], folders: [] } });
+    mockSaveVideoInputThumbnail.mockRejectedValueOnce(
+      new VideoInputMediaWriteOutcomeUnknownError(
+        "The thumbnail could not be saved to Media. Try again.",
+      ),
+    );
+    const user = userEvent.setup();
+    await renderMedia();
+
+    await user.click(screen.getByTitle("Add Media"));
+    await user.click(screen.getByRole("menuitem", { name: /add video input/i }));
+    const linkButton = await screen.findByRole("button", {
+      name: "Link mock video input",
+    });
+    await user.click(linkButton);
+    await waitFor(() =>
+      expect(mockSaveVideoInputThumbnail).toHaveBeenCalledTimes(1),
+    );
+
+    expect(mockRemoveOptimisticVideoInputMediaRow).not.toHaveBeenCalled();
+    const mediaId = "local_input_initial-camera";
+    mockState.media.list.push({
+      id: mediaId,
+      name: "Initial camera",
+      localVideoInput: { sourceId: "initial-camera" },
+    });
+
+    await user.click(linkButton);
+    await waitFor(() =>
+      expect(mockSaveVideoInputThumbnail).toHaveBeenCalledTimes(2),
+    );
+    expect(mockSaveVideoInputThumbnail.mock.calls[1][0]).toBe(mediaId);
+    expect(mockSaveVideoInputThumbnail.mock.calls[1][2]).toEqual(
+      expect.objectContaining({ allowCreate: true }),
+    );
+    expect(mockRemoveOptimisticVideoInputMediaRow).not.toHaveBeenCalled();
   });
 
   it("hides Canva import when Canva OAuth is not configured", async () => {

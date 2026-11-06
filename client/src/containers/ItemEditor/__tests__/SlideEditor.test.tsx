@@ -293,17 +293,23 @@ jest.mock("../../../components/LocalVideoInputPicker/LocalVideoInputPicker", () 
   },
 }));
 
-jest.mock("../../../hooks/useLocalVideoInputThumbnailPersistence", () => ({
-  useLocalVideoInputThumbnailPersistence: () => ({
-    persistVideoInputMediaPatch: (...args: unknown[]) =>
-      mockPersistVideoInputMediaPatch(...args),
-    removeOptimisticVideoInputMediaRow: jest.fn(),
-    saveVideoInputThumbnail: (...args: unknown[]) =>
-      mockSaveVideoInputThumbnail(...args),
-    removeVideoInputThumbnail: (...args: unknown[]) =>
-      mockRemoveVideoInputThumbnail(...args),
-  }),
-}));
+jest.mock("../../../hooks/useLocalVideoInputThumbnailPersistence", () => {
+  const actual = jest.requireActual(
+    "../../../hooks/useLocalVideoInputThumbnailPersistence",
+  ) as Record<string, unknown>;
+  return {
+    ...actual,
+    useLocalVideoInputThumbnailPersistence: () => ({
+      persistVideoInputMediaPatch: (...args: unknown[]) =>
+        mockPersistVideoInputMediaPatch(...args),
+      removeOptimisticVideoInputMediaRow: jest.fn(),
+      saveVideoInputThumbnail: (...args: unknown[]) =>
+        mockSaveVideoInputThumbnail(...args),
+      removeVideoInputThumbnail: (...args: unknown[]) =>
+        mockRemoveVideoInputThumbnail(...args),
+    }),
+  };
+});
 
 jest.mock("../BibleItemActions", () => ({
   __esModule: true,
