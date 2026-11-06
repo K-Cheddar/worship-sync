@@ -17,6 +17,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { useStore } from "react-redux";
 import {
   borderColorMap,
   getItemTypeLabel,
@@ -44,6 +45,7 @@ import {
 import {
   flushPendingItemMutations,
   getItemMutationOwner,
+  sameItemMutationOwner,
   scheduleOwnedItemMutation,
   type PendingItemMutationHandle,
   type ItemMutationOwner,
@@ -154,6 +156,7 @@ const resolveFormattedSlideIndex = ({
 
 const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessType; presentationMode?: PresentationControllerMode }) => {
   const dispatch = useDispatch();
+  const reduxStore = useStore<RootState>();
 
   const item = useSelector((state: RootState) => state.undoable.present.item);
   const {
@@ -1272,7 +1275,28 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       source: LocalVideoInputMediaSource,
       initialThumbnail?: LocalVideoThumbnailFrame,
     ) => {
-      const previous = selectedSlideMediaSource;
+      const startState = reduxStore.getState();
+      const startItem = startState.undoable.present.item;
+      const expectedOwner = getItemMutationOwner(startItem);
+      const targetArrangementId = startItem.type === "song"
+        ? startItem.arrangements[startItem.selectedArrangement]?.id
+        : undefined;
+      const startArrangement = targetArrangementId
+        ? startItem.arrangements.find(
+            (candidate) => candidate.id === targetArrangementId,
+          )
+        : undefined;
+      const startSlides = startArrangement?.slides ?? startItem.slides;
+      const targetSlide = startSlides[startItem.selectedSlide];
+      if (
+        !targetSlide?.mediaSource ||
+        targetSlide.mediaSource.kind !== "local-video-input"
+      ) {
+        throw new Error("The selected slide changed. Reopen it and try again.");
+      }
+      const targetSlideId = targetSlide.id;
+      const expectedSlideSource = JSON.stringify(targetSlide.mediaSource);
+      const previous = targetSlide.mediaSource;
       const ownedSource: LocalVideoInputMediaSource = {
         ...source,
         ownerDeviceId: getOrCreateDeviceId(),
@@ -1280,7 +1304,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       };
       const now = new Date().toISOString();
       const mediaId = `local_input_${ownedSource.sourceId}`;
-      const existing = mediaList.find((m) => m.id === mediaId);
+      const existing = startState.media.list.find((m) => m.id === mediaId);
       const pendingInitialRow = pendingInitialVideoRowsRef.current.get(mediaId);
       let optimisticRow: MediaType | undefined;
       if (!existing) {
@@ -1366,41 +1390,86 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         pendingInitialVideoRowsRef.current.delete(mediaId);
         throw error;
       }
-      if (type === "song" && arrangement?.slides) {
-        const updatedArrangements = item.arrangements.map((arr, idx) => {
-          if (idx !== item.selectedArrangement) return arr;
+      const latestItem = reduxStore.getState().undoable.present.item;
+      const latestOwner = getItemMutationOwner(latestItem);
+      const sameOwner = expectedOwner
+        ? sameItemMutationOwner(latestOwner, expectedOwner)
+        : latestOwner === null;
+      if (
+        latestItem._id !== startItem._id ||
+        latestItem.type !== startItem.type ||
+        !sameOwner
+      ) {
+        throw new Error(
+          "The active item changed while the video input was saving. Reopen it and try again.",
+        );
+      }
+
+      if (targetArrangementId) {
+        const targetArrangementIndex = latestItem.arrangements.findIndex(
+          (candidate) => candidate.id === targetArrangementId,
+        );
+        const latestTargetArrangement =
+          latestItem.arrangements[targetArrangementIndex];
+        const targetSlideIndex = latestTargetArrangement?.slides.findIndex(
+          (slide) => slide.id === targetSlideId,
+        ) ?? -1;
+        const latestTargetSlide = latestTargetArrangement?.slides[targetSlideIndex];
+        if (
+          !latestTargetArrangement ||
+          !latestTargetSlide ||
+          JSON.stringify(latestTargetSlide.mediaSource) !== expectedSlideSource
+        ) {
+          throw new Error(
+            "The target slide changed while the video input was saving. Reopen it and try again.",
+          );
+        }
+        const updatedArrangements = latestItem.arrangements.map((arr, idx) => {
+          if (idx !== targetArrangementIndex) return arr;
           return {
             ...arr,
             slides: arr.slides.map((slide, slideIndex) =>
-              slideIndex === selectedSlide ? applySource(slide) : slide,
+              slideIndex === targetSlideIndex ? applySource(slide) : slide,
             ),
           };
         });
-        dispatch(updateArrangements({ arrangements: updatedArrangements }));
+        dispatch(
+          updateArrangements({
+            arrangements: updatedArrangements,
+            expectedOwner: expectedOwner ?? undefined,
+          }),
+        );
       } else {
+        const targetSlideIndex = latestItem.slides.findIndex(
+          (slide) => slide.id === targetSlideId,
+        );
+        const latestTargetSlide = latestItem.slides[targetSlideIndex];
+        if (
+          !latestTargetSlide ||
+          JSON.stringify(latestTargetSlide.mediaSource) !== expectedSlideSource
+        ) {
+          throw new Error(
+            "The target slide changed while the video input was saving. Reopen it and try again.",
+          );
+        }
+        const updatedSlides = latestItem.slides.map((slide, slideIndex) =>
+          slideIndex === targetSlideIndex ? applySource(slide) : slide,
+        );
         dispatch(
           updateSlides({
-            slides: slides.map((slide, slideIndex) =>
-              slideIndex === selectedSlide ? applySource(slide) : slide,
-            ),
+            slides: updatedSlides,
+            expectedOwner: expectedOwner ?? undefined,
           }),
         );
       }
       setIsVideoInputRelinkOpen(false);
     },
     [
-      arrangement?.slides,
       dispatch,
-      item.arrangements,
-      item.selectedArrangement,
-      mediaList,
       persistVideoInputMediaPatch,
+      reduxStore,
       removeOptimisticVideoInputMediaRow,
       saveVideoInputThumbnail,
-      selectedSlide,
-      selectedSlideMediaSource,
-      slides,
-      type,
     ],
   );
 
