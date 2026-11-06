@@ -1,0 +1,7 @@
+{
+  "id": "service-planning-import-times",
+  "date": "2026-11-05",
+  "type": "fixed",
+  "title": "Service Planning import times",
+  "description": "Service Planning imports now interpret consecutive times correctly across noon, section breaks, and overnight transitions."
+}

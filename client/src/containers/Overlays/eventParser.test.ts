@@ -1,4 +1,7 @@
-import { parseServicePlanningImportFromHtml } from "./eventParser";
+import {
+  getNamesFromUrl,
+  parseServicePlanningImportFromHtml,
+} from "./eventParser";
 
 describe("parseServicePlanningImportFromHtml", () => {
   it("extracts the import plan label from the printout header", () => {
@@ -494,5 +497,199 @@ Line two</td><td>Mics:
     `);
 
     expect(parsed.sections[0].rows[0].songTitle).toBe("Shall Not Want (Eb)");
+  });
+
+  const header = `
+    <table class="service-info-table-printout">
+      <tr class="datetime"><td>Date:</td><th class="left">May 2, 2026 - 12:51 PM</th></tr>
+    </table>
+  `;
+  const sequenceLayouts: Array<[string, string]> = [
+    [
+      "share-link accordion",
+      `${header}<table>
+        <tr class="accordion-toggle"><td>12:56 (5m)</td><td>Welcome</td><td>Praise Team</td></tr>
+        <tr class="divider-2"><td colspan="3">Next section</td></tr>
+        <tr class="accordion-toggle"><td>1:01 (5m)</td><td>Song</td><td>Praise Team</td></tr>
+        <tr class="accordion-toggle"><td>1:06 (5m)</td><td>Prayer</td><td>Pastor</td></tr>
+      </table>`,
+    ],
+    [
+      "custom-column",
+      `${header}<table class="custom-printout">
+        <thead><tr><th>Start Time</th><th>Duration</th><th>Element Type</th><th>Title</th><th>Led by</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>12:56</td><td>5m</td><td>Welcome</td><td>Opening</td><td>Team</td><td></td></tr>
+          <tr class="divider-2"><td colspan="6">Next section</td></tr>
+          <tr><td>1:01</td><td>5m</td><td>Song</td><td>Welcome</td><td>Team</td><td></td></tr>
+          <tr><td>1:06</td><td>5m</td><td>Prayer</td><td>Opening Prayer</td><td>Pastor</td><td></td></tr>
+        </tbody>
+      </table>`,
+    ],
+    [
+      "main-row",
+      `${header}<table>
+        <tr class="main-row"><td>12:56</td><td>5m</td><td>Welcome</td><td>Opening</td><td>Team</td><td></td></tr>
+        <tr class="divider-2"><td colspan="6">Next section</td></tr>
+        <tr class="main-row"><td>1:01</td><td>5m</td><td>Song</td><td>Welcome</td><td>Team</td><td></td></tr>
+        <tr class="main-row"><td>1:06</td><td>5m</td><td>Prayer</td><td>Opening Prayer</td><td>Pastor</td><td></td></tr>
+      </table>`,
+    ],
+    [
+      "worship-flow",
+      `${header}<table class="worship-flow-table"><tbody>
+        <tr><td>12:56 (5m)</td><td>Welcome</td><td>Opening</td><td>Team</td><td></td></tr>
+        <tr class="divider-2"><td colspan="5">Next section</td></tr>
+        <tr><td>1:01 (5m)</td><td>Song</td><td>Welcome</td><td>Team</td><td></td></tr>
+        <tr><td>1:06 (5m)</td><td>Prayer</td><td>Opening Prayer</td><td>Pastor</td><td></td></tr>
+      </tbody></table>`,
+    ],
+  ];
+
+  it.each(sequenceLayouts)(
+    "resolves the same source-time sequence in %s across sections",
+    (_layout, html) => {
+      const parsed = parseServicePlanningImportFromHtml(html);
+
+      expect(parsed.sections.flatMap((section) => section.rows).map((row) => row.startTime)).toEqual([
+        "12:56",
+        "13:01",
+        "13:06",
+      ]);
+    },
+  );
+
+  it("uses adjacent AM and PM evidence for noon and overnight transitions", () => {
+    const noon = parseServicePlanningImportFromHtml(`
+      <table>
+        <tr class="main-row"><td>11:56 AM</td><td>5m</td><td>Talk</td><td>Morning</td><td>Pastor</td><td></td></tr>
+        <tr class="main-row"><td>12:01</td><td>5m</td><td>Song</td><td>Noon</td><td>Team</td><td></td></tr>
+      </table>
+    `);
+    const overnight = parseServicePlanningImportFromHtml(`
+      <table>
+        <tr class="main-row"><td>11:56 PM</td><td>5m</td><td>Talk</td><td>Late</td><td>Pastor</td><td></td></tr>
+        <tr class="main-row"><td>12:01</td><td>5m</td><td>Song</td><td>After midnight</td><td>Team</td><td></td></tr>
+      </table>
+    `);
+
+    expect(noon.sections[0].rows.map((row) => row.startTime)).toEqual([
+      "11:56",
+      "12:01",
+    ]);
+    expect(overnight.sections[0].rows.map((row) => row.startTime)).toEqual([
+      "23:56",
+      "00:01",
+    ]);
+  });
+
+  it("uses an explicit service start-time header to resolve the first ambiguous row", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table class="service-info-table-printout">
+        <tr class="datetime"><td>Date:</td><th class="left">May 2, 2026 - 1 PM</th></tr>
+      </table>
+      <table><tr class="main-row"><td>1:01</td><td>5m</td><td>Event</td><td>First</td><td>Team</td><td></td></tr></table>
+    `);
+
+    expect(parsed.sections[0].rows[0].startTime).toBe("13:01");
+  });
+
+  it("keeps the default when the prior and following rows support opposite interpretations", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table>
+        <tr class="main-row"><td>12:56 PM</td><td>5m</td><td>Event</td><td>First</td><td>Team</td><td></td></tr>
+        <tr class="main-row"><td>1:01</td><td>5m</td><td>Event</td><td>Ambiguous</td><td>Team</td><td></td></tr>
+        <tr class="main-row"><td>1:11 AM</td><td></td><td>Event</td><td>Known</td><td>Team</td><td></td></tr>
+      </table>
+    `);
+
+    expect(parsed.sections[0].rows.map((row) => row.startTime)).toEqual([
+      "12:56",
+      "01:01",
+      "01:11",
+    ]);
+  });
+
+  it("keeps explicit AM/PM, 24-hour, noon, and midnight values authoritative", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table>
+        <tr class="main-row"><td>1:01 AM</td><td></td><td>Talk</td><td>AM</td><td>Pastor</td><td></td></tr>
+        <tr class="main-row"><td>1:01 PM</td><td></td><td>Talk</td><td>PM</td><td>Pastor</td><td></td></tr>
+        <tr class="main-row"><td>13:01</td><td></td><td>Talk</td><td>24-hour</td><td>Pastor</td><td></td></tr>
+        <tr class="main-row"><td>12:01 AM</td><td></td><td>Talk</td><td>Midnight</td><td>Pastor</td><td></td></tr>
+        <tr class="main-row"><td>12:01 PM</td><td></td><td>Talk</td><td>Noon</td><td>Pastor</td><td></td></tr>
+        <tr class="main-row"><td>00:15</td><td></td><td>Talk</td><td>24-hour midnight</td><td>Pastor</td><td></td></tr>
+      </table>
+    `);
+
+    expect(parsed.sections[0].rows.map((row) => row.startTime)).toEqual([
+      "01:01",
+      "13:01",
+      "13:01",
+      "00:01",
+      "12:01",
+      "00:15",
+    ]);
+  });
+
+  it("uses durations when they support a long step and leaves unsupported decreases alone", () => {
+    const durationSupported = parseServicePlanningImportFromHtml(`
+      <table>
+        <tr class="main-row"><td>1:00 PM</td><td>420m</td><td>Event</td><td>Long event</td><td>Pastor</td><td></td></tr>
+        <tr class="main-row"><td>8:00</td><td></td><td>Event</td><td>Evening</td><td>Pastor</td><td></td></tr>
+      </table>
+    `);
+    const unsupportedDecrease = parseServicePlanningImportFromHtml(`
+      <table>
+        <tr class="main-row"><td>6:00</td><td></td><td>Event</td><td>First</td><td>Pastor</td><td></td></tr>
+        <tr class="main-row"><td>5:00</td><td></td><td>Event</td><td>Later</td><td>Pastor</td><td></td></tr>
+      </table>
+    `);
+
+    expect(durationSupported.sections[0].rows.map((row) => row.startTime)).toEqual([
+      "13:00",
+      "20:00",
+    ]);
+    expect(unsupportedDecrease.sections[0].rows.map((row) => row.startTime)).toEqual([
+      "06:00",
+      "05:00",
+    ]);
+  });
+
+  it("keeps missing times absent and leaves an unsupported initial time unchanged", () => {
+    const missing = parseServicePlanningImportFromHtml(`
+      <table>
+        <tr class="main-row"><td>12:56</td><td>2m</td><td>Event</td><td>First</td><td>Team</td><td></td></tr>
+        <tr class="main-row"><td></td><td>3m</td><td>Event</td><td>Untimed</td><td>Team</td><td></td></tr>
+        <tr class="main-row"><td>1:01</td><td>5m</td><td>Event</td><td>Later</td><td>Team</td><td></td></tr>
+      </table>
+    `);
+    const ambiguousInitial = parseServicePlanningImportFromHtml(`
+      <table><tr class="main-row"><td>1:01</td><td></td><td>Event</td><td>Only</td><td>Team</td><td></td></tr></table>
+    `);
+
+    expect(missing.sections[0].rows.map((row) => row.startTime)).toEqual([
+      "12:56",
+      undefined,
+      "13:01",
+    ]);
+    expect(ambiguousInitial.sections[0].rows[0].startTime).toBe("01:01");
+  });
+
+  it("uses the same resolved rows for direct Controller URL imports", async () => {
+    const html = `${header}<table>
+      <tr class="main-row"><td>12:56</td><td>5m</td><td>Welcome</td><td>Opening</td><td>Team</td><td></td></tr>
+      <tr class="main-row"><td>1:01</td><td>5m</td><td>Song</td><td>Welcome</td><td>Team</td><td></td></tr>
+    </table>`;
+    const fetchMock = jest.spyOn(global, "fetch").mockResolvedValue({
+      text: async () => html,
+    } as Response);
+
+    try {
+      const rows = await getNamesFromUrl("https://example.test/service");
+      expect(rows.map((row) => row.startTime)).toEqual(["12:56", "13:01"]);
+    } finally {
+      fetchMock.mockRestore();
+    }
   });
 });
