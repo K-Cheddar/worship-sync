@@ -4,6 +4,12 @@ import DisplayBox from "../../components/DisplayWindow/DisplayBox";
 import StaticSlideThumbnail from "./StaticSlideThumbnail";
 import { resolveDisplaySettings } from "../../utils/displaySettings";
 
+const queryRenderedVideo = () => {
+  // A native <video> has no implicit testing-library role.
+  // eslint-disable-next-line testing-library/no-node-access
+  return document.querySelector("video");
+};
+
 jest.mock("../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => url,
   useResolvedCachedMediaUrl: (url?: string) => url,
@@ -53,6 +59,36 @@ const makeSlide = (overrides: Partial<ItemSlideType> = {}) =>
   }) as ItemSlideType;
 
 describe("StaticSlideThumbnail", () => {
+  it.each(["projector", "stream", "monitor"] as const)(
+    "uses the captured input still in %s previews without video playback",
+    (previewMode) => {
+      render(
+        <StaticSlideThumbnail
+          slide={makeSlide({
+            mediaSource: {
+              kind: "local-video-input",
+              sourceId: "camera-1",
+              label: "Main camera",
+              fit: "cover",
+            },
+          })}
+          itemType="song"
+          previewMode={previewMode}
+          localVideoInputThumbnailUrl="blob:camera-thumbnail"
+        />,
+      );
+
+      expect(screen.getByTestId("static-video-input-thumbnail")).toHaveAttribute(
+        "src",
+        "blob:camera-thumbnail",
+      );
+      expect(screen.getByTestId("static-video-input-thumbnail")).toHaveClass(
+        "object-cover",
+      );
+      expect(queryRenderedVideo()).toBeNull();
+    },
+  );
+
   it("renders text and remote image stills without mounting DisplayWindow machinery", () => {
     render(
       <StaticSlideThumbnail
@@ -70,7 +106,7 @@ describe("StaticSlideThumbnail", () => {
       "src",
       "https://example.test/background.jpg",
     );
-    expect(screen.queryByRole("video")).not.toBeInTheDocument();
+    expect(queryRenderedVideo()).toBeNull();
   });
 
   it("uses a video poster or still and keeps stream free text lightweight", () => {
@@ -138,7 +174,7 @@ describe("StaticSlideThumbnail", () => {
       />,
     );
     expect(screen.getByText("Welcome")).toBeInTheDocument();
-    expect(screen.queryByRole("video")).not.toBeInTheDocument();
+    expect(queryRenderedVideo()).toBeNull();
   });
 
   it("uses the shared Bible stream formatting in static mode", () => {
@@ -217,7 +253,7 @@ describe("StaticSlideThumbnail", () => {
     expect(screen.getByText("Monitor current")).toBeInTheDocument();
     expect(screen.getByText("Monitor next")).toBeInTheDocument();
     expect(screen.getByTestId("monitor-preview-timer")).toHaveTextContent("05:00");
-    expect(screen.queryByRole("video")).not.toBeInTheDocument();
+    expect(queryRenderedVideo()).toBeNull();
   });
 
   it("uses the static single-slide Monitor layout when next-slide is off", () => {

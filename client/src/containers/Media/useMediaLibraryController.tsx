@@ -278,6 +278,19 @@ export type UseMediaLibraryControllerArgs = {
   onStorageUsageChanged?: () => void;
 };
 
+const deleteCloudinaryAssetOnce = async (
+  churchId: string,
+  publicId: string,
+  deletedIds: Set<string>,
+  canContinue: () => boolean,
+) => {
+  if (deletedIds.has(publicId) || !canContinue()) return false;
+  if (!churchId) throw new Error("Church session is unavailable.");
+  await deleteCloudinaryMediaAsset(churchId, publicId);
+  deletedIds.add(publicId);
+  return true;
+};
+
 export function useMediaLibraryController({
   variant = "default",
   pageMode = "default",
@@ -1249,25 +1262,40 @@ export function useMediaLibraryController({
       for (const row of rows) {
         if (!canContinue()) break;
         const provider = row.providerStorage?.provider ||
-          (row.localImage?.cloudUrl ? "cloudinary" : "") ||
+          (row.localImage?.cloudUrl || row.localImage?.cloudPublicId
+            ? "cloudinary"
+            : "") ||
           (row.localVideoFile?.cloudMediaId ? "mux" : "") ||
           row.source;
         const cloudinaryPublicId =
-          row.providerStorage?.publicId ||
-          (provider === "cloudinary" ? row.publicId : "") ||
-          (row.localImage?.cloudUrl ? row.publicId : "");
+          provider === "cloudinary"
+            ? row.providerStorage?.publicId ||
+              (!row.localVideoInput ? row.publicId : "") ||
+              (!row.localVideoInput && row.localImage?.cloudUrl ? row.publicId : "")
+            : "";
+        const thumbnailCloudPublicId =
+          row.localImage?.cloudPublicId ||
+          (row.localImage?.cloudUrl
+            ? extractPublicId(row.localImage.cloudUrl)
+            : row.localVideoInput && row.thumbnail
+              ? extractPublicId(row.thumbnail)
+              : "");
         const muxAssetId =
           (provider === "mux" ? row.providerStorage?.assetId : "") ||
           row.muxAssetId ||
           row.localVideoFile?.cloudMediaId;
         try {
+          const deletedCloudinaryIds = new Set<string>();
           if (provider === "cloudinary") {
-            let publicId = cloudinaryPublicId || extractPublicId(row.background) || "";
+            const publicId = cloudinaryPublicId || extractPublicId(row.background) ||
+              thumbnailCloudPublicId || "";
             if (publicId) {
-              if (!canContinue()) break;
-              if (!churchId) throw new Error("Church session is unavailable.");
-              await deleteCloudinaryMediaAsset(churchId, publicId);
-              providerUsageChanged = true;
+              providerUsageChanged = await deleteCloudinaryAssetOnce(
+                churchId,
+                publicId,
+                deletedCloudinaryIds,
+                canContinue,
+              ) || providerUsageChanged;
             }
           } else if (provider === "mux" && muxAssetId) {
             if (!canContinue()) break;
@@ -1277,14 +1305,24 @@ export function useMediaLibraryController({
           }
           if (!canContinue()) break;
           if (row.localImage) {
+            if (thumbnailCloudPublicId) {
+              providerUsageChanged = await deleteCloudinaryAssetOnce(
+                churchId,
+                thumbnailCloudPublicId,
+                deletedCloudinaryIds,
+                canContinue,
+              ) || providerUsageChanged;
+            }
             const imageJob = await getLocalImageUploadJob(row.localImage.id);
             if (!canContinue()) break;
             const queuedPublicId = imageJob?.cloudMedia?.publicId;
-            if (queuedPublicId && queuedPublicId !== cloudinaryPublicId) {
-              if (!canContinue()) break;
-              if (!churchId) throw new Error("Church session is unavailable.");
-              await deleteCloudinaryMediaAsset(churchId, queuedPublicId);
-              providerUsageChanged = true;
+            if (queuedPublicId) {
+              providerUsageChanged = await deleteCloudinaryAssetOnce(
+                churchId,
+                queuedPublicId,
+                deletedCloudinaryIds,
+                canContinue,
+              ) || providerUsageChanged;
             }
           }
           if (!canContinue()) break;

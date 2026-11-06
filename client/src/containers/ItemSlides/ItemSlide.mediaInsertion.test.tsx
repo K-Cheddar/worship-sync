@@ -9,9 +9,27 @@ const mockUseDroppable = jest.fn((_options?: unknown) => ({
 
 jest.mock("./StaticSlideThumbnail", () => ({
   __esModule: true,
-  default: ({ slide }: { slide: { name: string } }) => (
-    <div data-testid="static-slide-thumbnail">{slide.name}</div>
+  default: ({
+    slide,
+    localVideoInputThumbnailUrl,
+  }: {
+    slide: { name: string };
+    localVideoInputThumbnailUrl?: string;
+  }) => (
+    <div
+      data-testid="static-slide-thumbnail"
+      data-background={localVideoInputThumbnailUrl}
+    >
+      {slide.name}
+    </div>
   ),
+}));
+
+jest.mock("../../hooks/useLocalImageUrl", () => ({
+  useLocalImageUrl: (reference?: { id?: string }) =>
+    reference?.id === "thumbnail-1"
+      ? { isLocalImage: true, isOwner: true, status: "ready", url: "blob:thumbnail-1" }
+      : { isLocalImage: false, isOwner: false, status: "not-local" },
 }));
 
 jest.mock("../../components/FloatingWindow/FloatingWindow", () => ({
@@ -112,6 +130,66 @@ describe("ItemSlide media insertion zones", () => {
       );
     },
   );
+
+  it("reuses a saved input thumbnail across slides without changing their source data", () => {
+    const source = {
+      kind: "local-video-input" as const,
+      sourceId: "camera-1",
+      label: "Main camera",
+      fit: "contain" as const,
+    };
+    const first: ItemSlideType = {
+      ...slide,
+      id: "slide-1",
+      mediaSource: source,
+      boxes: [
+        { id: "background", width: 100, height: 100, background: "" },
+      ],
+    };
+    const second: ItemSlideType = { ...first, id: "slide-2" };
+    const thumbnail = {
+      localImage: {
+        id: "thumbnail-1",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "camera.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud" as const,
+      },
+      thumbnail: "https://res.cloudinary.com/example/camera.webp",
+    };
+    const renderSlide = (value: ItemSlideType, index: number) => (
+      <ItemSlide
+        key={value.id}
+        slide={value}
+        localVideoInputThumbnail={thumbnail}
+        index={index}
+        selectSlide={jest.fn()}
+        isSelected={false}
+        size={3}
+        itemType="song"
+        isMobile={false}
+        draggedSection={null}
+        isLive={false}
+        previewMode="projector"
+        getBibleInfo={() => ({ title: "", text: "" })}
+        borderWidth="1px"
+        hSize="text-sm"
+        onSlideGridClick={jest.fn()}
+      />
+    );
+
+    render(<ul>{renderSlide(first, 0)}{renderSlide(second, 1)}</ul>);
+
+    const previews = screen.getAllByTestId("static-slide-thumbnail");
+    expect(previews).toHaveLength(2);
+    previews.forEach((preview) =>
+      expect(preview).toHaveAttribute("data-background", "blob:thumbnail-1"),
+    );
+    expect(first.boxes[0].background).toBe("");
+    expect(second.boxes[0].background).toBe("");
+    expect(screen.getAllByText("Live input · Main camera")).toHaveLength(2);
+  });
 
   it("keeps auxiliary insertion targets positioned inside the existing slide grid item", () => {
     render(

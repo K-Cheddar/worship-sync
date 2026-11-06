@@ -1,0 +1,7 @@
+{
+  "id": "local-video-input-thumbnails",
+  "date": "2026-11-05",
+  "type": "new",
+  "title": "Video input thumbnails",
+  "description": "Capture a frame from a video input to recognize it in Media and static slide previews while live presentation continues using the input."
+}

@@ -85,6 +85,31 @@ export type LocalImageUploadJob = {
   providerUploadId?: string;
   providerExpectedPublicId?: string;
   cloudMedia?: MediaType;
+  /** Upload this image as a thumbnail on an existing local video-input row. */
+  localVideoInputThumbnail?: {
+    targetMediaId: string;
+    previousAssetId?: string;
+    previousCloudPublicId?: string;
+    previousAssets?: Array<{
+      assetId: string;
+      cloudPublicId?: string;
+      cloudCleanupComplete?: boolean;
+      cloudCleanupScheduled?: boolean;
+      localCleanupScheduled?: boolean;
+    }>;
+    previousLocalCleanupComplete?: boolean;
+    previousLocalCleanupScheduled?: boolean;
+    previousCloudCleanupComplete?: boolean;
+    previousCloudCleanupScheduled?: boolean;
+    staleLocalCleanupComplete?: boolean;
+    staleCloudCleanupComplete?: boolean;
+  };
+  /** Delete an old image after a thumbnail is removed; never uploads its bytes. */
+  cleanupOnly?: boolean;
+  cleanupReady?: boolean;
+  cleanupTargetMediaId?: string;
+  cleanupCloudPublicId?: string;
+  cleanupCloudComplete?: boolean;
   /** Cross-tab owner of the current processing attempt. */
   leaseOwnerId?: string;
   /** Epoch milliseconds after which another tab may recover this job. */
@@ -113,6 +138,7 @@ export type LocalImageReferencePatch = {
       | "storagePolicy"
       | "cloudUrl"
       | "cloudMediaId"
+      | "cloudPublicId"
     >
   >;
   media?: Partial<Pick<MediaType, "name" | "format" | "width" | "height">>;
@@ -677,6 +703,32 @@ const mutateLocalImageUploadJob = async (
   return result;
 };
 
+/** Stage cleanup only when no upload/reconciliation work still owns this asset. */
+export const stageLocalImageUploadCleanupJobAtomically = async (
+  candidate: LocalImageUploadJob,
+  now: number,
+) => {
+  let previous: LocalImageUploadJob | undefined;
+  let staged = false;
+  const job = await mutateLocalImageUploadJob(candidate.assetId, (current) => {
+    if (
+      current &&
+      current.status !== "complete" &&
+      current.status !== "cancelled"
+    ) {
+      return current;
+    }
+    previous = current;
+    staged = true;
+    return {
+      ...candidate,
+      createdAt: current?.createdAt ?? candidate.createdAt,
+      updatedAt: new Date(now).toISOString(),
+    };
+  });
+  return staged && job ? { job, previous } : undefined;
+};
+
 export const enqueueLocalImageUploadJobAtomically = async (
   candidate: LocalImageUploadJob,
   now: number,
@@ -775,6 +827,12 @@ type LeasedLocalImageUploadJobPatch = Partial<
     | "nextAttemptAt"
     | "lastError"
     | "lastErrorCode"
+    | "localVideoInputThumbnail"
+    | "cleanupOnly"
+    | "cleanupReady"
+    | "cleanupTargetMediaId"
+    | "cleanupCloudPublicId"
+    | "cleanupCloudComplete"
   > & {
     cloudMedia?: MediaType | null;
     providerUploadId?: string | null;
@@ -1328,5 +1386,6 @@ export const normalizeLocalImageReference = (
     storagePolicy,
     ...(cloudUrl ? { cloudUrl } : {}),
     ...(clean("cloudMediaId") ? { cloudMediaId: clean("cloudMediaId") } : {}),
+    ...(clean("cloudPublicId") ? { cloudPublicId: clean("cloudPublicId") } : {}),
   };
 };

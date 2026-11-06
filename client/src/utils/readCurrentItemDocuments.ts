@@ -18,9 +18,9 @@ export const readCurrentItemDocuments = async (
     include_docs: true,
     update_seq: true,
   });
-  if (snapshot.update_seq === undefined) {
-    throw new Error("Missing PouchDB snapshot sequence");
-  }
+  // An empty IndexedDB-backed PouchDB can omit update_seq. Replaying from
+  // zero keeps the snapshot-plus-changes read race safe in that case.
+  const snapshotSequence = snapshot.update_seq ?? 0;
 
   const documents = new Map<string, DBItem | DBHeading>();
   for (const row of snapshot.rows) {
@@ -28,7 +28,7 @@ export const readCurrentItemDocuments = async (
   }
 
   const changes = await db.changes<DBItem | DBHeading>({
-    since: snapshot.update_seq,
+    since: snapshotSequence,
     doc_ids: requestedIds,
     include_docs: true,
   });

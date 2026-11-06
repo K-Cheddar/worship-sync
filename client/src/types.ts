@@ -1138,6 +1138,8 @@ export type LocalImageAssetReference = {
   /** Present after the optional background upload completes. */
   cloudUrl?: string;
   cloudMediaId?: string;
+  /** Cloudinary identity for deleting this image without changing its parent Media identity. */
+  cloudPublicId?: string;
 };
 
 export type MediaCloudUploadRequest = {

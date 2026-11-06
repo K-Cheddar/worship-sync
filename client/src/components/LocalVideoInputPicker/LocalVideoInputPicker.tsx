@@ -6,7 +6,16 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Cable, MonitorUp, RefreshCw, Video } from "lucide-react";
+import {
+  Cable,
+  Camera,
+  MonitorUp,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Trash2,
+  Video,
+} from "lucide-react";
 import type {
   LocalVideoCaptureKind,
   LocalVideoInputMediaSource,
@@ -35,6 +44,10 @@ import {
   supportsDesktopSourceList,
 } from "../../utils/desktopCapture";
 import { isElectron } from "../../utils/environment";
+import {
+  captureLocalVideoInputThumbnail,
+  type LocalVideoThumbnailFrame,
+} from "../../utils/localVideoInputThumbnail";
 
 import Button from "../Button/Button";
 import Input from "../Input/Input";
@@ -188,7 +201,13 @@ type LocalVideoInputPickerProps = {
   source?: LocalVideoInputMediaSource;
   /** Hardware inputs and desktop shares are added from separate Media actions. */
   captureMode?: LocalVideoCaptureMode;
-  onLinked: (source: LocalVideoInputMediaSource) => void;
+  onLinked: (
+    source: LocalVideoInputMediaSource,
+    initialThumbnail?: LocalVideoThumbnailFrame,
+  ) => void | Promise<void>;
+  onSaveThumbnail?: (frame: LocalVideoThumbnailFrame) => Promise<string | void>;
+  onRemoveThumbnail?: () => Promise<void>;
+  hasThumbnail?: boolean;
   className?: string;
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -265,6 +284,9 @@ const LocalVideoInputPicker = ({
   source,
   captureMode,
   onLinked,
+  onSaveThumbnail,
+  onRemoveThumbnail,
+  hasThumbnail = false,
   className,
   open: controlledOpen,
   onOpenChange,
@@ -305,11 +327,39 @@ const LocalVideoInputPicker = ({
   const [previewError, setPreviewError] = useState("");
   const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
   const [previewPaused, setPreviewPaused] = useState(false);
+  const [capturedFrame, setCapturedFrame] = useState<{
+    frame: LocalVideoThumbnailFrame;
+    url: string;
+  }>();
+  const [captureError, setCaptureError] = useState("");
+  const [captureFeedback, setCaptureFeedback] = useState("");
+  const [capturedThumbnailSaved, setCapturedThumbnailSaved] = useState(false);
+  const [isCapturingThumbnail, setIsCapturingThumbnail] = useState(false);
+  const [isSavingThumbnail, setIsSavingThumbnail] = useState(false);
+  const [isRemovingThumbnail, setIsRemovingThumbnail] = useState(false);
+  const [thumbnailRemoved, setThumbnailRemoved] = useState(false);
   const previewPausedRef = useRef(false);
+  const pendingNewSourceRef = useRef<LocalVideoInputMediaSource | undefined>(
+    undefined,
+  );
   const refreshRequestRef = useRef(0);
   const desktopRequestRef = useRef(0);
   const linkedShareRef = useRef<MediaStream | undefined>(undefined);
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
+  const desktopPreviewImageRef = useRef<HTMLImageElement | null>(null);
+  const captureGenerationRef = useRef(0);
+  const thumbnailActionRequestRef = useRef(0);
+  const captureKey = JSON.stringify([
+    open,
+    source?.sourceId ?? "",
+    videoDeviceId,
+    desktopSourceId ?? "",
+    browserShare?.stream?.id ?? "",
+  ]);
+  const captureKeyRef = useRef(captureKey);
+  captureKeyRef.current = captureKey;
+  const capturedFrameRef = useRef(capturedFrame);
+  capturedFrameRef.current = capturedFrame;
   const previewStreamRef = useRef<MediaStream | undefined>(undefined);
   const previewSessionRef = useRef<DevicePreviewSession | undefined>(undefined);
   const previewReleaseRef = useRef<Promise<void>>(Promise.resolve());
@@ -322,6 +372,35 @@ const LocalVideoInputPicker = ({
   const pickerCaptureConsumerId = `${PICKER_CAPTURE_CONSUMER_ID}:${previewInstanceId}`;
   const pickerSourceId = source?.sourceId;
   const runningInElectron = isElectron();
+
+  useEffect(() => {
+    captureGenerationRef.current += 1;
+    thumbnailActionRequestRef.current += 1;
+    setCapturedFrame(undefined);
+    setCaptureError("");
+    setCaptureFeedback("");
+    setCapturedThumbnailSaved(false);
+    setIsCapturingThumbnail(false);
+    setIsSavingThumbnail(false);
+    setIsRemovingThumbnail(false);
+    setThumbnailRemoved(false);
+  }, [
+    browserShare?.stream,
+    desktopSourceId,
+    open,
+    previewRefreshKey,
+    source?.sourceId,
+    videoDeviceId,
+  ]);
+
+  const capturedFrameUrl = capturedFrame?.url;
+  useEffect(
+    () => () => {
+      captureGenerationRef.current += 1;
+      if (capturedFrameUrl) URL.revokeObjectURL(capturedFrameUrl);
+    },
+    [capturedFrameUrl],
+  );
 
   const retireDevicePreview = useCallback(
     (session = previewSessionRef.current) => {
@@ -791,15 +870,15 @@ const LocalVideoInputPicker = ({
     }
   };
 
-  const finishLink = (
+  const finishLink = async (
     nextSource: LocalVideoInputMediaSource,
     nextCaptureKind: LocalVideoCaptureKind,
     audioEnabled: boolean,
-  ) => {
+  ): Promise<boolean> => {
     const suggestedLabel = isDesktopMode
       ? (selectedDesktopSource?.name ?? browserShare?.name)
       : selectedVideoInput?.label;
-    onLinked({
+    const linkedSource = {
       ...nextSource,
       label:
         (isLabelEdited ? label.trim() : (suggestedLabel ?? label.trim())) ||
@@ -808,8 +887,24 @@ const LocalVideoInputPicker = ({
       captureKind: nextCaptureKind,
       fit,
       audioEnabled,
-    });
+    };
+    try {
+      if (capturedFrame && !capturedThumbnailSaved && !thumbnailRemoved) {
+        await onLinked(linkedSource, capturedFrame.frame);
+      } else {
+        await onLinked(linkedSource);
+      }
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "The video input could not be saved to Media. Try again.",
+      );
+      return false;
+    }
+    if (!source) pendingNewSourceRef.current = undefined;
     setOpen(false);
+    return true;
   };
 
   const linkDesktopShare = async (nextSource: LocalVideoInputMediaSource) => {
@@ -833,12 +928,11 @@ const LocalVideoInputPicker = ({
       }
       linkedShareRef.current = share.stream;
       keepBrowserDesktopShare(nextSource.sourceId, share.stream);
-      finishLink(
+      return finishLink(
         nextSource,
         share.captureKind,
         share.stream.getAudioTracks().length > 0,
       );
-      return true;
     }
 
     const desktopSource = selectedDesktopSource;
@@ -867,12 +961,11 @@ const LocalVideoInputPicker = ({
       true,
       pickerCaptureConsumerId,
     );
-    finishLink(
+    return finishLink(
       nextSource,
       desktopSource.kind,
       useSystemAudio || Boolean(selectedAudioInput),
     );
-    return true;
   };
 
   const linkVideoInput = async (nextSource: LocalVideoInputMediaSource) => {
@@ -899,17 +992,16 @@ const LocalVideoInputPicker = ({
       true,
       pickerCaptureConsumerId,
     );
-    finishLink(nextSource, "device", Boolean(selectedAudioInput));
-    return true;
+    return finishLink(nextSource, "device", Boolean(selectedAudioInput));
   };
 
   const link = async () => {
-    const nextSource =
-      source ??
+    const nextSource = source ?? pendingNewSourceRef.current ??
       createLocalVideoInputMediaSource(
         label,
         isDesktopMode ? captureKind : "device",
       );
+    if (!source) pendingNewSourceRef.current = nextSource;
     setIsLoading(true);
     setError("");
     let linked = false;
@@ -926,12 +1018,11 @@ const LocalVideoInputPicker = ({
       linked = await linkVideoInput(nextSource);
     } catch (nextError) {
       if (nextError instanceof LocalVideoCaptureOwnedError) {
-        finishLink(
+        linked = await finishLink(
           nextSource,
           isDesktopMode ? captureKind : "device",
           useSystemAudio || Boolean(selectedAudioInput),
         );
-        linked = true;
         return;
       }
       if (nextError instanceof PreviewCapturePendingError) {
@@ -989,8 +1080,17 @@ const LocalVideoInputPicker = ({
       ? Boolean(desktopSourceId)
       : Boolean(browserShare);
   }
-  const canSave = !isLoading && hasSelectedSource;
-  const saveLabel = source ? "Save local link" : "Add to Media";
+  const canSave =
+    !isLoading &&
+    !isCapturingThumbnail &&
+    !isSavingThumbnail &&
+    !isRemovingThumbnail &&
+    hasSelectedSource;
+  const saveLabel = source
+    ? "Save local link"
+    : capturedFrame
+      ? "Add to Media and save thumbnail"
+      : "Add to Media";
   let triggerIcon = source ? Cable : Video;
   if (isDesktopMode) triggerIcon = MonitorUp;
   const showDeviceOrBrowserPreview =
@@ -1005,9 +1105,18 @@ const LocalVideoInputPicker = ({
   }
 
   let desktopSourcePreview: ReactNode = null;
-  if (selectedDesktopSource?.thumbnailDataUrl) {
+  if (capturedFrame) {
     desktopSourcePreview = (
       <img
+        src={capturedFrame.url}
+        alt="Captured video input thumbnail"
+        className={`aspect-video w-full rounded border border-white/10 bg-black ${previewObjectFit}`}
+      />
+    );
+  } else if (selectedDesktopSource?.thumbnailDataUrl) {
+    desktopSourcePreview = (
+      <img
+        ref={desktopPreviewImageRef}
         src={selectedDesktopSource.thumbnailDataUrl}
         alt={`Preview of ${selectedDesktopSource.name}`}
         className={`aspect-video w-full rounded border border-white/10 bg-black ${previewObjectFit}`}
@@ -1023,6 +1132,109 @@ const LocalVideoInputPicker = ({
       </div>
     );
   }
+
+  const captureThumbnail = async () => {
+    const generation = ++captureGenerationRef.current;
+    setIsCapturingThumbnail(true);
+    setCaptureError("");
+    setCaptureFeedback("");
+    try {
+      const video = previewVideoRef.current;
+      const image = desktopPreviewImageRef.current;
+      const frameSource =
+        video && video.videoWidth > 0 && video.videoHeight > 0
+          ? video
+          : image && image.complete && image.naturalWidth > 0
+            ? image
+            : undefined;
+      if (!frameSource) {
+        throw new Error(
+          "The video preview is unavailable. Wait for a frame, then try again.",
+        );
+      }
+      const frame = await captureLocalVideoInputThumbnail(frameSource);
+      if (generation !== captureGenerationRef.current || !open) return;
+      setCapturedFrame({ frame, url: URL.createObjectURL(frame.blob) });
+      setCapturedThumbnailSaved(false);
+      setThumbnailRemoved(false);
+    } catch (error) {
+      if (generation !== captureGenerationRef.current || !open) return;
+      setCaptureError(
+        error instanceof Error
+          ? error.message
+          : "The video frame could not be captured. Try again.",
+      );
+    } finally {
+      if (generation === captureGenerationRef.current) {
+        setIsCapturingThumbnail(false);
+      }
+    }
+  };
+
+  const saveCapturedThumbnail = async () => {
+    if (!capturedFrame || !onSaveThumbnail || !source) return;
+    const frameToSave = capturedFrame;
+    const operationKey = captureKeyRef.current;
+    const generation = captureGenerationRef.current;
+    const requestId = ++thumbnailActionRequestRef.current;
+    const isCurrent = () =>
+      requestId === thumbnailActionRequestRef.current &&
+      generation === captureGenerationRef.current &&
+      operationKey === captureKeyRef.current &&
+      capturedFrameRef.current?.frame === frameToSave.frame;
+    setIsSavingThumbnail(true);
+    setCaptureError("");
+    try {
+      const message = await onSaveThumbnail(frameToSave.frame);
+      if (!isCurrent()) return;
+      setCapturedThumbnailSaved(true);
+      setThumbnailRemoved(false);
+      setCaptureFeedback(message || "Thumbnail saved.");
+    } catch (error) {
+      if (!isCurrent()) return;
+      setCaptureError(
+        error instanceof Error
+          ? error.message
+          : "The thumbnail could not be saved. Try again.",
+      );
+    } finally {
+      if (requestId === thumbnailActionRequestRef.current) {
+        setIsSavingThumbnail(false);
+      }
+    }
+  };
+
+  const removeSavedThumbnail = async () => {
+    if (!onRemoveThumbnail) return;
+    const operationKey = captureKeyRef.current;
+    const generation = captureGenerationRef.current;
+    const requestId = ++thumbnailActionRequestRef.current;
+    const isCurrent = () =>
+      requestId === thumbnailActionRequestRef.current &&
+      generation === captureGenerationRef.current &&
+      operationKey === captureKeyRef.current;
+    setIsRemovingThumbnail(true);
+    setCaptureError("");
+    setCaptureFeedback("");
+    try {
+      await onRemoveThumbnail();
+      if (!isCurrent()) return;
+      setThumbnailRemoved(true);
+      setCapturedThumbnailSaved(false);
+      setCaptureFeedback("Thumbnail removed.");
+    } catch (error) {
+      if (!isCurrent()) return;
+      setCaptureError(
+        error instanceof Error
+          ? error.message
+          : "The thumbnail could not be removed. Try again.",
+      );
+    } finally {
+      if (requestId === thumbnailActionRequestRef.current) {
+        setIsRemovingThumbnail(false);
+      }
+    }
+  };
 
   // The preview <video> mounts only after a source is selected; re-attach if
   // getUserMedia finished while the element was still unmounted.
@@ -1046,7 +1258,12 @@ const LocalVideoInputPicker = ({
           variant="tertiary"
           svg={triggerIcon}
           className={className}
-          onClick={() => setOpen(true)}
+          onClick={() => {
+            // Reopening Add starts a deliberate new input attempt. Failed saves
+            // within the open picker retain their source ID for retry.
+            if (!source) pendingNewSourceRef.current = undefined;
+            setOpen(true);
+          }}
         >
           {triggerLabel}
         </Button>
@@ -1165,8 +1382,15 @@ const LocalVideoInputPicker = ({
                   playsInline
                   autoPlay
                   aria-label="Input preview"
-                  className={`h-full w-full ${previewObjectFit}`}
+                  className={`h-full w-full ${previewObjectFit} ${capturedFrame ? "opacity-0" : ""}`}
                 />
+                {capturedFrame ? (
+                  <img
+                    src={capturedFrame.url}
+                    alt="Captured video input thumbnail"
+                    className={`absolute inset-0 h-full w-full ${previewObjectFit}`}
+                  />
+                ) : null}
                 {livePreviewStatusLabel ? (
                   <div
                     className="absolute inset-0 z-10 flex items-center justify-center bg-black px-4 text-center text-sm text-neutral-300"
@@ -1176,6 +1400,74 @@ const LocalVideoInputPicker = ({
                   </div>
                 ) : null}
               </div>
+            ) : null}
+            {source || hasSelectedSource || capturedFrame ? (
+              <div className="flex flex-wrap items-center gap-2">
+                {!capturedFrame ? (
+                  <Button
+                    variant="secondary"
+                    svg={Camera}
+                    disabled={isCapturingThumbnail || isLoading}
+                    isLoading={isCapturingThumbnail}
+                    onClick={() => void captureThumbnail()}
+                  >
+                    Capture thumbnail
+                  </Button>
+                ) : (
+                  <>
+                    <Button
+                      variant="tertiary"
+                      svg={RotateCcw}
+                      disabled={isSavingThumbnail || isRemovingThumbnail}
+                      onClick={() => {
+                        captureGenerationRef.current += 1;
+                        setCapturedFrame(undefined);
+                        setCaptureError("");
+                        setCaptureFeedback("");
+                        setCapturedThumbnailSaved(false);
+                        setThumbnailRemoved(false);
+                      }}
+                    >
+                      Retake
+                    </Button>
+                    {source && onSaveThumbnail ? (
+                      <Button
+                        variant="cta"
+                        svg={Save}
+                        disabled={isSavingThumbnail || isRemovingThumbnail || capturedThumbnailSaved}
+                        isLoading={isSavingThumbnail}
+                        onClick={() => void saveCapturedThumbnail()}
+                      >
+                        Save thumbnail
+                      </Button>
+                    ) : null}
+                  </>
+                )}
+                {source && (hasThumbnail || capturedThumbnailSaved) && !thumbnailRemoved && onRemoveThumbnail ? (
+                  <Button
+                    variant="tertiary"
+                    svg={Trash2}
+                    disabled={isRemovingThumbnail || isSavingThumbnail}
+                    isLoading={isRemovingThumbnail}
+                    onClick={() => void removeSavedThumbnail()}
+                  >
+                    Remove thumbnail
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
+            {captureFeedback ? (
+              <p className="text-sm text-emerald-200" role="status">
+                {captureFeedback}
+              </p>
+            ) : null}
+            {captureError ? (
+              <p
+                className="rounded-md border border-amber-500/35 bg-amber-950/35 p-3 text-sm text-amber-100"
+                role="alert"
+              >
+                {captureError}
+              </p>
             ) : null}
             {showAllowAccess || showRetryDeviceScan ? (
               <div className="flex flex-wrap gap-2">
@@ -1216,7 +1508,7 @@ const LocalVideoInputPicker = ({
               </Button>
               <Button
                 variant="cta"
-                disabled={!canSave}
+                disabled={!canSave || isSavingThumbnail || isRemovingThumbnail}
                 isLoading={isLoading}
                 onClick={() => void link()}
               >
