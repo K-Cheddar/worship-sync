@@ -14,20 +14,15 @@ import {
 import { Link } from "react-router-dom";
 import {
   CalendarDays,
-  ChevronsDownUp,
-  ChevronsUpDown,
   Clipboard,
   ClipboardPaste,
   Copy,
-  LayoutGrid,
   Link2,
   MoreHorizontal,
   MessageSquareText,
   Send,
   Plus,
   Printer,
-  Redo2,
-  Undo2,
   Users,
   Wand2,
   Pencil,
@@ -37,7 +32,6 @@ import Menu from "../../../components/Menu/Menu";
 import Modal from "../../../components/Modal/Modal";
 import ConfirmDialog from "../../../components/Modal/ConfirmDialog";
 import Drawer from "../../../components/Drawer/Drawer";
-import SegmentedControl from "../../../components/SegmentedControl/SegmentedControl";
 import type { MenuItemType } from "../../../types";
 import Icon from "../../../components/Icon/Icon";
 import Select from "../../../components/Select/Select";
@@ -59,6 +53,7 @@ import {
   getSharedOccurrenceTiming,
   occurrenceScheduleDetailsMatch,
   preserveStoredOccurrenceIds,
+  matchOccurrencesByIdentity,
 } from "@/utils/teamScheduleOccurrences";
 import {
   getCreateScheduleDefaultRange,
@@ -71,13 +66,24 @@ import {
 import {
   findReusablePeriodSchedule,
   findOverlappingPeriodSchedules,
+  findScheduleOccurrenceOwnershipConflicts,
+  hasScheduleData,
+  filterSafeScheduleReconciliationOccurrences,
   mergeCurrentScheduleOccurrences,
   resolveDisplayedPeriodRange,
   filterOccurrencesToRange,
   formatSchedulePeriodName,
+  scheduleCoversPeriodRange,
   type SchedulePeriodPreset,
 } from "./schedulePeriodUtils";
 import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
+import ScheduleStaffingSummary from "./ScheduleStaffingSummary";
+import ScheduleWorkspaceToolbar, {
+  resolveSchedulePublicationStatus,
+} from "./ScheduleWorkspaceToolbar";
+import ScheduleSendScopeNotice from "./ScheduleSendScopeNotice";
+import { getScheduleSendScope, resolveScheduleWorkspace } from "./scheduleWorkspaceModel";
+import { isPersistedScheduleId } from "./scheduleNotificationHistory";
 import { useScheduleNotificationHistory } from "./useScheduleNotificationHistory";
 import RangeSelector from "../components/RangeSelector";
 import { shiftRange } from "../rangeSelection";
@@ -93,6 +99,8 @@ import {
   updateTeamRosterMemberProfile,
   getTeamsBootstrap,
   updateTeamSchedule,
+  publishTeamSchedule,
+  unpublishTeamSchedule,
   updateTeamScheduleAssignment,
   updateTeamScheduleAssignmentsBatch,
   updateTeamScheduleAssignmentMicrophones,
@@ -138,7 +146,6 @@ import {
   type TeamScheduleAdminLayout,
 } from "../teamScheduleAdminLayout";
 import {
-  OCCURRENCE_ORGANIZE_OPTIONS,
   readScheduleOrganizeMode,
   writeScheduleOrganizeMode,
   type OccurrenceOrganizeMode,
@@ -261,8 +268,11 @@ import {
 } from "./scheduleDraftUtils";
 import {
   cellsMatch,
+  hasPendingScheduleUndoEdit,
+  prepareScheduleUndoChanges,
+  resolveScheduleUndoBatchResult,
   type ScheduleCellChange,
-  type ScheduleCellState,
+  type ScheduleUndoBatchChange,
   type ScheduleUndoEntry,
 } from "./scheduleUndo";
 import { useScheduleUndoStack } from "./useScheduleUndoStack";
@@ -545,7 +555,7 @@ const ScheduleTab = ({
   const activeServices = useMemo(() => data.services.filter(isActive), [data.services]);
   const {
     periodPreset, periodRange, selectRangePreset, selectCustomRange, setPeriodSelection,
-    markExplicitPeriodSelection, teamPeriod, periodServiceIds, generatedPeriodOccurrences,
+    markExplicitPeriodSelection, periodServiceIds, generatedPeriodOccurrences,
   } = useScheduleWorkspacePeriod({
     services: activeServices,
     positions: data.positions,
@@ -587,6 +597,21 @@ const ScheduleTab = ({
     serviceTimeZone,
     workspaceTeamId,
   ]);
+  const ownershipConflictServiceNames = useMemo(() => [...new Set(generatedPeriodOccurrences.flatMap((occurrence) =>
+    findScheduleOccurrenceOwnershipConflicts({
+      schedules,
+      churchId,
+      teamId: workspaceTeamId,
+      occurrences: [occurrence],
+      timeZone: serviceTimeZone,
+    }).length > 1 ? [occurrence.name] : [],
+  ))].sort((left, right) => left.localeCompare(right)), [
+    churchId,
+    generatedPeriodOccurrences,
+    schedules,
+    serviceTimeZone,
+    workspaceTeamId,
+  ]);
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
   const overlappingPeriodSchedules = useMemo(() => viewingSavedSchedule
     ? []
@@ -599,7 +624,11 @@ const ScheduleTab = ({
   const explicitlySelectedPeriodSchedule = periodScheduleSelection?.scope === periodSelectionScope
     ? overlappingPeriodSchedules.find((schedule) => schedule.scheduleId === periodScheduleSelection.scheduleId) || null
     : null;
-  const preferredPeriodSchedule = matchedPeriodSchedule;
+  // Displaying a preserved owner is independent of permission to reconcile it.
+  const preferredPeriodSchedule = periodScheduleMatch.ambiguous &&
+    (!matchedPeriodSchedule || !hasScheduleData(matchedPeriodSchedule))
+    ? periodScheduleMatch.reviewSchedule || matchedPeriodSchedule
+    : matchedPeriodSchedule || periodScheduleMatch.reviewSchedule;
   const virtualPeriodSchedule = useMemo(() => {
     if (
       !workspaceTeamId ||
@@ -656,6 +685,7 @@ const ScheduleTab = ({
   const virtualSchedulePreviewsRef = useRef(virtualSchedulePreviews);
   useLayoutEffect(() => { virtualSchedulePreviewsRef.current = virtualSchedulePreviews; }, [virtualSchedulePreviews]);
   const pendingScheduleCellEditsRef = useRef(new Map<string, PendingScheduleCellEdit>());
+  const [, refreshPendingAssignmentEdits] = useState(0);
   const scheduleCellEditSequenceRef = useRef(0);
   const selectedSchedulePreview = selectedScheduleRecord
     ? virtualSchedulePreviews.get(virtualSchedulePreviewKey(churchId, selectedScheduleRecord.scheduleId))
@@ -667,6 +697,34 @@ const ScheduleTab = ({
       pendingScheduleCellEditsRef.current.values(),
     )
     : null;
+  const safeReconciliationOccurrences = useMemo(() => filterSafeScheduleReconciliationOccurrences({
+    storedOccurrences: selectedSchedule?.occurrences || [],
+    currentOccurrences: generatedPeriodOccurrences,
+    schedules,
+    churchId,
+    teamId: workspaceTeamId,
+    scheduleId: selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId)
+      ? selectedSchedule.scheduleId
+      : undefined,
+    timeZone: serviceTimeZone,
+  }), [
+    churchId,
+    generatedPeriodOccurrences,
+    schedules,
+    selectedSchedule,
+    serviceTimeZone,
+    workspaceTeamId,
+  ]);
+  const safeCurrentMatches = useMemo(() => matchOccurrencesByIdentity(
+    selectedSchedule?.occurrences || [],
+    safeReconciliationOccurrences,
+    serviceTimeZone,
+  ), [safeReconciliationOccurrences, selectedSchedule?.occurrences, serviceTimeZone]);
+  const safePendingAdditionOccurrences = safeReconciliationOccurrences.filter((occurrence) =>
+    !safeCurrentMatches.matches.has(occurrence.occurrenceId) &&
+    !safeCurrentMatches.ambiguousCurrentIds.has(occurrence.occurrenceId) &&
+    !(selectedSchedule?.occurrences || []).some((saved) => saved.occurrenceId === occurrence.occurrenceId),
+  );
   const latestScheduleRef = useRef(selectedSchedule);
   const schedulesByOwnerRef = useRef(new Map<string, TeamSchedule>());
   useEffect(() => {
@@ -762,6 +820,27 @@ const ScheduleTab = ({
   useLayoutEffect(() => {
     activeScheduleIdRef.current = selectedScheduleRecord?.scheduleId || "";
   }, [selectedScheduleRecord?.scheduleId]);
+  const scheduleWorkspaceActionIdentity = JSON.stringify([
+    churchId,
+    workspaceTeamId,
+    periodRange.start,
+    periodRange.end,
+    displayedPeriodRange.start,
+    displayedPeriodRange.end,
+    viewingSavedSchedule,
+    selectedScheduleRecord?.scheduleId || "",
+  ]);
+  const scheduleWorkspaceActionIdentityRef = useRef(scheduleWorkspaceActionIdentity);
+  useLayoutEffect(() => {
+    scheduleWorkspaceActionIdentityRef.current = scheduleWorkspaceActionIdentity;
+  }, [scheduleWorkspaceActionIdentity]);
+  const isCurrentScheduleAction = (
+    schedule: Pick<TeamSchedule, "churchId" | "scheduleId">,
+    workspaceIdentity: string,
+  ) => scheduleTabMountedRef.current &&
+    activeChurchIdRef.current === schedule.churchId &&
+    activeScheduleIdRef.current === schedule.scheduleId &&
+    scheduleWorkspaceActionIdentityRef.current === workspaceIdentity;
   const confirmedPeriodReconciliationRef = useRef<string | null>(null);
   const pendingScheduleEnsuresRef = useRef(new Map<string, Promise<TeamSchedule | null>>());
   const periodOccurrenceSignature = generatedPeriodOccurrences.map((occurrence) =>
@@ -879,13 +958,59 @@ const ScheduleTab = ({
   );
   const ensureActiveSchedule = useCallback(async (
     requestedSchedule?: TeamSchedule | null,
+    assignmentOccurrenceIds?: string[],
   ): Promise<TeamSchedule | null> => {
     const active = requestedSchedule || latestScheduleRef.current;
     if (!active) throw new Error("Choose a service period before scheduling.");
     if (!active.scheduleId.startsWith("virtual:") && viewingSavedSchedule) return active;
+    const saved = schedules.find((schedule) =>
+      schedule.scheduleId === active.scheduleId && schedule.churchId === churchId &&
+      schedule.teamId === workspaceTeamId && !schedule.archivedAt,
+    );
+    const reconciliationOccurrences = filterSafeScheduleReconciliationOccurrences({
+      storedOccurrences: active.occurrences || [],
+      currentOccurrences: generatedPeriodOccurrences,
+      schedules,
+      churchId,
+      teamId: active.teamId,
+      scheduleId: isPersistedScheduleId(active.scheduleId) ? active.scheduleId : undefined,
+      timeZone: serviceTimeZone,
+    });
+    if (assignmentOccurrenceIds?.length) {
+      const unsafeTargetNames = assignmentOccurrenceIds.flatMap((id) => {
+        const target = active.occurrences?.find((occurrence) => occurrence.occurrenceId === id);
+        if (!target) return [id];
+        const match = matchOccurrencesByIdentity(reconciliationOccurrences, [target], serviceTimeZone);
+        return match.matches.has(id) && !match.ambiguousCurrentIds.has(id) ? [] : [target.name];
+      });
+      if (unsafeTargetNames.length) {
+        throw new Error(`${[...new Set(unsafeTargetNames)].join(", ")} needs service identity or ownership review before it can be changed. Its saved assignments are preserved.`);
+      }
+    }
+    // A targeted assignment to an already persisted row does not depend on
+    // adding unrelated services. New rows still require strict reconciliation.
+    if (saved &&
+        assignmentOccurrenceIds?.length && assignmentOccurrenceIds.every((id) => {
+          const stored = saved.occurrences?.find((occurrence) => occurrence.occurrenceId === id);
+          const target = active.occurrences?.find((occurrence) => occurrence.occurrenceId === id);
+          if (!stored || !target || !occurrenceScheduleDetailsMatch([stored], [target], serviceTimeZone)) return false;
+          const ownMatch = matchOccurrencesByIdentity(saved.occurrences || [], [stored], serviceTimeZone);
+          const currentMatch = matchOccurrencesByIdentity(generatedPeriodOccurrences, [stored], serviceTimeZone);
+          const current = currentMatch.matches.get(id);
+          return ownMatch.matches.has(id) && current &&
+            occurrenceScheduleDetailsMatch([stored], [current], serviceTimeZone) &&
+            findScheduleOccurrenceOwnershipConflicts({
+              schedules, churchId, teamId: saved.teamId, occurrences: [stored],
+              excludeScheduleId: saved.scheduleId, timeZone: serviceTimeZone,
+            }).length === 0;
+        })) return active;
+    // An overlapping schedule may be selected for display, but reconciling the
+    // full visible period could select a different saved owner on the server.
+    if (saved && !scheduleCoversPeriodRange(saved, persistedPeriodRange)) return active;
     const requestKey = makePeriodReconciliationKey(active.scheduleId, active.occurrences || [], active);
     if (
       !active.scheduleId.startsWith("virtual:") &&
+      !periodScheduleMatch.ambiguous && !periodScheduleMatch.ownershipConflict &&
       confirmedPeriodReconciliationRef.current === requestKey
     ) return active;
     if (!churchId) throw new Error("Church information is unavailable.");
@@ -898,22 +1023,18 @@ const ScheduleTab = ({
             teamId: workspaceTeamId,
             startDate: persistedPeriodRange.start,
             endDate: persistedPeriodRange.end,
-            serviceIds: periodServiceIds,
-            occurrences: teamPeriod.occurrences,
+            serviceIds: [...new Set(reconciliationOccurrences.flatMap((occurrence) =>
+              occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
+            ))],
+            occurrences: reconciliationOccurrences,
             visibleStartDate: periodRange.start,
             visibleEndDate: periodRange.end,
-            ...(operatorSelectedPeriodScheduleId
-              ? { operatorSelectedScheduleId: operatorSelectedPeriodScheduleId }
+            ...(operatorSelectedPeriodScheduleId || (isPersistedScheduleId(active.scheduleId) ? active.scheduleId : "")
+              ? { operatorSelectedScheduleId: operatorSelectedPeriodScheduleId || active.scheduleId }
               : {}),
-            visibleOccurrenceIds: generatedPeriodOccurrences.map((occurrence) => occurrence.occurrenceId),
+            visibleOccurrenceIds: reconciliationOccurrences.map((occurrence) => occurrence.occurrenceId),
             timeZone: serviceTimeZone,
           }));
-          const wasPersisted = !active.scheduleId.startsWith("virtual:");
-          const addedOccurrences = wasPersisted
-            ? (result.schedule.occurrences || []).filter((occurrence) =>
-              !(active.occurrences || []).some((saved) => saved.occurrenceId === occurrence.occurrenceId),
-            ).length
-            : 0;
           let schedule = result.schedule;
           if (active.scheduleId.startsWith("virtual:")) {
             const previewKey = virtualSchedulePreviewKey(churchId, active.scheduleId);
@@ -932,6 +1053,7 @@ const ScheduleTab = ({
               ), remappedEdit);
             }
             pendingScheduleCellEditsRef.current = remappedPending;
+            refreshPendingAssignmentEdits((revision) => revision + 1);
             schedule = applyPendingScheduleCellEdits(schedule, remappedPending.values());
             updateVirtualSchedulePreview(null, active.scheduleId);
             if (preview.guests?.length && !schedule.guests?.length) {
@@ -960,12 +1082,6 @@ const ScheduleTab = ({
               schedule,
             );
           }
-          if (addedOccurrences > 0 && activeChurchIdRef.current === churchId) {
-            showToast(
-              `${addedOccurrences} ${addedOccurrences === 1 ? "service" : "services"} added to ${schedule.name}.`,
-              "success",
-            );
-          }
           return schedule;
         } finally {
           if (pendingScheduleEnsuresRef.current.get(requestKey) === request) {
@@ -979,40 +1095,48 @@ const ScheduleTab = ({
     churchId,
     generatedPeriodOccurrences,
     makePeriodReconciliationKey,
-    teamPeriod.occurrences,
-    publishScheduleSnapshot,
-    persistedPeriodRange.end,
-    persistedPeriodRange.start,
+    persistedPeriodRange,
     periodRange.end,
     periodRange.start,
-    periodServiceIds,
     operatorSelectedPeriodScheduleId,
+    publishScheduleSnapshot,
     setSelectedScheduleId,
     serviceTimeZone,
-    showToast,
     trackTeamsSave,
     updateVirtualSchedulePreview,
     viewingSavedSchedule,
     workspaceTeamId,
+    schedules,
+    periodScheduleMatch.ambiguous,
+    periodScheduleMatch.ownershipConflict,
   ]);
+  const selectedScheduleCanBeReconciled = Boolean(
+    selectedSchedule && (
+      periodScheduleMatch.schedule?.scheduleId === selectedSchedule.scheduleId ||
+      (periodScheduleMatch.ambiguous && !periodScheduleMatch.ownershipConflict &&
+        safePendingAdditionOccurrences.length > 0 &&
+        periodScheduleMatch.reviewSchedule?.scheduleId === selectedSchedule.scheduleId)
+    ),
+  );
   useEffect(() => {
     if (
       !canEdit ||
       viewingSavedSchedule ||
       !selectedSchedule ||
       selectedSchedule.scheduleId.startsWith("virtual:") ||
-      periodScheduleMatch.schedule?.scheduleId !== selectedSchedule.scheduleId ||
-      periodScheduleMatch.ambiguous ||
+      !selectedScheduleCanBeReconciled ||
       periodScheduleMatch.ownershipConflict ||
       generatedPeriodOccurrences.length === 0 ||
       confirmedPeriodReconciliationRef.current === periodReconciliationKey
     ) return;
     let active = true;
-    const offerRetry = () => {
+    const offerRetry = (error: unknown) => {
       if (!active) return;
       let toastId = "";
       toastId = showToast({
-        message: "Couldn't check this schedule for newly added services. Retry to refresh the schedule.",
+        message: error instanceof Error
+          ? error.message
+          : "Couldn't check this schedule for newly added services. Retry to refresh the schedule.",
         variant: "error",
         persist: true,
         children: (
@@ -1032,9 +1156,9 @@ const ScheduleTab = ({
     ensureActiveSchedule,
     generatedPeriodOccurrences.length,
     periodReconciliationKey,
-    periodScheduleMatch.schedule?.scheduleId,
-    periodScheduleMatch.ambiguous,
     periodScheduleMatch.ownershipConflict,
+    selectedScheduleCanBeReconciled,
+    safePendingAdditionOccurrences.length,
     selectedSchedule,
     removeToast,
     showToast,
@@ -1201,6 +1325,8 @@ const ScheduleTab = ({
   const {
     canUndo,
     canRedo,
+    undoEntry,
+    redoEntry,
     undoLabel,
     redoLabel,
     record: recordUndoEntry,
@@ -1210,6 +1336,17 @@ const ScheduleTab = ({
     pushRedo,
     reset: resetUndoHistory,
   } = useScheduleUndoStack();
+  const pendingScheduleAssignmentEdits = [...pendingScheduleCellEditsRef.current.values()];
+  const undoBlockedByPendingSave = hasPendingScheduleUndoEdit(
+    undoEntry,
+    churchId,
+    pendingScheduleAssignmentEdits,
+  );
+  const redoBlockedByPendingSave = hasPendingScheduleUndoEdit(
+    redoEntry,
+    churchId,
+    pendingScheduleAssignmentEdits,
+  );
   // Export/share actions live in a toolbar overflow menu; the PDF preview modal is
   // rendered headless and opened from that menu item.
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
@@ -1468,6 +1605,11 @@ const ScheduleTab = ({
   const [closingReplacement, setClosingReplacement] = useState(false);
   const [scheduleMessagesOpen, setScheduleMessagesOpen] = useState(false);
   const [scheduleInitialSmsOpen, setScheduleInitialSmsOpen] = useState(false);
+  const [scheduleInitialSmsOrigin, setScheduleInitialSmsOrigin] = useState<{
+    churchId: string;
+    scheduleId: string;
+    workspaceIdentity: string;
+  } | null>(null);
   const scheduleActionsTriggerRef = useRef<HTMLButtonElement | null>(null);
   const membersDrawerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const wasScheduleMessagesOpenRef = useRef(false);
@@ -1535,16 +1677,40 @@ const ScheduleTab = ({
 
   const confirmScheduleSms = async () => {
     const preview = scheduleSmsPreview;
-    if (!preview || scheduleSmsSendLockRef.current) return;
+    if (!preview || scheduleSmsSendLockRef.current || scheduleActionPendingRef.current) return;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
     if (preview.intent.churchId !== churchId) {
       setScheduleSmsPreview(null);
       setSendingNotificationIntentId("");
       return;
     }
+    if (!isCurrentScheduleAction({ churchId, scheduleId: preview.intent.sourceId }, workspaceIdentity)) {
+      showToast("The active schedule changed while the message was open. Reopen it from the selected schedule before sending.", "error");
+      return;
+    }
     scheduleSmsSendLockRef.current = true;
-    setScheduleSmsPreview(null);
-    setSendingScheduleSms(true);
+    scheduleActionPendingRef.current = true;
+    setIsPreparingScheduleSend(true);
+    let sendStarted = false;
     try {
+      const schedule = latestScheduleRef.current?.scheduleId === preview.intent.sourceId &&
+        latestScheduleRef.current.churchId === churchId
+        ? latestScheduleRef.current
+        : schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(churchId, preview.intent.sourceId));
+      if (!schedule) {
+        showToast("This schedule changed while the message was open. Refresh it before sending the text.", "error");
+        return;
+      }
+      if (!(await flushPendingScheduleSaves(schedule, "send"))) return;
+      if (!isCurrentScheduleAction(schedule, workspaceIdentity)) {
+        showToast("The active schedule changed while its assignments were saving. Reopen this message before sending.", "error");
+        return;
+      }
+      setScheduleSmsPreview(null);
+      setIsPreparingScheduleSend(false);
+      setSendingScheduleSms(true);
+      setSendingNotificationIntentId("");
+      sendStarted = true;
       const result = await sendNotificationIntent(churchId, preview.intent.intentId, preview.approvalVersion);
       await refreshScheduleNotificationHistory(preview.intent.sourceId);
       showToast(
@@ -1562,8 +1728,10 @@ const ScheduleTab = ({
       } catch { /* Keep the last known queue visible. */ }
     } finally {
       scheduleSmsSendLockRef.current = false;
+      scheduleActionPendingRef.current = false;
+      setIsPreparingScheduleSend(false);
       setSendingScheduleSms(false);
-      setSendingNotificationIntentId("");
+      if (sendStarted) setSendingNotificationIntentId("");
     }
   };
 
@@ -1631,6 +1799,13 @@ const ScheduleTab = ({
     });
   }, []);
   const [copyingLink, setCopyingLink] = useState(false);
+  const copyingLinkRef = useRef(false);
+  const publicLinkInputRef = useRef<HTMLInputElement>(null);
+  const [publishAndCopyLink, setPublishAndCopyLink] = useState<{
+    schedule: TeamSchedule;
+    published: boolean;
+    publicUrl?: string;
+  } | null>(null);
   const [pasteRowOpen, setPasteRowOpen] = useState(false);
   const [scheduleLayout, setScheduleLayout] = useState<TeamScheduleAdminLayout>(
     resolveInitialTeamScheduleAdminLayout,
@@ -1806,6 +1981,9 @@ const ScheduleTab = ({
     };
     pending.set(key, edit);
     pendingScheduleCellEditsRef.current = pending;
+    if (field === "assignments") {
+      refreshPendingAssignmentEdits((revision) => revision + 1);
+    }
     scheduleCellSaveFailuresRef.current.delete(key);
     const toastId = scheduleCellSaveToastIdsRef.current.get(key);
     if (toastId) {
@@ -1828,6 +2006,9 @@ const ScheduleTab = ({
     if (pending.get(key)?.sequence !== edit.sequence) return false;
     pending.delete(key);
     pendingScheduleCellEditsRef.current = pending;
+    if (edit.field === "assignments") {
+      refreshPendingAssignmentEdits((revision) => revision + 1);
+    }
     return true;
   }, []);
   const saveLatestScheduleCellEdit = useCallback((
@@ -1984,6 +2165,7 @@ const ScheduleTab = ({
       scheduleCellSaveToastIdsRef.current.delete(key);
     });
     pendingScheduleCellEditsRef.current = nextEdits;
+    refreshPendingAssignmentEdits((revision) => revision + 1);
   }, [removeToast]);
   const showPositionSlotDependencyRetry = useCallback((edit: PendingScheduleCellEdit) => {
     const cellKey = scheduleCellEditKey(
@@ -2227,64 +2409,24 @@ const ScheduleTab = ({
         else pushRedo(entry);
         return;
       }
-      const previousSchedule = selectedSchedule;
-      let nextAssignments: TeamScheduleAssignments = {
-        ...(selectedSchedule.assignments || {}),
-      };
-      const changes: Array<{
-        serviceId: string;
-        positionSlotKey: string;
-        serviceDate: string;
-        expectedCell: ScheduleCellState;
-        assignment: ScheduleCellState;
-      }> = [];
-      let skipped = 0;
-      // Undo restores each cell's "before"; redo re-applies its "after". Process
-      // undo in reverse so a member is cleared from a slot before being restored
-      // to another (mirrors how the forward edit was ordered).
-      const ordered =
-        direction === "undo" ? [...entry.changes].reverse() : entry.changes;
-      for (const change of ordered) {
-        const expected = direction === "undo" ? change.after : change.before;
-        const desired = direction === "undo" ? change.before : change.after;
-        const liveCell = nextAssignments[change.occurrenceId]?.[change.cellKey] ?? "";
-        if (!cellsMatch(liveCell, expected)) {
-          skipped += 1;
-          continue;
-        }
-        const row = { ...(nextAssignments[change.occurrenceId] || {}) };
-        const serialized = serializeAssignmentCell(
-          normalizeAssignmentCell(desired || undefined),
-        );
-        if (serialized) {
-          row[change.cellKey] = serialized;
-        } else {
-          delete row[change.cellKey];
-        }
-        if (Object.keys(row).length > 0) {
-          nextAssignments[change.occurrenceId] = row;
-        } else {
-          const trimmed = { ...nextAssignments };
-          delete trimmed[change.occurrenceId];
-          nextAssignments = trimmed;
-        }
-        changes.push({
-          serviceId: change.occurrenceId,
-          positionSlotKey: change.cellKey,
-          serviceDate: change.serviceDate,
-          expectedCell: liveCell,
-          assignment: serialized || "",
-        });
-      }
-      if (skipped > 0) {
-        showToast(
-          "Some changes were edited by someone else and were left as they are.",
-          "neutral",
-        );
-      }
-      if (changes.length === 0) {
+      if (hasPendingScheduleUndoEdit(entry, churchId, pendingScheduleCellEditsRef.current.values())) {
         if (direction === "undo") pushUndo(entry);
         else pushRedo(entry);
+        return;
+      }
+      const previousSchedule = selectedSchedule;
+      const { changes, skippedChanges } = prepareScheduleUndoChanges(
+        entry,
+        direction,
+        previousSchedule.assignments || {},
+      );
+      if (changes.length === 0) {
+        if (skippedChanges.length) {
+          showToast(
+            `${direction === "undo" ? "Undo" : "Redo"} was skipped because some slots no longer match this step. This history entry was removed.`,
+            "neutral",
+          );
+        }
         return;
       }
 
@@ -2298,6 +2440,7 @@ const ScheduleTab = ({
       clearActiveSlot();
       let mutationSchedule = previousSchedule;
       let historyRecorded = false;
+      const operationId = globalThis.crypto.randomUUID();
       const restore = () => {
         let current = schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(
           mutationSchedule.churchId,
@@ -2329,6 +2472,7 @@ const ScheduleTab = ({
             {
               changes,
               skipChangedCells: true,
+              operationId,
               ...assignmentConflictPayload(fingerprint),
             },
           ));
@@ -2336,13 +2480,27 @@ const ScheduleTab = ({
           publishScheduleCellResponses(response.schedule, "assignments", stagedEdits);
           stagedEdits.forEach(clearScheduleCellEdit);
           publishScheduleCellResponses(response.schedule, "assignments", stagedEdits);
-          if (response.skipped.length) {
-            showToast("Some changes were edited by someone else and were left as they are.", "neutral");
-          }
+          const result = resolveScheduleUndoBatchResult(
+            entry,
+            changes,
+            response.accepted,
+          );
           if (!historyRecorded) {
             historyRecorded = true;
-            if (direction === "undo") pushRedo(entry);
-            else pushUndo(entry);
+            if (result.appliedEntry) {
+              if (direction === "undo") pushRedo(result.appliedEntry);
+              else pushUndo(result.appliedEntry);
+            }
+          }
+          const unresolvedCount = skippedChanges.length + result.skippedCount;
+          if (unresolvedCount > 0) {
+            const appliedCount = result.appliedEntry?.changes.length || 0;
+            showToast(
+              appliedCount > 0
+                ? `${direction === "undo" ? "Undo" : "Redo"} applied to ${appliedCount} of ${entry.changes.length} changes. The other slots no longer matched this step and were left as they are.`
+                : `${direction === "undo" ? "Undo" : "Redo"} was skipped because the schedule no longer matched this step. This history entry was removed.`,
+              "neutral",
+            );
           }
         } catch (error) {
           const conflictDetails = getOccurrenceConflictDetails(error);
@@ -2359,7 +2517,7 @@ const ScheduleTab = ({
             return;
           }
           const toastId = showToast({
-            message: `Couldn't ${direction} that change. Your schedule is still here. Retry the save when ready.`,
+            message: `Couldn't confirm ${direction} was saved. Retry to check the schedule and finish the operation.`,
             variant: "error",
             persist: true,
             children: (
@@ -2397,18 +2555,18 @@ const ScheduleTab = ({
     // Auto-fill records its undo entry for the fully-filled end state before
     // the reveal animation finishes applying it — undoing mid-reveal would
     // diff against a grid that doesn't match either state yet.
-    if (autoFilling) return;
+    if (autoFilling || undoBlockedByPendingSave) return;
     const entry = takeUndo();
     if (!entry) return;
     applyUndoEntry(entry, "undo");
-  }, [applyUndoEntry, autoFilling, takeUndo]);
+  }, [applyUndoEntry, autoFilling, takeUndo, undoBlockedByPendingSave]);
 
   const handleRedo = useCallback(() => {
-    if (autoFilling) return;
+    if (autoFilling || redoBlockedByPendingSave) return;
     const entry = takeRedo();
     if (!entry) return;
     applyUndoEntry(entry, "redo");
-  }, [applyUndoEntry, autoFilling, takeRedo]);
+  }, [applyUndoEntry, autoFilling, redoBlockedByPendingSave, takeRedo]);
 
   // Ctrl/Cmd+Z to undo, Ctrl/Cmd+Shift+Z or Ctrl+Y to redo — only on the schedule
   // grid, and never while typing in a field (so native field undo still works).
@@ -2761,7 +2919,51 @@ const ScheduleTab = ({
   );
 
   const [isSendingSchedule, setIsSendingSchedule] = useState(false);
+  const [isPreparingScheduleSend, setIsPreparingScheduleSend] = useState(false);
   const [isConfirmingSend, setIsConfirmingSend] = useState(false);
+  const [isPublicationPending, setIsPublicationPending] = useState(false);
+  const scheduleActionPendingRef = useRef(false);
+  const isScheduleActionPending = isPublicationPending ||
+    isPreparingScheduleSend || isSendingSchedule || sendingScheduleSms;
+  const sendScopeScheduleId = selectedSchedule?.scheduleId;
+  const sendScopeTeamId = selectedSchedule?.teamId;
+  const sendScopeStartDate = selectedSchedule?.startDate;
+  const sendScopeEndDate = selectedSchedule?.endDate;
+  const scheduleSendScope = useMemo(() => {
+    const emptyScope = { servicePreviews: [], conflictPreviews: [] };
+    if (
+      !sendScopeScheduleId || !sendScopeTeamId || !churchId || !serviceTimeZone ||
+      !isPersistedScheduleId(sendScopeScheduleId) || !sendScopeStartDate || !sendScopeEndDate
+    ) return emptyScope;
+    const range = {
+      start: displayedPeriodRange.start > sendScopeStartDate
+        ? displayedPeriodRange.start : sendScopeStartDate,
+      end: displayedPeriodRange.end < sendScopeEndDate
+        ? displayedPeriodRange.end : sendScopeEndDate,
+    };
+    if (range.start > range.end) return emptyScope;
+    const { rows } = resolveScheduleWorkspace({
+      churchId,
+      teamId: sendScopeTeamId,
+      range,
+      timeZone: serviceTimeZone,
+      services: data.services.map((service) => ({ ...service, churchId })),
+      positions: data.positions,
+      schedules,
+    });
+    return getScheduleSendScope(rows, sendScopeScheduleId);
+  }, [
+    churchId,
+    data.positions,
+    data.services,
+    displayedPeriodRange,
+    schedules,
+    sendScopeEndDate,
+    sendScopeScheduleId,
+    sendScopeStartDate,
+    sendScopeTeamId,
+    serviceTimeZone,
+  ]);
 
   /**
    * How many distinct people a send would email. Shown before the click,
@@ -2779,6 +2981,169 @@ const ScheduleTab = ({
     return holders.size;
   }, [selectedSchedule?.assignments]);
 
+  const flushPendingScheduleSaves = useCallback(async (
+    schedule: TeamSchedule,
+    action: "publish" | "send",
+  ): Promise<boolean> => {
+    const matchesSchedule = (churchId: string, scheduleId: string) =>
+      churchId === schedule.churchId && scheduleId === schedule.scheduleId;
+    const collectPendingWork = () => {
+      const work = new Set<Promise<unknown>>();
+      const assignmentQueue = assignmentSaveQueuesRef.current.get(schedule.scheduleId);
+      if (assignmentQueue) work.add(assignmentQueue);
+      pendingScheduleEnsuresRef.current.forEach((promise, key) => {
+        try {
+          const parts = JSON.parse(key) as unknown[];
+          if (parts[0] === schedule.churchId && parts[4] === schedule.scheduleId) {
+            work.add(promise);
+          }
+        } catch { /* Ignore unrelated legacy reconciliation keys. */ }
+      });
+      pendingPositionSlotSavesRef.current.forEach((save, key) => {
+        try {
+          const [churchId, scheduleId] = JSON.parse(key) as string[];
+          if (matchesSchedule(churchId, scheduleId) && save.outcome === "saving") {
+            work.add(save.promise);
+          }
+        } catch { /* Ignore unrelated legacy save keys. */ }
+      });
+      pendingScheduleCellEditsRef.current.forEach((edit) => {
+        if (!matchesSchedule(edit.churchId, edit.scheduleId)) return;
+        const key = scheduleCellEditKey(
+          edit.churchId,
+          edit.scheduleId,
+          edit.field,
+          edit.occurrenceId,
+          edit.cellKey,
+        );
+        const worker = scheduleCellSaveWorkersRef.current.get(key);
+        if (worker) work.add(worker);
+      });
+      return [...work];
+    };
+    const hasUnresolvedScheduleEdits = () =>
+      [...pendingScheduleCellEditsRef.current.values()].some((edit) =>
+        matchesSchedule(edit.churchId, edit.scheduleId),
+      ) ||
+      [...pendingPositionSlotSavesRef.current.keys()].some((key) => {
+        try {
+          const [churchId, scheduleId] = JSON.parse(key) as string[];
+          return matchesSchedule(churchId, scheduleId);
+        } catch {
+          return false;
+        }
+      });
+
+    const deadline = performance.now() + 20_000;
+    for (let pass = 0; pass < 10; pass += 1) {
+      const work = collectPendingWork();
+      if (work.length) {
+        const remaining = deadline - performance.now();
+        if (remaining <= 0) break;
+        let timeoutId: number | undefined;
+        const settled = await Promise.race([
+          Promise.allSettled(work).then(() => true),
+          new Promise<boolean>((resolve) => {
+            timeoutId = window.setTimeout(() => resolve(false), remaining);
+          }),
+        ]);
+        if (timeoutId !== undefined) window.clearTimeout(timeoutId);
+        if (!settled) {
+          showToast(
+            `Some schedule changes are still saving. Wait for them to finish before you ${action}.`,
+            "error",
+          );
+          return false;
+        }
+      }
+      // Let any in-flight ensure continuation enqueue its assignment write
+      // before deciding that a staged edit has no active save to wait for.
+      await Promise.resolve();
+      if (!hasUnresolvedScheduleEdits()) return true;
+      if (!collectPendingWork().length) {
+        showToast(
+          `Some schedule changes haven't saved. Retry them or resolve the open conflict before you ${action}.`,
+          "error",
+        );
+        return false;
+      }
+    }
+    showToast(
+      `Some schedule changes are still unresolved. Finish their saves before you ${action}.`,
+      "error",
+    );
+    return false;
+  }, [showToast]);
+
+  const updateSchedulePublication = useCallback(async (
+    schedule: TeamSchedule,
+    published: boolean,
+  ): Promise<TeamSchedule | null> => {
+    if (
+      !canEdit || !churchId || !isPersistedScheduleId(schedule.scheduleId) ||
+      scheduleActionPendingRef.current
+    ) return null;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
+    if (!isCurrentScheduleAction(schedule, workspaceIdentity)) {
+      showToast("The active schedule changed. Select it again before changing its publication status.", "error");
+      return null;
+    }
+    scheduleActionPendingRef.current = true;
+    setIsPublicationPending(true);
+    try {
+      if (published && !(await flushPendingScheduleSaves(schedule, "publish"))) {
+        return null;
+      }
+      if (!isCurrentScheduleAction(schedule, workspaceIdentity)) {
+        showToast("The active schedule changed while its assignments were saving. Review the selected schedule before continuing.", "error");
+        return null;
+      }
+      const update = published ? publishTeamSchedule : unpublishTeamSchedule;
+      const result = await trackTeamsSave(update(churchId, schedule.scheduleId));
+      publishScheduleSnapshot(result.schedule, ["published"]);
+      return result.schedule;
+    } catch (error) {
+      showApiErrorToast(
+        showToast,
+        error,
+        published
+          ? "Could not publish this schedule. Refresh and try again."
+          : "Could not unpublish this schedule. Refresh and try again.",
+      );
+      return null;
+    } finally {
+      scheduleActionPendingRef.current = false;
+      setIsPublicationPending(false);
+    }
+  }, [canEdit, churchId, flushPendingScheduleSaves, publishScheduleSnapshot, showToast, trackTeamsSave]);
+
+  const handleSchedulePublication = useCallback(async () => {
+    if (!selectedSchedule) return;
+    const published = selectedSchedule.published === false;
+    const result = await updateSchedulePublication(selectedSchedule, published);
+    if (!result) return;
+    showToast(
+      published
+        ? "Schedule published. Volunteers can now see it."
+        : "Schedule unpublished. It is hidden from volunteers and view-only links.",
+      "success",
+    );
+  }, [selectedSchedule, showToast, updateSchedulePublication]);
+
+  const handlePublishAndContinue = useCallback(async () => {
+    if (!selectedSchedule) return;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
+    const scheduleId = selectedSchedule.scheduleId;
+    const result = await updateSchedulePublication(selectedSchedule, true);
+    if (
+      result && activeChurchIdRef.current === churchId &&
+      activeScheduleIdRef.current === scheduleId &&
+      isCurrentScheduleAction(result, workspaceIdentity)
+    ) {
+      setIsConfirmingSend(true);
+    }
+  }, [churchId, selectedSchedule, updateSchedulePublication]);
+
   /**
    * Tell everyone on this schedule. Deliberately a button rather than a
    * side-effect of saving: an owner shuffles the grid for a while, and mailing
@@ -2789,16 +3154,28 @@ const ScheduleTab = ({
    * added slots.
    */
   const handleSendSchedule = useCallback(async () => {
-    if (!selectedSchedule || !churchId) return;
-    setIsSendingSchedule(true);
+    if (!selectedSchedule || !churchId || !isPersistedScheduleId(selectedSchedule.scheduleId)) return;
+    if (scheduleActionPendingRef.current) return;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
+    const scheduleId = selectedSchedule.scheduleId;
+    if (!isCurrentScheduleAction(selectedSchedule, workspaceIdentity)) {
+      showToast("The active schedule changed. Reopen Send schedule for the selected schedule before sending.", "error");
+      return;
+    }
+    scheduleActionPendingRef.current = true;
+    setIsPreparingScheduleSend(true);
+    let sendStarted = false;
     try {
-      const schedule = await ensureActiveSchedule();
-      if (!schedule) return;
-      const result = await sendTeamSchedule(
-        churchId,
-        schedule.scheduleId,
-      );
-      await refreshScheduleNotificationHistory(schedule.scheduleId);
+      if (!(await flushPendingScheduleSaves(selectedSchedule, "send"))) return;
+      if (!isCurrentScheduleAction(selectedSchedule, workspaceIdentity)) {
+        showToast("The active schedule changed while assignments were saving. Reopen Send schedule before sending.", "error");
+        return;
+      }
+      setIsPreparingScheduleSend(false);
+      setIsSendingSchedule(true);
+      sendStarted = true;
+      const result = await sendTeamSchedule(churchId, scheduleId);
+      await refreshScheduleNotificationHistory(scheduleId);
       const unreachable = result.unreachableMemberIds?.length || 0;
       const sentLabel =
         result.notified === 0
@@ -2812,14 +3189,48 @@ const ScheduleTab = ({
           : sentLabel,
         unreachable > 0 ? "warning" : "success",
       );
-      onScheduleSaved({ ...schedule, sentAt: result.sentAt });
+      const currentSchedule = latestScheduleRef.current?.scheduleId === scheduleId &&
+        latestScheduleRef.current.churchId === churchId
+        ? latestScheduleRef.current
+        : schedulesByOwnerRef.current.get(virtualSchedulePreviewKey(churchId, scheduleId)) || selectedSchedule;
+      onScheduleSaved({ ...currentSchedule, sentAt: result.sentAt });
     } catch (error) {
       showApiErrorToast(showToast, error, "Could not send this schedule.");
     } finally {
+      scheduleActionPendingRef.current = false;
+      setIsPreparingScheduleSend(false);
       setIsSendingSchedule(false);
-      setIsConfirmingSend(false);
+      if (sendStarted) setIsConfirmingSend(false);
     }
-  }, [churchId, ensureActiveSchedule, onScheduleSaved, refreshScheduleNotificationHistory, selectedSchedule, showToast]);
+  }, [churchId, flushPendingScheduleSaves, onScheduleSaved, refreshScheduleNotificationHistory, selectedSchedule, showToast]);
+
+  const handleOpenScheduleSms = useCallback(async () => {
+    if (!selectedSchedule || scheduleActionPendingRef.current) return;
+    const workspaceIdentity = scheduleWorkspaceActionIdentityRef.current;
+    if (!isCurrentScheduleAction(selectedSchedule, workspaceIdentity)) {
+      showToast("The active schedule changed. Reopen the text-message review for the selected schedule.", "error");
+      return;
+    }
+    scheduleActionPendingRef.current = true;
+    setIsPreparingScheduleSend(true);
+    try {
+      if (!(await flushPendingScheduleSaves(selectedSchedule, "send"))) return;
+      if (!isCurrentScheduleAction(selectedSchedule, workspaceIdentity)) {
+        showToast("The active schedule changed while assignments were saving. Reopen the text-message review before continuing.", "error");
+        return;
+      }
+      setScheduleInitialSmsOrigin({
+        churchId,
+        scheduleId: selectedSchedule.scheduleId,
+        workspaceIdentity,
+      });
+      setIsConfirmingSend(false);
+      setScheduleInitialSmsOpen(true);
+    } finally {
+      scheduleActionPendingRef.current = false;
+      setIsPreparingScheduleSend(false);
+    }
+  }, [churchId, flushPendingScheduleSaves, selectedSchedule, showToast]);
 
   const commitAssignment = async ({
     serviceId,
@@ -3022,7 +3433,7 @@ const ScheduleTab = ({
     };
     const saveAssignment = async (fingerprint?: string): Promise<void> => {
       try {
-        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule, stagedEdits.map((edit) => edit.occurrenceId));
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
         stagedEdits.forEach((edit, index) => {
@@ -3548,7 +3959,7 @@ const ScheduleTab = ({
       // save's Retry button was still visible.
       if (!scheduleTabMountedRef.current || !isShadowEditPending(mutationSchedule.scheduleId)) return;
       try {
-        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule, [staged.edit.occurrenceId]);
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
         if (!isShadowEditPending(ensuredSchedule.scheduleId)) return;
@@ -3832,13 +4243,7 @@ const ScheduleTab = ({
     // whole batch as one step, independent of how the reveal below is paced.
     const finalAssignments = { ...(previousSchedule.assignments || {}) };
     const undoChanges: ScheduleCellChange[] = [];
-    const batchChanges: Array<{
-      serviceId: string;
-      positionSlotKey: string;
-      serviceDate: string;
-      expectedCell: ScheduleCellState;
-      assignment: ScheduleCellState;
-    }> = [];
+    const batchChanges: ScheduleUndoBatchChange[] = [];
     entries.forEach((entry) => {
       const targetRow = { ...(finalAssignments[entry.occurrenceId] || {}) };
       const before = serializeAssignmentCell(
@@ -4442,26 +4847,92 @@ const ScheduleTab = ({
     selectedSchedule,
   ]);
 
+  const getSchedulePublicUrl = useCallback(async (scheduleId: string) => {
+    const { publicToken } = await getTeamSchedulePublicLink(churchId, scheduleId);
+    return buildTeamSchedulePublicUrl(publicToken);
+  }, [churchId]);
+  const copySchedulePublicUrl = useCallback(async (publicUrl: string) => {
+    await window.navigator.clipboard.writeText(publicUrl);
+  }, []);
+
   const copyPublicLink = useCallback(async () => {
-    if (!canEdit) return;
-    if (!selectedSchedule) return;
+    if (
+      !canEdit || !selectedSchedule ||
+      !isPersistedScheduleId(selectedSchedule.scheduleId) || copyingLinkRef.current
+    ) return;
+    copyingLinkRef.current = true;
     setCopyingLink(true);
+    let activeSchedule: TeamSchedule | null = null;
+    let publicUrl: string | undefined;
     try {
-      const schedule = await ensureActiveSchedule();
-      if (!schedule) return;
-      const { publicToken } = await getTeamSchedulePublicLink(
-        churchId,
-        schedule.scheduleId,
-      );
-      const url = buildTeamSchedulePublicUrl(publicToken);
-      await navigator.clipboard.writeText(url);
+      activeSchedule = selectedSchedule.published === false
+        ? await ensureActiveSchedule(selectedSchedule)
+        : selectedSchedule;
+      if (!activeSchedule) return;
+      if (activeSchedule.published === false) {
+        setPublishAndCopyLink({ schedule: activeSchedule, published: false });
+        return;
+      }
+      publicUrl = await getSchedulePublicUrl(activeSchedule.scheduleId);
+      await copySchedulePublicUrl(publicUrl);
       showToast("View-only link copied to clipboard.", "success");
     } catch (error) {
-      showApiErrorToast(showToast, error, "Could not create a view-only link.");
+      if (activeSchedule && activeSchedule.published !== false) {
+        setPublishAndCopyLink({
+          schedule: activeSchedule,
+          published: true,
+          ...(publicUrl ? { publicUrl } : {}),
+        });
+        showApiErrorToast(
+          showToast,
+          error,
+          publicUrl
+            ? "The schedule is published. Use Copy link or select the view-only URL and copy it manually."
+            : "The schedule is published, but its view-only link could not be prepared. Retry from the dialog.",
+        );
+      } else {
+        showApiErrorToast(showToast, error, "Could not create a view-only link. Refresh and try again.");
+      }
     } finally {
+      copyingLinkRef.current = false;
       setCopyingLink(false);
     }
-  }, [canEdit, churchId, ensureActiveSchedule, selectedSchedule, showToast]);
+  }, [canEdit, copySchedulePublicUrl, ensureActiveSchedule, getSchedulePublicUrl, selectedSchedule, showToast]);
+
+  const confirmPublishAndCopyLink = useCallback(async () => {
+    const pending = publishAndCopyLink;
+    if (!pending || copyingLinkRef.current) return;
+    copyingLinkRef.current = true;
+    setCopyingLink(true);
+    let schedule = pending.schedule;
+    try {
+      if (!pending.published) {
+        const published = await updateSchedulePublication(schedule, true);
+        if (!published) return;
+        schedule = published;
+        setPublishAndCopyLink({ schedule, published: true });
+      }
+      let publicUrl = pending.publicUrl;
+      if (!publicUrl) {
+        publicUrl = await getSchedulePublicUrl(schedule.scheduleId);
+        setPublishAndCopyLink({ schedule, published: true, publicUrl });
+      }
+      try {
+        await copySchedulePublicUrl(publicUrl);
+        setPublishAndCopyLink(null);
+        showToast("Schedule published and view-only link copied.", "success");
+      } catch (error) {
+        publicLinkInputRef.current?.focus();
+        publicLinkInputRef.current?.select();
+        showApiErrorToast(showToast, error, "Schedule is published. Use the Copy link button or select the link and copy it manually.");
+      }
+    } catch (error) {
+      showApiErrorToast(showToast, error, "Schedule is published, but the view-only link could not be prepared. Retry to get the link.");
+    } finally {
+      copyingLinkRef.current = false;
+      setCopyingLink(false);
+    }
+  }, [copySchedulePublicUrl, getSchedulePublicUrl, publishAndCopyLink, showToast, updateSchedulePublication]);
 
 
   // Seed a copy-specific draft and open an explicit create flow. The operator
@@ -5166,7 +5637,7 @@ const ScheduleTab = ({
     };
     const saveSwap = async (fingerprint?: string): Promise<void> => {
       try {
-        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule);
+        const ensuredSchedule = await ensureActiveSchedule(mutationSchedule, stagedEdits.map((edit) => edit.occurrenceId));
         if (!ensuredSchedule) return;
         mutationSchedule = ensuredSchedule;
         const persistedEdits = stagedEdits.map((edit) =>
@@ -5603,9 +6074,8 @@ const ScheduleTab = ({
       isToday: isOccurrenceToday(occurrence, serviceTimeZone),
     });
 
-  // Board accordion state lives here so the header's expand-all/collapse-all
-  // controls and the per-card chevrons stay in sync. Default expanded on desktop
-  // and collapsed on phones; `overrides` only records explicit toggles.
+  // Each service card keeps an explicit expansion override. Cards default to
+  // expanded on desktop and collapsed on phones until toggled individually.
   const boardCardsExpandedByDefault = useMediaQuery("(min-width: 768px)");
   const [boardExpandOverrides, setBoardExpandOverrides] = useState<
     Map<string, boolean>
@@ -5621,22 +6091,6 @@ const ScheduleTab = ({
       );
       return next;
     });
-  const setAllBoardCardsExpanded = (expanded: boolean) =>
-    setBoardExpandOverrides(
-      new Map(
-        scheduleOccurrences.map((occurrence) => [
-          occurrence.occurrenceId,
-          expanded,
-        ]),
-      ),
-    );
-  const allBoardCardsExpanded = scheduleOccurrences.every((occurrence) =>
-    isBoardCardExpanded(occurrence.occurrenceId),
-  );
-  const allBoardCardsCollapsed = scheduleOccurrences.every(
-    (occurrence) => !isBoardCardExpanded(occurrence.occurrenceId),
-  );
-
   const scheduleOccurrenceColumnCh = useMemo(() => {
     const chByOccurrence = new Map<string, number>();
     flatOccurrences.forEach(({ occurrence, group }) => {
@@ -6311,13 +6765,58 @@ const ScheduleTab = ({
       : []),
   ];
 
+  const scheduleAutoFillMenuItem: MenuItemType | undefined = canEdit
+    ? {
+      element: (
+        <span className="flex items-center gap-2">
+          <Wand2 className="h-4 w-4" aria-hidden />
+          {autoFilling ? "Auto-filling…" : "Auto-fill"}
+        </span>
+      ),
+      onClick: () => setAutoFillConfirmOpen(true),
+      disabled: autoFilling,
+    }
+    : undefined;
+  const scheduleWorkspaceMoreMenuItems: MenuItemType[] = [
+    {
+      element: (
+        <span className="flex items-center gap-2">
+          <Printer className="h-4 w-4" aria-hidden />
+          Save as PDF
+        </span>
+      ),
+      onClick: () => setPdfPreviewOpen(true),
+      disabled: !scheduleExportModel,
+    },
+    ...(canEdit && selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId)
+      ? [{
+        element: (
+          <span className="flex items-center gap-2">
+            <Link2 className="h-4 w-4" aria-hidden />
+            {copyingLink ? "Copying…" : "Copy view-only link"}
+          </span>
+        ),
+        onClick: () => void copyPublicLink(),
+        disabled: copyingLink,
+        preventClose: copyingLink,
+      }]
+      : []),
+  ];
+
+  const schedulePublicationStatus = resolveSchedulePublicationStatus(selectedSchedule);
+  let publishAndCopyButtonLabel = publishAndCopyLink?.published
+    ? publishAndCopyLink.publicUrl ? "Copy link" : "Copy view-only link"
+    : "Publish & Copy Link";
+  if (copyingLink) publishAndCopyButtonLabel = "Copying…";
+  if (isPublicationPending) publishAndCopyButtonLabel = "Publishing…";
+
   const scheduleWorkflowActions = (
     <div
       className="flex flex-wrap items-center justify-end gap-2"
       role="group"
       aria-label="Schedule actions"
     >
-      {canEdit && selectedSchedule ? (
+      {canEdit && selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId) ? (
         <Popover
           open={isConfirmingSend}
           onOpenChange={(open) => {
@@ -6330,9 +6829,9 @@ const ScheduleTab = ({
               variant="cta"
               svg={Send}
               iconSize="sm"
-              disabled={isSendingSchedule || sendRecipientCount === 0}
+              disabled={isScheduleActionPending || sendRecipientCount === 0}
             >
-              Send schedule
+              {isPreparingScheduleSend ? "Preparing…" : "Send schedule"}
             </Button>
           </PopoverTrigger>
           <PopoverContent
@@ -6341,11 +6840,30 @@ const ScheduleTab = ({
           >
             {selectedSchedule.published === false ? (
               <>
-                <p className="text-sm text-amber-200">Publish this schedule before sending email or text messages.</p>
-                <Button variant="tertiary" disabled={isSendingSchedule} onClick={() => setIsConfirmingSend(false)}>Close</Button>
+                <p className="text-sm text-gray-300">
+                  Publish this Draft to make it visible to teammates. You can review email or text messages next.
+                </p>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="cta"
+                    disabled={isScheduleActionPending}
+                    isLoading={isPublicationPending}
+                    onClick={() => void handlePublishAndContinue()}
+                  >
+                    {isPublicationPending ? "Publishing…" : "Publish & Continue"}
+                  </Button>
+                  <Button
+                    variant="tertiary"
+                    disabled={isScheduleActionPending}
+                    onClick={() => setIsConfirmingSend(false)}
+                  >
+                    Cancel
+                  </Button>
+                </div>
               </>
             ) : (
               <>
+                <ScheduleSendScopeNotice scope={scheduleSendScope} timeZone={serviceTimeZone} />
                 <p className="text-sm text-gray-300">
                   Email {sendRecipientCount} {sendRecipientCount === 1 ? "person" : "people"} on this schedule?
                 </p>
@@ -6354,24 +6872,22 @@ const ScheduleTab = ({
                     variant="cta"
                     svg={Send}
                     iconSize="sm"
-                    disabled={isSendingSchedule}
+                    disabled={isScheduleActionPending}
                     onClick={handleSendSchedule}
                   >
                     {isSendingSchedule ? "Sending…" : "Yes, send email"}
                   </Button>
                   <Button
                     variant="secondary"
-                    disabled={isSendingSchedule || selectedSchedule.scheduleId.startsWith("virtual:")}
-                    onClick={() => {
-                      setIsConfirmingSend(false);
-                      setScheduleInitialSmsOpen(true);
-                    }}
+                    disabled={isScheduleActionPending || !isPersistedScheduleId(selectedSchedule.scheduleId)}
+                    isLoading={isPreparingScheduleSend}
+                    onClick={() => void handleOpenScheduleSms()}
                   >
                     Review volunteers for text messages
                   </Button>
                   <Button
                     variant="tertiary"
-                    disabled={isSendingSchedule}
+                    disabled={isScheduleActionPending}
                     onClick={() => setIsConfirmingSend(false)}
                   >
                     Cancel
@@ -6392,18 +6908,12 @@ const ScheduleTab = ({
             iconSize="sm"
             ref={scheduleActionsTriggerRef}
             aria-label="More schedule options"
+            disabled={isScheduleActionPending}
           />
         }
       />
     </div>
   );
-  const scheduleRangeSummary = selectedSchedule && scheduleOccurrences.length > 0
-    ? `${scheduleOccurrences.length} ${scheduleOccurrences.length === 1 ? "service" : "services"} · ${selectedSchedule.scheduleId.startsWith("virtual:")
-      ? "Staffing not started"
-      : `${staffingProgress.filled} of ${staffingProgress.required} positions filled`
-    }`
-    : undefined;
-
   return (
     <div className={scheduleTabRootClassName}>
       {consentMember?.scope === quickMemberContextScope && isChurchAdmin ? (
@@ -6445,6 +6955,7 @@ const ScheduleTab = ({
                 <TeamsReturnBackButton
                   returnTo={scheduleReturnTo}
                   onClick={() => returnFromSchedule()}
+                  disabled={isScheduleActionPending}
                 />
               ) : null}
               <h1 className="sr-only flex min-w-0 items-center gap-2 text-xl font-semibold text-gray-100 sm:not-sr-only">
@@ -6464,12 +6975,13 @@ const ScheduleTab = ({
                 value={workspaceTeamId}
                 onChange={updateScheduleTeamFilter}
                 options={activeTeams.map((team) => ({ label: team.name, value: team.teamId }))}
-                disabled={!activeTeams.length}
+                disabled={!activeTeams.length || isScheduleActionPending}
               />
               {periodScheduleChoices.length > 1 && selectedScheduleRecord ? (
                 <ScheduleOverlapPicker
                   schedules={periodScheduleChoices}
                   selectedScheduleId={selectedScheduleRecord.scheduleId}
+                  disabled={isScheduleActionPending}
                   onSelect={(scheduleId) => {
                     markExplicitPeriodSelection();
                     setPeriodScheduleSelection({ scope: periodSelectionScope, scheduleId });
@@ -6489,44 +7001,25 @@ const ScheduleTab = ({
                   setViewingSavedSchedule(false);
                 }}
                 onNavigate={shiftPeriod}
+                disabled={isScheduleActionPending}
                 className="min-w-0 flex-1 sm:min-w-0"
                 labelLayout="inline"
               />
             </div>
-            {periodScheduleMatch.ambiguous && !viewingSavedSchedule ? (
-              <div role="status" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
-                This schedule contains services that have changed since it was saved. Review it before making changes.
-                {periodScheduleMatch.reviewSchedule ? (
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    className="mt-2"
-                    onClick={() => {
-                      const scheduleId = periodScheduleMatch.reviewSchedule?.scheduleId;
-                      if (scheduleId) openSavedScheduleForReview(scheduleId);
-                    }}
-                  >
-                    Review existing schedule
-                  </Button>
-                ) : null}
+            {viewingSavedSchedule ? (
+              <div role="status" className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-300">
+                Viewing the saved version. Current service additions are hidden.
+                <Button variant="tertiary" disabled={isScheduleActionPending} onClick={() => setViewingSavedSchedule(false)}>Return to current schedule</Button>
               </div>
             ) : null}
             {periodScheduleMatch.ownershipConflict && !viewingSavedSchedule ? (
-              <div role="alert" className="mt-3 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
-                More than one saved schedule contains the same service occurrence. Review ownership before making changes.
-                {periodScheduleMatch.reviewSchedule ? (
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    className="mt-2"
-                    onClick={() => {
-                      const scheduleId = periodScheduleMatch.reviewSchedule?.scheduleId;
-                      if (scheduleId) openSavedScheduleForReview(scheduleId);
-                    }}
-                  >
-                    Review existing schedule
-                  </Button>
-                ) : null}
+              <div role="alert" className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded border border-amber-700 bg-amber-950/30 p-3 text-sm text-amber-100">
+                <span>
+                  {ownershipConflictServiceNames.length
+                    ? `${ownershipConflictServiceNames.slice(0, 3).join(", ")}${ownershipConflictServiceNames.length > 3 ? `, and ${ownershipConflictServiceNames.length - 3} more` : ""} are owned by multiple schedules. Their saved assignments are preserved; manage schedule ownership before changing them.`
+                    : "Some service occurrences are owned by multiple schedules. Their saved assignments are preserved; manage schedule ownership before changing them."}
+                </span>
+                <Button variant="tertiary" onClick={() => setIsBrowsingSchedules(true)}>Manage schedules</Button>
               </div>
             ) : null}
           </section>
@@ -6534,241 +7027,81 @@ const ScheduleTab = ({
           {canShowScheduleWorkspace ? (
             <section
               ref={scheduleWorkspaceRef}
+              inert={isScheduleActionPending}
+              aria-busy={isScheduleActionPending}
               className={cn(panelClassName, scheduleWorkspacePanelClassName)}
             >
               <div className="shrink-0">
-                <div className="flex min-w-0 flex-col gap-2 lg:flex-row lg:items-start lg:justify-between">
-                  {scheduleRangeSummary ? (
-                    <p role="status" className="min-w-0 px-0.5 text-xs text-gray-400">
-                      {scheduleRangeSummary}
-                    </p>
-                  ) : null}
-                  <div
-                    role="group"
-                    aria-label="Team schedule controls"
-                    className="flex min-w-0 shrink-0 flex-nowrap items-center justify-end gap-2 lg:ml-auto"
-                  >
-                    {selectedSchedule && shouldOverlayMembers ? (
-                      <Button
-                        type="button"
-                        variant="tertiary"
-                        svg={Users}
-                        iconSize="sm"
-                        ref={membersDrawerTriggerRef}
-                        data-schedule-members-trigger
-                        aria-controls="schedule-members-panel"
-                        aria-expanded={membersPanelOpen}
-                        aria-pressed={membersPanelOpen}
-                        aria-label="Members"
-                        title={membersPanelOpen ? "Hide Members panel" : "Show Members panel"}
-                        className={cn(
-                          "gap-1.5",
-                          membersPanelOpen
-                            ? "bg-gray-700 text-white"
-                            : "text-gray-300",
-                        )}
-                        onClick={() => {
-                          setMembersDrawerAnimationsEnabled(true);
-                          if (!membersPanelOpen) setScheduleMessagesOpen(false);
-                          setMembersPanelOpen((open) => !open);
-                        }}
-                      >
-                        <span className="hidden sm:inline">Members</span>
-                      </Button>
-                    ) : null}
-                    {/* Desktop: Organize + Layout sit labeled in the toolbar.
-                        Narrow: both move into the overflow menu to save space. */}
-                    {!isNarrowViewport ? (
-                      <>
-                        {scheduleHasMultipleServices ? (
-                          <div className="flex flex-col gap-1">
-                            <span className="px-0.5 text-xs font-semibold text-gray-400">
-                              Organize
-                            </span>
-                            <SegmentedControl
-                              ariaLabel="Organize schedule"
-                              variant="compact"
-                              value={organizeMode}
-                              onChange={changeOrganizeMode}
-                              options={OCCURRENCE_ORGANIZE_OPTIONS}
-                            />
-                          </div>
-                        ) : null}
-                        <div className="flex flex-col gap-1">
-                          <span className="px-0.5 text-xs font-semibold text-gray-400">
-                            Layout
-                          </span>
-                          <SegmentedControl
-                            ariaLabel="Schedule layout"
-                            variant="compact"
-                            value={scheduleLayout}
-                            onChange={changeScheduleLayout}
-                            options={scheduleLayoutOptions}
-                          />
-                        </div>
-                      </>
-                    ) : null}
-                    {/* Board accordion: expand/collapse every service at once. */}
-                    {scheduleLayout === "board" && scheduleOccurrences.length > 1 ? (
-                      <div className="flex items-center gap-1">
-                        <Button
-                          variant="tertiary"
-                          svg={ChevronsUpDown}
-                          iconSize="sm"
-                          disabled={allBoardCardsExpanded}
-                          onClick={() => setAllBoardCardsExpanded(true)}
-                          aria-label="Expand all services"
-                          title="Expand all services"
-                        />
-                        <Button
-                          variant="tertiary"
-                          svg={ChevronsDownUp}
-                          iconSize="sm"
-                          disabled={allBoardCardsCollapsed}
-                          onClick={() => setAllBoardCardsExpanded(false)}
-                          aria-label="Collapse all services"
-                          title="Collapse all services"
-                        />
-                      </div>
-                    ) : null}
-                    {/* Edit history: the frequent, in-flow controls stay visible. */}
-                    {canEdit ? (
-                      <>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            variant="tertiary"
-                            svg={Undo2}
-                            iconSize="sm"
-                            disabled={!canUndo || autoFilling}
-                            onClick={handleUndo}
-                            aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
-                            title={
-                              undoLabel
-                                ? `Undo ${undoLabel} (${undoShortcut.undo})`
-                                : `Nothing to undo (${undoShortcut.undo})`
-                            }
-                          />
-                          <Button
-                            variant="tertiary"
-                            svg={Redo2}
-                            iconSize="sm"
-                            disabled={!canRedo || autoFilling}
-                            onClick={handleRedo}
-                            aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
-                            title={
-                              redoLabel
-                                ? `Redo ${redoLabel} (${undoShortcut.redo})`
-                                : `Nothing to redo (${undoShortcut.redo})`
-                            }
-                          />
-                        </div>
-                        {SHOW_PASTE_FROM_EXCEL ? (
-                          <Button
-                            variant="tertiary"
-                            svg={ClipboardPaste}
-                            iconSize="sm"
-                            onClick={() => setPasteRowOpen(true)}
-                          >
-                            Paste from Excel
-                          </Button>
-                        ) : null}
-                        <span
-                          aria-hidden
-                          className="mx-0.5 h-5 w-px self-center bg-gray-700"
-                        />
-                      </>
-                    ) : null}
-                    {/* Infrequent schedule actions, including auto-fill.
-                        On narrow viewports, Organize and Layout live here too. */}
-                    <Menu
-                      align="end"
-                      menuItems={[
-                        ...(canEdit
-                          ? [
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <Wand2 className="h-4 w-4" aria-hidden />
-                                  {autoFilling ? "Auto-filling…" : "Auto-fill"}
-                                </span>
-                              ),
-                              onClick: () => setAutoFillConfirmOpen(true),
-                              disabled: autoFilling,
-                            },
-                          ]
-                          : []),
-                        ...(isNarrowViewport && scheduleHasMultipleServices
-                          ? [
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <CalendarDays className="h-4 w-4" aria-hidden />
-                                  Organize
-                                </span>
-                              ),
-                              subItems: OCCURRENCE_ORGANIZE_OPTIONS.map(
-                                (option) => ({
-                                  text: `${organizeMode === option.value ? "✓ " : ""}${option.label}`,
-                                  onClick: () => changeOrganizeMode(option.value),
-                                }),
-                              ),
-                            },
-                          ]
-                          : []),
-                        ...(isNarrowViewport
-                          ? [
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <LayoutGrid className="h-4 w-4" aria-hidden />
-                                  Layout
-                                </span>
-                              ),
-                              subItems: scheduleLayoutOptions.map((option) => ({
-                                text: `${scheduleLayout === option.value ? "✓ " : ""}${option.label}`,
-                                onClick: () => changeScheduleLayout(option.value),
-                              })),
-                            },
-                          ]
-                          : []),
-                        {
-                          element: (
-                            <span className="flex items-center gap-2">
-                              <Printer className="h-4 w-4" aria-hidden />
-                              Save as PDF
-                            </span>
-                          ),
-                          onClick: () => setPdfPreviewOpen(true),
-                          disabled: !scheduleExportModel,
-                        },
-                        ...(canEdit
-                          ? [
-                            {
-                              element: (
-                                <span className="flex items-center gap-2">
-                                  <Link2 className="h-4 w-4" aria-hidden />
-                                  {copyingLink
-                                    ? "Copying…"
-                                    : "Copy view-only link"}
-                                </span>
-                              ),
-                              onClick: () => void copyPublicLink(),
-                              disabled: copyingLink,
-                              preventClose: copyingLink,
-                            },
-                          ]
-                          : []),
-                      ] as MenuItemType[]}
-                      TriggeringButton={
-                        <Button
-                          variant="tertiary"
-                          svg={MoreHorizontal}
-                          iconSize="sm"
-                          aria-label="More schedule actions"
-                        />
-                      }
+                <ScheduleWorkspaceToolbar
+                  staffingSummary={selectedSchedule ? (
+                    <ScheduleStaffingSummary
+                      serviceCount={scheduleOccurrences.length}
+                      filled={staffingProgress.filled}
+                      required={staffingProgress.required}
+                      staffingStarted={!selectedSchedule.scheduleId.startsWith("virtual:")}
                     />
-                    {/* A modal, not a popover: this opens from a menu item, and
+                  ) : null}
+                  membersControl={selectedSchedule && shouldOverlayMembers ? (
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      svg={Users}
+                      iconSize="sm"
+                      ref={membersDrawerTriggerRef}
+                      data-schedule-members-trigger
+                      aria-controls="schedule-members-panel"
+                      aria-expanded={membersPanelOpen}
+                      aria-pressed={membersPanelOpen}
+                      aria-label="Members"
+                      title={membersPanelOpen ? "Hide Members panel" : "Show Members panel"}
+                      className={cn(
+                        "gap-1.5",
+                        membersPanelOpen ? "bg-gray-700 text-white" : "text-gray-300",
+                      )}
+                      onClick={() => {
+                        setMembersDrawerAnimationsEnabled(true);
+                        if (!membersPanelOpen) setScheduleMessagesOpen(false);
+                        setMembersPanelOpen((open) => !open);
+                      }}
+                    >
+                      <span className="hidden sm:inline">Members</span>
+                    </Button>
+                  ) : null}
+                  canEdit={canEdit}
+                  canUndo={canUndo}
+                  canRedo={canRedo}
+                  undoBlockedByPendingSave={undoBlockedByPendingSave}
+                  redoBlockedByPendingSave={redoBlockedByPendingSave}
+                  autoFilling={autoFilling}
+                  undoLabel={undoLabel}
+                  redoLabel={redoLabel}
+                  undoShortcut={undoShortcut}
+                  onUndo={handleUndo}
+                  onRedo={handleRedo}
+                  pasteFromExcelControl={SHOW_PASTE_FROM_EXCEL ? (
+                    <Button
+                      variant="tertiary"
+                      svg={ClipboardPaste}
+                      iconSize="sm"
+                      onClick={() => setPasteRowOpen(true)}
+                    >
+                      Paste from Excel
+                    </Button>
+                  ) : null}
+                  autoFillMenuItem={scheduleAutoFillMenuItem}
+                  publicationStatus={schedulePublicationStatus}
+                  isScheduleActionPending={isScheduleActionPending}
+                  isPublicationPending={isPublicationPending}
+                  onPublicationChange={() => void handleSchedulePublication()}
+                  showOrganizeOptions={scheduleHasMultipleServices}
+                  organizeMode={organizeMode}
+                  onOrganizeModeChange={changeOrganizeMode}
+                  scheduleLayout={scheduleLayout}
+                  scheduleLayoutOptions={scheduleLayoutOptions}
+                  onScheduleLayoutChange={changeScheduleLayout}
+                  moreMenuItems={scheduleWorkspaceMoreMenuItems}
+                />
+                {/* A modal, not a popover: this opens from a menu item, and
                      * the menu's own focus handling as it closes dismisses a
                      * non-modal popover before anyone can reach Continue. Same
                      * pattern as the PDF preview below. */}
@@ -6847,8 +7180,6 @@ const ScheduleTab = ({
                       onOpenChange={setPdfPreviewOpen}
                     />
                   </div>
-                </div>
-              </div>
 
               {(occurrencesStale || (canEdit && refreshBlocked)) && !showForm ? (
                 <div className="mt-4 flex shrink-0 flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
@@ -7149,7 +7480,8 @@ const ScheduleTab = ({
                                               occurrence.occurrenceId,
                                             )}
                                           </div>
-                                        </th>                                        {scheduleColumns.map((column) => (
+                                        </th>
+                                        {scheduleColumns.map((column) => (
                                           <ScheduleGridCell
                                             key={scheduleGridCellKey(
                                               occurrence.occurrenceId,
@@ -7272,7 +7604,8 @@ const ScheduleTab = ({
                                                         occurrence.occurrenceId,
                                                       )}
                                                     </div>
-                                                  </th>                                                  {scheduleColumns.map((column) => (
+                                                  </th>
+                                                  {scheduleColumns.map((column) => (
                                                     <ScheduleGridCell
                                                       key={scheduleGridCellKey(
                                                         occurrence.occurrenceId,
@@ -7429,11 +7762,14 @@ const ScheduleTab = ({
                   }}
                 />
               ) : null}
-              {canEdit && selectedSchedule && !selectedSchedule.scheduleId.startsWith("virtual:") ? (
+              {canEdit && selectedSchedule && isPersistedScheduleId(selectedSchedule.scheduleId) ? (
                 <Drawer
                   key={`${churchId}:${selectedSchedule.scheduleId}:initial-sms`}
                   isOpen={scheduleInitialSmsOpen}
-                  onClose={() => setScheduleInitialSmsOpen(false)}
+                  onClose={() => {
+                    setScheduleInitialSmsOpen(false);
+                    setScheduleInitialSmsOrigin(null);
+                  }}
                   title="Send schedule text messages"
                   position="right"
                   size="xl"
@@ -7449,7 +7785,23 @@ const ScheduleTab = ({
                     scheduleName={selectedSchedule.name || "Schedule"}
                     teamName={data.teams.find((team) => team.teamId === selectedSchedule.teamId)?.name || "Team"}
                     timeZone={serviceTimeZone}
-                    onClose={() => setScheduleInitialSmsOpen(false)}
+                    sendScope={scheduleSendScope}
+                    canDispatch={() => Boolean(
+                      scheduleInitialSmsOrigin &&
+                      scheduleInitialSmsOrigin.churchId === churchId &&
+                      scheduleInitialSmsOrigin.scheduleId === selectedSchedule.scheduleId &&
+                      isCurrentScheduleAction(
+                        {
+                          churchId: scheduleInitialSmsOrigin.churchId,
+                          scheduleId: scheduleInitialSmsOrigin.scheduleId,
+                        },
+                        scheduleInitialSmsOrigin.workspaceIdentity,
+                      )
+                    )}
+                    onClose={() => {
+                      setScheduleInitialSmsOpen(false);
+                      setScheduleInitialSmsOrigin(null);
+                    }}
                   />
                 </Drawer>
               ) : null}
@@ -7464,6 +7816,55 @@ const ScheduleTab = ({
                 onCancel={cancelScheduleSms}
                 onSend={() => void confirmScheduleSms()}
               /> : null}
+              <Modal
+                isOpen={Boolean(publishAndCopyLink)}
+                onClose={() => setPublishAndCopyLink(null)}
+                title={publishAndCopyLink?.published ? "Schedule published" : "Publish schedule?"}
+                description={publishAndCopyLink?.published
+                  ? "Copy the view-only link to share this published schedule."
+                  : "Publishing makes this schedule visible to teammates. It won't send email or text messages."}
+                size="sm"
+                busy={isPublicationPending || copyingLink}
+              >
+                {publishAndCopyLink?.publicUrl ? (
+                  <div className="mb-4 space-y-1">
+                    <label htmlFor="published-team-schedule-link" className="text-sm font-medium text-gray-200">
+                      View-only schedule link
+                    </label>
+                    <input
+                      id="published-team-schedule-link"
+                      ref={publicLinkInputRef}
+                      type="text"
+                      readOnly
+                      value={publishAndCopyLink.publicUrl}
+                      onFocus={(event) => event.currentTarget.select()}
+                      onClick={(event) => event.currentTarget.select()}
+                      className="w-full rounded border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-100"
+                      aria-describedby="published-team-schedule-link-help"
+                    />
+                    <p id="published-team-schedule-link-help" className="text-xs text-gray-400">
+                      If copying doesn't work, select this link and copy it manually.
+                    </p>
+                  </div>
+                ) : null}
+                <div className="flex justify-end gap-2 text-sm">
+                  <Button
+                    variant="secondary"
+                    disabled={isPublicationPending || copyingLink}
+                    onClick={() => setPublishAndCopyLink(null)}
+                  >
+                    {publishAndCopyLink?.published ? "Done" : "Cancel"}
+                  </Button>
+                  <Button
+                    variant="cta"
+                    disabled={isPublicationPending || copyingLink}
+                    isLoading={isPublicationPending || copyingLink}
+                    onClick={() => void confirmPublishAndCopyLink()}
+                  >
+                    {publishAndCopyButtonLabel}
+                  </Button>
+                </div>
+              </Modal>
               <Modal
                 isOpen={Boolean(replacementIntentToClose)}
                 onClose={() => { if (!closingReplacement) setReplacementIntentToClose(null); }}

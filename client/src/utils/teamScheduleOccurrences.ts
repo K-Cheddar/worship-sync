@@ -12,6 +12,7 @@ import {
   occurrenceIdentityListsMatch,
   occurrenceScheduleDetailsMatch as compareOccurrenceScheduleDetails,
   serviceDateTimeInTimeZone,
+  oneTimeServiceInstant,
 } from "../../../shared/teamScheduleOccurrences";
 
 export {
@@ -25,6 +26,8 @@ export {
   matchOccurrencesByIdentity,
   preserveStoredOccurrenceIds,
   serviceDateTimeInTimeZone,
+  oneTimeServiceInstant,
+  oneTimeServiceLocalValue,
 } from "../../../shared/teamScheduleOccurrences";
 
 const toOccurrence = (
@@ -402,9 +405,7 @@ export const generateScheduleOccurrences = ({
     };
 
     if (service.reccurence === "one_time") {
-      const startsAt = service.dateTimeISO
-        ? new Date(service.dateTimeISO)
-        : null;
+      const startsAt = oneTimeServiceInstant(service.dateTimeISO, timeZone);
       const serviceDate = startsAt && !Number.isNaN(startsAt.getTime())
         ? calendarDateInTimeZone(startsAt, timeZone)
         : "";

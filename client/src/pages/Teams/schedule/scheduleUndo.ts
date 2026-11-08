@@ -2,7 +2,7 @@ import type {
   TeamScheduleCellAssignment,
   TeamScheduleShadowKind,
 } from "../../../api/authTypes";
-import { normalizeAssignmentCell } from "../teamsUtils";
+import { normalizeAssignmentCell, serializeAssignmentCell } from "../teamsUtils";
 
 /**
  * Undo/redo for the schedule grid works like collaborating on a spreadsheet: each
@@ -17,8 +17,8 @@ import { normalizeAssignmentCell } from "../teamsUtils";
  * since — undo never clobbers someone else's newer edit.
  */
 
-/** A single cell's value at a point in time. `""` means the cell is empty. */
-export type ScheduleCellState = TeamScheduleCellAssignment | "";
+/** A single cell's value at a point in time. Strings are legacy primary IDs. */
+export type ScheduleCellState = TeamScheduleCellAssignment | string;
 
 /** One cell that a mutation changed, with the values on either side of it. */
 export type ScheduleCellChange = {
@@ -36,6 +36,27 @@ export type ScheduleUndoEntry = {
   /** Human-readable action, e.g. "remove Jane from Drums" — used in tooltips. */
   label: string;
   changes: ScheduleCellChange[];
+};
+
+export type ScheduleUndoBatchChange = {
+  serviceId: string;
+  positionSlotKey: string;
+  serviceDate: string;
+  expectedCell: TeamScheduleCellAssignment | "";
+  assignment: TeamScheduleCellAssignment | "";
+};
+
+type ScheduleAssignmentMap = Record<
+  string,
+  Record<string, ScheduleCellState | undefined> | undefined
+>;
+
+type PendingScheduleAssignmentEdit = {
+  churchId: string;
+  scheduleId: string;
+  field: string;
+  occurrenceId: string;
+  cellKey: string;
 };
 
 /**
@@ -74,6 +95,82 @@ export const cellsMatch = (
   a?: ScheduleCellState | null,
   b?: ScheduleCellState | null,
 ): boolean => cellSignature(a) === cellSignature(b);
+
+const cellKey = (serviceId: string, positionSlotKey: string) =>
+  JSON.stringify([serviceId, positionSlotKey]);
+
+/** Prepare the guarded per-cell payload for one Undo or Redo attempt. */
+export const prepareScheduleUndoChanges = (
+  entry: ScheduleUndoEntry,
+  direction: "undo" | "redo",
+  assignments: ScheduleAssignmentMap = {},
+): { changes: ScheduleUndoBatchChange[]; skippedChanges: ScheduleCellChange[] } => {
+  const ordered = direction === "undo" ? [...entry.changes].reverse() : entry.changes;
+  const changes: ScheduleUndoBatchChange[] = [];
+  const skippedChanges: ScheduleCellChange[] = [];
+
+  ordered.forEach((change) => {
+    const expected = direction === "undo" ? change.after : change.before;
+    const desired = direction === "undo" ? change.before : change.after;
+    const liveCell = assignments[change.occurrenceId]?.[change.cellKey] ?? "";
+    if (!cellsMatch(liveCell, expected)) {
+      skippedChanges.push(change);
+      return;
+    }
+    changes.push({
+      serviceId: change.occurrenceId,
+      positionSlotKey: change.cellKey,
+      serviceDate: change.serviceDate,
+      expectedCell: serializeAssignmentCell(normalizeAssignmentCell(liveCell || undefined)),
+      assignment: serializeAssignmentCell(normalizeAssignmentCell(desired || undefined)),
+    });
+  });
+
+  return { changes, skippedChanges };
+};
+
+/** True when this history step overlaps an unsaved optimistic assignment edit. */
+export const hasPendingScheduleUndoEdit = (
+  entry: ScheduleUndoEntry | undefined,
+  churchId: string,
+  pendingEdits: Iterable<PendingScheduleAssignmentEdit>,
+): boolean => {
+  if (!entry) return false;
+  const entryCells = new Set(entry.changes.map((change) =>
+    cellKey(change.occurrenceId, change.cellKey),
+  ));
+  return [...pendingEdits].some((edit) =>
+    edit.churchId === churchId &&
+    edit.scheduleId === entry.scheduleId &&
+    edit.field === "assignments" &&
+    entryCells.has(cellKey(edit.occurrenceId, edit.cellKey)),
+  );
+};
+
+/** Keep only changes the server accepted, including a replayed receipt on retry. */
+export const resolveScheduleUndoBatchResult = (
+  entry: ScheduleUndoEntry,
+  attemptedChanges: ScheduleUndoBatchChange[],
+  accepted: Array<{ serviceId: string; positionSlotKey: string }>,
+): { appliedEntry: ScheduleUndoEntry | null; skippedCount: number } => {
+  const attemptedByKey = new Map(attemptedChanges.map((change) => [
+    cellKey(change.serviceId, change.positionSlotKey),
+    change,
+  ]));
+  const appliedKeys = new Set(accepted.map(({ serviceId, positionSlotKey }) =>
+    cellKey(serviceId, positionSlotKey),
+  ));
+
+  const attemptedKeys = new Set(attemptedByKey.keys());
+  const appliedChanges = entry.changes.filter((change) => {
+    const key = cellKey(change.occurrenceId, change.cellKey);
+    return attemptedKeys.has(key) && appliedKeys.has(key);
+  });
+  return {
+    appliedEntry: appliedChanges.length ? { ...entry, changes: appliedChanges } : null,
+    skippedCount: attemptedKeys.size - [...appliedKeys].filter((key) => attemptedKeys.has(key)).length,
+  };
+};
 
 /**
  * Compute the minimal list of assignment API calls that turn `current` into

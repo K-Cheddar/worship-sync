@@ -1,5 +1,7 @@
 import type { TeamScheduleOccurrence, TeamService } from "../api/authTypes";
 import {
+  oneTimeServiceInstant,
+  oneTimeServiceLocalValue,
   findNextUpcomingOccurrenceId,
   formatOccurrenceRowLabel,
   formatOccurrenceTiming,
@@ -25,6 +27,29 @@ const service = (overrides: Partial<TeamService>): TeamService => ({
   dayOfWeek: 0,
   time: "10:00",
   ...overrides,
+});
+
+describe("one-time service persistence", () => {
+  it.each(["2026-11-07T16:30", "2026-11-07T21:30:00.000Z", "2026-11-07T16:30:00-05:00"])("resolves %s in the church timezone", (value) => {
+    expect(oneTimeServiceInstant(value, "America/New_York")?.toISOString()).toBe("2026-11-07T21:30:00.000Z");
+    expect(oneTimeServiceLocalValue(value, "America/New_York")).toBe("2026-11-07T16:30");
+  });
+
+  it("resolves offset-less wall times that include seconds and milliseconds", () => {
+    expect(oneTimeServiceInstant("2026-11-07T16:30:15.250", "America/New_York")?.toISOString())
+      .toBe("2026-11-07T21:30:15.250Z");
+  });
+
+  it("uses church dates near midnight and keeps the existing DST rules", () => {
+    expect(oneTimeServiceInstant("2026-11-07T00:30", "America/New_York")?.toISOString()).toBe("2026-11-07T05:30:00.000Z");
+    expect(oneTimeServiceInstant("2026-03-08T02:30", "America/New_York")).toBeNull();
+    expect(oneTimeServiceInstant("2026-11-01T01:30", "America/New_York")?.toISOString()).toBe("2026-11-01T05:30:00.000Z");
+    expect(oneTimeServiceInstant("not-a-date", "America/New_York")).toBeNull();
+    const legacy = service({ serviceId: "legacy-local", reccurence: "one_time", dateTimeISO: "2026-11-07T00:30" });
+    expect(generateScheduleOccurrences({ services: [legacy], serviceIds: [legacy.serviceId], startDate: "2026-11-07", endDate: "2026-11-07", timeZone: "America/New_York" })).toEqual([
+      expect.objectContaining({ occurrenceId: "legacy-local@2026-11-07", serviceDate: "2026-11-07", startsAt: "2026-11-07T05:30:00.000Z" }),
+    ]);
+  });
 });
 
 describe("findNextUpcomingOccurrenceId", () => {

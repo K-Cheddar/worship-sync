@@ -576,6 +576,8 @@ export type ServiceTime = {
   positionRequirements?: PositionRequirement[];
   // template automatically used when the first plan for an occurrence is opened
   defaultPlanTemplateId?: string;
+  /** Confirmed Planning Center service type used for recurring plan discovery. */
+  planningCenterServiceTypeId?: string;
   // services sharing a non-empty serviceGroupId are "combined": when they fall on
   // the same date they merge into one schedule occurrence with a single shared set
   // of assignment cells (e.g. back-to-back 9am + 11am Sunday services).
@@ -1105,6 +1107,10 @@ export type VideoBackgroundPlaybackCue = {
   loop?: boolean;
   /** Policy update for cue-less playback; do not apply a transport clock. */
   loopOnly?: boolean;
+  /** True when a loop-only cue was sampled from a transmitting output's live playhead. */
+  hasLiveClock?: boolean;
+  /** Apply play/pause and loop policy at each output's own playhead; ignore the supplied clock. */
+  preserveOutputPosition?: boolean;
   atServerMs: number;
   /** Bumped on every send so live players can re-apply the same position. */
   generation: number;
@@ -1135,6 +1141,8 @@ export type LocalImageAssetReference = {
   /** Present after the optional background upload completes. */
   cloudUrl?: string;
   cloudMediaId?: string;
+  /** Cloudinary identity for deleting this image without changing its parent Media identity. */
+  cloudPublicId?: string;
 };
 
 export type MediaCloudUploadRequest = {

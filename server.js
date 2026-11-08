@@ -30,6 +30,7 @@ import {
   assertServerCsrf,
   startIntakeSubmissionDigestRecovery,
   startScheduleResponseDigestRecovery,
+  startTeamSchedulePublicationEventRecovery,
   startScheduleInitialSmsBatchDispatcher,
   stopScheduleInitialSmsBatchDispatcher,
   setDoc,
@@ -1578,6 +1579,14 @@ app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId/send",
   authHandlers.sendTeamSchedule,
 );
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/publish",
+  authHandlers.publishTeamSchedule,
+);
+app.post(
+  "/api/churches/:churchId/team-schedules/:scheduleId/unpublish",
+  authHandlers.unpublishTeamSchedule,
+);
 app.get(
   "/api/team-schedule-response",
   authHandlers.getAssignmentResponseContext,
@@ -1757,6 +1766,10 @@ app.post(
   authHandlers.getTeamSchedulePublicLink,
 );
 app.get("/api/team-schedule/public", authHandlers.getPublicTeamSchedule);
+app.get(
+  "/api/churches/:churchId/services/stream",
+  authHandlers.streamServicePlanUpdates,
+);
 app.get("/api/churches/:churchId/service-plans", authHandlers.listServicePlans);
 app.get(
   "/api/churches/:churchId/service-plans/:planKey/assignments",
@@ -2857,6 +2870,7 @@ app.get(
           churchId: req.params.churchId,
           serviceTypeId: req.params.serviceTypeId,
           filter: req.query.filter,
+          date: req.query.date,
         }),
       );
     } catch (error) {
@@ -4186,6 +4200,7 @@ let shutdownStarted = false;
 const startServerBackgroundWork = () => {
   startIntakeSubmissionDigestRecovery();
   startScheduleResponseDigestRecovery();
+  startTeamSchedulePublicationEventRecovery();
   startScheduleInitialSmsBatchDispatcher();
 };
 

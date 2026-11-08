@@ -4,9 +4,11 @@ import {
   findOverlappingPeriodSchedules,
   findReusablePeriodSchedule,
   findScheduleOccurrenceOwnershipConflicts,
+  filterSafeScheduleReconciliationOccurrences,
   mergeCurrentScheduleOccurrences,
   rangeFromPreset,
   resolveDisplayedPeriodRange,
+  scheduleCoversPeriodRange,
 } from "./schedulePeriodUtils";
 
 const occurrence: TeamScheduleOccurrence = {
@@ -22,7 +24,7 @@ const target = {
   endDate: "2026-10-31",
   occurrences: [occurrence],
 };
-type TestSchedule = TeamScheduleSummary & Pick<Partial<TeamSchedule>, "assignments">;
+type TestSchedule = TeamScheduleSummary & Pick<Partial<TeamSchedule>, "assignments" | "microphoneAssignments">;
 const schedule = (changes: Partial<TestSchedule> = {}): TestSchedule => ({
   scheduleId: "schedule-1",
   churchId: target.churchId,
@@ -42,6 +44,113 @@ describe("rangeFromPreset", () => {
       end: "2026-09-30",
     });
   });
+});
+
+it("previews unrelated additions while preserving saved grouping conflicts and map keys", () => {
+  const combined = { ...occurrence, occurrenceId: "group:sabbath@2026-10-03", groupId: "sabbath", serviceIds: ["service", "study"] };
+  const added = { ...occurrence, occurrenceId: "new@2026-10-03", serviceId: "new", name: "Book Launch" };
+  const result = mergeCurrentScheduleOccurrences([combined], [occurrence, added], "UTC");
+  expect(result.ambiguous).toBe(true);
+  expect(result.occurrences).toEqual(expect.arrayContaining([combined, added]));
+  expect(result.occurrences).toHaveLength(2);
+  expect(result.occurrences).not.toContainEqual(occurrence);
+});
+
+it("keeps unrelated additions eligible while omitting historical grouping mismatches from reconciliation", () => {
+  const worship = { ...occurrence, occurrenceId: "worship@2026-10-03", serviceId: "worship", name: "Worship" };
+  const study = { ...occurrence, occurrenceId: "study@2026-10-03", serviceId: "study", name: "Study" };
+  const savedCombined = {
+    ...occurrence,
+    occurrenceId: "group:sabbath@2026-10-03",
+    groupId: "sabbath",
+    serviceId: "worship",
+    serviceIds: ["worship", "study"],
+    name: "Worship & Study",
+  };
+  const bookLaunch = { ...occurrence, occurrenceId: "book-launch@2026-10-03", serviceId: "book-launch", name: "Book Launch" };
+  expect(filterSafeScheduleReconciliationOccurrences({
+    storedOccurrences: [savedCombined],
+    currentOccurrences: [worship, study, bookLaunch],
+    schedules: [schedule({ occurrences: [savedCombined] })],
+    churchId: target.churchId,
+    teamId: target.teamId,
+    scheduleId: "schedule-1",
+  })).toEqual([bookLaunch]);
+});
+
+it("does not reconcile a safe preview already owned by another schedule", () => {
+  const added = { ...occurrence, occurrenceId: "book-launch@2026-10-03", serviceId: "book-launch", name: "Book Launch" };
+  const currentOwner = schedule({ scheduleId: "owner-b", occurrences: [added] });
+  expect(filterSafeScheduleReconciliationOccurrences({
+    storedOccurrences: target.occurrences,
+    currentOccurrences: [occurrence, added],
+    schedules: [schedule(), currentOwner],
+    churchId: target.churchId,
+    teamId: target.teamId,
+    scheduleId: "schedule-1",
+  })).toEqual([occurrence]);
+});
+
+it("does not preview duplicate generated identities beside unrelated additions", () => {
+  const added = { ...occurrence, occurrenceId: "new@2026-10-03", serviceId: "new", name: "New service" };
+  const duplicate = { ...added, occurrenceId: "new@legacy" };
+  const unrelated = { ...added, occurrenceId: "other@2026-10-03", serviceId: "other", name: "Other" };
+  expect(mergeCurrentScheduleOccurrences([occurrence], [occurrence, added, duplicate, unrelated])).toEqual({
+    occurrences: [unrelated, occurrence].sort((a, b) => a.occurrenceId.localeCompare(b.occurrenceId)), ambiguous: true,
+  });
+});
+
+it("rejects a reused raw occurrence ID when its logical service identity changes", () => {
+  const saved = {
+    ...occurrence,
+    occurrenceId: "legacy-shared-id",
+    serviceId: "old-service",
+    name: "Old service",
+    startsAt: "2026-10-03T09:00:00.000Z",
+    serviceDate: "2026-10-03",
+  };
+  const current = {
+    ...occurrence,
+    occurrenceId: "legacy-shared-id",
+    serviceId: "new-service",
+    name: "New service",
+    startsAt: "2026-10-03T10:00:00.000Z",
+    serviceDate: "2026-10-03",
+  };
+  const savedSchedule = schedule({ occurrences: [saved], assignments: { [saved.occurrenceId]: { "position::0": { primaryMemberId: "member" } } } });
+
+  expect(findReusablePeriodSchedule({ schedules: [savedSchedule], ...target, occurrences: [current] })).toMatchObject({
+    schedule: null,
+    ambiguous: true,
+  });
+  expect(filterSafeScheduleReconciliationOccurrences({
+    storedOccurrences: [saved],
+    currentOccurrences: [current],
+    schedules: [savedSchedule],
+    churchId: target.churchId,
+    teamId: target.teamId,
+  })).toEqual([]);
+  expect(mergeCurrentScheduleOccurrences([saved], [current])).toMatchObject({
+    occurrences: [saved],
+    ambiguous: true,
+  });
+  expect(savedSchedule.assignments).toEqual({ [saved.occurrenceId]: { "position::0": { primaryMemberId: "member" } } });
+});
+
+it("accepts the same raw ID when the service identity is unchanged and keeps its saved map key", () => {
+  const saved = { ...occurrence, occurrenceId: "legacy-id", serviceDate: "2026-10-03" };
+  const current = { ...saved, startsAt: "2026-10-03T11:00:00.000Z" };
+  const assignments = { [saved.occurrenceId]: { "position::0": { primaryMemberId: "member" } } };
+  const microphones = { [saved.occurrenceId]: { "position::0": ["mic-1"] } };
+  const savedSchedule = schedule({ occurrences: [saved], assignments, microphoneAssignments: microphones });
+
+  expect(findReusablePeriodSchedule({ schedules: [savedSchedule], ...target, occurrences: [current] })).toMatchObject({
+    schedule: savedSchedule,
+    ambiguous: false,
+  });
+  expect(mergeCurrentScheduleOccurrences([saved], [current])).toEqual({ occurrences: [saved], ambiguous: false });
+  expect(savedSchedule.assignments).toBe(assignments);
+  expect(savedSchedule.microphoneAssignments).toBe(microphones);
 });
 
 it("filters past occurrences from the visible Upcoming range", () => {
@@ -743,6 +852,20 @@ describe("findReusablePeriodSchedule", () => {
     expect(findReusablePeriodSchedule({ schedules, ...target }))
       .toMatchObject({ schedule: schedules[0], ambiguous: false, ownershipConflict: true });
   });
+});
+
+it("allows partial schedules to display on overlap without treating them as period owners", () => {
+  const partial = schedule({ startDate: "2026-10-03", endDate: "2026-10-15" });
+  const overlapping = findOverlappingPeriodSchedules({
+    schedules: [partial],
+    churchId: target.churchId,
+    teamId: target.teamId,
+    range: { start: target.startDate, end: target.endDate },
+  });
+
+  expect(overlapping).toContain(partial);
+  expect(scheduleCoversPeriodRange(partial, { start: target.startDate, end: target.endDate })).toBe(false);
+  expect(scheduleCoversPeriodRange(schedule(), { start: target.startDate, end: target.endDate })).toBe(true);
 });
 
 describe("findOverlappingPeriodSchedules", () => {

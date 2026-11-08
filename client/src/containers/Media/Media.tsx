@@ -51,6 +51,11 @@ import type { LocalVideoInputMediaSource } from "../../types";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import { supportsDesktopCapture } from "../../utils/desktopCapture";
+import type { LocalVideoThumbnailFrame } from "../../utils/localVideoInputThumbnail";
+import {
+  useLocalVideoInputThumbnailPersistence,
+  VideoInputMediaWriteOutcomeUnknownError,
+} from "../../hooks/useLocalVideoInputThumbnailPersistence";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { MediaAddControl } from "./MediaAddControl";
 import { MediaSourceAddMenu } from "./MediaSourceAddMenu";
@@ -100,10 +105,10 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const [isVideoDownloadOpen, setIsVideoDownloadOpen] = useState(false);
   const [isVideoDownloaderAvailable, setIsVideoDownloaderAvailable] = useState(false);
   const [isLinkingLocalVideo, setIsLinkingLocalVideo] = useState(false);
-  const [videoInputToEdit, setVideoInputToEdit] =
-    useState<LocalVideoInputMediaSource>();
+  const [videoInputToEdit, setVideoInputToEdit] = useState<MediaType>();
   const [videoInputMode, setVideoInputMode] =
     useState<LocalVideoCaptureMode>("device");
+  const pendingInitialVideoRowsRef = useRef(new Map<string, MediaType>());
   const storageUsageRefreshRef = useRef<() => void>(() => undefined);
   const notifyStorageUsageChanged = useCallback(
     () => storageUsageRefreshRef.current(),
@@ -123,7 +128,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         ? "desktop"
         : "device",
     );
-    setVideoInputToEdit(media.localVideoInput);
+    setVideoInputToEdit(media);
     setIsVideoInputOpen(true);
   }, []);
   const openVideoInputPicker = useCallback((mode: LocalVideoCaptureMode) => {
@@ -138,7 +143,18 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     onRelinkVideoInput: relinkVideoInput,
     onStorageUsageChanged: notifyStorageUsageChanged,
   });
-  const { showAll, navigateToFolder } = c;
+  const {
+    showAll,
+    navigateToFolder,
+    getCurrentMediaList,
+  } = c;
+
+  const {
+    persistVideoInputMediaPatch,
+    removeOptimisticVideoInputMediaRow,
+    saveVideoInputThumbnail,
+    removeVideoInputThumbnail,
+  } = useLocalVideoInputThumbnailPersistence(notifyStorageUsageChanged);
   const handleDroppedFiles = useCallback(
     (files: File[]) => c.mediaUploadInputRef.current?.openModalWithFiles(files),
     [c.mediaUploadInputRef],
@@ -245,7 +261,10 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   );
 
   const addVideoInput = useCallback(
-    (source: LocalVideoInputMediaSource) => {
+    async (
+      source: LocalVideoInputMediaSource,
+      initialThumbnail?: LocalVideoThumbnailFrame,
+    ) => {
       const ownedSource: LocalVideoInputMediaSource = {
         ...source,
         ownerDeviceId: getOrCreateDeviceId(),
@@ -253,25 +272,79 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       };
       const now = new Date().toISOString();
       const id = `local_input_${ownedSource.sourceId}`;
-      addLocalMedia({
-        path: "",
-        createdAt: now,
-        updatedAt: now,
-        format: "live",
-        height: 1080,
-        width: 1920,
-        name: ownedSource.label,
-        publicId: id,
-        type: "video",
-        id,
-        background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
-        thumbnail: "",
-        placeholderImage: "",
-        source: "local",
-        localVideoInput: ownedSource,
-      });
+      const existing = getCurrentMediaList().find((item) => item.id === id);
+      const pendingInitialRow = pendingInitialVideoRowsRef.current.get(id);
+      let optimisticRow: MediaType | undefined;
+      if (!existing) {
+        optimisticRow = {
+          path: "",
+          createdAt: now,
+          updatedAt: now,
+          format: "live",
+          height: 1080,
+          width: 1920,
+          name: ownedSource.label,
+          publicId: id,
+          type: "video",
+          id,
+          background: `local-video-input://${encodeURIComponent(ownedSource.sourceId)}`,
+          thumbnail: "",
+          placeholderImage: "",
+          source: "local",
+          localVideoInput: ownedSource,
+          folderId: c.uploadTargetFolderId,
+        };
+        dispatch(
+          addItemToMediaList(optimisticRow),
+        );
+      }
+      const rowToRetainOrRollback = optimisticRow ?? pendingInitialRow;
+      const allowCreate = !existing || Boolean(pendingInitialRow);
+      try {
+        const mediaPatch = {
+          name: ownedSource.label,
+          updatedAt: now,
+          localVideoInput: ownedSource,
+        };
+        if (initialThumbnail) {
+          await saveVideoInputThumbnail(id, initialThumbnail, {
+            mediaPatch,
+            allowCreate,
+          });
+        } else {
+          await persistVideoInputMediaPatch(
+            id,
+            ownedSource.sourceId,
+            mediaPatch,
+            allowCreate,
+          );
+        }
+        pendingInitialVideoRowsRef.current.delete(id);
+      } catch (error) {
+        if (!existing || pendingInitialRow) {
+          if (
+            error instanceof VideoInputMediaWriteOutcomeUnknownError &&
+            rowToRetainOrRollback
+          ) {
+            pendingInitialVideoRowsRef.current.set(id, rowToRetainOrRollback);
+          } else {
+            if (rowToRetainOrRollback) {
+              removeOptimisticVideoInputMediaRow(id, rowToRetainOrRollback);
+            }
+            pendingInitialVideoRowsRef.current.delete(id);
+          }
+        }
+        throw error;
+      }
     },
-    [addLocalMedia],
+    [
+      c.uploadTargetFolderId,
+      dispatch,
+      getCurrentMediaList,
+      persistVideoInputMediaPatch,
+      removeOptimisticVideoInputMediaRow,
+      saveVideoInputThumbnail,
+    ],
   );
 
   const linkLocalVideo = useCallback(async () => {
@@ -472,12 +545,26 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             hideTrigger
             open
             captureMode={videoInputMode}
-            source={videoInputToEdit}
+            source={videoInputToEdit?.localVideoInput}
+            hasThumbnail={Boolean(
+              videoInputToEdit?.localImage || videoInputToEdit?.thumbnail,
+            )}
             onOpenChange={(open) => {
               setIsVideoInputOpen(open);
               if (!open) setVideoInputToEdit(undefined);
             }}
             onLinked={addVideoInput}
+            onSaveThumbnail={
+              videoInputToEdit
+                ? (frame) =>
+                    saveVideoInputThumbnail(videoInputToEdit.id, frame)
+                : undefined
+            }
+            onRemoveThumbnail={
+              videoInputToEdit
+                ? () => removeVideoInputThumbnail(videoInputToEdit.id)
+                : undefined
+            }
           />
         ) : null}
         {!c.isMediaReadOnly && c.isMediaExpanded && (

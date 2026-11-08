@@ -3,9 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { type BrowserContext } from "@playwright/test";
 import { test as diagnosticTest, expect } from "./fixtures";
-import { allowedE2EAuthOrigins } from "./authOrigins";
 import { FIXTURE_OWNER } from "./controllerFixtureCleanup";
-import { installControllerRuntime, readDocument, resetLocalOutputs, waitForControllerDatabase } from "./controllerRuntime";
+import { installControllerAuthRequestGuard, installControllerRuntime, readDocument, resetLocalOutputs, waitForControllerDatabase } from "./controllerRuntime";
 import { SONG_A, SONG_B, TEST_OUTLINE_ID, TEST_OUTLINE_NAME, cleanFixtureOutline, ensureSongExists, openPresentationController, selectTestOutline } from "./controllerTestData";
 
 export const controllerTest = diagnosticTest.extend<{}, { controllerContext: BrowserContext }>({
@@ -24,22 +23,11 @@ export const controllerTest = diagnosticTest.extend<{}, { controllerContext: Bro
     const ids = new Set<string>();
     const manifestPath = resolve("playwright/.fixtures", `${TEST_OUTLINE_ID}-${randomUUID()}.json`);
     await mkdir(resolve("playwright/.fixtures"), { recursive: true });
-    let unsafeAuthRequests = 0;
     let bulkDownloads = 0;
     const downloadsByPage = new Map<unknown, { requests: number; documents: number }>();
     const startupDurations: number[] = [];
     context.on("page", page => downloadsByPage.set(page, { requests: 0, documents: 0 }));
-    const trustedOrigins = allowedE2EAuthOrigins(options.baseURL!);
-    await context.route(/\/api\/auth(?:\/|$)|mailslurp\.com/i, async route => {
-      const request = route.request();
-      const url = new URL(request.url());
-      let renewal = false;
-      try { renewal = url.pathname === "/api/auth/session" && request.postDataJSON()?.requestNewCode === false; } catch { /* fail closed */ }
-      if (/mailslurp\.com/i.test(url.hostname) || !trustedOrigins.has(url.origin) || (request.method() === "POST" && !renewal)) {
-        unsafeAuthRequests++;
-        await route.abort("blockedbyclient");
-      } else await route.continue();
-    });
+    const authRequestGuard = await installControllerAuthRequestGuard(context, options.baseURL!);
     context.on("request", request => {
       const pathname = new URL(request.url()).pathname;
       if (!pathname.endsWith("/_bulk_get") || pathname.includes("/worship-sync-bibles/")) return;
@@ -50,12 +38,12 @@ export const controllerTest = diagnosticTest.extend<{}, { controllerContext: Bro
       counts.documents += request.postDataJSON()?.docs?.length ?? 0;
       downloadsByPage.set(page, counts);
     });
-    await installControllerRuntime(context);
+    const firebaseIsolation = await installControllerRuntime(context);
     let baselineSelection: Record<string, string> = {};
     let database = "";
     let cleanupDiagnostic: unknown = null;
     const persistManifest = async (status: string) => writeFile(manifestPath, JSON.stringify({
-      owner: FIXTURE_OWNER, outlineId: TEST_OUTLINE_ID, database, ids: [...ids], baselineSelection, status, cleanupDiagnostic, bulkDownloads, downloadsByPage: [...downloadsByPage.values()], startupDurationsMs: startupDurations, unsafeAuthRequests,
+      owner: FIXTURE_OWNER, outlineId: TEST_OUTLINE_ID, database, ids: [...ids], baselineSelection, status, cleanupDiagnostic, bulkDownloads, downloadsByPage: [...downloadsByPage.values()], startupDurationsMs: startupDurations, unsafeAuthRequests: authRequestGuard.blockedRequests(), firebaseIsolation: firebaseIsolation.metrics(),
     }, null, 2));
     await context.exposeBinding("controllerE2ERecord", async (_source, id: string) => {
       ids.add(id);
@@ -69,6 +57,7 @@ export const controllerTest = diagnosticTest.extend<{}, { controllerContext: Bro
     try {
       await openPresentationController(setupPage);
       await waitForControllerDatabase(setupPage);
+      await firebaseIsolation.assertReady(setupPage);
       const baseline = await readDocument(setupPage, "ItemLists");
       baselineSelection = baseline?.selectedIdByScope ?? {};
       database = await setupPage.evaluate(() => window.__controllerE2E.database().name);
@@ -144,8 +133,8 @@ export const controllerTest = diagnosticTest.extend<{}, { controllerContext: Bro
           }, { ids: [...ids], owner: FIXTURE_OWNER, outlineId: TEST_OUTLINE_ID, baselineSelection, database });
         }
         await persistManifest("cleaned");
-        console.log(`Controller worker: ${bulkDownloads} bulk download request(s), ${unsafeAuthRequests} unsafe auth requests; removed fixture IDs ${[...ids].join(", ")}`);
-        expect(unsafeAuthRequests).toBe(0);
+        console.log(`Controller worker: ${bulkDownloads} bulk download request(s), ${authRequestGuard.blockedRequests()} unsafe auth requests; removed fixture IDs ${[...ids].join(", ")}`);
+        expect(authRequestGuard.blockedRequests()).toBe(0);
       } catch (error) {
         try {
           cleanupDiagnostic = await cleanupPage.evaluate(async ({ ids, database }) => {

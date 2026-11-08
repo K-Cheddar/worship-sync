@@ -86,12 +86,12 @@ const OverlayEditor = ({
   const remoteUpdateToastIdRef = useRef<string | null>(null);
 
   const handleDraftPendingChange = useCallback(
-    (overlayId: string, isPending: boolean) => {
-      if (draftOwner && !draftOwner.isCurrent()) return;
+    (overlayId: string, isPending: boolean, draftId: string) => {
+      if (isPending && draftOwner && !draftOwner.isCurrent()) return;
       dispatch(
         isPending
-          ? markOverlayDraftPending(overlayId)
-          : clearOverlayDraftPending(overlayId),
+          ? markOverlayDraftPending({ overlayId, draftId })
+          : clearOverlayDraftPending({ overlayId, draftId }),
       );
     },
     [dispatch, draftOwner],

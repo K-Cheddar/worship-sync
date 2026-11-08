@@ -1,0 +1,7 @@
+{
+  "id": "current-service-viewer-live-updates",
+  "date": "2026-11-02",
+  "type": "improved",
+  "title": "Keep the Current Service Viewer in sync",
+  "description": "Current Service Viewers now reflect live service changes across browsers and paired workstations, and catch up automatically after a connection interruption."
+}

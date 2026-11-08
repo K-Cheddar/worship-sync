@@ -334,7 +334,7 @@ describe("flushMediaLibraryDocToPouch", () => {
         ],
       }],
       ["media-item:stable", { ...media("stable", "Pouch newer name", "folder"), _id: "media-item:stable", docType: "mediaItem" }],
-      ["media-item:concurrent-addition", { ...media("concurrent-addition", "Pouch latest addition", "folder"), _id: "media-item:concurrent-addition", docType: "mediaItem" }],
+      ["media-item:concurrent-addition", { ...media("concurrent-addition", "Pouch latest addition", null), _id: "media-item:concurrent-addition", docType: "mediaItem" }],
     ]);
     const db = {
       get: jest.fn(async (id: string) => {
@@ -374,8 +374,8 @@ describe("flushMediaLibraryDocToPouch", () => {
     }));
     expect(persisted.get("media-item:concurrent-addition")).toEqual(expect.objectContaining({
       name: "Pouch latest addition",
-      folderId: null,
     }));
+    expect(persisted.get("media-item:concurrent-addition")?.folderId).toBeUndefined();
     expect(persisted.has("media-item:already-tombstoned")).toBe(false);
     expect(persisted.has("media-item:deleted-remotely")).toBe(false);
     expect(persisted.get("media-folders")).toEqual(expect.objectContaining({ folders: [concurrentFolder] }));

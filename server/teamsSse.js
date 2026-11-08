@@ -12,6 +12,7 @@
 // connected to another — that would need a shared pub/sub (e.g. Redis).
 
 const teamsSseClients = new Map();
+const servicePlanSseClients = new Map();
 const churchServiceTimeZoneSseClients = new Map();
 
 const addClient = (clientsByChurch, churchId, res) => {
@@ -43,6 +44,14 @@ export const addTeamsSseClient = (churchId, res) => {
 
 export const removeTeamsSseClient = (churchId, res) => {
   removeClient(teamsSseClients, churchId, res);
+};
+
+export const addServicePlanSseClient = (churchId, res) => {
+  addClient(servicePlanSseClients, churchId, res);
+};
+
+export const removeServicePlanSseClient = (churchId, res) => {
+  removeClient(servicePlanSseClients, churchId, res);
 };
 
 export const addChurchServiceTimeZoneSseClient = (churchId, res) => {
@@ -110,6 +119,44 @@ export const emitTeamsEvent = (churchId, type, payload = {}) => {
       // A dead connection will be cleaned up by its own "close" handler; don't
       // let one broken pipe stop the broadcast to everyone else.
       console.error("Could not write teams SSE event:", error);
+    }
+  });
+};
+
+/**
+ * Publishes service-plan invalidations to the existing Teams consumers and to
+ * Services viewers. The Services stream receives only the plan key needed to
+ * request a fresh, authorized snapshot.
+ */
+export const emitServicePlanEvent = (churchId, type, payload = {}) => {
+  if (
+    !churchId ||
+    (type !== "service-plan-updated" && type !== "service-plan-removed") ||
+    typeof payload.planKey !== "string" ||
+    !payload.planKey.trim()
+  ) return;
+
+  emitTeamsEvent(churchId, type, {
+    planKey: payload.planKey,
+    ...(type === "service-plan-updated" &&
+    typeof payload.saveOperationId === "string"
+      ? { saveOperationId: payload.saveOperationId }
+      : {}),
+  });
+
+  const clients = servicePlanSseClients.get(churchId);
+  if (!clients?.size) return;
+
+  const event = JSON.stringify({
+    type,
+    planKey: payload.planKey,
+  });
+
+  clients.forEach((client) => {
+    try {
+      client.write(`data: ${event}\n\n`);
+    } catch (error) {
+      console.error("Could not write Services plan SSE event:", error);
     }
   });
 };

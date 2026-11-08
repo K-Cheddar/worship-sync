@@ -125,7 +125,7 @@ const AvailabilityFormWorkspace = ({
   );
   return (
     <section
-      className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg bg-gray-900 p-4 max-lg:min-h-fit max-lg:flex-none"
+      className="flex min-h-0 min-w-0 flex-1 flex-col rounded-lg bg-gray-900 p-4 max-lg:min-h-fit max-lg:flex-none lg:overflow-y-auto lg:scrollbar-variable"
       aria-label={`${form.name} workspace`}
     >
       <div className="mb-3">

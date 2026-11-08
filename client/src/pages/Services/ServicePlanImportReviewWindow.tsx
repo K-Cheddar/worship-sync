@@ -19,8 +19,11 @@ type ServicePlanImportReviewWindowProps = {
   proposedSections?: ServicePlanSection[];
   importedSections?: ServicePlanSection[];
   importLabel?: string;
+  reviewTitle?: string;
+  noChangeApplyLabel?: string;
+  applying?: boolean;
   getSelectedSections?: (keys: string[]) => ServicePlanSection[] | undefined;
-  onApply: (selectedChangeKeys: string[]) => void;
+  onApply: (selectedChangeKeys: string[]) => void | Promise<void>;
   onClose: () => void;
 };
 
@@ -72,6 +75,9 @@ const ServicePlanImportReviewWindow = ({
   proposedSections = [],
   importedSections = proposedSections,
   importLabel = "Updated PDF",
+  reviewTitle = "Review Service Planning updates",
+  noChangeApplyLabel,
+  applying = false,
   getSelectedSections,
   onApply,
   onClose,
@@ -92,6 +98,7 @@ const ServicePlanImportReviewWindow = ({
   );
   const changeCount = selectedChanges.length;
   const initialGeometry = useMemo(getInitialReviewWindowGeometry, []);
+  const handleApply = () => void onApply([...selectedChangeKeys]);
   const matches = summary.changes.filter((change) => change.kind === "legacy_match");
   const ordinaryChanges = summary.changes.filter((change) => change.kind !== "legacy_match");
   const changesBySection = new Map<string, typeof summary.changes>();
@@ -136,7 +143,7 @@ const ServicePlanImportReviewWindow = ({
 
   return (
     <FloatingWindow
-      title="Review Service Planning updates"
+      title={reviewTitle}
       label="Import review"
       onClose={onClose}
       defaultPosition={initialGeometry.position}
@@ -201,14 +208,27 @@ const ServicePlanImportReviewWindow = ({
               </section> : null}
               {getSelectedSections ? <details className="border-t border-gray-700 pt-3"><summary className="cursor-pointer font-semibold">Schedule impact ({timingChanges.length})</summary><p className="mt-1 text-xs text-gray-400">Timing reflects the selected changes.</p>{timingChanges.length ? <ul className="mt-2 space-y-1 text-xs">{timingChanges.map((change) => <li key={change.id}>{change.name} {"\u00b7"} {change.before} {"\u2192"} {change.after}</li>)}</ul> : <p className="mt-2 text-xs text-gray-400">No start time changes for existing items.</p>}</details> : null}
             </div>
-          ) : <p className="rounded-lg border border-dashed border-gray-700 px-3 py-4 text-center text-sm text-gray-400">Nothing will change with the options currently selected.</p>}
+          ) : <p className="rounded-lg border border-dashed border-gray-700 px-3 py-4 text-center text-sm text-gray-400">
+            {noChangeApplyLabel && summary.changes.length === 0
+              ? "The plans already match. Link this Planning Center plan to check for updates in the future."
+              : "Nothing will change with the options currently selected."}
+          </p>}
 
         </div>
 
         <div className="flex justify-end gap-2 border-t border-gray-700 px-4 py-3">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button variant="cta" svg={Check} onClick={() => onApply([...selectedChangeKeys])} disabled={!changeCount}>
-            Apply {changeCount || "no"} {changeCount === 1 ? "change" : "changes"}
+          <Button
+            variant="cta"
+            svg={Check}
+            onClick={() => void handleApply()}
+            disabled={applying || (!changeCount && !(noChangeApplyLabel && summary.changes.length === 0))}
+          >
+            {applying
+              ? "Checking Planning Center…"
+              : noChangeApplyLabel && summary.changes.length === 0
+                ? noChangeApplyLabel
+                : `Apply ${changeCount || "no"} ${changeCount === 1 ? "change" : "changes"}`}
           </Button>
         </div>
       </div>

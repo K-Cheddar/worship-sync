@@ -5,7 +5,7 @@ import { setActiveItem } from "../../store/itemSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { keepElementInView } from "../../utils/generalUtils";
 import { requestOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
-import type { DBItem, ItemSlideType, ServiceItem } from "../../types";
+import type { DBItem, ItemSlideType, MediaType, ServiceItem } from "../../types";
 
 const mockDispatch: jest.Mock = jest.fn((action) => {
   if (typeof action === "function") return action(mockDispatch, () => ({
@@ -31,6 +31,12 @@ jest.mock("../../hooks", () => ({
 
 jest.mock("../../hooks/useOutlineItemDocs", () => ({
   useOutlineItemDocs: (...args: unknown[]) => mockUseOutlineItemDocs(...args),
+}));
+
+jest.mock("../../hooks/useLocalImageUrl", () => ({
+  useLocalImageUrl: (reference?: { id?: string }) => ({
+    url: reference?.id ? `blob:${reference.id}` : undefined,
+  }),
 }));
 
 jest.mock("react-router-dom", () => ({
@@ -70,6 +76,7 @@ jest.mock("./ItemSlide", () => ({
   default: ({
     index,
     slide,
+    localVideoInputThumbnail,
     slideDomId,
     canEdit,
     onSlideGridClick,
@@ -77,6 +84,7 @@ jest.mock("./ItemSlide", () => ({
   }: {
     index: number;
     slide: { name: string };
+    localVideoInputThumbnail?: { localImage?: { id?: string } };
     slideDomId?: string;
     canEdit?: boolean;
     onSlideGridClick: (e: React.MouseEvent, index: number) => void;
@@ -86,6 +94,7 @@ jest.mock("./ItemSlide", () => ({
       id={slideDomId}
       data-testid={canEdit ? `active-outline-slide-${slide.name}` : undefined}
       data-preview-mode={previewMode}
+      data-thumbnail-id={localVideoInputThumbnail?.localImage?.id}
       type="button"
       onClick={(event) => onSlideGridClick(event, index)}
     >
@@ -362,6 +371,7 @@ describe("OutlineItemSlidesScroller", () => {
     ]);
     mockUseOutlineItemDocs.mockImplementation(() => mockDocsById);
     mockState = {
+      media: { list: [] },
       undoable: {
         present: {
           item: {
@@ -440,6 +450,53 @@ describe("OutlineItemSlidesScroller", () => {
         thumbnail.getAttribute("data-preview-mode") === "monitor",
       ),
     ).toBe(true);
+  });
+
+  it("matches saved stills by source for active and inactive outline tiles", () => {
+    const activeSlide = {
+      ...slide("s1a", "Active camera"),
+      mediaSource: {
+        kind: "local-video-input" as const,
+        sourceId: "active-source",
+        label: "Active camera",
+        fit: "cover" as const,
+      },
+    } as ItemSlideType;
+    const inactiveSlide = {
+      ...slide("s2a", "Inactive camera"),
+      mediaSource: {
+        kind: "local-video-input" as const,
+        sourceId: "inactive-source",
+        label: "Inactive camera",
+        fit: "contain" as const,
+      },
+    } as ItemSlideType;
+    mockDocsById.set("song-1", songDoc("song-1", [activeSlide]));
+    mockDocsById.set("song-2", songDoc("song-2", [inactiveSlide]));
+    mockState.undoable.present.item.arrangements[0].slides = [activeSlide];
+    mockState.media.list = [
+      {
+        id: "active-media",
+        localVideoInput: { sourceId: "active-source" },
+        localImage: { id: "active-still" },
+      },
+      {
+        id: "inactive-media",
+        localVideoInput: { sourceId: "inactive-source" },
+        localImage: { id: "inactive-still" },
+      },
+    ] as MediaType[];
+
+    renderScroller(0, 2);
+
+    expect(screen.getByTestId("active-outline-slide-Active camera")).toHaveAttribute(
+      "data-thumbnail-id",
+      "active-still",
+    );
+    expect(screen.getByTestId("static-video-input-thumbnail")).toHaveAttribute(
+      "src",
+      "blob:inactive-still",
+    );
   });
 
   it("switches the active rendered section across sequential item changes", () => {

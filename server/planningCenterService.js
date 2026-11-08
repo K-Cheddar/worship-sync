@@ -211,13 +211,21 @@ export const createPlanningCenterService = ({
     }
   };
 
-  const saveToken = async (churchId, data, accountLabel = "") => {
+  const saveToken = async (
+    churchId,
+    data,
+    accountLabel = "",
+    accountId = "",
+    connectionRevision = "",
+  ) => {
     await setDoc(TOKEN_COLLECTION, churchId, {
       accessToken: encrypt(data.access_token),
       refreshToken: encrypt(data.refresh_token),
       expiresAt: now() + Number(data.expires_in || 7200) * 1000,
       scope: data.scope || SCOPES,
       accountLabel,
+      accountId,
+      connectionRevision,
       updatedAt: now(),
     });
   };
@@ -229,7 +237,13 @@ export const createPlanningCenterService = ({
         grant_type: "refresh_token",
         refresh_token: decrypt(tokenDoc.refreshToken),
       });
-      await saveToken(churchId, data, tokenDoc.accountLabel);
+      await saveToken(
+        churchId,
+        data,
+        tokenDoc.accountLabel,
+        tokenDoc.accountId,
+        tokenDoc.connectionRevision || "",
+      );
       return data.access_token;
     })().finally(() => refreshes.delete(churchId));
     refreshes.set(churchId, pending);
@@ -261,6 +275,9 @@ export const createPlanningCenterService = ({
         await updateStatus(churchId, {
           enabled: false,
           connected: false,
+          accountLabel: "",
+          accountId: "",
+          connectionRevision: "",
           lastError:
             "The Planning Center connection expired. Connect it again.",
         });
@@ -357,6 +374,7 @@ export const createPlanningCenterService = ({
         redirect_uri: callbackUrl,
       });
       let accountLabel = "Connected Planning Center account";
+      let accountId = "";
       try {
         const profileResponse = await httpClient.get(USERINFO_URL, {
           headers: {
@@ -367,6 +385,9 @@ export const createPlanningCenterService = ({
           timeout: 20000,
         });
         const profile = profileResponse.data || {};
+        accountId = typeof profile.organization_id === "string"
+          ? profile.organization_id.trim()
+          : String(profile.organization_id || "").trim();
         accountLabel = safeName(
           profile.organization_name || profile.name,
           accountLabel,
@@ -377,16 +398,33 @@ export const createPlanningCenterService = ({
           profileError?.message,
         );
       }
-      await saveToken(stateDoc.churchId, token, accountLabel);
+      const connectionRevision = randomValue(18);
+      await saveToken(
+        stateDoc.churchId,
+        token,
+        accountLabel,
+        accountId,
+        connectionRevision,
+      );
       await updateStatus(stateDoc.churchId, {
         enabled: true,
         connected: true,
         accountLabel,
+        accountId,
+        connectionRevision,
         lastError: "",
       });
-      await finish({ status: "completed", accountLabel, completedAt: now() });
+      await finish({
+        status: "completed",
+        accountLabel,
+        accountId,
+        connectionRevision,
+        completedAt: now(),
+      });
       return {
         accountLabel,
+        accountId,
+        connectionRevision,
         returnTo: stateDoc.returnTo,
         desktop: stateDoc.desktop,
       };
@@ -427,6 +465,8 @@ export const createPlanningCenterService = ({
       status: doc.status,
       errorMessage: doc.errorMessage || "",
       accountLabel: doc.accountLabel || "",
+      accountId: doc.accountId || "",
+      connectionRevision: doc.connectionRevision || "",
       expiresAt: doc.expiresAt,
       completedAt: doc.completedAt,
     };
@@ -438,6 +478,8 @@ export const createPlanningCenterService = ({
       oauthConfigured: configured,
       connected: Boolean(doc),
       accountLabel: doc?.accountLabel || "",
+      accountId: doc?.accountId || "",
+      connectionRevision: doc?.connectionRevision || "",
     };
   };
 
@@ -474,6 +516,8 @@ export const createPlanningCenterService = ({
       enabled: false,
       connected: false,
       accountLabel: "",
+      accountId: "",
+      connectionRevision: "",
       lastError: "",
     });
   };
@@ -521,10 +565,11 @@ export const createPlanningCenterService = ({
     }
   };
 
-  const pcoGetCollection = async (churchId, path, params = {}) => {
+  const pcoGetCollection = async (churchId, path, params = {}, options = {}) => {
     const data = [];
     const includedByKey = new Map();
     let offset = 0;
+    let complete = false;
     const perPage = Math.min(100, Number(params.per_page) || 100);
     for (let page = 0; page < MAX_COLLECTION_PAGES; page += 1) {
       const response = await pcoGet(churchId, path, {
@@ -540,10 +585,17 @@ export const createPlanningCenterService = ({
         if (!entry?.type || entry.id == null) continue;
         includedByKey.set(`${entry.type}:${entry.id}`, entry);
       }
-      if (pageData.length < perPage) break;
+      if (pageData.length < perPage || options.stopAfterPage?.(pageData)) {
+        complete = true;
+        break;
+      }
       offset += perPage;
     }
-    return { data, included: [...includedByKey.values()] };
+    return { data, included: [...includedByKey.values()], truncated: !complete };
+  };
+
+  const throwIfCollectionTruncated = (collection, message) => {
+    if (collection.truncated) throw createClientError(message, 502);
   };
 
   const safeId = (value, label) => {
@@ -555,13 +607,17 @@ export const createPlanningCenterService = ({
   };
 
   const listServiceTypes = async ({ churchId }) => {
-    const { data } = await pcoGetCollection(
+    const collection = await pcoGetCollection(
       churchId,
       "/services/v2/service_types",
       { order: "name", per_page: 100 },
     );
+    throwIfCollectionTruncated(
+      collection,
+      "Planning Center returned too many service types to check safely. Set the service's Planning Center type in Service setup and try again.",
+    );
     return {
-      items: data.map((entry) => ({
+      items: collection.data.map((entry) => ({
         id: String(entry.id),
         name:
           String(entry.attributes?.name || "Service type").trim() ||
@@ -570,22 +626,79 @@ export const createPlanningCenterService = ({
     };
   };
 
-  const listPlans = async ({ churchId, serviceTypeId, filter = "future" }) => {
+  const listPlans = async ({ churchId, serviceTypeId, filter = "future", date }) => {
     const typeId = safeId(serviceTypeId, "service type");
-    const planFilter =
-      filter === "past" || filter === "no_dates" ? filter : "future";
-    const { data } = await pcoGetCollection(
-      churchId,
-      `/services/v2/service_types/${encodeURIComponent(typeId)}/plans`,
-      {
+    const path = `/services/v2/service_types/${encodeURIComponent(typeId)}/plans`;
+    let data;
+    let included = [];
+    if (filter === "date") {
+      const plainDate = String(date || "").trim();
+      const timestamp = Date.parse(`${plainDate}T00:00:00.000Z`);
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(plainDate) ||
+        !Number.isFinite(timestamp) ||
+        new Date(timestamp).toISOString().slice(0, 10) !== plainDate
+      ) {
+        throw createClientError("Choose a valid service date.");
+      }
+      // Search a broad UTC window around the local occurrence date. The final
+      // match uses each included Service Plan time converted to the church
+      // timezone, so this window only narrows the API response.
+      const after = new Date(timestamp - 24 * 60 * 60 * 1000).toISOString();
+      const before = new Date(timestamp + 48 * 60 * 60 * 1000).toISOString();
+      const dateWindowPlans = await pcoGetCollection(churchId, path, {
+        filter: "after",
+        after,
+        order: "sort_date",
+        include: "plan_times",
+        per_page: 100,
+      }, {
+        // Ascending sort_date means every later page is beyond the requested
+        // window once the final row on a page passes the upper bound.
+        stopAfterPage: (pageData) => {
+          const lastSortDate = Date.parse(pageData.at(-1)?.attributes?.sort_date || "");
+          return Number.isFinite(lastSortDate) && lastSortDate > Date.parse(before);
+        },
+      });
+      throwIfCollectionTruncated(
+        dateWindowPlans,
+        "Planning Center returned too many plans to check this date safely. Try again later or set the service's Planning Center type in Service setup.",
+      );
+      if (dateWindowPlans.data.some((entry) =>
+        !Number.isFinite(Date.parse(entry.attributes?.sort_date || "")),
+      )) {
+        throw createClientError(
+          "Planning Center returned a plan without a valid service date, so this date check could not be completed safely.",
+          502,
+        );
+      }
+      data = dateWindowPlans.data.filter((entry) => {
+        const sortDate = Date.parse(entry.attributes?.sort_date || "");
+        return Number.isFinite(sortDate) && sortDate <= Date.parse(before);
+      });
+      included = dateWindowPlans.included;
+    } else {
+      const planFilter =
+        filter === "past" || filter === "no_dates" ? filter : "future";
+      ({ data } = await pcoGetCollection(churchId, path, {
         filter: planFilter,
         order: planFilter === "past" ? "-sort_date" : "sort_date",
         per_page: 50,
-      },
+      }));
+    }
+    const planTimesById = new Map(
+      included
+        .filter((entry) => entry.type === "PlanTime")
+        .map((entry) => [String(entry.id), entry]),
     );
     return {
       items: data.map((entry) => {
         const attrs = entry.attributes || {};
+        const relatedPlanTimes = Array.isArray(
+          entry.relationships?.plan_times?.data,
+        )
+          ? entry.relationships.plan_times.data
+          : [];
         const dates =
           String(attrs.dates || attrs.short_dates || "").trim() || "No date";
         const title = String(attrs.title || attrs.series_title || "").trim();
@@ -597,6 +710,20 @@ export const createPlanningCenterService = ({
           label: title ? `${dates} · ${title}` : dates,
           itemsCount: Number(attrs.items_count) || 0,
           sortDate: attrs.sort_date || "",
+          ...(filter === "date" && attrs.updated_at
+            ? { updatedAt: String(attrs.updated_at).trim() }
+            : {}),
+          serviceTimes: relatedPlanTimes.flatMap((relationship) => {
+            const planTime = planTimesById.get(String(relationship.id));
+            const timeAttributes = planTime?.attributes || {};
+            const startsAt = String(timeAttributes.starts_at || "").trim();
+            return startsAt
+              ? [{
+                  startsAt,
+                  timeType: String(timeAttributes.time_type || "").trim().toLowerCase(),
+                }]
+              : [];
+          }),
           sourceUrl:
             String(attrs.planning_center_url || "").trim() ||
             `https://services.planningcenteronline.com/plans/${encodeURIComponent(String(entry.id))}`,

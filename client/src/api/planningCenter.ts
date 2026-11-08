@@ -4,6 +4,8 @@ export type PlanningCenterStatus = {
   oauthConfigured: boolean;
   connected: boolean;
   accountLabel: string;
+  accountId?: string;
+  connectionRevision?: string;
 };
 
 export type PlanningCenterConnectResponse = {
@@ -18,6 +20,8 @@ export type PlanningCenterConnectStatus = {
   status: "pending" | "completed" | "failed" | "expired";
   errorMessage: string;
   accountLabel?: string;
+  accountId?: string;
+  connectionRevision?: string;
 };
 
 type JsonInit = Omit<RequestInit, "body"> & {
@@ -100,11 +104,17 @@ export type PlanningCenterServiceType = {
 export type PlanningCenterPlanSummary = {
   id: string;
   serviceTypeId: string;
+  serviceTypeName?: string;
   dates: string;
   title: string;
   label: string;
   itemsCount: number;
   sortDate: string;
+  updatedAt?: string;
+  serviceTimes?: Array<{
+    startsAt: string;
+    timeType: string;
+  }>;
   sourceUrl: string;
 };
 
@@ -151,6 +161,17 @@ export const listPlanningCenterPlans = (
     `${base(churchId)}/service-types/${encodeURIComponent(serviceTypeId)}/plans${
       params.size ? `?${params}` : ""
     }`,
+  );
+};
+
+export const listPlanningCenterPlansForDate = (
+  churchId: string,
+  serviceTypeId: string,
+  date: string,
+) => {
+  const params = new URLSearchParams({ filter: "date", date });
+  return fetchJson<{ items: PlanningCenterPlanSummary[] }>(
+    `${base(churchId)}/service-types/${encodeURIComponent(serviceTypeId)}/plans?${params}`,
   );
 };
 

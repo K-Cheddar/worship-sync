@@ -223,6 +223,8 @@ describe("localImageAssets", () => {
         contentType: " image/png ",
         storagePolicy: "local-and-cloud",
         cloudUrl: " https://res.cloudinary.com/example/welcome.png ",
+        cloudMediaId: " cloud-media-1 ",
+        cloudPublicId: " example/welcome ",
       }),
     ).toEqual({
       id: "asset-1",
@@ -232,6 +234,8 @@ describe("localImageAssets", () => {
       contentType: "image/png",
       storagePolicy: "local-and-cloud",
       cloudUrl: "https://res.cloudinary.com/example/welcome.png",
+      cloudMediaId: "cloud-media-1",
+      cloudPublicId: "example/welcome",
     });
     expect(normalizeLocalImageReference({ id: "asset-1" })).toBeUndefined();
   });

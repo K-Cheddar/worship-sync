@@ -24,6 +24,10 @@ export const isLocalImageUploadJobRunnable = (
   job: LocalImageUploadJob,
   now: number,
 ) => {
+  if (
+    job.status === "staged" ||
+    job.localVideoInputThumbnail?.mediaReferencePending
+  ) return false;
   if (job.leaseOwnerId && (job.leaseExpiresAt ?? 0) > now) return false;
   return (
     job.status === "pending" ||

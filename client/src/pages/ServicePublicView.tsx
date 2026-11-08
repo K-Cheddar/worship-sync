@@ -169,7 +169,7 @@ const PublicResourceReferences = ({
     <>
       <div
         className={cn(
-          "flex min-w-0 flex-wrap items-center gap-1.5",
+          "mt-1 flex min-w-0 flex-wrap items-center gap-1.5",
           theme === "light" ? "text-slate-700" : "text-neutral-300",
         )}
         aria-label="Resources"
@@ -556,7 +556,7 @@ const ServicePublicView = ({
       list: "border-slate-200 bg-white",
       itemBorder: "border-slate-200",
       time: "text-slate-600",
-      duration: "text-slate-400",
+      duration: "text-slate-500",
       title: "text-slate-900",
       credit: "text-slate-500",
       creditName: "text-slate-700",
@@ -574,7 +574,7 @@ const ServicePublicView = ({
         list: "border-neutral-700 bg-neutral-900",
         itemBorder: "border-neutral-700/80",
         time: "text-neutral-300",
-        duration: "text-neutral-500",
+        duration: "text-neutral-400",
         title: "text-neutral-100",
         credit: "text-neutral-400",
         creditName: "text-neutral-300",
@@ -591,7 +591,7 @@ const ServicePublicView = ({
         list: "border-neutral-700 bg-neutral-900",
         itemBorder: "border-neutral-700/80",
         time: "text-neutral-300",
-        duration: "text-neutral-500",
+        duration: "text-neutral-400",
         title: "text-neutral-100",
         credit: "text-neutral-400",
         creditName: "text-neutral-300",
@@ -820,8 +820,8 @@ const ServicePublicView = ({
                               : undefined
                           }
                         >
-                          <div className="flex items-baseline gap-2.5 sm:gap-3">
-                            <div className="flex w-[6rem] shrink-0 items-baseline gap-1.5 whitespace-nowrap sm:w-[6.5rem]">
+                          <div className="grid grid-cols-[6rem_minmax(0,1fr)] items-baseline gap-x-2.5 sm:grid-cols-[6.5rem_minmax(0,1fr)] sm:gap-x-3">
+                            <div className="flex shrink-0 items-baseline gap-1.5 whitespace-nowrap">
                               <time
                                 className={cn(
                                   "text-xs font-medium tabular-nums sm:text-sm",
@@ -842,7 +842,7 @@ const ServicePublicView = ({
                                 </span>
                               ) : null}
                             </div>
-                            <div className="min-w-0 flex-1">
+                            <div className="min-w-0">
                               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                                 <h3
                                   className={cn(
@@ -860,13 +860,15 @@ const ServicePublicView = ({
                                 {item.creditName ? (
                                   <p className={cn("ml-auto text-xs", chrome.credit)}>
                                     Led by{" "}
-                                    <span className={cn("font-medium", chrome.creditName)}>
+                                    <span className={cn("text-sm font-medium sm:text-[15px]", chrome.creditName)}>
                                       {item.creditName}
                                     </span>
                                   </p>
                                 ) : null}
                               </div>
+                            </div>
 
+                            <div className="col-span-2 min-w-0 px-2">
                               <PublicItemContent item={item} theme={theme} isGeneralView={isGeneralView} />
 
                               {hasNotes ? (

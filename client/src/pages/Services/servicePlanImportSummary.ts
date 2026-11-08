@@ -689,6 +689,14 @@ export const applySelectedServicePlanImportChanges = (
 
   const selectedChangeFor = (kind: ServicePlanImportChangeKind, id: string) =>
     selectedChanges.get(`${kind}:${id}`);
+  const hasNonAddStructuralChangeInSection = (sectionId: string) =>
+    [...selectedChanges.values()].some((change) => (
+      (change.kind === "removed" && change.sectionId === sectionId) ||
+      (change.kind === "legacy_match" &&
+        (change.sectionId === sectionId || change.fromSectionId === sectionId)) ||
+      (change.kind === "moved" && change.fromSectionId !== change.sectionId &&
+        (change.sectionId === sectionId || change.fromSectionId === sectionId))
+    ));
   const currentItemsById = new Map(currentSections.flatMap((section) =>
     section.elements.map((element) => [element.id, element] as const),
   ));
@@ -746,7 +754,8 @@ export const applySelectedServicePlanImportChanges = (
     }
     if (selectedChangeFor("added", element.id)) return [element];
     const move = selectedChangeFor("moved", element.id);
-    if (!move || move.sectionId !== sectionId) return [];
+    if (!move || move.sectionId !== sectionId ||
+      (move.fromSectionId === sectionId && hasNonAddStructuralChangeInSection(sectionId))) return [];
     const current = currentItemsById.get(element.id) || element;
     return [withSourceAssociation(selectedChangeFor("updated", element.id) ? element : current, current, element, true)];
   };
@@ -777,7 +786,8 @@ export const applySelectedServicePlanImportChanges = (
         return incoming ? placementFor(incoming, currentSection.id) : [currentElement];
       }
       const move = selectedChangeFor("moved", currentElement.id);
-      if (move) return [];
+      if (move && (move.fromSectionId !== move.sectionId ||
+        !hasNonAddStructuralChangeInSection(move.sectionId))) return [];
       const linked = Boolean(selectedChangeFor("linked", currentElement.id));
       if (selectedChangeFor("updated", currentElement.id)) {
         return [withSourceAssociation(
@@ -793,8 +803,67 @@ export const applySelectedServicePlanImportChanges = (
         : [currentElement];
     });
     const placements = (nextSection?.elements || []).flatMap((element) => placementFor(element, currentSection.id));
-    const orderedElements = nextSection && placements.length
+    let orderedElements = nextSection && placements.length
       ? placeServicePlanImportElements(elements, sourceOrderFor(nextSection), placements) : elements;
+
+    // A same-section reorder is a change to source-managed slots. Keep local
+    // rows anchored at their original indices while applying only the selected
+    // source moves. The general placement path remains responsible for adds,
+    // removals, and cross-section moves.
+    const selectedSameSectionMoves = [...selectedChanges.values()].filter((change) =>
+      change.kind === "moved" && change.sectionId === currentSection.id &&
+      change.fromSectionId === currentSection.id,
+    );
+    const hasNonAddStructuralChange = hasNonAddStructuralChangeInSection(currentSection.id);
+    if (nextSection && selectedSameSectionMoves.length) {
+      const updatedElementsById = new Map(orderedElements.map((element) => [element.id, element]));
+      const reorderBaseElements = hasNonAddStructuralChange
+        ? orderedElements
+        : currentSection.elements.map((element) => updatedElementsById.get(element.id) || element);
+      const canReorder = (element: ServicePlanElement) => element.sourcePlanningManaged &&
+        !reservedIds.has(element.id) &&
+        (!element.planningCenterPdfMatchReviewRequired || Boolean(element.sourceOccurrenceId));
+      const trackedSlots = reorderBaseElements.flatMap((element, index) =>
+        canReorder(element) && nextSection.elements.some(({ id }) => id === element.id) ? [index] : [],
+      );
+      const trackedIds = new Set(trackedSlots.map((index) => reorderBaseElements[index].id));
+      const currentTracked = trackedSlots.map((index) => {
+        const element = reorderBaseElements[index];
+        return updatedElementsById.get(element.id) || element;
+      });
+      const sourceTrackedOrder = sourceOrderFor(nextSection).filter((element) =>
+        canReorder(element) && trackedIds.has(element.id),
+      );
+      const selectedMoveElements = selectedSameSectionMoves.flatMap((change) => {
+        const element = updatedElementsById.get(change.id);
+        return element ? [element] : [];
+      });
+      const reorderedTracked = placeServicePlanImportElements(
+        currentTracked,
+        sourceTrackedOrder,
+        selectedMoveElements,
+      );
+      if (reorderedTracked.length === trackedSlots.length) {
+        const anchored = reorderBaseElements.map((element) => updatedElementsById.get(element.id) || element);
+        trackedSlots.forEach((slot, index) => { anchored[slot] = reorderedTracked[index]; });
+        if (hasNonAddStructuralChange) {
+          orderedElements = anchored;
+        } else {
+          const currentIds = new Set(currentSection.elements.map(({ id }) => id));
+          const selectedAdditionIds = new Set([...selectedChanges.values()].flatMap((change) =>
+            change.kind === "added" && change.sectionId === currentSection.id ? [change.id] : [],
+          ));
+          const selectedAdditions = orderedElements.filter((element) =>
+            !currentIds.has(element.id) && selectedAdditionIds.has(element.id),
+          );
+          orderedElements = placeServicePlanImportElements(
+            anchored,
+            sourceOrderFor(nextSection),
+            selectedAdditions,
+          );
+        }
+      }
+    }
 
     const allElementsRemoved =
       !nextSection &&

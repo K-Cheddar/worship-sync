@@ -42,6 +42,16 @@ describe("local image upload scheduling", () => {
     const result = getRunnableLocalImageUploadJobs(
       [
         job("pending"),
+        {
+          ...job("pending"),
+          id: "uncommitted-thumbnail",
+          assetId: "uncommitted-thumbnail",
+          localVideoInputThumbnail: {
+            targetMediaId: "local_input_camera-1",
+            mediaReferencePending: true,
+          },
+        },
+        job("staged"),
         job("uploading"),
         activeUpload,
         expiredUpload,

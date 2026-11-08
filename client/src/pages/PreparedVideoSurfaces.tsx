@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import Button from "../components/Button/Button";
+import Checkbox from "../components/Checkbox/Checkbox";
+import Select from "../components/Select/Select";
 import { isInstantVideoSource } from "../utils/isInstantVideoSource";
 import {
   getPreparedVideoSourceLabel,
@@ -326,21 +329,40 @@ const PreparedVideoSurfaces = () => {
     <h1 className="text-2xl font-semibold">Prepared video surface experiment</h1>
     <p className="text-sm text-gray-300">Dev-only. Uses cached finite video sources only; no live display path is involved.</p>
     <div className="flex flex-wrap gap-2">
-      {[1, 5, 10, 20, 30].map((count) => <button key={count} className="rounded bg-slate-700 px-3 py-1" onClick={() => chooseCount(count)}>Select {count}</button>)}
-      <button className="rounded bg-blue-700 px-3 py-1" onClick={() => setPrepared(selected)}>Prepare selected</button>
-      <button className="rounded bg-slate-700 px-3 py-1" onClick={() => setPrepared([])}>Dispose all</button>
-      <button className="rounded bg-slate-700 px-3 py-1" onClick={() => void refreshSources()}>Refresh cache</button>
+      {[1, 5, 10, 20, 30].map((count) => <Button key={count} variant="tertiary" onClick={() => chooseCount(count)}>Select {count}</Button>)}
+      <Button variant="cta" onClick={() => setPrepared(selected)}>Prepare selected</Button>
+      <Button variant="secondary" onClick={() => setPrepared([])}>Dispose all</Button>
+      <Button variant="secondary" onClick={() => void refreshSources()}>Refresh cache</Button>
     </div>
-    <label className="block text-sm">Hidden strategy <select className="ml-2 text-black" value={strategy} onChange={(event) => setStrategy(event.target.value as HiddenStrategy)}><option value="opacity">opacity 0, composited</option><option value="offscreen">offscreen</option></select></label>
+    <div className="flex items-center text-sm">
+      <label id="prepared-hidden-strategy-label" htmlFor="prepared-hidden-strategy">Hidden strategy</label>
+      <Select
+        id="prepared-hidden-strategy"
+        aria-labelledby="prepared-hidden-strategy-label"
+        value={strategy}
+        onChange={(value) => setStrategy(value as HiddenStrategy)}
+        options={[
+          { value: "opacity", label: "opacity 0, composited" },
+          { value: "offscreen", label: "offscreen" },
+        ]}
+        className="ml-2 w-44"
+      />
+    </div>
     <p className="text-sm">selected: {selectedCount} · preparing: {preparingCount} · ready: {readyCount} · error: {errorCount}</p>
     <p className="text-sm">renderer private RAM: {formatMetricValue(processMetric?.memory.private, "MB")} · working set: {formatMetricValue(processMetric?.memory.workingSet, "MB")} · CPU: {formatMetricValue(processMetric?.cpu, "%")} · metric status: {processMetric?.status || "not measured yet"}</p>
     <div className="max-h-64 overflow-auto rounded bg-slate-900 p-3 text-sm">
-      {eligible.map((item) => <label key={item.source} className="block"><input type="checkbox" checked={selected.includes(item.source)} onChange={() => setSelected((current) => current.includes(item.source) ? current.filter((source) => source !== item.source) : [...current, item.source])} /> {item.sourceType} ({getPreparedVideoSourceLabel(item)}) — {item.source}</label>)}
+      {eligible.map((item) => <Checkbox
+        key={item.source}
+        checked={selected.includes(item.source)}
+        onCheckedChange={() => setSelected((current) => current.includes(item.source) ? current.filter((source) => source !== item.source) : [...current, item.source])}
+        label={`${item.sourceType} (${getPreparedVideoSourceLabel(item)}) — ${item.source}`}
+        className="py-1"
+      />)}
       {!eligible.length && PREPARED_VIDEO_EMPTY_STATE_MESSAGE}
     </div>
     <table className="w-full text-left text-sm"><thead><tr><th>Surface</th><th>State</th><th>Metadata</th><th>First frame</th><th>Ready-to-play</th><th>Actions</th></tr></thead><tbody>{selectedSurfaces.map((item) => {
       const metric = metrics[item.source]; const control = controls.current.get(item.source);
-      return <tr key={`${strategy}-${item.source}`}><td>{item.source}</td><td>{metric?.phase ?? "loading"}{metric?.error ? ` — ${metric.error}` : ""}</td><td>{metric?.metadataMs?.toFixed(0) ?? "—"} ms</td><td>{metric?.firstFrameMs?.toFixed(0) ?? "—"} ms</td><td>{metric?.playToPresentedFrameMs?.toFixed(0) ?? "—"} ms</td><td><button onClick={() => control?.play()}>Play</button> <button onClick={() => control?.reset()}>Reset</button> <button onClick={() => setPrepared((current) => current.filter((source) => source !== item.source))}>Dispose</button></td></tr>;
+      return <tr key={`${strategy}-${item.source}`}><td>{item.source}</td><td>{metric?.phase ?? "loading"}{metric?.error ? ` — ${metric.error}` : ""}</td><td>{metric?.metadataMs?.toFixed(0) ?? "—"} ms</td><td>{metric?.firstFrameMs?.toFixed(0) ?? "—"} ms</td><td>{metric?.playToPresentedFrameMs?.toFixed(0) ?? "—"} ms</td><td><Button variant="textLink" className="mr-2" onClick={() => control?.play()}>Play</Button><Button variant="textLink" className="mr-2" onClick={() => control?.reset()}>Reset</Button><Button variant="textLink" onClick={() => setPrepared((current) => current.filter((source) => source !== item.source))}>Dispose</Button></td></tr>;
     })}</tbody></table>
     {selectedSurfaces.map((item) => <PreparedSurface key={`${strategy}-${item.source}`} mediaKey={item.mediaKey} source={item.source} strategy={strategy} onControl={(control) => { if (control) controls.current.set(item.source, control); else controls.current.delete(item.source); }} onMetric={(metric) => setMetrics((current) => ({ ...current, [item.source]: metric }))} />)}
   </main>;
