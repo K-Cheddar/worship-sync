@@ -9,19 +9,18 @@ import {
   deleteCloudinaryMediaAsset,
 } from "../../api/providerStorage";
 import {
+  claimStagedLocalVideoThumbnailReference,
   claimLocalImageUploadJob,
-  activateStagedLocalVideoInputThumbnailUploadJobAtomically,
   cleanupOrphanedLocalImages,
-  discardStagedLocalVideoInputThumbnailUploadJobAtomically,
   deleteLocalImage,
   deleteLocalImageUploadJob,
   getLocalImage,
   listLocalImageUploadJobs,
-  isLocalImageUploadStagingSessionActive,
   persistLocalImageCloudCopy,
   releaseLocalImageUploadJobLease,
   renewLocalImageUploadJobLease,
   stageLocalImageUploadCleanupJobAtomically,
+  finishStagedLocalVideoThumbnailReferenceCheck,
   updateLeasedLocalImageUploadJob,
   type LocalImageUploadJob,
 } from "../../utils/localImageAssets";
@@ -50,23 +49,21 @@ jest.mock("../../hooks", () => ({
     selector(mockState),
 }));
 jest.mock("../../utils/localImageAssets", () => ({
-  activateStagedLocalVideoInputThumbnailUploadJobAtomically: jest.fn(),
+  claimStagedLocalVideoThumbnailReference: jest.fn(),
   claimLocalImageUploadJob: jest.fn(),
   cleanupOrphanedLocalImages: jest.fn(() => Promise.resolve(0)),
   deleteLocalImageUploadJob: jest.fn(),
-  discardStagedLocalVideoInputThumbnailUploadJobAtomically: jest.fn(),
   deleteLocalImage: jest.fn(() => Promise.resolve()),
   getLocalImage: jest.fn(),
   getLocalImageUploadJob: jest.fn(() => Promise.resolve(undefined)),
-  isLocalImageUploadStagingSessionActive: jest.fn(() => false),
   listLocalImageUploadJobs: jest.fn(),
   persistLocalImageCloudCopy: jest.fn(),
   putLocalImageUploadJob: jest.fn(() => Promise.resolve()),
   releaseLocalImageUploadJobLease: jest.fn(),
-  registerLocalImageUploadManagerSession: jest.fn(() => jest.fn()),
   renewLocalImageUploadJobLease: jest.fn(),
   subscribeLocalImageUploadJobChanges: jest.fn(() => jest.fn()),
   stageLocalImageUploadCleanupJobAtomically: jest.fn(async (job) => ({ job, previous: undefined })),
+  finishStagedLocalVideoThumbnailReferenceCheck: jest.fn(),
   updateLeasedLocalImageUploadJob: jest.fn(),
 }));
 jest.mock("../../utils/flushMediaLibraryDoc", () => ({
@@ -116,10 +113,7 @@ jest.mock("../../containers/Media/utils/cloudinaryMediaItem", () => ({
 
 const mockListJobs = jest.mocked(listLocalImageUploadJobs);
 const mockClaimJob = jest.mocked(claimLocalImageUploadJob);
-const mockActivateStagedUpload = jest.mocked(activateStagedLocalVideoInputThumbnailUploadJobAtomically);
-const mockDiscardStagedUpload = jest.mocked(discardStagedLocalVideoInputThumbnailUploadJobAtomically);
 const mockGetLocalImage = jest.mocked(getLocalImage);
-const mockStagingSessionActive = jest.mocked(isLocalImageUploadStagingSessionActive);
 const mockUpload = jest.mocked(uploadImageToCloudinarySigned);
 const mockCommitCloudinary = jest.mocked(commitCloudinaryMediaAsset);
 const mockCancelCloudinaryUpload = jest.mocked(cancelCloudinaryMediaUpload);
@@ -133,6 +127,8 @@ const mockLoadMediaLibrary = jest.mocked(loadMediaLibrary);
 const mockReleaseLease = jest.mocked(releaseLocalImageUploadJobLease);
 const mockRenewLease = jest.mocked(renewLocalImageUploadJobLease);
 const mockStageCleanup = jest.mocked(stageLocalImageUploadCleanupJobAtomically);
+const mockClaimStagedThumbnail = jest.mocked(claimStagedLocalVideoThumbnailReference);
+const mockFinishStagedThumbnail = jest.mocked(finishStagedLocalVideoThumbnailReferenceCheck);
 const mockUpdateJob = jest.mocked(updateLeasedLocalImageUploadJob);
 
 const interruptedJob: LocalImageUploadJob = {
@@ -174,7 +170,7 @@ describe("LocalImageUploadManager", () => {
       return { ok: true };
     });
     store.dispatch(updateMediaList([]));
-    mockListJobs.mockReset().mockResolvedValueOnce([interruptedJob]).mockResolvedValue([]);
+    mockListJobs.mockResolvedValueOnce([interruptedJob]).mockResolvedValue([]);
     mockGetLocalImage.mockResolvedValue({
       id: "asset-1",
       workspaceId: "church-1",
@@ -210,12 +206,11 @@ describe("LocalImageUploadManager", () => {
       leaseOwnerId,
       leaseExpiresAt: Date.now() + 300_000,
     }));
-    mockActivateStagedUpload.mockReset();
-    mockDiscardStagedUpload.mockReset().mockResolvedValue(true);
-    mockStagingSessionActive.mockReset().mockReturnValue(false);
     mockReleaseLease.mockResolvedValue(true);
     mockRenewLease.mockResolvedValue(true);
     mockStageCleanup.mockReset().mockImplementation(async (job) => ({ job, previous: undefined }));
+    mockClaimStagedThumbnail.mockReset().mockResolvedValue(undefined);
+    mockFinishStagedThumbnail.mockReset().mockResolvedValue(undefined);
   });
 
   it("merges cloud finalization into the latest Media row and cleans its previous image", async () => {
@@ -533,693 +528,6 @@ describe("LocalImageUploadManager", () => {
     view.unmount();
   });
 
-  it.each(["thumbnail URL", "localImage.cloudUrl", "localImage.cloudPublicId"])(
-    "keeps a stale cloud result while a failed C upload still references it through %s",
-    async (referenceField) => {
-      const cloudUrl = "https://res.cloudinary.com/example/stale.webp";
-      const input: MediaType = {
-        ...({
-          path: "",
-          createdAt: "2026-11-01T00:00:00.000Z",
-          updatedAt: "2026-11-01T00:00:00.000Z",
-          format: "live",
-          height: 1080,
-          width: 1920,
-          name: "Camera",
-          publicId: "camera-row",
-          type: "video",
-          id: "camera-row",
-          background: "local-video-input://camera-source",
-          thumbnail: "",
-          source: "local",
-          localVideoInput: {
-            kind: "local-video-input",
-            sourceId: "camera-source",
-            label: "Camera",
-            ownerDeviceId: "device-1",
-          },
-        } as MediaType),
-        ...(referenceField === "thumbnail URL" ? { thumbnail: cloudUrl } : {}),
-        localImage: {
-          id: "asset-c",
-          ownerDeviceId: "device-1",
-          ownerLabel: "Booth",
-          fileName: "camera-c.webp",
-          contentType: "image/webp",
-          storagePolicy: "local-and-cloud",
-          ...(referenceField === "localImage.cloudUrl" ? { cloudUrl } : {}),
-          ...(referenceField === "localImage.cloudPublicId"
-            ? { cloudPublicId: "stale-cloud-public-id" }
-            : {}),
-        },
-      };
-      const staleJob: LocalImageUploadJob = {
-        ...interruptedJob,
-        id: "asset-b",
-        assetId: "asset-b",
-        status: "uploaded",
-        phase: "finalizing",
-        cloudMedia: {
-          ...input,
-          id: "cloud-media-b",
-          publicId: "stale-cloud-public-id",
-          background: cloudUrl,
-          thumbnail: cloudUrl,
-        },
-        localVideoInputThumbnail: { targetMediaId: input.id },
-      };
-      const failedCJob: LocalImageUploadJob = {
-        ...interruptedJob,
-        id: "asset-c",
-        assetId: "asset-c",
-        status: "failed",
-        nextAttemptAt: 0,
-        localVideoInputThumbnail: { targetMediaId: input.id },
-      };
-      mockState.media.list = [input];
-      mockPouchState.list = [input];
-      store.dispatch(updateMediaList([input]));
-      mockListJobs.mockReset().mockResolvedValueOnce([staleJob, failedCJob]).mockResolvedValue([]);
-      mockClaimJob.mockImplementation(async ({ assetId, leaseOwnerId }) => assetId === staleJob.assetId
-        ? {
-            ...staleJob,
-            leaseOwnerId,
-            leaseExpiresAt: Date.now() + 300_000,
-          }
-        : undefined);
-      mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => ({
-        ...staleJob,
-        ...patch,
-        leaseOwnerId,
-        leaseExpiresAt: now + leaseDurationMs,
-        updatedAt: new Date(now).toISOString(),
-      } as LocalImageUploadJob));
-
-      const view = render(
-        <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
-          <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-            <LocalImageUploadManager />
-          </GlobalInfoContext.Provider>
-        </ControllerInfoContext.Provider>,
-      );
-
-      await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
-        patch: expect.objectContaining({
-          status: "failed",
-          nextAttemptAt: expect.any(Number),
-          lastError: expect.stringContaining("still referenced by Media"),
-        }),
-      })));
-      expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalled();
-      expect(mockClaimJob).not.toHaveBeenCalledWith(expect.objectContaining({ assetId: failedCJob.assetId }));
-      expect(mockDeleteLocalImage).not.toHaveBeenCalledWith("asset-b");
-      expect(mockUpdateJob).not.toHaveBeenCalledWith(expect.objectContaining({
-        patch: expect.objectContaining({
-          localVideoInputThumbnail: expect.objectContaining({ staleCloudCleanupComplete: true }),
-        }),
-      }));
-      view.unmount();
-    },
-  );
-
-  it("retries stale cloud cleanup after the replacement stops referencing the prior URL", async () => {
-    const cloudUrl = "https://res.cloudinary.com/example/stale.webp";
-    const input = {
-      ...({
-        path: "",
-        createdAt: "2026-11-01T00:00:00.000Z",
-        updatedAt: "2026-11-01T00:00:00.000Z",
-        format: "live",
-        height: 1080,
-        width: 1920,
-        name: "Camera",
-        publicId: "camera-row",
-        type: "video",
-        id: "camera-row",
-        background: "local-video-input://camera-source",
-        thumbnail: cloudUrl,
-        source: "local",
-        localVideoInput: {
-          kind: "local-video-input" as const,
-          sourceId: "camera-source",
-          label: "Camera",
-          ownerDeviceId: "device-1",
-        },
-      } as MediaType),
-      localImage: {
-        id: "asset-c",
-        ownerDeviceId: "device-1",
-        ownerLabel: "Booth",
-        fileName: "camera-c.webp",
-        contentType: "image/webp",
-        storagePolicy: "local-and-cloud" as const,
-        cloudPublicId: "stale-cloud-public-id",
-      },
-    } as MediaType;
-    const staleJob: LocalImageUploadJob = {
-      ...interruptedJob,
-      id: "asset-b",
-      assetId: "asset-b",
-      status: "uploaded",
-      phase: "finalizing",
-      cloudMedia: {
-        ...input,
-        id: "cloud-media-b",
-        publicId: "stale-cloud-public-id",
-        background: cloudUrl,
-        thumbnail: cloudUrl,
-      },
-      localVideoInputThumbnail: { targetMediaId: input.id },
-    };
-    mockState.media.list = [input];
-    mockPouchState.list = [input];
-    store.dispatch(updateMediaList([input]));
-    mockListJobs.mockReset().mockResolvedValue([staleJob]);
-    mockClaimJob.mockResolvedValue({
-      ...staleJob,
-      leaseOwnerId: "lease-owner",
-      leaseExpiresAt: Date.now() + 300_000,
-    });
-    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => ({
-      ...staleJob,
-      ...patch,
-      leaseOwnerId,
-      leaseExpiresAt: now + leaseDurationMs,
-      updatedAt: new Date(now).toISOString(),
-    } as LocalImageUploadJob));
-
-    const view = render(
-      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-
-    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
-      patch: expect.objectContaining({
-        status: "failed",
-        lastError: expect.stringContaining("still referenced by Media"),
-      }),
-    })));
-    expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalled();
-    mockPouchState.list = [{
-      ...input,
-      thumbnail: "https://res.cloudinary.com/example/current-c.webp",
-      localImage: {
-        ...input.localImage!,
-        cloudPublicId: "current-c-public-id",
-        cloudUrl: "https://res.cloudinary.com/example/current-c.webp",
-      },
-    }];
-    await act(async () => window.dispatchEvent(new Event("online")));
-    await waitFor(() => expect(mockDeleteCloudinaryAsset).toHaveBeenCalledWith(
-      "church-1",
-      "stale-cloud-public-id",
-    ));
-    view.unmount();
-  });
-
-  it("preserves the stale cloud checkpoint when its authoritative reference check fails", async () => {
-    const staleJob: LocalImageUploadJob = {
-      ...interruptedJob,
-      id: "asset-b",
-      assetId: "asset-b",
-      status: "uploaded",
-      phase: "finalizing",
-      cloudMedia: {
-        id: "cloud-media-b",
-        path: "",
-        createdAt: "",
-        updatedAt: "",
-        format: "webp",
-        height: 360,
-        width: 640,
-        name: "stale.webp",
-        publicId: "stale-cloud-public-id",
-        type: "image",
-        background: "https://res.cloudinary.com/example/stale.webp",
-        thumbnail: "https://res.cloudinary.com/example/stale.webp",
-        providerStorage: {
-          provider: "cloudinary",
-          assetId: "provider-asset-b",
-          publicId: "stale-cloud-public-id",
-          churchId: "church-1",
-          permanent: true,
-        },
-      } as MediaType,
-      localVideoInputThumbnail: { targetMediaId: "camera-row" },
-    };
-    mockListJobs.mockReset().mockResolvedValueOnce([staleJob]).mockResolvedValue([]);
-    mockClaimJob.mockResolvedValue({
-      ...staleJob,
-      leaseOwnerId: "lease-owner",
-      leaseExpiresAt: Date.now() + 300_000,
-    });
-    mockUpdateJob.mockImplementation(async ({ assetId, leaseOwnerId, leaseDurationMs, now, patch }) => ({
-      ...staleJob,
-      ...patch,
-      id: assetId,
-      assetId,
-      leaseOwnerId,
-      leaseExpiresAt: now + leaseDurationMs,
-      updatedAt: new Date(now).toISOString(),
-    } as LocalImageUploadJob));
-    mockLoadMediaLibrary
-      .mockImplementationOnce(async () => ({ list: [], folders: [] } as any))
-      .mockRejectedValueOnce(new Error("Media read timed out"));
-
-    const view = render(
-      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-
-    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
-      patch: expect.objectContaining({
-        status: "failed",
-        nextAttemptAt: expect.any(Number),
-        lastError: "Media read timed out",
-      }),
-    })));
-    expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalled();
-    expect(mockUpdateJob).not.toHaveBeenCalledWith(expect.objectContaining({
-      patch: expect.objectContaining({
-        localVideoInputThumbnail: expect.objectContaining({ staleCloudCleanupComplete: true }),
-      }),
-    }));
-    view.unmount();
-  });
-
-  it("does not clean an old church's cloud result after switching the active database", async () => {
-    const staleJob: LocalImageUploadJob = {
-      ...interruptedJob,
-      id: "asset-b",
-      assetId: "asset-b",
-      status: "uploaded",
-      phase: "finalizing",
-      cloudMedia: {
-        ...({} as MediaType),
-        id: "cloud-media-b",
-        path: "",
-        createdAt: "",
-        updatedAt: "",
-        format: "webp",
-        height: 360,
-        width: 640,
-        name: "stale.webp",
-        publicId: "stale-cloud-public-id",
-        type: "image",
-        background: "https://res.cloudinary.com/example/stale.webp",
-        thumbnail: "https://res.cloudinary.com/example/stale.webp",
-      } as MediaType,
-      localVideoInputThumbnail: { targetMediaId: "camera-row" },
-    };
-    const readA = deferred<Awaited<ReturnType<typeof loadMediaLibrary>>>();
-    mockListJobs.mockReset().mockImplementation(async (workspaceId) =>
-      workspaceId === "church-1" ? [staleJob] : [],
-    );
-    mockClaimJob.mockResolvedValue({
-      ...staleJob,
-      leaseOwnerId: "lease-owner",
-      leaseExpiresAt: Date.now() + 300_000,
-    });
-    mockUpdateJob.mockImplementation(async ({ assetId, leaseOwnerId, leaseDurationMs, now, patch }) => ({
-      ...staleJob,
-      ...patch,
-      id: assetId,
-      assetId,
-      leaseOwnerId,
-      leaseExpiresAt: now + leaseDurationMs,
-      updatedAt: new Date(now).toISOString(),
-    } as LocalImageUploadJob));
-    mockLoadMediaLibrary.mockImplementationOnce(() => readA.promise);
-    const dbA = {} as PouchDB.Database;
-    const dbB = {} as PouchDB.Database;
-    const view = render(
-      <ControllerInfoContext.Provider value={{ db: dbA, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-    await waitFor(() => expect(mockLoadMediaLibrary).toHaveBeenCalledWith(dbA));
-
-    view.rerender(
-      <ControllerInfoContext.Provider value={{ db: dbB, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-2" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-    await act(async () => readA.resolve({ list: [], folders: [] } as any));
-
-    expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalled();
-    expect(mockDeleteLocalImage).not.toHaveBeenCalledWith("asset-b");
-    view.unmount();
-  });
-
-  it("reconciles staged uploads only after an authoritative matching Media commit", async () => {
-    const stagedJob: LocalImageUploadJob = {
-      ...interruptedJob,
-      id: "staged-thumbnail",
-      assetId: "staged-thumbnail",
-      status: "staged",
-      localVideoInputThumbnail: {
-        targetMediaId: "camera-row",
-        targetSourceId: "camera-source",
-        mediaReferencePending: true,
-      },
-    };
-    const row: MediaType = {
-      ...({
-        path: "",
-        createdAt: "2026-11-01T00:00:00.000Z",
-        updatedAt: "2026-11-01T00:00:00.000Z",
-        format: "live",
-        height: 1080,
-        width: 1920,
-        name: "Camera",
-        publicId: "camera-row",
-        type: "video",
-        id: "camera-row",
-        background: "local-video-input://camera-source",
-        thumbnail: "",
-        source: "local",
-      } as MediaType),
-      localVideoInput: {
-        kind: "local-video-input",
-        sourceId: "camera-source",
-        label: "Camera",
-        ownerDeviceId: "device-1",
-      },
-      localImage: {
-        id: stagedJob.assetId,
-        ownerDeviceId: "device-1",
-        ownerLabel: "Booth",
-        fileName: "camera.webp",
-        contentType: "image/webp",
-        storagePolicy: "local-and-cloud",
-      },
-    };
-    const activatedJob: LocalImageUploadJob = {
-      ...stagedJob,
-      status: "pending",
-      localVideoInputThumbnail: {
-        targetMediaId: "camera-row",
-        targetSourceId: "camera-source",
-      },
-    };
-    mockPouchState.list = [row];
-    mockListJobs.mockReset().mockResolvedValueOnce([stagedJob]).mockResolvedValue([]);
-    mockActivateStagedUpload.mockResolvedValue(activatedJob);
-    mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
-      ...activatedJob,
-      leaseOwnerId,
-      leaseExpiresAt: Date.now() + 300_000,
-    }));
-    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => ({
-      ...activatedJob,
-      ...patch,
-      leaseOwnerId,
-      leaseExpiresAt: now + leaseDurationMs,
-      updatedAt: new Date(now).toISOString(),
-    } as LocalImageUploadJob));
-
-    const view = render(
-      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-
-    await waitFor(() => expect(mockCreateCloudinaryUpload).toHaveBeenCalled());
-    expect(mockActivateStagedUpload).toHaveBeenCalledWith(stagedJob.assetId, expect.any(Number));
-    expect(mockActivateStagedUpload.mock.invocationCallOrder[0]).toBeLessThan(
-      mockCreateCloudinaryUpload.mock.invocationCallOrder[0],
-    );
-    expect(mockDiscardStagedUpload).not.toHaveBeenCalled();
-    view.unmount();
-  });
-
-  it("retains staged local images when the authoritative Media read fails", async () => {
-    const stagedJob: LocalImageUploadJob = {
-      ...interruptedJob,
-      id: "staged-thumbnail",
-      assetId: "staged-thumbnail",
-      status: "staged",
-      localVideoInputThumbnail: {
-        targetMediaId: "camera-row",
-        targetSourceId: "camera-source",
-        mediaReferencePending: true,
-      },
-    };
-    mockListJobs.mockReset().mockResolvedValueOnce([stagedJob]).mockResolvedValue([]);
-    mockLoadMediaLibrary.mockRejectedValueOnce(new Error("database temporarily unavailable"));
-
-    const view = render(
-      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-
-    await waitFor(() => expect(mockLoadMediaLibrary).toHaveBeenCalled());
-    expect(mockActivateStagedUpload).not.toHaveBeenCalled();
-    expect(mockDiscardStagedUpload).not.toHaveBeenCalled();
-    expect(mockDeleteLocalImage).not.toHaveBeenCalledWith(stagedJob.assetId);
-    expect(mockClaimJob).not.toHaveBeenCalled();
-    view.unmount();
-  });
-
-  it("discards an uncommitted staged upload and orphaned bytes after an authoritative read", async () => {
-    const stagedJob: LocalImageUploadJob = {
-      ...interruptedJob,
-      id: "staged-thumbnail",
-      assetId: "staged-thumbnail",
-      status: "staged",
-      localVideoInputThumbnail: {
-        targetMediaId: "camera-row",
-        targetSourceId: "camera-source",
-        mediaReferencePending: true,
-      },
-    };
-    mockListJobs.mockReset().mockResolvedValueOnce([stagedJob]).mockResolvedValue([]);
-
-    const view = render(
-      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-
-    await waitFor(() => expect(mockDiscardStagedUpload).toHaveBeenCalledWith({
-      assetId: stagedJob.assetId,
-      workspaceId: "church-1",
-      targetMediaId: "camera-row",
-    }));
-    await waitFor(() => expect(mockDeleteLocalImage).toHaveBeenCalledWith(stagedJob.assetId));
-    expect(mockActivateStagedUpload).not.toHaveBeenCalled();
-    expect(mockClaimJob).not.toHaveBeenCalled();
-    expect(mockCreateCloudinaryUpload).not.toHaveBeenCalled();
-    view.unmount();
-  });
-
-  it("does not discard an uncommitted intent while its originating tab is active", async () => {
-    const stagedJob: LocalImageUploadJob = {
-      ...interruptedJob,
-      id: "staged-thumbnail",
-      assetId: "staged-thumbnail",
-      status: "staged",
-      localVideoInputThumbnail: {
-        targetMediaId: "camera-row",
-        targetSourceId: "camera-source",
-        stagingSessionId: "active-save-session",
-        mediaReferencePending: true,
-      },
-    };
-    mockListJobs.mockReset().mockResolvedValueOnce([stagedJob]).mockResolvedValue([]);
-    mockStagingSessionActive.mockReturnValue(true);
-
-    const view = render(
-      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-
-    await waitFor(() => expect(mockStagingSessionActive).toHaveBeenCalledWith("active-save-session"));
-    expect(mockDiscardStagedUpload).not.toHaveBeenCalled();
-    expect(mockDeleteLocalImage).not.toHaveBeenCalledWith(stagedJob.assetId);
-    expect(mockClaimJob).not.toHaveBeenCalled();
-    expect(mockCreateCloudinaryUpload).not.toHaveBeenCalled();
-    view.unmount();
-  });
-
-  it("does not activate a staged job after the thumbnail was replaced", async () => {
-    const stagedJob: LocalImageUploadJob = {
-      ...interruptedJob,
-      id: "staged-thumbnail",
-      assetId: "staged-thumbnail",
-      status: "staged",
-      localVideoInputThumbnail: {
-        targetMediaId: "camera-row",
-        targetSourceId: "camera-source",
-        mediaReferencePending: true,
-      },
-    };
-    const replacement: MediaType = {
-      ...({
-        path: "",
-        createdAt: "2026-11-01T00:00:00.000Z",
-        updatedAt: "2026-11-01T00:00:00.000Z",
-        format: "live",
-        height: 1080,
-        width: 1920,
-        name: "Camera",
-        publicId: "camera-row",
-        type: "video",
-        id: "camera-row",
-        background: "local-video-input://camera-source",
-        thumbnail: "",
-        source: "local",
-        localVideoInput: {
-          kind: "local-video-input",
-          sourceId: "camera-source",
-          label: "Camera",
-          ownerDeviceId: "device-1",
-        },
-      } as MediaType),
-      localImage: {
-        id: "asset-d",
-        ownerDeviceId: "device-1",
-        ownerLabel: "Booth",
-        fileName: "camera-d.webp",
-        contentType: "image/webp",
-        storagePolicy: "local-only",
-      },
-    };
-    mockPouchState.list = [replacement];
-    mockListJobs.mockReset().mockResolvedValueOnce([stagedJob]).mockResolvedValue([]);
-
-    const view = render(
-      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-
-    await waitFor(() => expect(mockDiscardStagedUpload).toHaveBeenCalledWith({
-      assetId: stagedJob.assetId,
-      workspaceId: "church-1",
-      targetMediaId: "camera-row",
-    }));
-    expect(mockActivateStagedUpload).not.toHaveBeenCalled();
-    expect(mockClaimJob).not.toHaveBeenCalled();
-    expect(mockCreateCloudinaryUpload).not.toHaveBeenCalled();
-    // The replacement row owns different bytes, so the unreferenced staged
-    // asset can be removed after its intent is retired.
-    expect(mockDeleteLocalImage).toHaveBeenCalledWith(stagedJob.assetId);
-    view.unmount();
-  });
-
-  it("fails a committed staged upload safely when its local image is missing", async () => {
-    const stagedJob: LocalImageUploadJob = {
-      ...interruptedJob,
-      id: "staged-thumbnail",
-      assetId: "staged-thumbnail",
-      status: "staged",
-      localVideoInputThumbnail: {
-        targetMediaId: "camera-row",
-        targetSourceId: "camera-source",
-        mediaReferencePending: true,
-      },
-    };
-    const row: MediaType = {
-      ...({
-        path: "",
-        createdAt: "2026-11-01T00:00:00.000Z",
-        updatedAt: "2026-11-01T00:00:00.000Z",
-        format: "live",
-        height: 1080,
-        width: 1920,
-        name: "Camera",
-        publicId: "camera-row",
-        type: "video",
-        id: "camera-row",
-        background: "local-video-input://camera-source",
-        thumbnail: "",
-        source: "local",
-      } as MediaType),
-      localVideoInput: {
-        kind: "local-video-input",
-        sourceId: "camera-source",
-        label: "Camera",
-        ownerDeviceId: "device-1",
-      },
-      localImage: {
-        id: stagedJob.assetId,
-        ownerDeviceId: "device-1",
-        ownerLabel: "Booth",
-        fileName: "camera.webp",
-        contentType: "image/webp",
-        storagePolicy: "local-and-cloud",
-      },
-    };
-    const activatedJob: LocalImageUploadJob = {
-      ...stagedJob,
-      status: "pending",
-      localVideoInputThumbnail: {
-        targetMediaId: "camera-row",
-        targetSourceId: "camera-source",
-      },
-    };
-    mockPouchState.list = [row];
-    mockListJobs.mockReset().mockResolvedValueOnce([stagedJob]).mockResolvedValue([]);
-    mockActivateStagedUpload.mockResolvedValue(activatedJob);
-    mockClaimJob.mockImplementation(async ({ leaseOwnerId }) => ({
-      ...activatedJob,
-      leaseOwnerId,
-      leaseExpiresAt: Date.now() + 300_000,
-    }));
-    mockGetLocalImage.mockResolvedValue(undefined);
-    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => ({
-      ...activatedJob,
-      ...patch,
-      leaseOwnerId,
-      leaseExpiresAt: now + leaseDurationMs,
-      updatedAt: new Date(now).toISOString(),
-    } as LocalImageUploadJob));
-
-    const view = render(
-      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
-        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
-          <LocalImageUploadManager />
-        </GlobalInfoContext.Provider>
-      </ControllerInfoContext.Provider>,
-    );
-
-    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
-      assetId: stagedJob.assetId,
-      patch: expect.objectContaining({
-        status: "failed",
-        nextAttemptAt: 0,
-        lastError: "The local image is missing. Relink it to continue.",
-      }),
-    })));
-    expect(mockActivateStagedUpload).toHaveBeenCalled();
-    expect(mockCreateCloudinaryUpload).not.toHaveBeenCalled();
-    expect(mockDeleteLocalImage).not.toHaveBeenCalledWith(stagedJob.assetId);
-    view.unmount();
-  });
-
   it("cleans a completed upload after a local-only thumbnail replacement", async () => {
     const input: MediaType = {
       path: "",
@@ -1432,6 +740,697 @@ describe("LocalImageUploadManager", () => {
         url: "https://res.cloudinary.com/example/welcome.png",
       },
     });
+    view.unmount();
+  });
+
+  it("reconciles a committed staged thumbnail after restart before uploading", async () => {
+    const mediaRow: MediaType = {
+      id: "local_input_camera-1",
+      name: "Main camera",
+      path: "",
+      createdAt: "created",
+      updatedAt: "updated",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      publicId: "local_input_camera-1",
+      type: "video",
+      background: "local-video-input://camera-1",
+      thumbnail: "https://res.cloudinary.com/example/previous.webp",
+      placeholderImage: "",
+      source: "local",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "camera-1",
+        label: "Main camera",
+      },
+      localImage: {
+        id: "staged-thumbnail",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "camera.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+      },
+    } as MediaType;
+    const stagedJob: LocalImageUploadJob = {
+      ...interruptedJob,
+      id: "staged-thumbnail",
+      assetId: "staged-thumbnail",
+      workspaceId: "church-1",
+      mediaId: "staged-thumbnail-cloud",
+      status: "pending",
+      localVideoInputThumbnail: {
+        targetMediaId: mediaRow.id,
+        targetSourceId: "camera-1",
+      },
+      thumbnailReferenceState: "staged",
+      thumbnailReferenceLeaseExpiresAt: Date.now() - 1,
+    };
+    let durableJob = stagedJob;
+    const db = {} as PouchDB.Database;
+    mockState.media.list = [mediaRow];
+    store.dispatch(updateMediaList([mediaRow]));
+    mockPouchState.list = [mediaRow];
+    mockListJobs.mockReset().mockImplementation(async () =>
+      durableJob.status === "complete" ? [] : [durableJob],
+    );
+    mockClaimStagedThumbnail.mockImplementation(async ({ ownerId, now, leaseDurationMs }) => {
+      durableJob = {
+        ...durableJob,
+        thumbnailReferenceOwnerId: ownerId,
+        thumbnailReferenceLeaseExpiresAt: now + leaseDurationMs,
+      };
+      return durableJob;
+    });
+    mockFinishStagedThumbnail.mockImplementation(async ({ ownerId, result, now }) => {
+      if (durableJob.thumbnailReferenceOwnerId !== ownerId) return undefined;
+      durableJob = {
+        ...durableJob,
+        thumbnailReferenceState: result === "retry" ? "staged" : result,
+        status: result === "confirmed" ? "pending" : durableJob.status,
+        phase: result === "confirmed" ? "queued" : durableJob.phase,
+        nextAttemptAt: 0,
+        updatedAt: new Date(now).toISOString(),
+      };
+      delete durableJob.thumbnailReferenceOwnerId;
+      delete durableJob.thumbnailReferenceLeaseExpiresAt;
+      return durableJob;
+    });
+    mockClaimJob.mockImplementation(async ({ leaseOwnerId, now, leaseDurationMs }) => ({
+      ...durableJob,
+      leaseOwnerId,
+      leaseExpiresAt: now + leaseDurationMs,
+    }));
+    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => {
+      durableJob = {
+        ...durableJob,
+        ...patch,
+        leaseOwnerId,
+        leaseExpiresAt: now + leaseDurationMs,
+        updatedAt: new Date(now).toISOString(),
+      } as LocalImageUploadJob;
+      return durableJob;
+    });
+    mockGetLocalImage.mockResolvedValue({
+      id: stagedJob.assetId,
+      workspaceId: "church-1",
+      blob: new Blob(["image"], { type: "image/webp" }),
+      fileName: "camera.webp",
+      contentType: "image/webp",
+      size: 5,
+      width: 640,
+      height: 360,
+      createdAt: stagedJob.createdAt,
+    });
+
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(durableJob.status).toBe("complete"));
+    expect(mockFinishStagedThumbnail).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: stagedJob.assetId,
+      result: "confirmed",
+    }));
+    expect(mockUpload).toHaveBeenCalledTimes(1);
+    expect(mockFinishStagedThumbnail.mock.invocationCallOrder[0])
+      .toBeLessThan(mockUpload.mock.invocationCallOrder[0]);
+    expect(mockPouchState.list[0]).toEqual(expect.objectContaining({
+      thumbnail: "https://res.cloudinary.com/example/welcome.png",
+      localImage: expect.objectContaining({
+        id: stagedJob.assetId,
+        cloudPublicId: "cloud-public-id",
+      }),
+    }));
+    view.unmount();
+  });
+
+  it("abandons an uncommitted staged thumbnail after restart without uploading it", async () => {
+    const mediaRow: MediaType = {
+      id: "local_input_camera-1",
+      name: "Main camera",
+      path: "",
+      createdAt: "created",
+      updatedAt: "updated",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      publicId: "local_input_camera-1",
+      type: "video",
+      background: "local-video-input://camera-1",
+      thumbnail: "https://res.cloudinary.com/example/previous.webp",
+      placeholderImage: "",
+      source: "local",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "camera-1",
+        label: "Main camera",
+      },
+      localImage: {
+        id: "previous-thumbnail",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "previous.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+      },
+    } as MediaType;
+    const stagedJob: LocalImageUploadJob = {
+      ...interruptedJob,
+      id: "orphaned-staged-thumbnail",
+      assetId: "orphaned-staged-thumbnail",
+      workspaceId: "church-1",
+      mediaId: "orphaned-thumbnail-cloud",
+      status: "pending",
+      localVideoInputThumbnail: {
+        targetMediaId: mediaRow.id,
+        targetSourceId: "camera-1",
+        previousAssetId: "previous-thumbnail",
+      },
+      thumbnailReferenceState: "staged",
+      thumbnailReferenceLeaseExpiresAt: Date.now() - 1,
+    };
+    let durableJob = stagedJob;
+    const db = {} as PouchDB.Database;
+    mockState.media.list = [mediaRow];
+    store.dispatch(updateMediaList([mediaRow]));
+    mockPouchState.list = [mediaRow];
+    mockListJobs.mockReset().mockImplementation(async () =>
+      durableJob.status === "complete" ? [] : [durableJob],
+    );
+    mockClaimStagedThumbnail.mockImplementation(async ({ ownerId, now, leaseDurationMs }) => {
+      durableJob = {
+        ...durableJob,
+        thumbnailReferenceOwnerId: ownerId,
+        thumbnailReferenceLeaseExpiresAt: now + leaseDurationMs,
+      };
+      return durableJob;
+    });
+    mockFinishStagedThumbnail.mockImplementation(async ({ ownerId, result, now }) => {
+      if (durableJob.thumbnailReferenceOwnerId !== ownerId) return undefined;
+      durableJob = {
+        ...durableJob,
+        thumbnailReferenceState: result === "retry" ? "staged" : result,
+        status: result === "abandoned" ? "pending" : durableJob.status,
+        phase: result === "abandoned" ? "queued" : durableJob.phase,
+        nextAttemptAt: 0,
+        updatedAt: new Date(now).toISOString(),
+      };
+      delete durableJob.thumbnailReferenceOwnerId;
+      delete durableJob.thumbnailReferenceLeaseExpiresAt;
+      return durableJob;
+    });
+    mockClaimJob.mockImplementation(async ({ leaseOwnerId, now, leaseDurationMs }) => ({
+      ...durableJob,
+      leaseOwnerId,
+      leaseExpiresAt: now + leaseDurationMs,
+    }));
+    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => {
+      durableJob = {
+        ...durableJob,
+        ...patch,
+        leaseOwnerId,
+        leaseExpiresAt: now + leaseDurationMs,
+        updatedAt: new Date(now).toISOString(),
+      } as LocalImageUploadJob;
+      return durableJob;
+    });
+
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(durableJob.status).toBe("complete"));
+    expect(mockFinishStagedThumbnail).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: stagedJob.assetId,
+      result: "abandoned",
+    }));
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockDeleteLocalImage).toHaveBeenCalledWith(stagedJob.assetId);
+    expect(durableJob.thumbnailReferenceState).toBe("abandoned");
+    view.unmount();
+  });
+
+  it("finalizes a durable cloud checkpoint when its local blob is missing after restart", async () => {
+    const cloudUrl = "https://res.cloudinary.com/example/thumbnail-b.webp";
+    const row: MediaType = {
+      id: "local_input_camera-1",
+      name: "Main camera",
+      path: "",
+      createdAt: "created",
+      updatedAt: "updated",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      publicId: "local_input_camera-1",
+      type: "video",
+      background: "local-video-input://camera-1",
+      thumbnail: "",
+      placeholderImage: "",
+      source: "local",
+      localVideoInput: { kind: "local-video-input", sourceId: "camera-1", label: "Main camera" },
+      localImage: {
+        id: "thumbnail-b",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "thumbnail-b.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+      },
+    } as MediaType;
+    const cloudMedia = {
+      id: "thumbnail-b-cloud-media",
+      type: "image",
+      publicId: "thumbnail-b-public-id",
+      background: cloudUrl,
+      providerStorage: {
+        provider: "cloudinary",
+        assetId: "provider-thumbnail-b",
+        publicId: "thumbnail-b-public-id",
+        churchId: "church-1",
+        permanent: true,
+      },
+    } as MediaType;
+    const job: LocalImageUploadJob = {
+      ...interruptedJob,
+      id: "thumbnail-b",
+      assetId: "thumbnail-b",
+      itemId: "",
+      workspaceId: "church-1",
+      status: "uploaded",
+      phase: "finalizing",
+      cloudMedia,
+      localVideoInputThumbnail: {
+        targetMediaId: row.id,
+        targetSourceId: "camera-1",
+      },
+      thumbnailReferenceState: "confirmed",
+    };
+    let durableJob = job;
+    const db = {} as PouchDB.Database;
+    mockState.media.list = [row];
+    store.dispatch(updateMediaList([row]));
+    mockPouchState.list = [row];
+    mockListJobs.mockReset().mockResolvedValue([job]);
+    mockClaimJob.mockResolvedValue({
+      ...job,
+      leaseOwnerId: "tab-a",
+      leaseExpiresAt: Date.now() + 30_000,
+    });
+    mockGetLocalImage.mockResolvedValue(undefined);
+    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => {
+      durableJob = {
+        ...durableJob,
+        ...patch,
+        leaseOwnerId,
+        leaseExpiresAt: now + leaseDurationMs,
+        updatedAt: new Date(now).toISOString(),
+      } as LocalImageUploadJob;
+      return durableJob;
+    });
+
+    const { unmount } = render(
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(durableJob.status).toBe("complete"));
+    expect(mockUpload).not.toHaveBeenCalled();
+    expect(mockCommitCloudinary).not.toHaveBeenCalled();
+    expect(mockFlushMedia).toHaveBeenCalledWith(
+      db,
+      expect.arrayContaining([expect.objectContaining({
+        id: row.id,
+        thumbnail: cloudUrl,
+        localImage: expect.objectContaining({
+          id: job.assetId,
+          cloudPublicId: cloudMedia.publicId,
+          cloudUrl,
+        }),
+      })]),
+      expect.anything(),
+      undefined,
+      expect.anything(),
+      expect.anything(),
+    );
+    unmount();
+  });
+
+  it("keeps a stale cloud thumbnail while C still references it, then cleans it after C commits", async () => {
+    const cloudUrlB = "https://res.cloudinary.com/example/thumbnail-b.webp";
+    const rowC: MediaType = {
+      id: "local_input_camera-1",
+      name: "Main camera",
+      path: "",
+      createdAt: "created",
+      updatedAt: "updated",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      publicId: "local_input_camera-1",
+      type: "video",
+      background: "local-video-input://camera-1",
+      thumbnail: cloudUrlB,
+      placeholderImage: "",
+      source: "local",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "camera-1",
+        label: "Main camera",
+      },
+      localImage: {
+        id: "thumbnail-c",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "thumbnail-c.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+        cloudPublicId: "thumbnail-b-public-id",
+        cloudUrl: cloudUrlB,
+      },
+    } as MediaType;
+    const cloudMediaB = {
+      id: "thumbnail-b-cloud-media",
+      name: "thumbnail-b.webp",
+      type: "image",
+      publicId: "thumbnail-b-public-id",
+      background: cloudUrlB,
+      providerStorage: {
+        provider: "cloudinary",
+        assetId: "provider-thumbnail-b",
+        publicId: "thumbnail-b-public-id",
+        churchId: "church-1",
+        permanent: true,
+      },
+    } as MediaType;
+    const jobB: LocalImageUploadJob = {
+      ...interruptedJob,
+      id: "thumbnail-b",
+      assetId: "thumbnail-b",
+      itemId: "",
+      workspaceId: "church-1",
+      mediaId: cloudMediaB.id,
+      status: "uploaded",
+      phase: "finalizing",
+      cloudMedia: cloudMediaB,
+      localVideoInputThumbnail: { targetMediaId: rowC.id, targetSourceId: "camera-1" },
+    };
+    const failedJobC: LocalImageUploadJob = {
+      ...interruptedJob,
+      id: "thumbnail-c",
+      assetId: "thumbnail-c",
+      itemId: "",
+      workspaceId: "church-1",
+      status: "failed",
+      nextAttemptAt: 0,
+      localVideoInputThumbnail: { targetMediaId: rowC.id, targetSourceId: "camera-1" },
+      thumbnailReferenceState: "confirmed",
+    };
+    let durableJob = jobB;
+    const db = {} as PouchDB.Database;
+    mockState.media.list = [rowC];
+    store.dispatch(updateMediaList([rowC]));
+    mockPouchState.list = [rowC];
+    mockListJobs.mockReset().mockImplementation(async () => [failedJobC, durableJob]);
+    mockClaimJob.mockImplementation(async ({ assetId, leaseOwnerId, now, leaseDurationMs }) =>
+      assetId === durableJob.assetId
+        ? { ...durableJob, leaseOwnerId, leaseExpiresAt: now + leaseDurationMs }
+        : undefined,
+    );
+    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => {
+      durableJob = {
+        ...durableJob,
+        ...patch,
+        leaseOwnerId,
+        leaseExpiresAt: now + leaseDurationMs,
+        updatedAt: new Date(now).toISOString(),
+      } as LocalImageUploadJob;
+      return durableJob;
+    });
+    mockGetLocalImage.mockResolvedValue({
+      id: jobB.assetId,
+      workspaceId: "church-1",
+      blob: new Blob(["thumbnail B"], { type: "image/webp" }),
+      fileName: "thumbnail-b.webp",
+      contentType: "image/webp",
+      size: 11,
+      width: 640,
+      height: 360,
+      createdAt: jobB.createdAt,
+    });
+
+    const { unmount: unmountFirst } = render(
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(durableJob.status).toBe("failed"));
+    expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalledWith(
+      "church-1",
+      "thumbnail-b-public-id",
+    );
+    expect(durableJob.cloudMedia).toEqual(cloudMediaB);
+    expect(durableJob.localVideoInputThumbnail?.staleCloudCleanupComplete).not.toBe(true);
+    unmountFirst();
+
+    const cloudUrlC = "https://res.cloudinary.com/example/thumbnail-c.webp";
+    const rowAfterCCommit = {
+      ...rowC,
+      thumbnail: cloudUrlC,
+      localImage: {
+        ...rowC.localImage!,
+        cloudPublicId: "thumbnail-c-public-id",
+        cloudUrl: cloudUrlC,
+      },
+    };
+    mockState.media.list = [rowAfterCCommit];
+    store.dispatch(updateMediaList([rowAfterCCommit]));
+    mockPouchState.list = [rowAfterCCommit];
+    durableJob = {
+      ...durableJob,
+      leaseOwnerId: undefined,
+      leaseExpiresAt: 0,
+      nextAttemptAt: Date.now() - 1,
+    };
+
+    const { unmount: unmountSecond } = render(
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockDeleteCloudinaryAsset).toHaveBeenCalledWith(
+      "church-1",
+      "thumbnail-b-public-id",
+    ));
+    expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: jobB.assetId,
+      patch: expect.objectContaining({
+        localVideoInputThumbnail: expect.objectContaining({ staleCloudCleanupComplete: true }),
+      }),
+    }));
+    expect(mockDeleteLocalImage).toHaveBeenCalledWith(jobB.assetId);
+    expect(mockUpload).not.toHaveBeenCalled();
+    unmountSecond();
+  });
+
+  it("preserves a stale cloud checkpoint when the authoritative Media read fails", async () => {
+    const cloudUrl = "https://res.cloudinary.com/example/thumbnail-b.webp";
+    const row: MediaType = {
+      id: "local_input_camera-1",
+      name: "Main camera",
+      path: "",
+      createdAt: "created",
+      updatedAt: "updated",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      publicId: "local_input_camera-1",
+      type: "video",
+      background: "local-video-input://camera-1",
+      thumbnail: cloudUrl,
+      placeholderImage: "",
+      source: "local",
+      localVideoInput: { kind: "local-video-input", sourceId: "camera-1", label: "Main camera" },
+      localImage: {
+        id: "thumbnail-c",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "thumbnail-c.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+        cloudPublicId: "thumbnail-b-public-id",
+        cloudUrl,
+      },
+    } as MediaType;
+    const cloudMedia = {
+      id: "thumbnail-b-cloud-media",
+      type: "image",
+      publicId: "thumbnail-b-public-id",
+      background: cloudUrl,
+      providerStorage: { provider: "cloudinary", assetId: "asset-b", churchId: "church-1", permanent: true },
+    } as MediaType;
+    const job: LocalImageUploadJob = {
+      ...interruptedJob,
+      id: "thumbnail-b",
+      assetId: "thumbnail-b",
+      workspaceId: "church-1",
+      itemId: "",
+      status: "uploaded",
+      cloudMedia,
+      localVideoInputThumbnail: { targetMediaId: row.id, targetSourceId: "camera-1" },
+    };
+    let durableJob = job;
+    const db = {} as PouchDB.Database;
+    mockPouchState.list = [row];
+    mockListJobs.mockReset().mockResolvedValue([job]);
+    mockClaimJob.mockResolvedValue({ ...job, leaseOwnerId: "tab-a", leaseExpiresAt: Date.now() + 30_000 });
+    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => {
+      durableJob = { ...durableJob, ...patch, leaseOwnerId, leaseExpiresAt: now + leaseDurationMs } as LocalImageUploadJob;
+      return durableJob;
+    });
+    mockLoadMediaLibrary
+      .mockResolvedValueOnce({ list: [row], folders: [] } as Awaited<ReturnType<typeof loadMediaLibrary>>)
+      .mockRejectedValueOnce(new Error("temporary PouchDB read failure"));
+
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() => expect(mockUpdateJob).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: job.assetId,
+      patch: expect.objectContaining({
+        status: "failed",
+        lastError: "temporary PouchDB read failure",
+      }),
+    })));
+    expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalledWith("church-1", "thumbnail-b-public-id");
+    expect(durableJob.cloudMedia).toEqual(cloudMedia);
+    expect(durableJob.localVideoInputThumbnail?.staleCloudCleanupComplete).not.toBe(true);
+    view.unmount();
+  });
+
+  it("keeps thumbnail cleanup bound to the originating church and database", async () => {
+    const cloudUrl = "https://res.cloudinary.com/example/thumbnail-b.webp";
+    const rowA: MediaType = {
+      id: "local_input_camera-1",
+      name: "Camera A",
+      path: "",
+      createdAt: "created",
+      updatedAt: "updated",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      publicId: "local_input_camera-1",
+      type: "video",
+      background: "local-video-input://camera-1",
+      thumbnail: cloudUrl,
+      placeholderImage: "",
+      source: "local",
+      localVideoInput: { kind: "local-video-input", sourceId: "camera-1", label: "Camera A" },
+      localImage: {
+        id: "thumbnail-c",
+        ownerDeviceId: "device-a",
+        ownerLabel: "A",
+        fileName: "thumbnail-c.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+        cloudPublicId: "thumbnail-b-public-id",
+        cloudUrl,
+      },
+    } as MediaType;
+    const job: LocalImageUploadJob = {
+      ...interruptedJob,
+      id: "thumbnail-b",
+      assetId: "thumbnail-b",
+      workspaceId: "church-a",
+      itemId: "",
+      status: "uploaded",
+      cloudMedia: {
+        id: "thumbnail-b-cloud-media",
+        type: "image",
+        publicId: "thumbnail-b-public-id",
+        background: cloudUrl,
+        providerStorage: { provider: "cloudinary", assetId: "asset-b", churchId: "church-a", permanent: true },
+      } as MediaType,
+      localVideoInputThumbnail: { targetMediaId: rowA.id, targetSourceId: "camera-1" },
+    };
+    const dbA = {} as PouchDB.Database;
+    const dbB = {} as PouchDB.Database;
+    const mediaRead = deferred<Awaited<ReturnType<typeof loadMediaLibrary>>>();
+    let readsFromA = 0;
+    const readsFromB: PouchDB.Database[] = [];
+    let durableJob = job;
+    mockListJobs.mockReset().mockImplementation(async (workspaceId) =>
+      workspaceId === "church-a" ? [durableJob] : [],
+    );
+    mockClaimJob.mockResolvedValue({ ...job, leaseOwnerId: "tab-a", leaseExpiresAt: Date.now() + 30_000 });
+    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => {
+      durableJob = { ...durableJob, ...patch, leaseOwnerId, leaseExpiresAt: now + leaseDurationMs } as LocalImageUploadJob;
+      return durableJob;
+    });
+    mockGetLocalImage.mockResolvedValue({
+      id: job.assetId,
+      workspaceId: "church-a",
+      blob: new Blob(["thumbnail B"], { type: "image/webp" }),
+      fileName: "thumbnail-b.webp",
+      contentType: "image/webp",
+      size: 11,
+      width: 640,
+      height: 360,
+      createdAt: job.createdAt,
+    });
+    mockLoadMediaLibrary.mockImplementation(async (db) => {
+      if (db === dbB) {
+        readsFromB.push(db);
+        return { list: [], folders: [] } as Awaited<ReturnType<typeof loadMediaLibrary>>;
+      }
+      readsFromA += 1;
+      if (readsFromA === 1) {
+        return { list: [rowA], folders: [] } as Awaited<ReturnType<typeof loadMediaLibrary>>;
+      }
+      return mediaRead.promise;
+    });
+    const renderManager = (db: PouchDB.Database, churchId: string) => (
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    );
+    const view = render(renderManager(dbA, "church-a"));
+    await waitFor(() => expect(readsFromA).toBe(2));
+    view.rerender(renderManager(dbB, "church-b"));
+    await act(async () => {
+      mediaRead.resolve({ list: [rowA], folders: [] });
+      await mediaRead.promise;
+    });
+
+    await waitFor(() => expect(durableJob.status).toBe("failed"));
+    expect(mockDeleteCloudinaryAsset).not.toHaveBeenCalled();
+    expect(readsFromB).toHaveLength(0);
+    expect(mockLoadMediaLibrary).toHaveBeenCalledWith(dbA);
     view.unmount();
   });
 
