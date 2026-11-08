@@ -1,17 +1,38 @@
 import { test, expect } from "./smokeFixtures";
 import {
+  beginSmokeTemplateNavigation,
   homeNavigationDiagnostics,
   openEditableTeam,
   openHome,
   teamsAndServicesHomeLink,
+  type E2EAuthFlags,
 } from "./smokeNavigation";
 import { E2E_CHURCH_ID } from "./testChurch";
 import { requirePresentationControllerHomeLink } from "./controllerTestData";
+import { waitForControllerStartup } from "./controllerRuntime";
+import {
+  findSeededSmokeTemplate,
+  requireSmokePrerequisite,
+  smokePrerequisiteFailure,
+} from "./smokePrerequisites";
 
-const openTeamsAndServices = async (page: import("@playwright/test").Page) => {
+type SmokeWorkspaceRequirement =
+  | "teams-access"
+  | "team-edit"
+  | "global-teams-edit"
+  | "services-access";
+
+const openTeamsAndServices = async (
+  page: import("@playwright/test").Page,
+  requirement: SmokeWorkspaceRequirement = "teams-access",
+) => {
   const auth = await openHome(page);
+  const missingAccess = smokePrerequisiteFailure({ kind: requirement, auth });
+  if (missingAccess) {
+    throw new Error(await homeNavigationDiagnostics(page, auth, missingAccess));
+  }
   const workspaceLink = teamsAndServicesHomeLink(page);
-  if (auth.bootstrapStatus === 200 && auth.authenticated && auth.canViewTeams) {
+  if (auth.bootstrapStatus === 200 && auth.authenticated && (auth.canViewTeams || auth.canViewServices)) {
     try {
       await expect(workspaceLink).toBeVisible({ timeout: 15_000 });
     } catch {
@@ -25,9 +46,9 @@ const openTeamsAndServices = async (page: import("@playwright/test").Page) => {
         ? "The saved session is not authenticated in the Home application; Teams navigation cannot be evaluated."
         : auth.sessionKind !== "human" || auth.churchId !== E2E_CHURCH_ID
           ? `The E2E account must be a human session for church ${E2E_CHURCH_ID}; the Home link may be absent because this is the wrong identity.`
-          : auth.canViewTeams === false
-            ? "The Home link is correctly hidden: this account lacks canViewTeams. Grant Teams view/edit access or a team-scoped grant through the existing access controls."
-            : "The authenticated permission response allows Teams, but Home did not render its Teams and Services route link after loading. This indicates an application loading or homepage navigation regression.";
+          : !auth.canViewTeams && !auth.canViewServices
+            ? "The Home link is correctly hidden: the account has neither Teams access nor Services: View/Edit. Grant the permission required by the intended smoke workflow through WorshipSync's existing account permissions interface."
+            : "The authenticated permission response allows Teams or Services, but Home did not render its Teams and Services route link after loading. This indicates an application loading or homepage navigation regression.";
     throw new Error(await homeNavigationDiagnostics(page, auth, reason));
   }
   await expect(workspaceLink).toBeVisible();
@@ -36,29 +57,51 @@ const openTeamsAndServices = async (page: import("@playwright/test").Page) => {
   await expect(
     page.getByRole("navigation", { name: "Teams and Services sections" }),
   ).toBeVisible();
+  return auth;
 };
 
-test("core navigation opens the controller and Teams and Services workspace", async ({ page }) => {
+const requireWorkspaceLink = async (
+  page: import("@playwright/test").Page,
+  label: string,
+  auth: E2EAuthFlags,
+  requirement: SmokeWorkspaceRequirement,
+) => {
+  const link = page.getByRole("link", { name: label, exact: true });
+  try {
+    await expect(link).toBeVisible({ timeout: 5_000 });
+  } catch {
+    const missingAccess = smokePrerequisiteFailure({ kind: requirement, auth });
+    const reason = missingAccess ??
+      `The saved account's effective ${requirement} permission is present, but the ${label} navigation link did not render. This indicates a Teams and Services navigation regression.`;
+    throw new Error(await homeNavigationDiagnostics(page, auth, reason));
+  }
+  return link;
+};
+
+test("core navigation opens the controller and Teams and Services workspace", async ({ page }, testInfo) => {
+  // Controller startup may use the same bounded 90-second readiness window as
+  // the dedicated controller suite. The test also verifies replication and
+  // outline readiness before it treats the navigation as usable.
+  testInfo.setTimeout(180_000);
   const auth = await openHome(page);
   const presentationLink = await requirePresentationControllerHomeLink(page, auth);
   await presentationLink.click();
   await expect(page).toHaveURL(/#\/controller(?:\/|$)/);
+  await waitForControllerStartup(page);
   await expect(page.locator("#controller-main")).toBeVisible();
   await expect(page.getByRole("link", { name: "Songs", exact: true })).toBeVisible();
-  await expect(page.getByTestId("controller-loading-overlay")).toBeHidden();
 
   await page.goBack();
   await expect(page).toHaveURL(/#\/home$/);
-  await openTeamsAndServices(page);
+  await openTeamsAndServices(page, "teams-access");
   await expect(
     page.getByRole("heading", { name: "Teams and Services", exact: true }),
   ).toBeVisible();
 });
 
 test("Services loads an existing plan and its primary controls", async ({ page }) => {
-  await openTeamsAndServices(page);
-  const servicesLink = page.getByRole("link", { name: "Services", exact: true });
-  await expect(servicesLink).toBeVisible();
+  const auth = await openTeamsAndServices(page, "services-access");
+  const servicesLink = await requireWorkspaceLink(page, "Services", auth, "services-access");
   await servicesLink.click();
   await expect(page).toHaveURL(/#\/teams-and-services\/services$/);
 
@@ -71,11 +114,10 @@ test("Services loads an existing plan and its primary controls", async ({ page }
   ).toBeHidden();
 
   const existingPlan = results.getByRole("button", { name: /^Open plan for / }).first();
-  if (await existingPlan.count() === 0) {
+  const planCount = await existingPlan.count();
+  if (planCount === 0) {
     const emptyState = await results.innerText();
-    throw new Error(
-      `Services loaded without an openable existing plan. Provision at least one dated service with a saved plan for the E2E account. Current Services state: ${emptyState}`,
-    );
+    requireSmokePrerequisite({ kind: "seeded-service-plan", count: planCount, currentState: emptyState });
   }
   await existingPlan.click();
 
@@ -86,9 +128,8 @@ test("Services loads an existing plan and its primary controls", async ({ page }
 });
 
 test("Teams opens an existing team with its positions and member UI", async ({ page }) => {
-  await openTeamsAndServices(page);
-  const teamsLink = page.getByRole("link", { name: "Teams", exact: true });
-  await expect(teamsLink).toBeVisible();
+  const auth = await openTeamsAndServices(page, "team-edit");
+  const teamsLink = await requireWorkspaceLink(page, "Teams", auth, "team-edit");
   await teamsLink.click();
   await expect(page).toHaveURL(/#\/teams-and-services\/groups$/);
   await expect(page.getByRole("status", { name: "Loading teams" })).toBeHidden();
@@ -98,12 +139,8 @@ test("Teams opens an existing team with its positions and member UI", async ({ p
 });
 
 test("Members opens an active member's details without saving changes", async ({ page }) => {
-  await openTeamsAndServices(page);
-  const membersLink = page.getByRole("link", { name: "Members", exact: true });
-  await expect(
-    membersLink,
-    "The saved E2E account must have access to Teams and Services → Members.",
-  ).toBeVisible();
+  const auth = await openTeamsAndServices(page, "global-teams-edit");
+  const membersLink = await requireWorkspaceLink(page, "Members", auth, "global-teams-edit");
   await membersLink.click();
   await expect(page).toHaveURL(/#\/teams-and-services\/members$/);
 
@@ -114,7 +151,7 @@ test("Members opens an active member's details without saving changes", async ({
   const memberCount = (await membersHeading.innerText()).match(/\((\d+)\)/);
   if (!memberCount) throw new Error("The loaded Members list did not expose its record count.");
   if (Number(memberCount[1]) === 0) {
-    throw new Error("The configured demo church must contain at least one active member for the details smoke test.");
+    requireSmokePrerequisite({ kind: "active-member", count: Number(memberCount[1]) });
   }
 
   const activeMemberAction = page.getByRole("button", { name: /^Edit .+/ }).first();
@@ -128,7 +165,18 @@ test("Members opens an active member's details without saving changes", async ({
   if (!memberName) throw new Error("The active member row did not expose its accessible name.");
   await activeMemberAction.click();
 
-  await expect(page.getByRole("heading", { name: "Edit member", exact: true })).toBeVisible();
+  try {
+    await expect(page.getByRole("heading", { name: "Edit member", exact: true })).toBeVisible({ timeout: 5_000 });
+  } catch {
+    const scopedEditorVisible = await page.getByRole("heading", { name: memberName, exact: true }).isVisible().catch(() => false);
+    throw new Error(await homeNavigationDiagnostics(
+      page,
+      auth,
+      scopedEditorVisible
+        ? "Global Teams: Edit is present, but opening a member rendered the scoped team-profile editor instead of the full member editor. This indicates an application permission-normalization or editor-selection regression."
+        : "Global Teams: Edit is present, but opening a member did not render the full member editor.",
+    ));
+  }
   const firstName = page.getByRole("textbox", { name: "First name", exact: true });
   const lastName = page.getByRole("textbox", { name: "Last name", exact: true });
   await expect(firstName).toBeVisible();
@@ -137,12 +185,8 @@ test("Members opens an active member's details without saving changes", async ({
 });
 
 test("Equipment loads microphones and IEMs and returns to microphones", async ({ page }) => {
-  await openTeamsAndServices(page);
-  const equipmentLink = page.getByRole("link", { name: "Equipment", exact: true });
-  await expect(
-    equipmentLink,
-    "The saved E2E account must have access to Services → Equipment.",
-  ).toBeVisible();
+  const auth = await openTeamsAndServices(page, "services-access");
+  const equipmentLink = await requireWorkspaceLink(page, "Equipment", auth, "services-access");
 
   const microphoneLoad = page.waitForResponse((response) =>
     response.request().method() === "GET" && new URL(response.url()).pathname.endsWith("/service-plan-microphones"),
@@ -190,40 +234,26 @@ test("Equipment loads microphones and IEMs and returns to microphones", async ({
 });
 
 test("Service Templates opens and returns to a seeded template", async ({ page }) => {
-  const templateLoad = page.waitForResponse((response) =>
-    response.request().method() === "GET" && new URL(response.url()).pathname.endsWith("/service-plan-templates"),
+  const auth = await openTeamsAndServices(page, "services-access");
+  const templatesLink = await requireWorkspaceLink(page, "Templates", auth, "services-access");
+  const { templateResponse: templateLoad, navigation } = beginSmokeTemplateNavigation(
+    page,
+    () => templatesLink.click(),
   );
-  await openTeamsAndServices(page);
-  const templatesLink = page.getByRole("link", { name: "Templates", exact: true });
-  await expect(
-    templatesLink,
-    "The saved E2E account must have access to Services → Templates.",
-  ).toBeVisible();
-  await templatesLink.click();
+  await navigation;
   await expect(page).toHaveURL(/#\/teams-and-services\/templates$/);
   const templateResponse = await templateLoad;
   expect(templateResponse.ok(), "Templates request should succeed before checking its list state.").toBeTruthy();
   const templatePayload = await templateResponse.json() as {
     success?: boolean;
-    templates?: Array<{ name: string; sections: Array<{ name: string; elements: unknown[] }> }>;
+    templates?: unknown;
   };
   expect(templatePayload.success, "Templates response should report a successful load.").toBe(true);
   await expect(page.getByText("Could not load templates", { exact: true })).toBeHidden();
 
-  const templates = templatePayload.templates || [];
-  if (templates.length === 0) {
-    const emptyState = await page.locator("main").innerText();
-    throw new Error(
-      `The configured demo church must seed at least one service template with section structure for the editor-opening smoke assertion. Current Templates state: ${emptyState}`,
-    );
-  }
-  const seededTemplate = templates.find((template) =>
-    template.name.trim() && template.sections.length > 0
-      && templates.filter((candidate) => candidate.name === template.name).length === 1,
-  );
-  if (!seededTemplate) {
-    throw new Error("The configured demo church must seed a uniquely named service template with at least one section.");
-  }
+  const seededTemplate = findSeededSmokeTemplate(templatePayload.templates);
+  requireSmokePrerequisite({ kind: "seeded-template", templates: templatePayload.templates });
+  if (!seededTemplate) throw new Error("Seeded template prerequisite check returned an inconsistent result.");
   const templateName = seededTemplate.name;
   const templateButton = page.getByRole("button", { name: `Edit ${templateName}`, exact: true }).or(
     page.getByRole("button", { name: `View ${templateName}`, exact: true }),
