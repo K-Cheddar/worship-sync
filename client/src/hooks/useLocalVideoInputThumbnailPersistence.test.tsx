@@ -25,6 +25,7 @@ jest.mock("../utils/localImageAssets", () => {
     getLocalImageUploadJob: jest.fn().mockResolvedValue(undefined),
     getRememberedLocalImagePolicy: jest.fn(() => "local-only"),
     putLocalImageUploadJob: jest.fn().mockResolvedValue(undefined),
+    activateStagedLocalImageUploadCleanupJobAtomically: jest.fn().mockResolvedValue(undefined),
     restoreStagedLocalImageUploadCleanupJob: jest.fn().mockResolvedValue(true),
     stageLocalImageUploadCleanupJobAtomically: jest.fn(async (job) => ({
       job,
@@ -259,6 +260,7 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
       getLocalImageUploadJob: jest.Mock;
       getRememberedLocalImagePolicy: jest.Mock;
       putLocalImageUploadJob: jest.Mock;
+      activateStagedLocalImageUploadCleanupJobAtomically: jest.Mock;
       restoreStagedLocalImageUploadCleanupJob: jest.Mock;
       saveLocalImage: jest.Mock;
       stageLocalImageUploadCleanupJobAtomically: jest.Mock;
@@ -268,6 +270,7 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     assets.getLocalImageUploadJob.mockReset().mockResolvedValue(undefined);
     assets.getRememberedLocalImagePolicy.mockReset().mockReturnValue("local-only");
     assets.putLocalImageUploadJob.mockReset().mockResolvedValue(undefined);
+    assets.activateStagedLocalImageUploadCleanupJobAtomically.mockReset().mockResolvedValue(undefined);
     assets.restoreStagedLocalImageUploadCleanupJob.mockReset().mockResolvedValue(true);
     assets.saveLocalImage.mockReset().mockResolvedValue(undefined);
     assets.stageLocalImageUploadCleanupJobAtomically
@@ -799,8 +802,8 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
       { churchId: "church-1", isGuestSession: false },
     );
     const assets = jest.requireMock("../utils/localImageAssets") as {
+      activateStagedLocalImageUploadCleanupJobAtomically: jest.Mock;
       deleteLocalImageUploadJob: jest.Mock;
-      putLocalImageUploadJob: jest.Mock;
       stageLocalImageUploadCleanupJobAtomically: jest.Mock;
     };
     const staging = deferred<{ job: LocalImageUploadJob; previous: undefined }>();
@@ -827,10 +830,10 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     expect(db.readRow()).toEqual(expect.objectContaining({ thumbnail: secondUrl }));
     expect(db.put).not.toHaveBeenCalled();
     expect(assets.deleteLocalImageUploadJob).not.toHaveBeenCalledWith(stagedJob.assetId);
-    expect(assets.putLocalImageUploadJob).toHaveBeenCalledWith(expect.objectContaining({
-      assetId: stagedJob.assetId,
-      cleanupReady: true,
-    }));
+    expect(assets.activateStagedLocalImageUploadCleanupJobAtomically).toHaveBeenCalledWith(
+      stagedJob,
+      expect.any(Number),
+    );
   });
 
   it("keeps removal cleanup staged when Media verification read failed", async () => {
@@ -1149,6 +1152,7 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
     };
     let currentUpload = activeUpload;
     const assets = jest.requireMock("../utils/localImageAssets") as {
+      activateStagedLocalImageUploadCleanupJobAtomically: jest.Mock;
       getLocalImageUploadJob: jest.Mock;
       putLocalImageUploadJob: jest.Mock;
       stageLocalImageUploadCleanupJobAtomically: jest.Mock;
@@ -1192,13 +1196,14 @@ describe("useLocalVideoInputThumbnailPersistence", () => {
       }),
       expect.any(Number),
     );
-    expect(assets.putLocalImageUploadJob).toHaveBeenCalledWith(
+    expect(assets.activateStagedLocalImageUploadCleanupJobAtomically).toHaveBeenCalledWith(
       expect.objectContaining({
         assetId: expect.stringMatching(/^thumbnail-cloud-cleanup-/),
         cleanupCloudPublicId: "previous-cloud-public-id",
         cleanupOnly: true,
-        cleanupReady: true,
+        cleanupReady: false,
       }),
+      expect.any(Number),
     );
     expect(assets.putLocalImageUploadJob).not.toHaveBeenCalledWith(
       expect.objectContaining({ assetId: activeUpload.assetId }),

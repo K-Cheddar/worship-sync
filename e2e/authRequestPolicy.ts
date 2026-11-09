@@ -1,6 +1,6 @@
 import { request as playwrightRequest } from "@playwright/test";
 import type { APIResponse, BrowserContext } from "@playwright/test";
-import { allowedE2EAuthOrigins } from "./authOrigins";
+import { allowedE2EAuthOrigins, shouldIgnoreE2EHTTPSErrors } from "./authOrigins";
 
 const deviceIdentityKey = "worshipsync_device_id";
 const silentSessionPath = "/api/auth/session";
@@ -181,7 +181,9 @@ export async function installSavedSessionAuthRequestGuard(
   let recoveryAttempts = 0;
   const recoveryDiagnostics: AuthRecoveryDiagnostic[] = [];
   const isolatedRecoveryRequest = smokeIdentity
-    ? await playwrightRequest.newContext()
+    ? await playwrightRequest.newContext({
+        ignoreHTTPSErrors: shouldIgnoreE2EHTTPSErrors(baseURL),
+      })
     : undefined;
 
   await context.route(/\/api\/auth(?:\/|$)|mailslurp\.com/i, async (route) => {

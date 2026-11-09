@@ -17,6 +17,7 @@ import {
   deleteCloudinaryMediaAsset,
 } from "../../api/providerStorage";
 import {
+  activateStagedLocalImageUploadCleanupJobAtomically,
   claimLocalImageUploadJob,
   claimStagedLocalVideoThumbnailReference,
   getLocalImageUploadJob,
@@ -26,7 +27,6 @@ import {
   listLocalImageUploadJobs,
   notifyLocalImageCloudCleanupComplete,
   persistLocalImageCloudCopy,
-  putLocalImageUploadJob,
   releaseLocalImageUploadJobLease,
   restoreCommittedLocalVideoThumbnailUploadJobAtomically,
   renewLocalImageUploadJobLease,
@@ -1196,24 +1196,30 @@ const LocalImageUploadManager = () => {
       if (reconciledStagedReference) {
         jobs = await listLocalImageUploadJobs(churchId);
       }
+      const unreadyCleanupJobs = jobs.some(
+        (job) => job.cleanupOnly && !job.cleanupReady,
+      );
+      const authoritativeMedia = unreadyCleanupJobs
+        ? await loadMediaLibrary(db)
+        : undefined;
       for (let index = 0; index < jobs.length; index += 1) {
         const job = jobs[index];
         if (!job.cleanupOnly || job.cleanupReady) continue;
-        const target = job.cleanupTargetMediaId
-          ? (store.getState().media.list as MediaType[]).find(
-              (item: MediaType) => item.id === job.cleanupTargetMediaId,
-            )
-          : undefined;
-        if (target?.localImage?.id === job.assetId) continue;
-        const readyJob = {
-          ...job,
-          status: "pending",
-          phase: "queued",
-          cleanupReady: true,
-          nextAttemptAt: 0,
-          updatedAt: new Date().toISOString(),
-        } as LocalImageUploadJob;
-        await putLocalImageUploadJob(readyJob);
+        const authoritativeList = authoritativeMedia?.list ?? [];
+        const assetIsReferenced = isLocalImageAssetReferenced(
+          authoritativeList,
+          job.assetId,
+        );
+        const cloudIsReferenced = Boolean(
+          job.cleanupCloudPublicId &&
+          isCloudinaryAssetReferenced(authoritativeList, job.cleanupCloudPublicId),
+        );
+        if (assetIsReferenced || cloudIsReferenced) continue;
+        const readyJob = await activateStagedLocalImageUploadCleanupJobAtomically(
+          job,
+          Date.now(),
+        );
+        if (!readyJob?.cleanupReady) continue;
         jobs[index] = readyJob;
       }
       const now = Date.now();

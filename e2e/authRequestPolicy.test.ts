@@ -13,12 +13,21 @@ import {
   allowedE2EAuthOrigins,
   firebaseAuthRequestMatchers,
   isTrustedFirebaseAuthOrigin,
+  shouldIgnoreE2EHTTPSErrors,
 } from "./authOrigins";
 import { isAllowedSmokeChurchRead } from "./smokeRequestPolicy";
 
 const baseURL = "https://local.worshipsync.net:3000/";
 const trustedOrigins = allowedE2EAuthOrigins(baseURL);
 const deviceIdentity = "saved-test-device";
+
+test("HTTPS certificate exceptions are limited to approved local development hosts", () => {
+  assert.equal(shouldIgnoreE2EHTTPSErrors("https://local.worshipsync.net:3000/"), true);
+  assert.equal(shouldIgnoreE2EHTTPSErrors("https://localhost:3000/"), true);
+  assert.equal(shouldIgnoreE2EHTTPSErrors("https://example.com/"), false);
+  assert.equal(shouldIgnoreE2EHTTPSErrors("not a URL"), false);
+});
+
 const validRequest = {
   method: "POST",
   url: "https://local.worshipsync.net:5000/api/auth/session",

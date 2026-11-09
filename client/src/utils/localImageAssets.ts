@@ -738,6 +738,30 @@ export const stageLocalImageUploadCleanupJobAtomically = async (
   return staged && job ? { job, previous } : undefined;
 };
 
+/** Activate a staged cleanup only while the exact staged snapshot still owns the job. */
+export const activateStagedLocalImageUploadCleanupJobAtomically = async (
+  staged: LocalImageUploadJob,
+  now: number,
+) =>
+  mutateLocalImageUploadJob(staged.assetId, (current) => {
+    if (
+      !current ||
+      current.updatedAt !== staged.updatedAt ||
+      !current.cleanupOnly ||
+      current.cleanupReady !== false ||
+      current.cleanupTargetMediaId !== staged.cleanupTargetMediaId ||
+      current.cleanupCloudPublicId !== staged.cleanupCloudPublicId
+    ) return current;
+    return {
+      ...current,
+      status: "pending",
+      phase: "queued",
+      cleanupReady: true,
+      nextAttemptAt: 0,
+      updatedAt: new Date(now).toISOString(),
+    };
+  });
+
 /** Queue a Cloudinary image cleanup for the upload manager's authoritative reference checks. */
 export const enqueueLocalImageCloudCleanup = async ({
   mediaId,
@@ -793,13 +817,6 @@ export const enqueueLocalImageCloudCleanup = async ({
     ) return current;
     throw new Error("The Cloudinary thumbnail cleanup could not be queued.");
   }
-  await putLocalImageUploadJob({
-    ...staged.job,
-    status: "pending",
-    phase: "queued",
-    cleanupReady: true,
-    nextAttemptAt: 0,
-  });
   return staged.job;
 };
 

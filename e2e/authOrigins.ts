@@ -1,4 +1,21 @@
 /** Trusted auth API origins for the app's configured browser/Electron dev setup. */
+const localDevelopmentHosts = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "local.worshipsync.net",
+]);
+
+export const shouldIgnoreE2EHTTPSErrors = (baseURL: string): boolean => {
+  try {
+    return localDevelopmentHosts.has(
+      new URL(baseURL).hostname.replace(/^\[|\]$/g, ""),
+    );
+  } catch {
+    return false;
+  }
+};
+
 export const allowedE2EAuthOrigins = (baseURL: string): Set<string> => {
   const appURL = new URL(baseURL);
   const origins = new Set([appURL.origin]);

@@ -14,7 +14,7 @@ import {
   deleteLocalImageUploadJob,
   getLocalImageUploadJob,
   getRememberedLocalImagePolicy,
-  putLocalImageUploadJob,
+  activateStagedLocalImageUploadCleanupJobAtomically,
   saveLocalImage,
   restoreCommittedLocalVideoThumbnailUploadJobAtomically,
   stageLocalImageUploadCleanupJobAtomically,
@@ -85,6 +85,14 @@ const createThumbnailCleanupJob = async ({
   cloudPublicId?: string;
 }) => {
   const previous = await getLocalImageUploadJob(assetId);
+  if (
+    previous?.cleanupOnly &&
+    previous.cleanupReady === false &&
+    previous.cleanupTargetMediaId === mediaId &&
+    previous.cleanupCloudPublicId === cloudPublicId
+  ) {
+    return { job: previous };
+  }
   const now = new Date().toISOString();
   const job: LocalImageUploadJob = {
     ...(previous ?? {}),
@@ -123,14 +131,7 @@ const createThumbnailCleanupJob = async ({
 };
 
 const activateThumbnailCleanupJob = async (job: LocalImageUploadJob) => {
-  await putLocalImageUploadJob({
-    ...job,
-    status: "pending",
-    phase: "queued",
-    cleanupReady: true,
-    nextAttemptAt: 0,
-    updatedAt: new Date().toISOString(),
-  });
+  await activateStagedLocalImageUploadCleanupJobAtomically(job, Date.now());
 };
 
 const reconcileStagedThumbnailRemoval = async (
