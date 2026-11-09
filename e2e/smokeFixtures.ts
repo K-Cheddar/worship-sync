@@ -60,6 +60,7 @@ export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>(
         console.info(
           `Smoke auth guard: ${authGuard.blockedRequests()} unsafe request(s); recovery ${JSON.stringify(authRecoveryDiagnostics)}.`,
         );
+        await authGuard.dispose();
         await context.close();
         if (authGuard.blockedRequests() > 0) {
           throw new Error("Smoke authentication guard blocked an unsafe request; see sanitized browser diagnostics.");

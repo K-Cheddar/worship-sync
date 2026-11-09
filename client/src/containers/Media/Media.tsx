@@ -50,6 +50,7 @@ import {
 import type { LocalVideoInputMediaSource } from "../../types";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
+import { LOCAL_IMAGE_CLOUD_CLEANUP_COMPLETE_EVENT } from "../../utils/localImageAssets";
 import { supportsDesktopCapture } from "../../utils/desktopCapture";
 import type { LocalVideoThumbnailFrame } from "../../utils/localVideoInputThumbnail";
 import {
@@ -100,6 +101,17 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     () => storageUsageRefreshRef.current(),
     [],
   );
+  useEffect(() => {
+    const handleCloudCleanupComplete = (event: Event) => {
+      const detail = (event as CustomEvent<{ workspaceId?: string }>).detail;
+      if (detail?.workspaceId === churchId) notifyStorageUsageChanged();
+    };
+    window.addEventListener(LOCAL_IMAGE_CLOUD_CLEANUP_COMPLETE_EVENT, handleCloudCleanupComplete);
+    return () => window.removeEventListener(
+      LOCAL_IMAGE_CLOUD_CLEANUP_COMPLETE_EVENT,
+      handleCloudCleanupComplete,
+    );
+  }, [churchId, notifyStorageUsageChanged]);
   const registerStorageUsageRefresh = useCallback((refresh: () => void) => {
     storageUsageRefreshRef.current = refresh;
   }, []);

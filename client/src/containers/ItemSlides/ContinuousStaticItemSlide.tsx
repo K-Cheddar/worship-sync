@@ -140,6 +140,7 @@ const ContinuousStaticItemSlide = ({
           label={slide.mediaSource.label}
           captureKind={slide.mediaSource.captureKind}
           variant={localVideoThumbnailUrl ? "indicator" : "overlay"}
+          className={localVideoThumbnailUrl ? "!bottom-2 !left-2 !right-auto !max-w-[65%]" : undefined}
         />
       ) : null}
     </li>

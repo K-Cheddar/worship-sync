@@ -24,10 +24,13 @@ import {
   deleteLocalImage,
   getLocalImage,
   listLocalImageUploadJobs,
+  notifyLocalImageCloudCleanupComplete,
   persistLocalImageCloudCopy,
   putLocalImageUploadJob,
   releaseLocalImageUploadJobLease,
+  restoreCommittedLocalVideoThumbnailUploadJobAtomically,
   renewLocalImageUploadJobLease,
+  saveLocalImage,
   subscribeLocalImageUploadJobChanges,
   stageLocalImageUploadCleanupJobAtomically,
   finishStagedLocalVideoThumbnailReferenceCheck,
@@ -240,6 +243,7 @@ const LocalImageUploadManager = () => {
           throw new Error("The cloud thumbnail is still referenced by Media; cleanup will retry.");
         }
         await deleteCloudinaryMediaAsset(churchId, publicId);
+        notifyLocalImageCloudCleanupComplete(job.workspaceId);
       };
       const deleteJobCloudMedia = async (media?: MediaType) => {
         if (!media?.publicId) return;
@@ -356,11 +360,30 @@ const LocalImageUploadManager = () => {
                 Object.assign(thumbnailTarget, updatedTarget);
                 cloudMedia = undefined;
               }
+              const abandonedImage = await getLocalImage(job.assetId);
               const latestBeforeLocalDelete = await loadMediaLibrary(db);
               if (isLocalImageAssetReferenced(latestBeforeLocalDelete.list, job.assetId)) {
                 throw new Error("The staged thumbnail is still referenced by Media; cleanup will retry.");
               }
               await deleteLocalImage(job.assetId);
+              const latestAfterLocalDelete = await loadMediaLibrary(db);
+              const lateTarget = latestAfterLocalDelete.list.find(
+                (item) => item.id === thumbnailTarget.targetMediaId,
+              );
+              if (
+                lateTarget?.localVideoInput &&
+                lateTarget.localImage?.id === job.assetId &&
+                lateTarget.localImage.storagePolicy === "local-and-cloud" &&
+                (!thumbnailTarget.targetSourceId ||
+                  lateTarget.localVideoInput.sourceId === thumbnailTarget.targetSourceId)
+              ) {
+                if (abandonedImage) await saveLocalImage(abandonedImage);
+                await restoreCommittedLocalVideoThumbnailUploadJobAtomically(
+                  job,
+                  Date.now(),
+                );
+                return;
+              }
               await updateClaimedJob({
                 status: "complete",
                 phase: "complete",
@@ -471,6 +494,13 @@ const LocalImageUploadManager = () => {
               return;
             }
             await deleteLocalImage(job.assetId);
+            await updateClaimedJob({
+              status: "complete",
+              phase: "complete",
+              progress: 100,
+              nextAttemptAt: 0,
+              lastError: undefined,
+            });
           } catch (error) {
             await updateClaimedJob({
               status: "failed",
@@ -820,6 +850,16 @@ const LocalImageUploadManager = () => {
                 }
                 await deleteLocalImage(job.assetId);
               }
+              await updateClaimedJob({
+                status: "complete",
+                phase: "complete",
+                progress: 100,
+                cloudMedia: null,
+                providerUploadId: null,
+                providerExpectedPublicId: null,
+                nextAttemptAt: 0,
+                lastError: undefined,
+              });
             } catch (error) {
               await updateClaimedJob({
                 status: "failed",
@@ -867,6 +907,14 @@ const LocalImageUploadManager = () => {
               canPersist: () =>
                 activeScopeRef.current.db === db &&
                 activeScopeRef.current.churchId === churchId,
+              canUpdateMediaItem: (mediaId, current) =>
+                mediaId !== updatedMedia.id || Boolean(
+                  current?.localVideoInput &&
+                    current.localImage?.id === job.assetId &&
+                    current.thumbnail === localMedia.thumbnail &&
+                    (!thumbnailTarget.targetSourceId ||
+                      current.localVideoInput.sourceId === thumbnailTarget.targetSourceId),
+                ),
               publishIfCurrent: () =>
                 activeScopeRef.current.db === db &&
                 activeScopeRef.current.churchId === churchId,

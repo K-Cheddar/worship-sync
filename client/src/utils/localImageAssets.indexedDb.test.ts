@@ -9,6 +9,7 @@ import {
   cleanupOrphanedLocalImages,
   deleteLocalImage,
   deleteLocalImageUploadJob,
+  enqueueLocalImageCloudCleanup,
   enqueueLocalImageUploadJobAtomically,
   finishStagedLocalVideoThumbnailReferenceCheck,
   getLocalImage,
@@ -463,6 +464,33 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       ),
     ).resolves.toBeUndefined();
     await expect(getLocalImageUploadJob(active.assetId)).resolves.toEqual(active);
+  });
+
+  it("durably queues a Cloudinary thumbnail cleanup for the upload manager", async () => {
+    const queued = await enqueueLocalImageCloudCleanup({
+      mediaId: "local_input_camera-1",
+      workspaceId: "church-1",
+      cloudPublicId: "thumbnails/camera-1",
+    });
+
+    expect(queued).toMatchObject({
+      workspaceId: "church-1",
+      cleanupOnly: true,
+      cleanupReady: true,
+      cleanupTargetMediaId: "local_input_camera-1",
+      cleanupCloudPublicId: "thumbnails/camera-1",
+      cleanupCloudComplete: false,
+      status: "pending",
+    });
+    await expect(listLocalImageUploadJobs("church-1")).resolves.toContainEqual(queued);
+
+    const repeated = await enqueueLocalImageCloudCleanup({
+      mediaId: "local_input_camera-2",
+      workspaceId: "church-1",
+      cloudPublicId: "thumbnails/camera-1",
+    });
+    expect(repeated.assetId).toBe(queued.assetId);
+    expect(repeated.cleanupTargetMediaId).toBe(queued.cleanupTargetMediaId);
   });
 
   it("repairs a legacy unsigned ownership failure only on explicit retry", async () => {

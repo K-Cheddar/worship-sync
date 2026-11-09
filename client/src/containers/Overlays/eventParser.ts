@@ -327,6 +327,7 @@ const scoreTimeGap = (
   gap: number,
   expectedMinutes: number | undefined,
 ): number => {
+  if (gap < 0) return -2;
   if (expectedMinutes !== undefined) {
     return isDurationConsistent(gap, expectedMinutes) ? 4 : -2;
   }
@@ -338,7 +339,9 @@ const scoreTimeGap = (
 const getServiceStartTimeAnchor = (
   planLabel: string,
 ): ParsedPlanningStartTime | undefined => {
-  const match = planLabel.match(/[-–—]\s*(.+)$/);
+  const match = planLabel.match(
+    /[-–—]\s*(\d{1,2}(?::\d{2}(?::\d{2})?)?\s*(?:A\.?M\.?|P\.?M\.?)?)\s*$/i,
+  );
   // Ambiguous header values retain the same conservative default as row times.
   if (!match) return undefined;
   return parsePlanningStartTime(match[1]);
@@ -358,11 +361,20 @@ const resolvePlanningStartTimes = (
     const row = rows[index];
     const parsed = row.parsedPlanningStartTime;
     if (!parsed) continue;
+    const isFirstTimedRow = previousTimedRowIndex < 0;
 
     if (parsed.interpretation !== "ambiguous") {
+      const isPlausiblePreServiceTime = Boolean(
+        isFirstTimedRow &&
+        anchor &&
+        parsed.minuteOfDay < anchor.minuteOfDay &&
+        anchor.minuteOfDay - parsed.minuteOfDay <= 180,
+      );
       const absoluteTime = previousAbsoluteTime === undefined
         ? parsed.minuteOfDay
-        : getNextOccurrence(parsed.minuteOfDay, previousAbsoluteTime);
+        : isPlausiblePreServiceTime
+          ? parsed.minuteOfDay
+          : getNextOccurrence(parsed.minuteOfDay, previousAbsoluteTime);
       previousAbsoluteTime = absoluteTime;
       previousTimedRowIndex = index;
       row.startTime = formatPlanningStartTime(parsed.minuteOfDay);
@@ -374,11 +386,19 @@ const resolvePlanningStartTimes = (
       parsed.minuteOfDay,
     ];
     const previousTime = previousAbsoluteTime;
-    const candidateTimes = candidates.map((minuteOfDay) =>
-      previousTime === undefined
+    const candidateTimes = candidates.map((minuteOfDay) => {
+      const isPlausiblePreServiceTime = Boolean(
+        isFirstTimedRow &&
+        anchor &&
+        minuteOfDay < anchor.minuteOfDay &&
+        anchor.minuteOfDay - minuteOfDay <= 180,
+      );
+      return previousTime === undefined
         ? minuteOfDay
-        : getNextOccurrence(minuteOfDay, previousTime),
-    );
+        : isPlausiblePreServiceTime
+          ? minuteOfDay
+          : getNextOccurrence(minuteOfDay, previousTime);
+    });
     const defaultCandidateIndex = candidates.findIndex(
       (candidate) => candidate === parsed.minuteOfDay,
     );
@@ -403,9 +423,14 @@ const resolvePlanningStartTimes = (
         index,
       );
       addSupportedCandidate(
-        candidateTimes.map((candidateTime) =>
-          scoreTimeGap(candidateTime - previousTime, expected),
-        ),
+        candidateTimes.map((candidateTime) => {
+          const gap = candidateTime - previousTime;
+          if (
+            isFirstTimedRow && anchor && gap < 0 &&
+            -gap <= 180
+          ) return 3;
+          return scoreTimeGap(gap, expected);
+        }),
       );
     }
 

@@ -68,6 +68,13 @@ test("reports saved-session and Controller permission prerequisites without unsa
   });
   assert.match(sessionFailure ?? "", /Saved-session authentication failed/);
   assert.match(sessionFailure ?? "", /No password or verification-code flow was attempted/);
+  for (const accountMatch of [false, null]) {
+    const accountFailure = smokePrerequisiteFailure({
+      kind: "saved-session",
+      auth: auth({ matchesConfiguredAccount: accountMatch }),
+    });
+    assert.match(accountFailure ?? "", /Saved-session authentication failed/);
+  }
 
   const controllerFailure = smokePrerequisiteFailure({
     kind: "controller-access",

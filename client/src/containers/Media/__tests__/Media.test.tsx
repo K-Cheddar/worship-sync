@@ -22,6 +22,7 @@ import { ControllerInfoContext } from "../../../context/controllerInfo";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { createNewFreeForm } from "../../../utils/itemUtil";
 import { claimMediaUpload } from "../../../utils/mediaOperationClaims";
+import * as localImageAssets from "../../../utils/localImageAssets";
 import { MEDIA_LIBRARY_ROOT_VIEW } from "../../../utils/mediaFolderMutations";
 import { VideoInputMediaWriteOutcomeUnknownError } from "../../../hooks/useLocalVideoInputThumbnailPersistence";
 
@@ -2543,6 +2544,99 @@ describe("Media", () => {
       expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledWith("church-1", "thumb-asset"),
     );
     expect(mockDeleteCloudinaryMediaAsset).toHaveBeenCalledTimes(1);
+  });
+
+  it("queues a legacy local video thumbnail by its Cloudinary provider without deleting a Mux parent", async () => {
+    const row = {
+      ...makeBaseState().media.list[0],
+      id: "legacy-local-input",
+      type: "video",
+      source: "local",
+      background: "local-video-input://camera-source",
+      thumbnail: "https://res.cloudinary.com/demo/image/upload/v123/thumbnails/camera.webp",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "camera-source",
+        label: "Booth camera",
+      },
+      providerStorage: {
+        provider: "mux",
+        assetId: "mux-parent-asset",
+        churchId: "church-1",
+        permanent: true,
+      },
+    };
+    mockState = makeBaseState({ media: { list: [row], folders: [] } });
+    mockSelectedMedia = row as typeof emptySelectedMedia;
+    mockSelectedMediaIds = new Set([row.id]);
+    const enqueue = jest.spyOn(localImageAssets, "enqueueLocalImageCloudCleanup").mockResolvedValue({
+      assetId: "cleanup-job",
+    } as Awaited<ReturnType<typeof localImageAssets.enqueueLocalImageCloudCleanup>>);
+    try {
+      await renderMedia();
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+      await waitFor(() => expect(enqueue).toHaveBeenCalledWith({
+        mediaId: "legacy-local-input",
+        workspaceId: "church-1",
+        cloudPublicId: "mock-public-id",
+      }));
+      expect(enqueue.mock.invocationCallOrder[0]).toBeLessThan(
+        mockDeleteMuxAsset.mock.invocationCallOrder[0],
+      );
+      expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
+      expect(mockDeleteMuxAsset).toHaveBeenCalledWith("church-1", "mux-parent-asset");
+      expect(mockDeleteMuxAsset).toHaveBeenCalledTimes(1);
+    } finally {
+      enqueue.mockRestore();
+    }
+  });
+
+  it("does not guess a thumbnail provider from an unrecognized URL", async () => {
+    const row = {
+      ...makeBaseState().media.list[0],
+      id: "legacy-local-input-ambiguous",
+      type: "video",
+      source: "local",
+      background: "local-video-input://camera-source",
+      thumbnail: "https://images.example.com/camera.jpg",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "camera-source",
+        label: "Booth camera",
+      },
+      providerStorage: {
+        provider: "mux",
+        assetId: "explicit-mux-parent",
+        churchId: "church-1",
+        permanent: true,
+      },
+    };
+    mockState = makeBaseState({ media: { list: [row], folders: [] } });
+    mockSelectedMedia = row as typeof emptySelectedMedia;
+    mockSelectedMediaIds = new Set([row.id]);
+    const extraction = jest.requireMock("../../../utils/cloudinaryUtils") as {
+      extractPublicId: jest.Mock;
+    };
+    extraction.extractPublicId.mockReturnValueOnce(null);
+    const enqueue = jest.spyOn(localImageAssets, "enqueueLocalImageCloudCleanup").mockResolvedValue({
+      assetId: "unused-cleanup-job",
+    } as Awaited<ReturnType<typeof localImageAssets.enqueueLocalImageCloudCleanup>>);
+    try {
+      await renderMedia();
+      await userEvent.click(screen.getByRole("button", { name: "Delete" }));
+      await userEvent.click(screen.getByRole("button", { name: "confirm-delete" }));
+
+      await waitFor(() => expect(mockDeleteMuxAsset).toHaveBeenCalledWith(
+        "church-1",
+        "explicit-mux-parent",
+      ));
+      expect(enqueue).not.toHaveBeenCalled();
+      expect(mockDeleteCloudinaryMediaAsset).not.toHaveBeenCalled();
+    } finally {
+      enqueue.mockRestore();
+    }
   });
 
   const mountFolderQueue = () => {

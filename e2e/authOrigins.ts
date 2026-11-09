@@ -33,8 +33,14 @@ export const isTrustedFirebaseAuthOrigin = (
     const hostname = provider === "identitytoolkit"
       ? "identitytoolkit.googleapis.com"
       : "securetoken.googleapis.com";
-    return url.protocol === "https:" && url.hostname === hostname;
+    return url.protocol === "https:" && url.hostname === hostname && url.port === "";
   } catch {
     return false;
   }
 };
+
+/** Match the exact Firebase auth hosts, including insecure or unexpected ports, so the guard can reject them. */
+export const firebaseAuthRequestMatchers = {
+  identitytoolkit: /^https?:\/\/identitytoolkit\.googleapis\.com(?::\d+)?(?:[/?#]|$)/i,
+  securetoken: /^https?:\/\/securetoken\.googleapis\.com(?::\d+)?(?:[/?#]|$)/i,
+} as const;
