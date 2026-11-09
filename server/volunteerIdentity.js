@@ -8,6 +8,8 @@ const isFirestoreTransactionAborted = (error) => {
   return code === "10" || code === "aborted";
 };
 
+const MAX_VOLUNTEER_LINK_TRANSACTION_ATTEMPTS = 3;
+
 export const volunteerIdentityClaimId = (churchId, userId) =>
   `volunteer_identity_${createHash("sha256")
     .update(`${String(churchId || "").trim()}\u0000${String(userId || "").trim()}`)
@@ -276,23 +278,33 @@ export const createVolunteerIdentityOperations = ({
   const linkRosterMember = async (args) => {
     const db = requireFirestore();
     if (db) {
-      try {
-        return await db.runTransaction(async (transaction) => {
-          const plan = await prepareRosterMemberLink({
-            ...args,
-            db,
-            transaction,
+      for (
+        let attempt = 1;
+        attempt <= MAX_VOLUNTEER_LINK_TRANSACTION_ATTEMPTS;
+        attempt += 1
+      ) {
+        try {
+          return await db.runTransaction(async (transaction) => {
+            const plan = await prepareRosterMemberLink({
+              ...args,
+              db,
+              transaction,
+            });
+            plan.applyToTransaction(transaction);
+            return plan;
           });
-          plan.applyToTransaction(transaction);
-          return plan;
-        });
-      } catch (transactionError) {
-        if (isFirestoreTransactionAborted(transactionError)) {
-          throw linkConflict(
-            "This account's roster link changed during the request. Try again.",
-          );
+        } catch (transactionError) {
+          if (!isFirestoreTransactionAborted(transactionError)) {
+            throw transactionError;
+          }
+          if (attempt === MAX_VOLUNTEER_LINK_TRANSACTION_ATTEMPTS) {
+            throw linkConflict(
+              "This account's roster link changed during the request. Try again.",
+            );
+          }
+          // A fresh transaction lets a contending link or removal finish and
+          // rechecks the current membership and roster identity before failing.
         }
-        throw transactionError;
       }
     }
 

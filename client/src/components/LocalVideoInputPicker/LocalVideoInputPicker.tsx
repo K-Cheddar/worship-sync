@@ -330,6 +330,7 @@ const LocalVideoInputPicker = ({
   const [capturedFrame, setCapturedFrame] = useState<{
     frame: LocalVideoThumbnailFrame;
     url: string;
+    captureKey: string;
   }>();
   const [captureError, setCaptureError] = useState("");
   const [captureFeedback, setCaptureFeedback] = useState("");
@@ -360,6 +361,8 @@ const LocalVideoInputPicker = ({
   captureKeyRef.current = captureKey;
   const capturedFrameRef = useRef(capturedFrame);
   capturedFrameRef.current = capturedFrame;
+  const currentCapturedFrame =
+    capturedFrame?.captureKey === captureKey ? capturedFrame : undefined;
   const previewStreamRef = useRef<MediaStream | undefined>(undefined);
   const previewSessionRef = useRef<DevicePreviewSession | undefined>(undefined);
   const previewReleaseRef = useRef<Promise<void>>(Promise.resolve());
@@ -384,14 +387,14 @@ const LocalVideoInputPicker = ({
     setIsSavingThumbnail(false);
     setIsRemovingThumbnail(false);
     setThumbnailRemoved(false);
-  }, [
-    browserShare?.stream,
-    desktopSourceId,
-    open,
-    previewRefreshKey,
-    source?.sourceId,
-    videoDeviceId,
-  ]);
+  }, [captureKey]);
+
+  useEffect(() => {
+    // Restarting the live preview invalidates an in-progress capture, while a
+    // frame already captured for this same source remains reviewable and usable.
+    captureGenerationRef.current += 1;
+    setIsCapturingThumbnail(false);
+  }, [previewRefreshKey]);
 
   const capturedFrameUrl = capturedFrame?.url;
   useEffect(
@@ -889,8 +892,8 @@ const LocalVideoInputPicker = ({
       audioEnabled,
     };
     try {
-      if (capturedFrame && !capturedThumbnailSaved && !thumbnailRemoved) {
-        await onLinked(linkedSource, capturedFrame.frame);
+      if (currentCapturedFrame && !capturedThumbnailSaved && !thumbnailRemoved) {
+        await onLinked(linkedSource, currentCapturedFrame.frame);
       } else {
         await onLinked(linkedSource);
       }
@@ -1088,7 +1091,7 @@ const LocalVideoInputPicker = ({
     hasSelectedSource;
   const saveLabel = source
     ? "Save local link"
-    : capturedFrame
+    : currentCapturedFrame
       ? "Add to Media and save thumbnail"
       : "Add to Media";
   let triggerIcon = source ? Cable : Video;
@@ -1105,10 +1108,10 @@ const LocalVideoInputPicker = ({
   }
 
   let desktopSourcePreview: ReactNode = null;
-  if (capturedFrame) {
+  if (currentCapturedFrame) {
     desktopSourcePreview = (
       <img
-        src={capturedFrame.url}
+        src={currentCapturedFrame.url}
         alt="Captured video input thumbnail"
         className={`aspect-video w-full rounded border border-white/10 bg-black ${previewObjectFit}`}
       />
@@ -1135,6 +1138,7 @@ const LocalVideoInputPicker = ({
 
   const captureThumbnail = async () => {
     const generation = ++captureGenerationRef.current;
+    const operationKey = captureKeyRef.current;
     setIsCapturingThumbnail(true);
     setCaptureError("");
     setCaptureFeedback("");
@@ -1153,8 +1157,16 @@ const LocalVideoInputPicker = ({
         );
       }
       const frame = await captureLocalVideoInputThumbnail(frameSource);
-      if (generation !== captureGenerationRef.current || !open) return;
-      setCapturedFrame({ frame, url: URL.createObjectURL(frame.blob) });
+      if (
+        generation !== captureGenerationRef.current ||
+        operationKey !== captureKeyRef.current ||
+        !open
+      ) return;
+      setCapturedFrame({
+        frame,
+        url: URL.createObjectURL(frame.blob),
+        captureKey: operationKey,
+      });
       setCapturedThumbnailSaved(false);
       setThumbnailRemoved(false);
     } catch (error) {
@@ -1172,8 +1184,8 @@ const LocalVideoInputPicker = ({
   };
 
   const saveCapturedThumbnail = async () => {
-    if (!capturedFrame || !onSaveThumbnail || !source) return;
-    const frameToSave = capturedFrame;
+    if (!currentCapturedFrame || !onSaveThumbnail || !source) return;
+    const frameToSave = currentCapturedFrame;
     const operationKey = captureKeyRef.current;
     const generation = captureGenerationRef.current;
     const requestId = ++thumbnailActionRequestRef.current;
@@ -1181,7 +1193,8 @@ const LocalVideoInputPicker = ({
       requestId === thumbnailActionRequestRef.current &&
       generation === captureGenerationRef.current &&
       operationKey === captureKeyRef.current &&
-      capturedFrameRef.current?.frame === frameToSave.frame;
+      capturedFrameRef.current?.frame === frameToSave.frame &&
+      capturedFrameRef.current.captureKey === operationKey;
     setIsSavingThumbnail(true);
     setCaptureError("");
     try {
@@ -1382,16 +1395,16 @@ const LocalVideoInputPicker = ({
                   playsInline
                   autoPlay
                   aria-label="Input preview"
-                  className={`h-full w-full ${previewObjectFit} ${capturedFrame ? "opacity-0" : ""}`}
+                  className={`h-full w-full ${previewObjectFit} ${currentCapturedFrame ? "opacity-0" : ""}`}
                 />
-                {capturedFrame ? (
+                {currentCapturedFrame ? (
                   <img
-                    src={capturedFrame.url}
+                    src={currentCapturedFrame.url}
                     alt="Captured video input thumbnail"
                     className={`absolute inset-0 h-full w-full ${previewObjectFit}`}
                   />
                 ) : null}
-                {livePreviewStatusLabel ? (
+                {livePreviewStatusLabel && !currentCapturedFrame ? (
                   <div
                     className="absolute inset-0 z-10 flex items-center justify-center bg-black px-4 text-center text-sm text-neutral-300"
                     role="status"
@@ -1401,9 +1414,9 @@ const LocalVideoInputPicker = ({
                 ) : null}
               </div>
             ) : null}
-            {source || hasSelectedSource || capturedFrame ? (
+            {source || hasSelectedSource || currentCapturedFrame ? (
               <div className="flex flex-wrap items-center gap-2">
-                {!capturedFrame ? (
+                {!currentCapturedFrame ? (
                   <Button
                     variant="secondary"
                     svg={Camera}

@@ -19,6 +19,7 @@ An operator opens Add/Relink for a local video input, captures a frame from its 
 - Capture happens only after an operator asks for it.
 - The saved still appears in the Media Library and in static item-slide previews that reference the same source.
 - A cloud-backed replacement keeps the prior cloud copy until the new one is uploaded and committed. A local-only replacement keeps it until the new local reference commits, then clears the old cloud reference and durably schedules its deletion.
+- A cloud-backed thumbnail upload is durably staged before its Media reference is written and cannot run until that reference is confirmed. After an interruption, the upload manager reconciles the staged job against authoritative Media state before resuming or cleaning it up.
 - Replacing a thumbnail does not overwrite an active upload job; its lease and provider checkpoints remain until upload cancellation or completion is reconciled.
 - Relinking without a new capture leaves the existing thumbnail and local image reference unchanged.
 - An explicit thumbnail removal remains in effect when the operator saves the local link.
@@ -68,4 +69,4 @@ An operator opens Add/Relink for a local video input, captures a frame from its 
 
 ## Technical design notes
 
-The picker encodes one frame from its already-visible video or desktop preview, capped at 640×360 with aspect ratio preserved. The Media row stores only a `LocalImageAssetReference`. Source relinks and thumbnail changes patch the existing Media row through the v2 document merge, preserving unrelated fields. Thumbnail save and removal share one per-database, per-row mutation queue. The upload job names the existing input row as its target, guards stale retakes, preserves the live source fields, and retries prior asset cleanup.
+The picker encodes one frame from its already-visible video or desktop preview, capped at 640×360 with aspect ratio preserved. The Media row stores only a `LocalImageAssetReference`. Source relinks and thumbnail changes patch the existing Media row through the v2 document merge, preserving unrelated fields. Thumbnail save and removal share one per-database, per-row mutation queue. Cloud-backed saves stage a non-runnable upload job before writing the Media reference; the upload manager confirms the matching Media row, source, and asset after restart before activating the job. The upload job names the existing input row as its target, guards stale retakes, preserves the live source fields, and retries prior asset cleanup.
