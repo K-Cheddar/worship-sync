@@ -5,11 +5,19 @@ import { sortNamesInList } from "../utils/sort";
 
 /** Song-specific view of the shared document cache. */
 export const selectSongLibrary = createSelector(
-  [(state: RootState) => state.allDocs.allSongDocs,
-    (state: RootState) => state.allDocs.isInitialized],
-  (documents, isInitialized) => ({
-    songs: sortNamesInList(documents.map(itemDocumentToLibraryEntry)),
-    documents,
-    isLoading: !isInitialized && documents.length === 0,
-  }),
+  [
+    (state: RootState) => state.allDocs.allSongDocs,
+    (state: RootState) => state.allDocs.isInitialized,
+    (state: RootState) => state.allDocs.songLibraryDiagnostics,
+  ],
+  (documents, isInitialized, diagnostics) => {
+    const unavailableIds = new Set(diagnostics.map((diagnostic) => diagnostic.songId));
+    const songs = sortNamesInList(documents.map(itemDocumentToLibraryEntry))
+      .filter((song) => !unavailableIds.has(song._id));
+    return {
+      songs,
+      documents,
+      isLoading: !isInitialized && documents.length === 0,
+    };
+  },
 );

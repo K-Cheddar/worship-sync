@@ -126,6 +126,11 @@ export type SlideType =
 
 export type OverflowMode = "fit" | "separate";
 
+export type MonitorLayout = {
+  currentFontSizePx: number;
+  nextFontSizePx: number;
+};
+
 export type ItemSlideType = {
   type: SlideType;
   name: string;
@@ -135,9 +140,9 @@ export type ItemSlideType = {
   videoBackgroundSendMode?: VideoBackgroundSendMode;
   /** Missing values resolve from the owning item type. */
   videoBackgroundLoop?: boolean;
+  /** Legacy persisted monitor boxes. Hydration converts these to compact layout values. */
   /** Pre-calculated boxes for monitor "current" band (50% height). Set when slide is formatted. */
   monitorCurrentBandBoxes?: Box[];
-  /** Pre-calculated boxes for monitor "next" band (30% height). Set when slide is formatted. */
   monitorNextBandBoxes?: Box[];
   overflow?: OverflowMode;
   formattedTextDisplayInfo?: FormattedTextDisplayInfo;
@@ -174,6 +179,9 @@ export type DocType =
   | "credit"
   | "credit-history"
   | "overlay-history"
+  | "song-v2-root"
+  | "song-v2-arrangement"
+  | "song-v2-slide"
   | "board-alias"
   | "board"
   | "board-post"
@@ -191,6 +199,60 @@ export type DBItem = ItemProperties & {
   createdBy?: string;
   updatedBy?: string;
   docType?: DocType;
+};
+
+type SongV2AuditFields = Pick<DBItem, "createdAt" | "updatedAt" | "createdBy" | "updatedBy">;
+
+/** Song-level data for the fragmented song representation. */
+export type SongV2RootDocument = SongV2AuditFields & {
+  _id: string;
+  _rev?: string;
+  docType: "song-v2-root";
+  songId: string;
+  songSchemaVersion: 2;
+  name: string;
+  shouldSkipTitle?: boolean;
+  selectedArrangement: number;
+  arrangementIds: string[];
+  /** A retained tombstone prevents a legacy predecessor from becoming authoritative again. */
+  deletedAt?: string;
+  background?: string;
+  shouldSendTo?: ShouldSendTo;
+  songMetadata?: SongMetadata;
+  songLinks?: SongLink[];
+  songAudio?: SongAudio;
+};
+
+/** Arrangement-authored data and the explicit order of its slide references. */
+export type SongV2ArrangementDocument = SongV2AuditFields & {
+  _id: string;
+  _rev?: string;
+  docType: "song-v2-arrangement";
+  songId: string;
+  arrangementId: string;
+  name: string;
+  formattedLyrics: Arrangment["formattedLyrics"];
+  songOrder: Arrangment["songOrder"];
+  monitorLayout?: MonitorLayout;
+  slideIds: string[];
+};
+
+/** One authored slide is the smallest independently conflicting content unit. */
+export type SongV2SlideDocument = Omit<
+  ItemSlideType,
+  "monitorCurrentBandBoxes" | "monitorNextBandBoxes"
+> & SongV2AuditFields & {
+  _id: string;
+  _rev?: string;
+  docType: "song-v2-slide";
+  songId: string;
+  arrangementId: string;
+};
+
+export type SongV2Documents = {
+  root: SongV2RootDocument;
+  arrangements: SongV2ArrangementDocument[];
+  slides: SongV2SlideDocument[];
 };
 
 export type SongMetadata = {
@@ -297,7 +359,10 @@ export type ItemProperties = {
   selectedArrangement: number;
   background?: string;
   arrangements: Arrangment[];
+  /** Used by non-song items. Songs use arrangement slides. */
   slides: ItemSlideType[];
+  /** Compact monitor sizing for non-song items. Songs store this per arrangement. */
+  monitorLayout?: MonitorLayout;
   bibleInfo?: BibleInfo;
   timerInfo?: TimerInfo;
   shouldSendTo: ShouldSendTo;
@@ -314,6 +379,8 @@ export type ItemContentOwner = {
   scopeId: string;
   databaseKey: string;
   churchId: string;
+  /** Stable account identity prevents retained local mutations crossing users. */
+  accountId?: string;
 };
 
 export type BibleInfo = {
@@ -326,6 +393,8 @@ export type BibleInfo = {
 
 export type ItemState = ItemProperties & {
   contentOwner?: ItemContentOwner;
+  /** Physical storage representation of the active item, when the document has one. */
+  docType?: DocType;
   listId?: string;
   selectedSlide: number;
   selectedBox: number;
@@ -335,8 +404,11 @@ export type ItemState = ItemProperties & {
   isItemFormatting?: boolean;
   hasPendingUpdate?: boolean;
   hasRemoteUpdate?: boolean;
+  remoteUpdateReason?: "song-version-transition" | "song-content-conflict" | null;
   baseItem?: DBItem | null;
   pendingRemoteItem?: DBItem | null;
+  /** Runtime-only revision leaves shown with the current conflict decision. */
+  pendingSongV2Conflicts?: { documentId: string; winningRevision: string; revisions: string[] }[];
   /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */
   restoreFocusToBox?: number | null;
   /** Editor-only: slide ids selected for subset background apply/clear (media actions). */
@@ -351,6 +423,7 @@ export type Arrangment = {
   name: string;
   formattedLyrics: FormattedLyrics[];
   songOrder: SongOrder[];
+  monitorLayout?: MonitorLayout;
   slides: ItemSlideType[];
   id: string;
 };
@@ -870,8 +943,8 @@ export type ItemLists = {
   itemLists: ItemList[];
   activeList: ItemList;
   /**
-   * Last outline opened per controller scope. Survives reload so each
-   * controller returns to its own place; absent on legacy docs.
+   * Legacy last-opened metadata from older clients. Current clients keep
+   * outline selection locally and preserve this field only on unrelated writes.
    */
   selectedIdByScope?: Record<string, string>;
   _id: string;

@@ -27,7 +27,8 @@ import {
   listChurchResources,
   updateChurchResource,
 } from "../api/auth";
-import { useSelector } from "../hooks";
+import { useDispatch, useSelector } from "../hooks";
+import { applyItemDocumentChange } from "../store/allDocsSlice";
 import { broadcastItemUpdate } from "../store/store";
 import { useChurchStorageQuota } from "../components/StorageUsage/useChurchStorageQuota";
 import { StorageUsageIndicators } from "../components/StorageUsage/StorageUsageIndicators";
@@ -42,6 +43,7 @@ import {
   deleteSongAudioBeforeClearingMetadata,
   persistSongAudioAttachment,
 } from "../utils/persistSongAudioAttachment";
+import { loadSong, songToLibraryProjection } from "../utils/songPersistence";
 import type {
   ChurchResource,
   ResourceLibraryEntry,
@@ -68,6 +70,7 @@ const resourceSkeletonColumns = [
 ];
 
 const ResourcesPage = () => {
+  const dispatch = useDispatch();
   const { churchId, churchName, access } = useContext(GlobalInfoContext) || {};
   const { db } = useContext(ControllerInfoContext) || {};
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
@@ -237,10 +240,26 @@ const ResourcesPage = () => {
           setResources((current) => current.filter((resource) => resource.id !== entry.resource.id));
         } else {
           if (!db) throw new Error("The song library is not available. Try again.");
+          const baselineSong = await loadSong(db, entry.songId);
+          if (baselineSong.docType === "song-v2-root") {
+            const saved = await persistSongAudioAttachment({
+              db, songId: entry.songId, audio: null, baselineSong,
+            });
+            dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
+            broadcastItemUpdate(saved);
+            try {
+              await deleteSongAudioWithRetry({ churchId, songId: entry.songId, audio: baselineSong.songAudio ?? entry.audio });
+            } catch (error) {
+              console.error("Error cleaning removed song audio:", error);
+            }
+            storageChanged = true;
+            continue;
+          }
           await deleteSongAudioBeforeClearingMetadata({
             deleteAudio: () => deleteSongAudioWithRetry({ churchId, songId: entry.songId, audio: entry.audio }),
             clearMetadata: async () => {
               const saved = await persistSongAudioAttachment({ db, songId: entry.songId, audio: null });
+              dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
               broadcastItemUpdate(saved);
               return saved;
             },

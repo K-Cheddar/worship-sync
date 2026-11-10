@@ -11,7 +11,7 @@ const songDoc = (name: string): DBItem =>
 const createTestStore = (songs: string[]) =>
   configureStore({
     reducer: {
-      allDocs: (state = { allSongDocs: songs.map(songDoc) }) => state,
+      allDocs: (state = { allSongDocs: songs.map(songDoc), songLibraryDiagnostics: [] }) => state,
     },
     middleware: (getDefaultMiddleware) =>
       getDefaultMiddleware({ serializableCheck: false, immutableCheck: false }),

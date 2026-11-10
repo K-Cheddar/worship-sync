@@ -103,8 +103,10 @@ export const overlaysSlice = createSlice({
       state.isInitialized = action.payload;
     },
     initiateOverlayList: (state, action: PayloadAction<OverlayInfo[]>) => {
-      if (state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
-      state.list = action.payload.map((overlay) => {
+      const retainedDraft = state.outlineOwnerKey
+        ? state.pendingByOutline?.[state.outlineOwnerKey]
+        : undefined;
+      const remoteList = action.payload.map((overlay) => {
         return {
           ...overlay,
           id: overlay.id || generateRandomId(),
@@ -114,9 +116,26 @@ export const overlaysSlice = createSlice({
           },
         };
       });
+      if (retainedDraft && state.outlineOwnerKey) {
+        const remoteById = new Map(remoteList.map((overlay) => [overlay.id, overlay]));
+        state.list = retainedDraft.map((overlay) => ({
+          ...remoteById.get(overlay.id),
+          ...overlay,
+        }));
+        state.hasPendingUpdate = state.list.length !== remoteList.length ||
+          state.list.some((overlay, index) => overlay.id !== remoteList[index]?.id);
+        if (state.hasPendingUpdate) {
+          state.pendingByOutline![state.outlineOwnerKey] = state.list;
+        } else {
+          delete state.pendingByOutline![state.outlineOwnerKey];
+        }
+      } else {
+        state.list = remoteList;
+        state.hasPendingUpdate = false;
+        if (state.outlineOwnerKey) delete state.pendingByOutline?.[state.outlineOwnerKey];
+      }
       state.initialList = state.list.map((overlay) => overlay.id);
       state.isInitialized = true;
-      state.hasPendingUpdate = false;
     },
     updateOverlayListFromRemote: (
       state,

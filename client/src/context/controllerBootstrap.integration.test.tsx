@@ -88,7 +88,7 @@ describe("controller bootstrap production consumers", () => {
   it("shows delayed remote outlines, details, preferences and scoped routes without navigation or default writes", async () => {
     mount();
     await waitFor(() => expect(mockPulls).toHaveLength(1));
-    await waitFor(() => expect(mockGet).toHaveBeenCalledWith("ItemLists"));
+    await waitFor(() => expect(mockGet).toHaveBeenCalledWith("ItemLists", { conflicts: true }));
     expect(mockPut).not.toHaveBeenCalled();
     seedSaved();
     act(() => mockPulls[0].emit("complete", { ok: true }));

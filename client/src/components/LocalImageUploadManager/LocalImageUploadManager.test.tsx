@@ -924,6 +924,120 @@ describe("LocalImageUploadManager", () => {
     view.unmount();
   });
 
+  it("discards an upload superseded by a rapid retake without adding Media", async () => {
+    const input: MediaType = {
+      path: "",
+      createdAt: "2026-11-01T00:00:00.000Z",
+      updatedAt: "2026-11-01T00:00:00.000Z",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      name: "Main camera",
+      publicId: "local_input_camera-1",
+      type: "video",
+      id: "local_input_camera-1",
+      background: "local-video-input://camera-1",
+      thumbnail: "https://res.cloudinary.com/example/old.webp",
+      source: "local",
+      localImage: {
+        id: "latest-thumbnail",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "latest.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud",
+      },
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "camera-1",
+        label: "Main camera",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+      },
+    };
+    const staleJob: LocalImageUploadJob = {
+      ...interruptedJob,
+      id: "stale-thumbnail",
+      assetId: "stale-thumbnail",
+      status: "uploaded",
+      phase: "finalizing",
+      cloudMedia: {
+        id: "stale-cloud-media",
+        path: "",
+        createdAt: "",
+        updatedAt: "",
+        format: "webp",
+        height: 360,
+        width: 640,
+        name: "Stale thumbnail",
+        publicId: "stale-cloud-public-id",
+        type: "image",
+        background: "https://res.cloudinary.com/example/stale.webp",
+        thumbnail: "https://res.cloudinary.com/example/stale.webp",
+        providerStorage: {
+          provider: "cloudinary",
+          assetId: "stale-cloud-media",
+          publicId: "stale-cloud-public-id",
+          churchId: "church-1",
+          permanent: true,
+        },
+      },
+      localVideoInputThumbnail: {
+        targetMediaId: input.id,
+      },
+    };
+    mockState.media.list = [input];
+    store.dispatch(updateMediaList([input]));
+    mockListJobs.mockReset().mockResolvedValueOnce([staleJob]).mockResolvedValue([]);
+    mockClaimJob.mockResolvedValue({
+      ...staleJob,
+      leaseOwnerId: "lease-owner",
+      leaseExpiresAt: Date.now() + 300_000,
+    });
+    mockUpdateJob.mockImplementation(async ({ leaseOwnerId, leaseDurationMs, now, patch }) => ({
+      ...staleJob,
+      ...patch,
+      leaseOwnerId,
+      leaseExpiresAt: now + leaseDurationMs,
+      updatedAt: new Date(now).toISOString(),
+    } as LocalImageUploadJob));
+    mockGetLocalImage.mockResolvedValue({
+      id: "stale-thumbnail",
+      workspaceId: "church-1",
+      blob: new Blob(["image"], { type: "image/webp" }),
+      fileName: "stale.webp",
+      contentType: "image/webp",
+      size: 5,
+      width: 640,
+      height: 360,
+      createdAt: "2026-11-05T00:00:00.000Z",
+    });
+
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db: {} as PouchDB.Database, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-1" } as any}>
+          <LocalImageUploadManager />
+        </GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>,
+    );
+
+    await waitFor(() =>
+      expect(mockDeleteCloudinaryAsset).toHaveBeenCalledWith(
+        "church-1",
+        "stale-cloud-public-id",
+      ),
+    );
+    await waitFor(() =>
+      expect(mockDeleteLocalImage).toHaveBeenCalledWith("stale-thumbnail"),
+    );
+    expect(mockFlushMedia).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: addItemToMediaList.type }),
+    );
+    expect(store.getState().media.list[0].localVideoInput?.sourceId).toBe("camera-1");
+    view.unmount();
+  });
+
   it("waits for schema v2 before marking a workspace swept", async () => {
     jest.useFakeTimers();
     jest.mocked(cleanupOrphanedLocalImages).mockReset().mockResolvedValueOnce(null).mockResolvedValue(0);

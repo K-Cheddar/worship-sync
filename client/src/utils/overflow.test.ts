@@ -20,19 +20,18 @@ jest.mock("./slideCreation", () => ({
 }));
 
 jest.mock("./monitorSlideFormatter", () => ({
-  addMonitorFormattedToSlide: jest.fn((slide) => ({
-    ...slide,
-    monitorFormatted: true,
-    monitorCurrentBandBoxes: [{ id: "current-0", words: slide.boxes?.[1]?.words }],
-    monitorNextBandBoxes: [{ id: "next-0", words: slide.boxes?.[1]?.words }],
-  })),
   addMonitorFormattedToSlides: jest.fn((slides) =>
-    slides.map((slide: any, index: number) => ({
+    slides.map((slide: any) => ({
       ...slide,
-      monitorCurrentBandBoxes: [{ id: `current-${index}`, words: slide.boxes?.[1]?.words }],
-      monitorNextBandBoxes: [{ id: `next-${index}`, words: slide.boxes?.[1]?.words }],
+      monitorCurrentBandBoxes: [{ id: "current", words: slide.boxes?.[1]?.words }],
+      monitorNextBandBoxes: [{ id: "next", words: slide.boxes?.[1]?.words }],
     })),
   ),
+  getMonitorLayoutForSlides: jest.fn(() => ({ currentFontSizePx: 33, nextFontSizePx: 33 })),
+  stripMonitorBoxClones: jest.fn((slides) => slides.map((slide: any) => {
+    const { monitorCurrentBandBoxes: _current, monitorNextBandBoxes: _next, ...clean } = slide;
+    return clean;
+  })),
 }));
 
 let generatedId = 0;
@@ -113,12 +112,8 @@ describe("overflow utilities", () => {
     expect(result).toHaveLength(2);
     expect(result[0].boxes[1].words).toBe("Line 1\nLine 2\n");
     expect(result[1].boxes[1].words).toBe("Line 3");
-    expect((result[0] as { monitorFormatted?: boolean }).monitorFormatted).toBe(
-      true,
-    );
-    expect((result[1] as { monitorFormatted?: boolean }).monitorFormatted).toBe(
-      true,
-    );
+    expect(result[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(result[1]).not.toHaveProperty("monitorNextBandBoxes");
   });
 
   it("preview offset matches formatLyrics so first verse slide uses slides[1] boxes", () => {
@@ -213,14 +208,14 @@ describe("overflow utilities", () => {
     expect(result.slides).toEqual([
       expect.objectContaining({
         name: "Section 3",
-        monitorCurrentBandBoxes: [
-          expect.objectContaining({ id: "current-0" }),
-        ],
-        monitorNextBandBoxes: [
-          expect.objectContaining({ id: "next-0" }),
+        boxes: [
+          expect.objectContaining({ background: "bg" }),
+          expect.objectContaining({ fontSize: 40 }),
         ],
       }),
     ]);
+    expect(result.slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(result.slides[0]).not.toHaveProperty("monitorNextBandBoxes");
     expect(errorSpy).toHaveBeenCalled();
   });
 
@@ -259,12 +254,9 @@ describe("overflow utilities", () => {
     expect(result.slides).toHaveLength(1);
     expect(result.slides[0].name).toBe("Section 1");
     expect(result.slides[0].boxes[1].words).toBe("new words");
-    expect(result.slides[0].monitorCurrentBandBoxes).toEqual([
-      expect.objectContaining({ id: "current-0", words: "new words" }),
-    ]);
-    expect(result.slides[0].monitorNextBandBoxes).toEqual([
-      expect.objectContaining({ id: "next-0", words: "new words" }),
-    ]);
+    expect(result.slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(result.slides[0]).not.toHaveProperty("monitorNextBandBoxes");
+    expect(result.monitorLayout).toEqual({ currentFontSizePx: 33, nextFontSizePx: 33 });
     expect(result.formattedSections?.[0]?.slideSpan).toBe(1);
   });
 
@@ -418,10 +410,11 @@ describe("overflow utilities", () => {
     } as any;
 
     const result = formatSong(item);
-    const verseSlides = result.slides.filter((s: any) =>
+    const verseSlides = result.arrangements[0].slides.filter((s: any) =>
       String(s.name).startsWith("Verse 1"),
     );
 
+    expect(result.slides).toEqual([]);
     expect(verseSlides.length).toBeGreaterThan(1);
     expect(verseSlides.some((s: any) => String(s.name).includes("\u200Ba\u200B"))).toBe(
       true,
