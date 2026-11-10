@@ -215,6 +215,7 @@ const loadStoreWithItemPersistence = (recoveryStore = new Map<string, any>()) =>
   let storeModule: any;
   let itemSliceModule: any;
   let songPersistenceModule: any;
+  let recoveryStorage: any;
   let deferredMutations!: typeof import("./deferredItemMutations");
   let contentReplicationActivity!: typeof import("../utils/contentReplicationActivity");
   let replicationConflicts: any;
@@ -284,6 +285,8 @@ const loadStoreWithItemPersistence = (recoveryStore = new Map<string, any>()) =>
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     storeModule = require("./store");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
+    recoveryStorage = require("../utils/songV2AutosaveRecovery");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemSliceModule = require("./itemSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     songPersistenceModule = require("../utils/songPersistence");
@@ -305,6 +308,7 @@ const loadStoreWithItemPersistence = (recoveryStore = new Map<string, any>()) =>
     updateSlideVideoBackgroundSendMode: itemSliceModule.updateSlideVideoBackgroundSendMode,
     db,
     recoveryStore,
+    recoveryStorage,
     globalFireDbInfo,
     postMessage,
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
@@ -384,6 +388,40 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Resumed edit after resolution");
     expect(unrelatedDb.put).not.toHaveBeenCalled();
     expect(env.store.getState().undoable.present.item.contentOwner).toEqual(owner);
+  });
+
+  it("retries a pending V2 save after its durable recovery checkpoint temporarily fails", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    session.markInitialReplicationComplete();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    env.recoveryStorage.putSongV2AutosaveRecovery.mockRejectedValueOnce(new Error("IndexedDB temporarily blocked"));
+
+    env.editSong("Retry title", "Retry lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.recoveryStore.size).toBe(0);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+
+    const laterReplication = env.contentReplicationActivity.trackContentReplication(env.db.name);
+    laterReplication.release();
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      await flushListenerEffects();
+      if (env.docs.get(env.physical.root._id).name === "Retry title") break;
+    }
+    expect(env.docs.get(env.physical.root._id).name).toBe("Retry title");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Retry lyrics");
+    expect(env.recoveryStore.size).toBe(0);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+
+    session.release();
+    env.deferredMutations.setActiveContentDatabase(null);
   });
 
   it("ignores unrelated slides, coalesces active notifications, and uses only scoped reads", async () => {

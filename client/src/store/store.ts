@@ -1071,6 +1071,7 @@ type PendingItemAutosave = {
   recoveryRecordId?: string;
   recoveryNeedsReview?: boolean;
   recoveryDiscarded?: boolean;
+  recoveryCheckpointFailed?: boolean;
 };
 const itemAutosaveDebounces = new Map<string, ItemAutosaveDebounce>();
 const itemAutosaveWriteQueues = new Map<string, Promise<void>>();
@@ -1389,6 +1390,7 @@ listenerMiddleware.startListening({
         ? previousItem.pendingSongV2Conflicts : priorPending?.resolveReplicationConflicts,
       authorizationInterrupted: priorPending?.authorizationInterrupted,
       recoveryRecordId: priorPending?.recoveryRecordId,
+      recoveryCheckpointFailed: priorPending?.recoveryCheckpointFailed,
     };
     if (
       isPersistedAudioUpdate &&
@@ -1596,6 +1598,7 @@ listenerMiddleware.startListening({
             ...currentPending,
             recoveryRecordId,
             recoveryNeedsReview: false,
+            recoveryCheckpointFailed: false,
           };
           if (retryRequest?.recovery) {
             pendingSongV2WriteRecoveries.set(saveKey, currentPending);
@@ -1614,6 +1617,13 @@ listenerMiddleware.startListening({
           // Do not start a multi-document save if its restart recovery record
           // could not be committed. The editor keeps the pending draft visible.
           console.error("Could not persist Song V2 autosave recovery", error);
+          const latestPending = pendingItemAutosaves.get(saveKey);
+          if (latestPending?.mutationVersion === mutationVersion) {
+            pendingItemAutosaves.set(saveKey, {
+              ...latestPending,
+              recoveryCheckpointFailed: true,
+            });
+          }
           return;
         }
       }
@@ -5470,8 +5480,16 @@ const retryInterruptedAutosaveForOwner = (
     return;
   }
   const pending = pendingItemAutosaves.get(saveKey);
-  if (!pending?.authorizationInterrupted || !pendingAutosaveMatchesContentOwner(pending, owner, database)) return;
-  const rebound = { ...pending, database, authorizationInterrupted: false };
+  if (
+    (!pending?.authorizationInterrupted && !pending?.recoveryCheckpointFailed) ||
+    !pendingAutosaveMatchesContentOwner(pending, owner, database)
+  ) return;
+  const rebound = {
+    ...pending,
+    database,
+    authorizationInterrupted: false,
+    recoveryCheckpointFailed: false,
+  };
   pendingItemAutosaves.set(saveKey, rebound);
   requestPendingItemAutosaveRetry(saveKey, rebound, false);
 };
@@ -5558,7 +5576,7 @@ registerContentDatabaseActivationHandler((owner, database) => {
   const saveKeys = new Set([
     ...pendingSongV2WriteRecoveries.keys(),
     ...[...pendingItemAutosaves.entries()]
-      .filter(([, pending]) => pending.authorizationInterrupted)
+      .filter(([, pending]) => pending.authorizationInterrupted || pending.recoveryCheckpointFailed)
       .map(([saveKey]) => saveKey),
   ]);
   saveKeys.forEach(saveKey => retryInterruptedAutosaveForOwner(saveKey, owner, database));
@@ -5573,7 +5591,7 @@ subscribeToContentActivity(() => {
     const saveKeys = new Set([
       ...pendingSongV2WriteRecoveries.keys(),
       ...[...pendingItemAutosaves.entries()]
-        .filter(([, pending]) => pending.authorizationInterrupted)
+        .filter(([, pending]) => pending.authorizationInterrupted || pending.recoveryCheckpointFailed)
         .map(([saveKey]) => saveKey),
     ]);
     saveKeys.forEach(saveKey => retryInterruptedAutosaveForOwner(saveKey, owner, activeDatabase));
