@@ -211,7 +211,7 @@ const loadStoreWithOverlayTemplatePersistence = () => {
 };
 
 let mockActiveItemDb: any;
-const loadStoreWithItemPersistence = () => {
+const loadStoreWithItemPersistence = (recoveryStore = new Map<string, any>()) => {
   let storeModule: any;
   let itemSliceModule: any;
   let songPersistenceModule: any;
@@ -236,6 +236,30 @@ const loadStoreWithItemPersistence = () => {
   };
 
   jest.isolateModules(() => {
+    jest.doMock("../utils/songV2AutosaveRecovery", () => {
+      const actual = jest.requireActual("../utils/songV2AutosaveRecovery");
+      const sameOwner = (left: ItemContentOwner, right: ItemContentOwner) =>
+        left.scopeId === right.scopeId && left.databaseKey === right.databaseKey &&
+        left.churchId === right.churchId && left.accountId === right.accountId;
+      return {
+        ...actual,
+        putSongV2AutosaveRecovery: jest.fn(async (record: any) => { recoveryStore.set(record.id, record); }),
+        listSongV2AutosaveRecoveries: jest.fn(async (owner: ItemContentOwner) =>
+          [...recoveryStore.values()].filter(record => sameOwner(record.owner, owner))),
+        markSongV2AutosaveRecoveryNeedsReview: jest.fn(async (id: string, owner: ItemContentOwner) => {
+          const record = recoveryStore.get(id);
+          if (record && sameOwner(record.owner, owner)) recoveryStore.set(id, { ...record, status: "needs-review" });
+        }),
+        markSongV2AutosaveRecoveryDiscarded: jest.fn(async (id: string, owner: ItemContentOwner) => {
+          const record = recoveryStore.get(id);
+          if (record && sameOwner(record.owner, owner)) recoveryStore.set(id, { ...record, status: "discarded" });
+        }),
+        deleteSongV2AutosaveRecovery: jest.fn(async (id: string, owner: ItemContentOwner) => {
+          const record = recoveryStore.get(id);
+          if (record && sameOwner(record.owner, owner)) recoveryStore.delete(id);
+        }),
+      };
+    });
     jest.doMock("../utils/songPersistence", () => {
       const actual = jest.requireActual("../utils/songPersistence");
       return {
@@ -280,6 +304,7 @@ const loadStoreWithItemPersistence = () => {
     updateSlideVideoBackgroundLoop: itemSliceModule.updateSlideVideoBackgroundLoop,
     updateSlideVideoBackgroundSendMode: itemSliceModule.updateSlideVideoBackgroundSendMode,
     db,
+    recoveryStore,
     globalFireDbInfo,
     postMessage,
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
@@ -293,8 +318,8 @@ const loadStoreWithItemPersistence = () => {
 
 describe("v2 remote refresh and pending-input boundaries", () => {
   const structuredClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
-  function setup() {
-    const env = loadStoreWithItemPersistence();
+  function setup(recoveryStore?: Map<string, any>) {
+    const env = loadStoreWithItemPersistence(recoveryStore);
     const source = createSongDoc({ arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [],
       slides: ["A", "B"].map(id => ({ id, name: `Verse 1${id}`, type: "Verse", boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }] })),
     }] });
@@ -326,8 +351,12 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     };
     return { ...env, docs, physical, baseline, edit, editSong };
   }
-  beforeEach(() => jest.useFakeTimers());
-  afterEach(() => jest.useRealTimers());
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
 
   it("autosaves resumed edits through the restored account owner after conflict resolution", async () => {
     const env = setup();
@@ -351,6 +380,7 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
+    expect(env.db.put).toHaveBeenCalled();
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Resumed edit after resolution");
     expect(unrelatedDb.put).not.toHaveBeenCalled();
     expect(env.store.getState().undoable.present.item.contentOwner).toEqual(owner);
@@ -482,6 +512,7 @@ describe("v2 remote refresh and pending-input boundaries", () => {
 
     env.editSong("First save title", "First save lyrics");
     await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
     await firstCommit;
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First save lyrics");
     expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
@@ -515,6 +546,7 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     env.globalFireDbInfo.churchId = owner.churchId;
     const firstSession = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
     env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    firstSession.markInitialReplicationComplete();
     env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
 
     const originalPut = env.db.put.getMockImplementation()!;
@@ -535,6 +567,7 @@ describe("v2 remote refresh and pending-input boundaries", () => {
 
     env.editSong("First save title", "First save lyrics");
     await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
     await firstCommit;
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First save lyrics");
     expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
@@ -560,9 +593,10 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     env.globalFireDbInfo.canWriteSongContent = true;
     const restoredSession = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
     env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    restoredSession.markInitialReplicationComplete();
     for (let attempt = 0; attempt < 100 &&
       env.docs.get(env.physical.root._id).name !== "Latest save title"; attempt += 1) {
-      await Promise.resolve();
+      await flushListenerEffects();
     }
     await flushListenerEffects();
 
@@ -576,6 +610,113 @@ describe("v2 remote refresh and pending-input boundaries", () => {
 
     restoredSession.release();
     env.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("waits for initial replication and recovers a partial V2 save after a renderer reload", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const firstSession = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    firstSession.markInitialReplicationComplete();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+
+    const originalPut = env.db.put.getMockImplementation()!;
+    let committedFirstDocument!: () => void;
+    let releaseFirstDocument!: () => void;
+    const firstCommit = new Promise<void>(resolve => { committedFirstDocument = resolve; });
+    const firstCommitGate = new Promise<void>(resolve => { releaseFirstDocument = resolve; });
+    env.db.put.mockImplementationOnce(async next => {
+      expect(env.recoveryStore.size).toBe(1);
+      const result = await originalPut(next);
+      committedFirstDocument();
+      await firstCommitGate;
+      return result;
+    });
+
+    env.editSong("Recovered title", "Recovered lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    await firstCommit;
+    expect(env.recoveryStore.size).toBe(1);
+
+    env.globalFireDbInfo.canWriteSongContent = false;
+    env.globalFireDbInfo.churchId = "";
+    firstSession.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+    releaseFirstDocument();
+    await flushListenerEffects();
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Recovered lyrics");
+    expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
+
+    // A fresh renderer has a fresh store and PouchDB object. The owner-scoped
+    // IndexedDB recovery survives, while the new local PouchDB starts empty.
+    const restored = setup(env.recoveryStore);
+    restored.docs.clear();
+    restored.db.get.mockClear();
+    restored.db.put.mockClear();
+    restored.globalFireDbInfo.churchId = owner.churchId;
+    restored.globalFireDbInfo.canWriteSongContent = true;
+    const otherOwner: ItemContentOwner = {
+      ...owner,
+      scopeId: "user-b:church-a:db-a",
+      accountId: "user-b",
+    };
+    const otherSession = restored.contentReplicationActivity.beginContentDatabaseSession(restored.db.name);
+    restored.deferredMutations.setActiveContentDatabase(otherOwner, restored.db as never);
+    restored.store.dispatch(restored.itemSlice.actions.setActiveItem({ ...restored.baseline, contentOwner: otherOwner }));
+    otherSession.markInitialReplicationComplete();
+    await flushListenerEffects();
+    expect(restored.db.get).not.toHaveBeenCalled();
+    expect(restored.db.put).not.toHaveBeenCalled();
+    expect(restored.recoveryStore.size).toBe(1);
+    otherSession.release();
+    restored.deferredMutations.setActiveContentDatabase(null);
+
+    const restoredSession = restored.contentReplicationActivity.beginContentDatabaseSession(restored.db.name);
+    restored.deferredMutations.setActiveContentDatabase(owner, restored.db as never);
+    restored.store.dispatch(restored.itemSlice.actions.setActiveItem({ ...restored.baseline, contentOwner: owner }));
+    await flushListenerEffects();
+    expect(restored.db.get).not.toHaveBeenCalled();
+    expect(restored.db.put).not.toHaveBeenCalled();
+
+    // Initial remote pull populates the partially committed slide before the
+    // readiness signal releases recovery.
+    for (const document of env.docs.values()) {
+      restored.docs.set(document._id, structuredClone(document));
+    }
+    restored.db.get.mockRejectedValueOnce(Object.assign(
+      new Error("Song root has not arrived in the first pull yet"),
+      { status: 404 },
+    ));
+    restoredSession.markInitialReplicationComplete();
+    await flushListenerEffects();
+    expect(restored.db.get).toHaveBeenCalledTimes(1);
+    expect(restored.db.put).not.toHaveBeenCalled();
+    expect(restored.recoveryStore.size).toBe(1);
+
+    // A later replication activity retries the retained record after the
+    // initial-ready attempt hit a transient local 404.
+    const laterReplication = restored.contentReplicationActivity.trackContentReplication(restored.db.name);
+    laterReplication.release();
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      await flushListenerEffects();
+      if (restored.recoveryStore.size === 0) break;
+    }
+
+    const latest = (await restored.songPersistence.loadSongV2Snapshot(
+      restored.db as never,
+      restored.baseline._id,
+    )).hydrated;
+    expect(latest.name).toBe("Recovered title");
+    expect(latest.arrangements[0].slides[0].boxes[0].words).toBe("Recovered lyrics");
+    expect(restored.recoveryStore.size).toBe(0);
+    expect(restored.db.put).toHaveBeenCalled();
+
+    restoredSession.release();
+    restored.deferredMutations.setActiveContentDatabase(null);
   });
 
   it("re-reads an older remote response after a successful save instead of replacing the saved content", async () => {
