@@ -1,3 +1,26 @@
+# [2.50.0](https://github.com/K-Cheddar/worship-sync/compare/v2.49.2...v2.50.0) (2026-11-10)
+
+
+### Bug Fixes
+
+* address PR 434 review findings ([2b530c8](https://github.com/K-Cheddar/worship-sync/commit/2b530c8ea8e49f778d764ebaee2ba8bfec0c31d8))
+* address remaining review concerns for PR 428 ([daa3bc1](https://github.com/K-Cheddar/worship-sync/commit/daa3bc1383b6d59d7825f6ba2f7bc48f7081fda1))
+* address thumbnail persistence edge cases ([abff319](https://github.com/K-Cheddar/worship-sync/commit/abff3198990b52764754e1f46e0c7a3395051b33))
+* **e2e:** isolate controller Firebase writes ([cec2bab](https://github.com/K-Cheddar/worship-sync/commit/cec2bab53307b8996942a49f84fe7d60d26c4750))
+* ensure schedule picker rows are at least 32px high ([92e3191](https://github.com/K-Cheddar/worship-sync/commit/92e3191c0d23fe9ea22672108ec063e42f6e73e0))
+* guard async slide relinks against stale state ([7816176](https://github.com/K-Cheddar/worship-sync/commit/781617632f8c79c5fe1e1305d4cce272cbbe0415))
+* harden local video thumbnail recovery ([79c029d](https://github.com/K-Cheddar/worship-sync/commit/79c029dc484d49410eefa35a9222b194acee4d8c))
+* make thumbnail upload recovery durable ([0b51591](https://github.com/K-Cheddar/worship-sync/commit/0b515913de27a2367872768a5d262b80e8b27fea))
+* **media:** preserve thumbnail state during replacement ([80c94d1](https://github.com/K-Cheddar/worship-sync/commit/80c94d1291ce9cee6e4d5833d20cd100ae02c5d8))
+* preserve video input retries and slide save order ([2f2d475](https://github.com/K-Cheddar/worship-sync/commit/2f2d475502b135b633ab6655ce2ab3b02b51f8cd))
+* resolve remaining smoke E2E failures ([0dc6fc2](https://github.com/K-Cheddar/worship-sync/commit/0dc6fc27a086d51219fbac5a9b83814105bb3129))
+* **service-planning:** resolve ambiguous imported times ([75c3087](https://github.com/K-Cheddar/worship-sync/commit/75c3087b90f9af10de5b0dbd6cc0532fb9aa0498))
+
+
+### Features
+
+* **media:** add local video input thumbnails ([77e5bcf](https://github.com/K-Cheddar/worship-sync/commit/77e5bcf876219d695cdc826d25e0406c7a7a6c85))
+
 ## [2.49.2](https://github.com/K-Cheddar/worship-sync/compare/v2.49.1...v2.49.2) (2026-11-04)
 
 
