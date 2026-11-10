@@ -13,6 +13,19 @@ import { mergeLyricText } from "./mergeLyricText";
 type Document = SongV2RootDocument | SongV2ArrangementDocument | SongV2SlideDocument;
 type Update<T> = { current: T; next: T };
 type Changes<T> = { create: T[]; update: Update<T>[]; delete: T[] };
+export type SongV2MutationGuard = () => boolean;
+
+export class SongV2MutationNotAuthorizedError extends Error {
+  constructor() {
+    super("Song changes are no longer authorized for this session.");
+    this.name = "SongV2MutationNotAuthorizedError";
+  }
+}
+
+export const assertSongV2MutationAllowed = (guard: SongV2MutationGuard): void => {
+  if (!guard()) throw new SongV2MutationNotAuthorizedError();
+};
+
 export type SongV2ChangePlan = {
   root?: Update<SongV2RootDocument>;
   arrangements: Changes<SongV2ArrangementDocument>;
@@ -157,7 +170,11 @@ function remember(documents: SongV2Documents, document: Document): void {
   }
 }
 
-async function execute(db: PouchDB.Database, initial: WriteState): Promise<SongV2WriteResult> {
+async function execute(
+  db: PouchDB.Database,
+  initial: WriteState,
+  mutationGuard?: SongV2MutationGuard,
+): Promise<SongV2WriteResult> {
   // Copy state so a retry does not mutate the error's diagnostic history.
   const state: WriteState = {
     documents: { ...initial.documents, arrangements: [...initial.documents.arrangements], slides: [...initial.documents.slides] },
@@ -172,15 +189,18 @@ async function execute(db: PouchDB.Database, initial: WriteState): Promise<SongV
     const doc = step.document;
     try {
       if (step.kind === "put") {
+        if (mutationGuard) assertSongV2MutationAllowed(mutationGuard);
         const response = await db.put(doc);
         remember(state.documents, { ...doc, _rev: response.rev });
         state.progress.written.push(doc._id);
         if (step.isNew) state.progress.created.push(doc._id);
       } else {
+        if (mutationGuard) assertSongV2MutationAllowed(mutationGuard);
         await db.remove(doc._id, doc._rev!);
         state.progress.deleted.push(doc._id);
       }
     } catch (cause) {
+      if (cause instanceof SongV2MutationNotAuthorizedError) throw cause;
       if (step.kind === "put") throw new SongV2WriteError(doc._id, cause, state);
       // All references have already been removed; cleanup is not logical failure.
       state.progress.cleanupErrors.push({ documentId: doc._id, revision: doc._rev, cause });
@@ -289,6 +309,7 @@ function mergeConcurrentLyrics(baseline: DBItem, desired: DBItem, latest: DBItem
 export async function saveSongV2FromBaseline(
   db: PouchDB.Database, baselineSong: DBItem, desiredSong: DBItem,
   snapshot?: SongV2Snapshot,
+  mutationGuard?: SongV2MutationGuard,
 ): Promise<SongV2WriteResult> {
   if (baselineSong.docType !== "song-v2-root") {
     throw new SongV2DocumentError("Song v2 interactive saves require a v2 authored baseline");
@@ -419,7 +440,11 @@ export async function saveSongV2FromBaseline(
     arrangements: rebase(intent.arrangements, currentArrangements, arrangementDeleteStatus, adoptedArrangements),
     slides: rebase(intent.slides, currentSlides, slideDeleteStatus, adoptedSlides),
   };
-  return execute(db, { documents: { ...current, arrangements: currentArrangementDocs, slides: currentSlideDocs }, steps: buildSteps(plan), progress: emptyProgress() });
+  return execute(
+    db,
+    { documents: { ...current, arrangements: currentArrangementDocs, slides: currentSlideDocs }, steps: buildSteps(plan), progress: emptyProgress() },
+    mutationGuard,
+  );
 }
 
 /** Snapshot-based low-level writer retained for migration tooling and focused tests. */

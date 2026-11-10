@@ -84,7 +84,7 @@ import {
   Presentation as PresentationType,
 } from "../types";
 import { ActionCreators } from "redux-undo";
-import { normalizeControllerAccess } from "../utils/accessTiers";
+import { canEditSongContent, normalizeControllerAccess } from "../utils/accessTiers";
 import {
   AUTH_SIGN_IN_AGAIN_MESSAGE,
   AUTH_VERIFY_DEVICE_MESSAGE,
@@ -509,6 +509,8 @@ export const GlobalInfoContext = createContext<GlobalInfoContextType | null>(
 type globalFireBaseInfoType = {
   db: Database | undefined;
   isConnected: boolean;
+  /** Current session may persist controller song content to its local PouchDB. */
+  canWriteSongContent: boolean;
   writeCapabilities: {
     presentation: boolean;
     timers: boolean;
@@ -525,6 +527,7 @@ type globalFireBaseInfoType = {
 export const globalFireDbInfo: globalFireBaseInfoType = {
   db: undefined,
   isConnected: false,
+  canWriteSongContent: false,
   writeCapabilities: {
     presentation: false,
     timers: false,
@@ -945,6 +948,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "";
       globalFireDbInfo.database = "";
       globalFireDbInfo.churchId = "";
+      globalFireDbInfo.canWriteSongContent = false;
       globalFireDbInfo.writeCapabilities = {
         presentation: false,
         timers: false,
@@ -1015,6 +1019,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     globalFireDbInfo.user = toolbarDisplayName;
     globalFireDbInfo.database = bootstrap.database || "demo";
     globalFireDbInfo.churchId = bootstrap.churchId || "";
+    globalFireDbInfo.canWriteSongContent = bootstrap.sessionKind !== "display" &&
+      canEditSongContent(normalizedControllerAccess);
     const hasSharedWriteSession =
       bootstrap.sessionKind === "human" || bootstrap.sessionKind === "workstation";
     const canWriteControllerData =
@@ -1552,6 +1558,7 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       globalFireDbInfo.user = "Demo";
       globalFireDbInfo.database = "demo";
       globalFireDbInfo.churchId = "";
+      globalFireDbInfo.canWriteSongContent = true;
       globalFireDbInfo.writeCapabilities = {
         presentation: false,
         timers: false,

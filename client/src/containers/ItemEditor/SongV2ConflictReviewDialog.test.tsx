@@ -127,12 +127,14 @@ describe("SongV2ConflictReviewDialog", () => {
     db: PouchDB.Database;
     songId: string;
     snapshot: SongV2Snapshot | null;
+    canSave: boolean;
     resolutionOwner: object;
     isOpen: boolean;
   }> = {}) => ({
     db: {} as PouchDB.Database,
     songId: "song-1",
     snapshot,
+    canSave: true,
     resolutionOwner: {},
     isOpen: true,
     onClose,

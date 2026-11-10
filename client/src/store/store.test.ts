@@ -220,11 +220,19 @@ const loadStoreWithItemPersistence = () => {
   let selectionModule: typeof import("./controllerItemSelection");
   const postMessage = jest.fn();
   const db = {
+    name: "item-content-db",
     get: jest.fn(),
     put: jest.fn(),
+    remove: jest.fn(),
     allDocs: jest.fn(),
   };
   mockActiveItemDb = db;
+  const globalFireDbInfo = {
+    db: undefined,
+    database: undefined,
+    churchId: "",
+    canWriteSongContent: true,
+  };
 
   jest.isolateModules(() => {
     jest.doMock("../utils/songPersistence", () => {
@@ -239,7 +247,7 @@ const loadStoreWithItemPersistence = () => {
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: { db: undefined, database: undefined },
+      globalFireDbInfo,
       globalHostId: "host-123",
     }));
     jest.doMock("firebase/database", () => ({
@@ -269,6 +277,7 @@ const loadStoreWithItemPersistence = () => {
     updateSlideVideoBackgroundLoop: itemSliceModule.updateSlideVideoBackgroundLoop,
     updateSlideVideoBackgroundSendMode: itemSliceModule.updateSlideVideoBackgroundSendMode,
     db,
+    globalFireDbInfo,
     postMessage,
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
     songPersistence: songPersistenceModule,
@@ -491,7 +500,7 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     expect(env.store.getState().undoable.present.item.pendingRemoteItem.name).toBe("Remote version");
     env.store.dispatch(choice === "mine" ? env.itemSlice.actions.keepLocalItemChanges() : env.itemSlice.actions.applyPendingRemoteItem());
     await jest.advanceTimersByTimeAsync(1500);
-    expect(prune).toHaveBeenCalledWith(env.db, expect.anything(), approved);
+    expect(prune).toHaveBeenCalledWith(env.db, expect.anything(), approved, expect.any(Function));
     expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
     expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
     prune.mockRestore();
@@ -549,6 +558,284 @@ const mockV2AllDocs = (db: { allDocs?: jest.Mock }, docs: Map<string, any>) => {
     };
   });
 };
+
+describe("authoritative Song V2 reads in controller and Undo/Redo paths", () => {
+  const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  const songId = "migrated-song";
+  let activeDeferredMutations: ReturnType<typeof loadStoreWithItemPersistence>["deferredMutations"] | undefined;
+  const setup = () => {
+    const env = loadStoreWithItemPersistence();
+    activeDeferredMutations = env.deferredMutations;
+    const source = createSongDoc({
+      _id: songId,
+      name: "Migrated song",
+      arrangements: [{
+        id: "a",
+        name: "Master",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: ["A", "B"].map(id => ({
+          id, name: `Verse 1${id}`, type: "Verse",
+          boxes: [{ id: `${id}-box`, words: id === "A" ? "Authoritative V2 lyrics" : "Second V2 slide", width: 100, height: 100 }],
+        })),
+      }],
+    }) as any;
+    const physical: SongV2Documents = env.songPersistence.serializeSongToV2Documents(source);
+    const staleV1 = clone({
+      ...source,
+      name: "Stale V1 predecessor",
+      arrangements: [{
+        ...source.arrangements[0],
+        slides: source.arrangements[0].slides.map((slide: any, index: number) => ({
+          ...slide, boxes: [{ ...slide.boxes[0], words: index === 0 ? "Obsolete V1 lyrics" : "Old V1 slide" }],
+        })),
+      }],
+    });
+    const docs = new Map<string, any>([
+      ...[physical.root, ...physical.arrangements, ...physical.slides]
+        .map(doc => [doc._id, { ...doc, _rev: "1-base" }] as const),
+      [songId, staleV1],
+    ]);
+    env.db.get.mockImplementation(async (id: string) => {
+      const doc = docs.get(id);
+      if (!doc) throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+      return clone(doc);
+    });
+    (env.db as any).changes = jest.fn(async () => ({ results: [] }));
+    mockV2AllDocs(env.db, docs);
+    env.db.put.mockImplementation(async next => {
+      const previous = docs.get(next._id);
+      if (previous && next._rev !== previous._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = `${Number(previous?._rev?.split("-")[0] ?? 0) + 1}-written`;
+      docs.set(next._id, clone({ ...next, _rev: rev }));
+      return { ok: true, id: next._id, rev };
+    });
+    env.db.remove.mockImplementation(async (id: string, rev: string) => {
+      const current = docs.get(id);
+      if (!current || current._rev !== rev) throw Object.assign(new Error("missing revision"), { status: 404 });
+      docs.delete(id);
+      return { ok: true, id, rev };
+    });
+    const baseline = env.songPersistence.hydrateSongFromV2Documents(
+      docs.get(physical.root._id),
+      physical.arrangements.map(doc => docs.get(doc._id)),
+      physical.slides.map(doc => docs.get(doc._id)),
+      true,
+    );
+    const updateLyrics = (words: string) => {
+      const active = env.store.getState().undoable.present.item;
+      const slides = clone(active.arrangements[0].slides);
+      slides[0].boxes[0].words = words;
+      env.store.dispatch(env.itemSlice.actions._updateSlides(slides));
+    };
+    return { ...env, docs, physical, staleV1, baseline, updateLyrics };
+  };
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    activeDeferredMutations?.setActiveContentDatabase(null);
+    activeDeferredMutations = undefined;
+    jest.useRealTimers();
+  });
+
+  it("keeps a migrated song's baseline authoritative through Undo, Redo, and a later save", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    jest.runAllTimers();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    env.updateLyrics("First V2 edit");
+    expect(env.store.getState().undoable.past.length).toBeGreaterThan(0);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First V2 edit");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    const verifiedLatest = await env.songPersistence.loadItemWithSongHydration(env.db as never, songId);
+    expect(verifiedLatest.arrangements[0].slides[0].boxes[0].words).toBe("First V2 edit");
+    const readsBeforeUndo = env.db.get.mock.calls.length;
+    const rebase = jest.spyOn(env.itemSlice.actions, "rebaseItemPersistence");
+
+    env.store.dispatch({ type: "@@redux-undo/UNDO" });
+    await flushListenerEffects();
+    const afterUndo = env.store.getState().undoable.present.item;
+    expect(env.db.get.mock.calls.slice(readsBeforeUndo).some(([id]) => id === env.physical.root._id)).toBe(true);
+    expect(rebase).toHaveBeenCalled();
+    expect(rebase.mock.calls.map(([doc]) => (doc as any).arrangements[0].slides[0].boxes[0].words)).toContain("First V2 edit");
+    expect(afterUndo.arrangements[0].slides[0].boxes[0].words).toBe("Authoritative V2 lyrics");
+    expect(afterUndo.baseItem).toMatchObject({ docType: "song-v2-root", _id: songId });
+    expect(afterUndo.baseItem.arrangements[0].slides[0].boxes[0].words).toBe("First V2 edit");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    env.store.dispatch({ type: "@@redux-undo/REDO" });
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("First V2 edit");
+    env.updateLyrics("Saved after redo");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Saved after redo");
+    expect(env.docs.get(songId)).toEqual(env.staleV1);
+  });
+
+  it("flushes a component edit accepted during the Undo/Redo hydration read", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    jest.runAllTimers();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    env.updateLyrics("Saved V2 edit");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    let releaseRoot!: (doc: any) => void;
+    let started!: () => void;
+    const rootReadStarted = new Promise<void>(resolve => { started = resolve; });
+    const rootRead = new Promise<any>(resolve => { releaseRoot = resolve; });
+    const originalGet = env.db.get.getMockImplementation()!;
+    let heldRoot = false;
+    env.db.get.mockImplementation((id: string) => {
+      if (id === env.physical.root._id && !heldRoot) {
+        heldRoot = true;
+        started();
+        return rootRead;
+      }
+      return originalGet(id);
+    });
+    env.store.dispatch({ type: "@@redux-undo/UNDO" });
+    await rootReadStarted;
+
+    const mutationOwner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item)!;
+    env.deferredMutations.scheduleOwnedItemMutation(mutationOwner, 200, () => env.updateLyrics("Component edit during read"));
+    releaseRoot(env.docs.get(env.physical.root._id));
+    await flushListenerEffects();
+
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words)
+      .toBe("Component edit during read");
+    expect(env.store.getState().undoable.present.item.baseItem).toMatchObject({ docType: "song-v2-root", _id: songId });
+  });
+
+  it("hydrates a stale V1 predecessor from V2 and buffers unresolved conflicts for a view-only controller", async () => {
+    const env = setup();
+    env.globalFireDbInfo.canWriteSongContent = false;
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-competing"] });
+
+    await env.store.dispatch(env.selectControllerItem({ _id: songId, listId: "view-outline", type: "song" }, env.db as never));
+    const active = env.store.getState().undoable.present.item;
+    expect(active.name).toBe("Migrated song");
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("Authoritative V2 lyrics");
+    expect(active.pendingSongV2Conflicts).toEqual([expect.objectContaining({
+      documentId: env.physical.arrangements[0]._id,
+      revisions: ["2-competing"],
+    })]);
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.db.remove).not.toHaveBeenCalled();
+    expect(env.docs.get(songId)).toEqual(env.staleV1);
+  });
+
+  it("uses guarded automatic reconciliation when an authorized editor opens a conflicting V2 song", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.globalFireDbInfo.canWriteSongContent = true;
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-disjoint"] });
+    const merged = clone(env.baseline);
+    merged.arrangements[0].slides[0].boxes[0].words = "Authorized disjoint merge";
+    const reconcile = jest.spyOn(env.replicationConflicts, "loadReconciledSongV2Snapshot")
+      .mockImplementation(async (...args: unknown[]) => {
+        const snapshot = args[2] as any;
+        return { ...snapshot, conflicts: undefined, hydrated: merged };
+      });
+
+    await env.store.dispatch(env.selectControllerItem(
+      { _id: songId, listId: "editor-outline", type: "song" }, env.db as never,
+    ));
+
+    expect(reconcile).toHaveBeenCalledWith(env.db, songId, expect.anything(), expect.any(Function));
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words)
+      .toBe("Authorized disjoint merge");
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+  });
+
+  it("does not reconcile or retire conflict leaves on a view-only replication refresh", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.globalFireDbInfo.canWriteSongContent = false;
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-competing"] });
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+
+    env.store.dispatch({
+      type: "allDocs/applyItemDocumentChange",
+      payload: { id: songId, doc: env.songPersistence.songToLibraryProjection(env.baseline) },
+    });
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toEqual([expect.objectContaining({
+      documentId: env.physical.arrangements[0]._id,
+      revisions: ["2-competing"],
+    })]);
+
+    env.store.dispatch(env.songV2DocumentsChanged([{
+      songId, libraryChanged: false, database: env.db as never, owner,
+    }]));
+    await jest.advanceTimersByTimeAsync(50);
+    await flushListenerEffects();
+
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toEqual([expect.objectContaining({
+      documentId: env.physical.arrangements[0]._id,
+      revisions: ["2-competing"],
+    })]);
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.db.remove).not.toHaveBeenCalled();
+    expect(env.docs.get(songId)).toEqual(env.staleV1);
+  });
+
+  it("keeps automatic reconciliation on the authorized active-song replication path", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-disjoint"] });
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    const merged = clone(env.baseline);
+    merged.arrangements[0].slides[0].boxes[0].words = "Safe disjoint merge";
+    const reconcile = jest.spyOn(env.replicationConflicts, "loadReconciledSongV2Snapshot")
+      .mockImplementation(async (...args: unknown[]) => {
+        const snapshot = args[2] as any;
+        return {
+          ...snapshot,
+          conflicts: undefined,
+          hydrated: merged,
+        };
+      });
+
+    env.store.dispatch(env.songV2DocumentsChanged([{
+      songId, libraryChanged: false, database: env.db as never, owner,
+    }]));
+    await jest.advanceTimersByTimeAsync(50);
+    await flushListenerEffects();
+
+    expect(reconcile).toHaveBeenCalledWith(env.db, songId, expect.anything(), expect.any(Function));
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem.arrangements[0].slides[0].boxes[0].words)
+      .toBe("Safe disjoint merge");
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+  });
+});
 
 // Characterization tests deliberately assert the current defects. Convert the
 // defect expectations to preservation expectations when the fixes are approved.
@@ -2649,6 +2936,9 @@ describe("store module", () => {
       db,
       expect.objectContaining({ name: "Edited Song", songAudio: persistedAudio }),
       expect.objectContaining({ _rev: "2-song", songAudio: persistedAudio }),
+      undefined,
+      undefined,
+      expect.any(Function),
     );
     songPersistence.saveSong.mockClear();
   });

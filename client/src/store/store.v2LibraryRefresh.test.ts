@@ -26,7 +26,13 @@ const setup = () => {
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({ get globalDb() { return activeDb; }, globalBroadcastRef: undefined }));
     jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo, globalHostId: "host" }));
-    jest.doMock("../utils/songPersistence", () => ({ ...jest.requireActual("../utils/songPersistence"), loadItemWithSongHydration: load }));
+    jest.doMock("../utils/songPersistence", () => ({
+      ...jest.requireActual("../utils/songPersistence"),
+      loadItemWithSongHydration: load,
+      loadSongV2Snapshot: jest.fn(async (_database: unknown, songId: string) => ({
+        hydrated: await load(_database, songId),
+      })),
+    }));
     jest.doMock("../utils/songV2ReplicationConflicts", () => {
       const actual = jest.requireActual("../utils/songV2ReplicationConflicts");
       return {

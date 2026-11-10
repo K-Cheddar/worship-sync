@@ -7,7 +7,11 @@ import {
   hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
   type SongV2RevisionConflict, type SongV2Snapshot,
 } from "./songPersistence";
-import { saveSongV2FromBaseline } from "./songV2Writer";
+import {
+  assertSongV2MutationAllowed,
+  saveSongV2FromBaseline,
+  type SongV2MutationGuard,
+} from "./songV2Writer";
 import { formatSong } from "./overflow";
 import { mergeLyricText } from "./mergeLyricText";
 import _ from "lodash";
@@ -98,6 +102,7 @@ async function prune(
   db: PouchDB.Database,
   conflicts: SongV2RevisionConflict[],
   committed: SongV2Snapshot,
+  mutationGuard: SongV2MutationGuard,
 ): Promise<boolean> {
   const committedById = new Map(documentsIn(committed).map(doc => [doc._id, doc]));
   const pending: SongV2RevisionConflict[] = [];
@@ -120,6 +125,7 @@ async function prune(
 
   for (const conflict of pending) {
     for (const rev of conflict.revisions) {
+      assertSongV2MutationAllowed(mutationGuard);
       try { await db.remove(conflict.documentId, rev); }
       catch (error) {
         if (![404, 409].includes((error as { status?: number }).status ?? 0)) throw error;
@@ -294,6 +300,7 @@ export async function resolveSongV2ConflictReview(
   adopted: DBItem,
   approved: SongV2RevisionConflict[],
   sourceRevisions: Record<string, string>,
+  mutationGuard: SongV2MutationGuard,
 ): Promise<{ song: DBItem; conflictsRetired: boolean }> {
   const current = await loadSongV2Snapshot(db, reviewed.root.songId, true);
   const currentConflicts = current.conflicts ?? [];
@@ -321,8 +328,8 @@ export async function resolveSongV2ConflictReview(
     }
   }
 
-  const saved = await saveSongV2FromBaseline(db, current.hydrated, adopted, current);
-  const pruned = await pruneResolvedSongV2Conflicts(db, saved.song, approved, saved.snapshot);
+  const saved = await saveSongV2FromBaseline(db, current.hydrated, adopted, current, mutationGuard);
+  const pruned = await pruneResolvedSongV2Conflicts(db, saved.song, approved, mutationGuard, saved.snapshot);
   clearUnresolvedFingerprint(db, reviewed.root.songId);
   return { song: saved.song, conflictsRetired: Boolean(pruned) };
 }
@@ -332,6 +339,7 @@ export async function pruneResolvedSongV2Conflicts(
   db: PouchDB.Database,
   adopted: DBItem,
   approved: SongV2RevisionConflict[],
+  mutationGuard: SongV2MutationGuard,
   expectedSnapshot?: SongV2Snapshot,
 ): Promise<DBItem | undefined> {
   const snapshot = await loadSongV2Snapshot(db, adopted._id, true);
@@ -355,7 +363,7 @@ export async function pruneResolvedSongV2Conflicts(
       .sort((left, right) => String((left as { _id: string })._id).localeCompare(String((right as { _id: string })._id)));
   };
   if (!_.isEqual(content(snapshot.hydrated), content(adopted))) return;
-  if (!(await prune(db, approved, snapshot))) return;
+  if (!(await prune(db, approved, snapshot, mutationGuard))) return;
   clearUnresolvedFingerprint(db, adopted._id);
   return snapshot.hydrated;
 }
@@ -364,7 +372,8 @@ export async function pruneResolvedSongV2Conflicts(
 export async function loadReconciledSongV2Snapshot(
   db: PouchDB.Database,
   songId: string,
-  initial?: SongV2Snapshot,
+  initial: SongV2Snapshot | undefined,
+  mutationGuard: SongV2MutationGuard,
 ): Promise<SongV2Snapshot> {
   const snapshot = initial ?? await loadSongV2Snapshot(db, songId, true);
   if (!snapshot.conflicts?.length) {
@@ -414,8 +423,9 @@ export async function loadReconciledSongV2Snapshot(
   if (!sameRevisionGraph(snapshot, latest) || !sameConflictSet(snapshot.conflicts, latest.conflicts ?? [])) {
     throw new SongV2ReplicationConflictError(latest);
   }
-  const saved = await saveSongV2FromBaseline(db, latest.hydrated, desired, latest);
-  const retired = await pruneResolvedSongV2Conflicts(db, saved.song, snapshot.conflicts, saved.snapshot);
+  assertSongV2MutationAllowed(mutationGuard);
+  const saved = await saveSongV2FromBaseline(db, latest.hydrated, desired, latest, mutationGuard);
+  const retired = await pruneResolvedSongV2Conflicts(db, saved.song, snapshot.conflicts, mutationGuard, saved.snapshot);
   if (!retired) throw new SongV2ReplicationConflictError(await loadSongV2Snapshot(db, songId, true));
   return saved.snapshot;
 }

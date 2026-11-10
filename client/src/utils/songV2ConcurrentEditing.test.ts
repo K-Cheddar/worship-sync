@@ -4,7 +4,7 @@ import PouchDB from "pouchdb-browser";
 import type { DBItem, ItemState } from "../types";
 import { createNewSlide } from "./slideCreation";
 import { formatSong } from "./overflow";
-import { createSongV2 } from "./songV2Writer";
+import { createSongV2, SongV2MutationNotAuthorizedError } from "./songV2Writer";
 import { loadSong, loadSongV2Snapshot, saveSong } from "./songPersistence";
 import { itemSlice } from "../store/itemSlice";
 import {
@@ -185,11 +185,12 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       const allDocs = jest.spyOn(a, "allDocs");
       const put = jest.spyOn(a, "put");
       const remove = jest.spyOn(a, "remove");
-      const reconciled = mode === "reopen" ? { hydrated: await loadSong(a, baseA._id) }
-        : await loadReconciledSongV2Snapshot(a, baseA._id);
+      const reconciled = await loadReconciledSongV2Snapshot(
+        a, baseA._id, conflict, () => true,
+      );
       expect({ get: get.mock.calls.length, allDocs: allDocs.mock.calls.length,
         put: put.mock.calls.length, remove: remove.mock.calls.length })
-        .toEqual({ get: 7, allDocs: 6, put: 1, remove: 1 });
+        .toEqual({ get: 6, allDocs: 4, put: 1, remove: 1 });
       console.info("Eventual-branch reconciliation calls", { get: get.mock.calls.length, allDocs: allDocs.mock.calls.length,
         put: put.mock.calls.length, remove: remove.mock.calls.length });
       expect(reconciled.hydrated.arrangements[0].formattedLyrics[0].words).toBe("alpha\nbeta1\ngamma\ndelta1");
@@ -197,6 +198,74 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       await b.replicate.from(db);
       expect((await loadSongV2Snapshot(b, baseB._id, true)).conflicts).toBeUndefined();
       expect(await loadSong(a, baseA._id)).toEqual(await loadSong(b, baseB._id));
+    } finally { await a.destroy(); await b.destroy(); }
+  });
+
+  it("keeps safe replicated edits read-only until an authorized editor reconciles them", async () => {
+    const a = new PouchDB(`readonly-reconcile-a-${Math.random()}`, { adapter: "idb" });
+    const b = new PouchDB(`readonly-reconcile-b-${Math.random()}`, { adapter: "idb" });
+    try {
+      await Promise.all([a.replicate.from(db), b.replicate.from(db)]);
+      const baselineA = await loadSong(a, "better-test");
+      const baselineB = await loadSong(b, "better-test");
+      await saveSong(a, edit(baselineA, 0, "alpha\nbeta1\n"), baselineA);
+      await saveSong(b, edit(baselineB, 1, "gamma\ndelta1"), baselineB);
+      await a.replicate.to(db);
+      await b.replicate.to(db);
+      await a.replicate.from(db);
+
+      const conflict = await loadSongV2Snapshot(a, "better-test", true);
+      expect(conflict.conflicts).toHaveLength(1);
+      const puts = jest.spyOn(a, "put");
+      const removes = jest.spyOn(a, "remove");
+      const readOnly = await loadSong(a, "better-test");
+      expect(readOnly).toEqual(conflict.hydrated);
+      expect(puts).not.toHaveBeenCalled();
+      expect(removes).not.toHaveBeenCalled();
+      expect((await loadSongV2Snapshot(a, "better-test", true)).conflicts).toHaveLength(1);
+
+      await expect(loadReconciledSongV2Snapshot(a, "better-test", conflict, () => false))
+        .rejects.toBeInstanceOf(SongV2MutationNotAuthorizedError);
+      expect(puts).not.toHaveBeenCalled();
+      expect(removes).not.toHaveBeenCalled();
+      expect((await loadSongV2Snapshot(a, "better-test", true)).conflicts).toHaveLength(1);
+
+      const reconciled = await loadReconciledSongV2Snapshot(a, "better-test", conflict, () => true);
+      expect(reconciled.hydrated.arrangements[0].formattedLyrics[0].words)
+        .toBe("alpha\nbeta1\ngamma\ndelta1");
+      expect(puts).toHaveBeenCalledTimes(1);
+      expect(removes).toHaveBeenCalledTimes(1);
+      expect((await loadSongV2Snapshot(a, "better-test", true)).conflicts).toBeUndefined();
+    } finally { await a.destroy(); await b.destroy(); }
+  });
+
+  it("rechecks authorization before retiring a conflict leaf after a committed merge", async () => {
+    const a = new PouchDB(`revoked-reconcile-a-${Math.random()}`, { adapter: "idb" });
+    const b = new PouchDB(`revoked-reconcile-b-${Math.random()}`, { adapter: "idb" });
+    try {
+      await Promise.all([a.replicate.from(db), b.replicate.from(db)]);
+      const baselineA = await loadSong(a, "better-test");
+      const baselineB = await loadSong(b, "better-test");
+      await saveSong(a, edit(baselineA, 0, "alpha\nbeta1\n"), baselineA);
+      await saveSong(b, edit(baselineB, 1, "gamma\ndelta1"), baselineB);
+      await a.replicate.to(db);
+      await b.replicate.to(db);
+      await a.replicate.from(db);
+      const conflict = await loadSongV2Snapshot(a, "better-test", true);
+      const originalPut = a.put.bind(a);
+      let allowed = true;
+      const puts = jest.spyOn(a, "put").mockImplementation(async document => {
+        const result = await originalPut(document);
+        allowed = false;
+        return result;
+      });
+      const removes = jest.spyOn(a, "remove");
+
+      await expect(loadReconciledSongV2Snapshot(a, "better-test", conflict, () => allowed))
+        .rejects.toBeInstanceOf(SongV2MutationNotAuthorizedError);
+      expect(puts).toHaveBeenCalledTimes(1);
+      expect(removes).not.toHaveBeenCalled();
+      expect((await loadSongV2Snapshot(a, "better-test", true)).conflicts).toHaveLength(1);
     } finally { await a.destroy(); await b.destroy(); }
   });
 
@@ -212,7 +281,7 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       const before = await loadSongV2Snapshot(db, baseline._id, true);
       const put = jest.spyOn(db, "put");
       const remove = jest.spyOn(db, "remove");
-      await expect(loadReconciledSongV2Snapshot(db, baseline._id)).rejects.toBeInstanceOf(SongV2ReplicationConflictError);
+      await expect(loadReconciledSongV2Snapshot(db, baseline._id, undefined, () => true)).rejects.toBeInstanceOf(SongV2ReplicationConflictError);
       expect(put).not.toHaveBeenCalled();
       expect(remove).not.toHaveBeenCalled();
       expect(before.conflicts?.length).toBe(2);
@@ -231,6 +300,7 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       const selection = await buildSongV2RevisionSelection(db, before, versions, choices);
       const resolved = await resolveSongV2ConflictReview(
         db, before, selection.song, before.conflicts!, selection.sourceRevisions,
+        () => true,
       );
       expect(resolved.conflictsRetired).toBe(true);
       expect(resolved.song.arrangements[0].formattedLyrics[0].words).toContain(selectedText);
@@ -268,9 +338,12 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       const reads = jest.spyOn(reviewer, "get");
       const puts = jest.spyOn(reviewer, "put");
       const removes = jest.spyOn(reviewer, "remove");
-      await expect(loadSong(reviewer, "better-test")).rejects.toBeInstanceOf(SongV2ReplicationConflictError);
       const revisionReadCount = reads.mock.calls.filter(([, options]) => options?.revs).length;
-      await expect(loadSong(reviewer, "better-test")).rejects.toBeInstanceOf(SongV2ReplicationConflictError);
+      const readOnly = await loadSong(reviewer, "better-test");
+      expect(["first", "second"].some(choice =>
+        readOnly.arrangements[0].formattedLyrics[0].words.includes(choice),
+      )).toBe(true);
+      expect((await loadSongV2Snapshot(reviewer, "better-test", true)).conflicts?.length).toBeGreaterThan(0);
       expect(reads.mock.calls.filter(([, options]) => options?.revs)).toHaveLength(revisionReadCount);
       expect(puts).not.toHaveBeenCalled();
       expect(removes).not.toHaveBeenCalled();
@@ -296,8 +369,13 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
         return [entry.conflict.documentId, chosen?.revision ?? entry.conflict.winningRevision];
       }));
       const selection = await buildSongV2RevisionSelection(reviewer, reviewed, versions, choices);
+      expect(selection.song.arrangements[0].formattedLyrics[0].words).toContain("second");
+      expect(selection.song.arrangements[0].slides.filter(slide => slide.name.startsWith("Verse 1"))
+        .map(slide => slide.boxes[1].words).join(""))
+        .toBe(selection.song.arrangements[0].formattedLyrics[0].words);
       const resolved = await resolveSongV2ConflictReview(
         reviewer, reviewed, selection.song, reviewed.conflicts!, selection.sourceRevisions,
+        () => true,
       );
       expect(resolved.conflictsRetired).toBe(true);
       expect(resolved.song.arrangements[0].formattedLyrics[0].words).toContain("second");
@@ -305,11 +383,19 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
         .map(slide => slide.boxes[1].words).join(""))
         .toBe(resolved.song.arrangements[0].formattedLyrics[0].words);
       expect((await loadSongV2Snapshot(reviewer, "better-test", true)).conflicts).toBeUndefined();
+      expect((await loadSong(reviewer, "better-test")).arrangements[0].formattedLyrics[0].words)
+        .toBe("alpha\nsecond\ngamma\ndelta");
 
       await reviewer.replicate.to(db);
+      expect((await loadSong(reviewer, "better-test")).arrangements[0].formattedLyrics[0].words)
+        .toBe("alpha\nsecond\ngamma\ndelta");
       await observer.replicate.from(db);
       expect((await loadSongV2Snapshot(observer, "better-test", true)).conflicts).toBeUndefined();
-      expect(await loadSong(reviewer, "better-test")).toEqual(await loadSong(observer, "better-test"));
+      const reviewerSong = await loadSong(reviewer, "better-test");
+      const observerSong = await loadSong(observer, "better-test");
+      expect(reviewerSong.arrangements[0].formattedLyrics[0].words).toBe("alpha\nsecond\ngamma\ndelta");
+      expect(observerSong.arrangements[0].formattedLyrics[0].words).toBe("alpha\nsecond\ngamma\ndelta");
+      expect(reviewerSong).toEqual(observerSong);
     } finally {
       await Promise.all([browserA.destroy().catch(() => undefined), browserB.destroy().catch(() => undefined), reviewer.destroy(), observer.destroy()]);
     }
@@ -328,7 +414,7 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       const chosen = await saveSong(db, edit(displayed.hydrated, 0, "alpha\nchosen\n"), displayed.hydrated);
       await saveSong(unseen, edit(baseline, 0, "alpha\nunseen\n"), baseline);
       await unseen.replicate.to(db);
-      await pruneResolvedSongV2Conflicts(db, chosen, displayed.conflicts!);
+      await pruneResolvedSongV2Conflicts(db, chosen, displayed.conflicts!, () => true);
       const remaining = await loadSongV2Snapshot(db, baseline._id, true);
       expect(remaining.conflicts?.length).toBe(2);
       expect(remaining.hydrated.arrangements[0].formattedLyrics[0].words).toContain("chosen");
@@ -359,6 +445,7 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       const removes = jest.spyOn(peer, "remove");
       await expect(resolveSongV2ConflictReview(
         peer, reviewed, selection.song, reviewed.conflicts!, selection.sourceRevisions,
+        () => true,
       )).rejects.toBeInstanceOf(SongV2ConflictReviewStaleError);
       expect(puts).not.toHaveBeenCalled();
       expect(removes).not.toHaveBeenCalled();
@@ -378,9 +465,9 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       await peer.replicate.to(db);
       const put = jest.spyOn(db, "put");
       jest.spyOn(db, "remove").mockRejectedValueOnce(new Error("cleanup offline"));
-      await expect(loadReconciledSongV2Snapshot(db, baseline._id)).rejects.toThrow("cleanup offline");
+      await expect(loadReconciledSongV2Snapshot(db, baseline._id, undefined, () => true)).rejects.toThrow("cleanup offline");
       expect(put).toHaveBeenCalledTimes(1);
-      const recovered = await loadReconciledSongV2Snapshot(db, baseline._id);
+      const recovered = await loadReconciledSongV2Snapshot(db, baseline._id, undefined, () => true);
       expect(put).toHaveBeenCalledTimes(1);
       expect(recovered.hydrated.arrangements[0].formattedLyrics[0].words).toBe("alpha\nbeta1\ngamma\ndelta1");
       expect((await loadSongV2Snapshot(db, baseline._id, true)).conflicts).toBeUndefined();

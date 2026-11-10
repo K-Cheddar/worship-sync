@@ -121,6 +121,7 @@ import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
 import { getFreeSectionNumber } from "../../utils/freeSectionNames";
 import type { OwnedItemContentMutation } from "../../utils/ownedItemContentMutation";
 import { getActiveItemSlides } from "../../utils/activeItemSlides";
+import { canEditSongContent } from "../../utils/accessTiers";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -208,7 +209,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
   const canEdit = !pendingSongV2Conflicts?.length && (
     access === "full" ||
-    (access === "music" && (type === "song" || type === "free"))
+    (type === "song" && canEditSongContent(access)) ||
+    (access === "music" && type === "free")
   );
 
   const { shouldShowItemEditor } = useSelector(

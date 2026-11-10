@@ -43,6 +43,13 @@ Authorization: the “WorshipSync Song v2 — Fix Blocking Conflict Screen and R
 - A later browser can recover the song after the original editors close. Unconflicted songs keep their normal opening and editing flow; migrations and unrelated songs are unchanged.
 - A conflict-review completion may write to its captured original database, but it only updates the editor or conflict state while the original database session, church, item, and outline occurrence still own the view. An item/database switch or unmount suppresses stale UI publication.
 
+### Read-only hydration and authorized automatic reconciliation
+
+Authorization: the current high-priority code-review remediation request, November 10, 2026.
+
+- Song hydration and conflict inspection are read-only. A view-only Controller session or paired display reads the current winning song content and retains competing revisions; reads never persist a merge or retire a revision leaf.
+- Automatic merge of provably disjoint canonical lyric edits uses the existing Controller song-edit access (`music` or `full`). The permission and original database/session/item owner are checked at each content write and revision retirement. Genuine conflicts remain for explicit review.
+
 Targeted nonactive slide-cache invalidation and stale conflict-review completion guards are confirmed by the November 5, 2026 code-review remediation request.
 
 ### Song v2 semantic conflict review (October 27, 2026)

@@ -12,6 +12,7 @@ import {
   hydrateSongFromV2Documents as hydrateSongV2DocumentsStructural,
   hydrateSongFromV2DocumentsWithNormalizer,
 } from "./songV2Codec";
+import type { SongV2MutationGuard } from "./songV2Writer";
 export * from "./songV2Codec";
 
 export class SongV2VersionTransitionError extends Error {
@@ -206,7 +207,7 @@ export async function loadItemWithSongHydration(
   return document.type === "song" ? loadSong(db, itemId) : document;
 }
 
-/** Loads one song document and returns its canonical hydrated application shape. */
+/** Read-only hydration of the authoritative song documents into the app shape. */
 export async function loadSong(
   db: PouchDB.Database,
   songId: string,
@@ -224,13 +225,14 @@ export async function loadSong(
       );
     }
     assertValidV2Root(v2Root);
-    const snapshot = await loadV2Documents(db, v2Root, true);
-    if ([snapshot.root, ...snapshot.arrangements, ...snapshot.slides]
-      .some(doc => (doc as typeof doc & { _conflicts?: string[] })._conflicts?.length)) {
-      const { loadReconciledSongV2Snapshot } = await import("./songV2ReplicationConflicts");
-      const resolved = await loadReconciledSongV2Snapshot(db, songId, snapshotFromDocuments(snapshot));
-      return normalizeItemSlides(resolved.hydrated);
-    }
+    const documents = await loadV2Documents(db, v2Root, true);
+    const snapshot = snapshotFromDocuments({
+      root: { ...documents.root },
+      arrangements: documents.arrangements.map(document => ({ ...document })),
+      slides: documents.slides.map(document => ({ ...document })),
+    });
+    // Reads return the current winning revision. Conflict inspection and any
+    // authorized reconciliation belong to explicit editor/store paths.
     return hydrateSongFromV2Documents(snapshot.root, snapshot.arrangements, snapshot.slides);
   }
   const document = (await db.get(songId)) as DBItem;
@@ -267,6 +269,7 @@ export async function saveSong(
   currentSong?: DBItem,
   diagnostics?: SongSaveDiagnostics,
   snapshot?: SongV2Snapshot,
+  mutationGuard?: SongV2MutationGuard,
 ): Promise<DBItem> {
   if (song.type !== "song") throw new Error("Only songs can be saved here");
   if (song.docType === "song-v2-root" || isSongV2Root(currentSong)) {
@@ -279,13 +282,13 @@ export async function saveSong(
     }
     const { saveSongV2FromBaseline } = await import("./songV2Writer");
     let result;
-    try { result = await saveSongV2FromBaseline(db, currentSong, song, snapshot); }
+    try { result = await saveSongV2FromBaseline(db, currentSong, song, snapshot, mutationGuard); }
     catch (error) {
       // Another writer can win between validation and put. Re-read once and
       // recompute against the original authored baseline; never blind retry.
       if (!(error instanceof Error && error.name === "SongV2WriteError" &&
         "status" in error && error.status === 409)) throw error;
-      result = await saveSongV2FromBaseline(db, currentSong, song);
+      result = await saveSongV2FromBaseline(db, currentSong, song, undefined, mutationGuard);
     }
     if (result.cleanupErrors.length) await reportV2CleanupErrors(db, song._id, result.cleanupErrors, diagnostics);
     return result.song;
@@ -296,7 +299,7 @@ export async function saveSong(
       throw new SongV2BaselineRequiredError(song._id);
     }
     const { saveSongV2FromBaseline } = await import("./songV2Writer");
-    const result = await saveSongV2FromBaseline(db, currentSong, song, snapshot);
+    const result = await saveSongV2FromBaseline(db, currentSong, song, snapshot, mutationGuard);
     if (result.cleanupErrors.length) await reportV2CleanupErrors(db, song._id, result.cleanupErrors, diagnostics);
     return result.song;
   }
@@ -320,6 +323,10 @@ export async function saveSong(
   // migration published the authoritative root after the baseline was read.
   if (await getOptionalDocument<SongV2RootDocument>(db, getSongV2RootDocId(song._id))) {
     throw new SongV2VersionTransitionError(song._id);
+  }
+  if (mutationGuard) {
+    const { assertSongV2MutationAllowed } = await import("./songV2Writer");
+    assertSongV2MutationAllowed(mutationGuard);
   }
   const result = await db.put(persisted);
   return normalizeItemSlides({ ...persisted, _rev: result.rev });

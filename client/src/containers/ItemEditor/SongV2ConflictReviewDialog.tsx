@@ -21,6 +21,7 @@ import {
 } from "../../utils/buildSongV2ConflictDiffModel";
 import { loadSongV2Snapshot, type SongV2Snapshot } from "../../utils/songPersistence";
 import type { Arrangment, DBItem, ItemState } from "../../types";
+import { globalFireDbInfo } from "../../context/globalInfo";
 
 type ManualLyrics = Record<string, Record<string, string>>;
 export type SongV2ConflictReviewOwner = object;
@@ -37,6 +38,7 @@ type SongV2ConflictReviewDialogProps = {
   db: PouchDB.Database;
   songId: string;
   snapshot?: SongV2Snapshot | null;
+  canSave: boolean;
   resolutionOwner: SongV2ConflictReviewOwner;
   isOpen: boolean;
   onClose: () => void;
@@ -267,6 +269,7 @@ const SongV2ConflictReviewDialog = ({
   db,
   songId,
   snapshot,
+  canSave,
   resolutionOwner,
   isOpen,
   onClose,
@@ -442,6 +445,10 @@ const SongV2ConflictReviewDialog = ({
         manualSong,
         reviewedSnapshot.conflicts ?? [],
         sourceRevisions,
+        // The physical save is owned by its captured database and may finish
+        // after this dialog unmounts. Permission revocation still blocks every
+        // subsequent write or revision retirement; UI publication stays guarded.
+        () => canSave && globalFireDbInfo.canWriteSongContent === true,
       );
       if (!isCurrentOperation()) return;
       if (result.conflictsRetired) {
@@ -742,7 +749,7 @@ const SongV2ConflictReviewDialog = ({
         <Button
           variant="primary"
           onClick={() => void saveResolution()}
-          disabled={isLoading || isChoosing || isSaving || missingManual.length > 0 || !reviewedSnapshot || !draftSong || !(reviewedSnapshot.conflicts?.length)}
+          disabled={!canSave || isLoading || isChoosing || isSaving || missingManual.length > 0 || !reviewedSnapshot || !draftSong || !(reviewedSnapshot.conflicts?.length)}
           isLoading={isSaving}
         >
           Save resolution

@@ -21,6 +21,7 @@ import { getContentDatabaseSessionToken } from "../../utils/contentReplicationAc
 import type { ItemContentOwner, ItemState } from "../../types";
 import type { RootState } from "../../store/store";
 import type { SongV2ConflictReviewOwner } from "../../containers/ItemEditor/SongV2ConflictReviewDialog";
+import { canEditSongContent } from "../../utils/accessTiers";
 
 type ConflictReviewOwner = SongV2ConflictReviewOwner & {
   database: PouchDB.Database;
@@ -124,6 +125,7 @@ const Item = () => {
             db={db}
             songId={_id}
             resolutionOwner={resolutionOwner}
+            canSave={canEditSongContent(access)}
             isOpen={Boolean(isConflictReviewOpen && conflictReviewOwner === resolutionOwner)}
             onClose={closeConflictReview}
             onResolved={(song, owner) => {

@@ -26,6 +26,10 @@ export const hasControllerAccess = (access?: ControllerAccess | "member" | null)
 export const hasFullControllerAccess = (access?: ControllerAccess | null): boolean =>
   access === "full";
 
+/** Matches the existing Controller rule for editing songs and free items. */
+export const canEditSongContent = (access?: ControllerAccess | null): boolean =>
+  access === "full" || access === "music";
+
 // Temporary alias for workstation and older call sites. New auth code uses the
 // explicitly named Controller helpers above.
 export const isViewOnlyAccess = isControllerViewOnly;
