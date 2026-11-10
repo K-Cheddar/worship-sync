@@ -13,7 +13,10 @@ import { mergeLyricText } from "./mergeLyricText";
 type Document = SongV2RootDocument | SongV2ArrangementDocument | SongV2SlideDocument;
 type Update<T> = { current: T; next: T };
 type Changes<T> = { create: T[]; update: Update<T>[]; delete: T[] };
-export type SongV2MutationGuard = () => boolean;
+export type SongV2MutationGuard = (() => boolean) & {
+  /** Called after a guarded physical mutation commits successfully. */
+  onWriteCommitted?: () => void;
+};
 
 export class SongV2MutationNotAuthorizedError extends Error {
   constructor() {
@@ -191,12 +194,14 @@ async function execute(
       if (step.kind === "put") {
         if (mutationGuard) assertSongV2MutationAllowed(mutationGuard);
         const response = await db.put(doc);
+        mutationGuard?.onWriteCommitted?.();
         remember(state.documents, { ...doc, _rev: response.rev });
         state.progress.written.push(doc._id);
         if (step.isNew) state.progress.created.push(doc._id);
       } else {
         if (mutationGuard) assertSongV2MutationAllowed(mutationGuard);
         await db.remove(doc._id, doc._rev!);
+        mutationGuard?.onWriteCommitted?.();
         state.progress.deleted.push(doc._id);
       }
     } catch (cause) {

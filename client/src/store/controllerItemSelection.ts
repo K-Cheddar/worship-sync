@@ -5,6 +5,7 @@ import { selectItemDocuments } from "./itemLibrarySelectors";
 import { bufferSongV2RevisionConflict, setActiveItem, setActiveItemOccurrence, setItemIsLoading, setSelectedSlide } from "./itemSlice";
 import { setActiveItemInList } from "./itemListSlice";
 import { prepareItemForEditor } from "../utils/outlineSlideSections";
+import { normalizeItemSlides } from "../utils/activeItemSlides";
 import { readCurrentItemDocuments } from "../utils/readCurrentItemDocuments";
 import { SERVICE_TIME_COUNTDOWN_ID } from "../constants/nextServiceTimer";
 import { buildServiceTimeItem } from "../utils/itemUtil";
@@ -37,15 +38,17 @@ export const selectControllerItem = (
   const contentOwner = getActiveContentDatabaseOwner();
   const churchId = globalFireDbInfo.churchId;
   const sessionToken = db ? getContentDatabaseSessionToken(db.name) : null;
-  const isCurrent = () => selections.get(getState) === request &&
+  const isOriginalOwnerCurrent = () =>
     getState().allDocs.session === session &&
     getActiveContentDatabaseOwner() === contentOwner &&
-    getState().undoable.present.itemList.selectedItemListId === target.listId &&
     globalFireDbInfo.churchId === churchId &&
     (!db || getContentDatabaseSessionToken(db.name) === sessionToken) &&
     (contentOwner
       ? getContentDatabaseForOwner(contentOwner) === db
       : !getActiveContentDatabaseOwner());
+  const isCurrent = () => selections.get(getState) === request &&
+    isOriginalOwnerCurrent() &&
+    getState().undoable.present.itemList.selectedItemListId === target.listId;
   const activate = (doc: DBItem) => {
     // Preserve the middleware that flushes editors and restores pending autosaves.
     dispatch(setActiveItem({
@@ -55,8 +58,11 @@ export const selectControllerItem = (
     }));
   };
   const activateLoadedSong = (doc: DBItem, conflicts: NonNullable<ItemState["pendingSongV2Conflicts"]> = []) => {
-    const occurrence = { ...doc, listId: target.listId };
-    dispatch(applyItemDocumentChange({ id: doc._id, doc }));
+    // V2 snapshots are structurally hydrated for conflict inspection. Restore
+    // client-derived monitor sizing before the editor/display model is cached.
+    const normalizedDoc = normalizeItemSlides(doc);
+    const occurrence = { ...normalizedDoc, listId: target.listId };
+    dispatch(applyItemDocumentChange({ id: normalizedDoc._id, doc: normalizedDoc }));
     activate(occurrence);
     if (conflicts.length) {
       dispatch(bufferSongV2RevisionConflict({ item: occurrence, conflicts }));
@@ -71,9 +77,14 @@ export const selectControllerItem = (
       loaded = snapshot.hydrated;
       conflicts = snapshot.conflicts ?? [];
       if (conflicts.length && globalFireDbInfo.canWriteSongContent) {
-        const mutationGuard = () => globalFireDbInfo.canWriteSongContent === true &&
-          isCurrent() &&
-          (!contentOwner || getContentDatabaseForOwner(contentOwner) === db);
+        // A later selection suppresses activation, not an already durable merge.
+        let hasCommittedWrite = false;
+        const mutationGuard = Object.assign(
+          () => globalFireDbInfo.canWriteSongContent === true &&
+            isOriginalOwnerCurrent() &&
+            (hasCommittedWrite || isCurrent()),
+          { onWriteCommitted: () => { hasCommittedWrite = true; } },
+        );
         try {
           const reconciled = await loadReconciledSongV2Snapshot(
             db,

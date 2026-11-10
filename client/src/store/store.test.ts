@@ -316,7 +316,11 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       slides[0].boxes[0].words = words;
       env.store.dispatch(env.itemSlice.actions._updateSlides(slides));
     };
-    return { ...env, docs, physical, baseline, edit };
+    const editSong = (name: string, words: string) => {
+      env.store.dispatch(env.itemSlice.actions._setName(name));
+      edit(words);
+    };
+    return { ...env, docs, physical, baseline, edit, editSong };
   }
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
@@ -444,6 +448,58 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("first");
     await jest.advanceTimersByTimeAsync(1500);
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("second typed");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("finishes a multi-document V2 save after a newer edit supersedes it mid-commit", async () => {
+    const env = setup();
+    const originalPut = env.db.put.getMockImplementation()!;
+    let committedFirstDocument!: () => void;
+    let releaseFirstDocument!: () => void;
+    let committedThirdDocument!: () => void;
+    let releaseThirdDocument!: () => void;
+    const firstCommit = new Promise<void>(resolve => { committedFirstDocument = resolve; });
+    const firstCommitGate = new Promise<void>(resolve => { releaseFirstDocument = resolve; });
+    const thirdCommit = new Promise<void>(resolve => { committedThirdDocument = resolve; });
+    const thirdCommitGate = new Promise<void>(resolve => { releaseThirdDocument = resolve; });
+    let writes = 0;
+    env.db.put.mockImplementation(async next => {
+      const result = await originalPut(next);
+      writes += 1;
+      if (writes === 1) {
+        committedFirstDocument();
+        await firstCommitGate;
+      } else if (writes === 3) {
+        committedThirdDocument();
+        await thirdCommitGate;
+      }
+      return result;
+    });
+
+    env.editSong("First save title", "First save lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await firstCommit;
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First save lyrics");
+    expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
+
+    env.editSong("Latest save title", "Latest save lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    releaseFirstDocument();
+    await flushListenerEffects();
+    await thirdCommit;
+    expect(env.docs.get(env.physical.root._id).name).toBe("First save title");
+    expect(env.store.getState().undoable.present.item.name).toBe("Latest save title");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    releaseThirdDocument();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const latest = (await env.songPersistence.loadSongV2Snapshot(env.db as never, env.baseline._id)).hydrated;
+    expect(writes).toBeGreaterThanOrEqual(4);
+    expect(latest.name).toBe("Latest save title");
+    expect(latest.arrangements[0].slides[0].boxes[0].words).toBe("Latest save lyrics");
+    expect(env.docs.get(env.physical.root._id).name).not.toBe("First save title");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).not.toBe("First save lyrics");
     expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
   });
 
@@ -740,6 +796,24 @@ describe("authoritative Song V2 reads in controller and Undo/Redo paths", () => 
     expect(env.docs.get(songId)).toEqual(env.staleV1);
   });
 
+  it("restores calculated monitor layout when activating a V2 snapshot without persisted layout", async () => {
+    const env = setup();
+    expect(env.physical.arrangements[0]).not.toHaveProperty("monitorLayout");
+    const expected = await env.songPersistence.loadSong(env.db as never, songId);
+    expect(expected.arrangements[0].monitorLayout).toBeDefined();
+
+    await env.store.dispatch(env.selectControllerItem(
+      { _id: songId, listId: "monitor-layout-outline", type: "song" }, env.db as never,
+    ));
+
+    const active = env.store.getState().undoable.present.item;
+    expect(active.arrangements[0].monitorLayout).toEqual(expected.arrangements[0].monitorLayout);
+    expect(env.store.getState().allDocs.allSongDocs.find((doc: any) => doc._id === songId)
+      ?.arrangements[0].monitorLayout).toEqual(expected.arrangements[0].monitorLayout);
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.db.remove).not.toHaveBeenCalled();
+  });
+
   it("uses guarded automatic reconciliation when an authorized editor opens a conflicting V2 song", async () => {
     const env = setup();
     const owner: ItemContentOwner = {
@@ -765,6 +839,39 @@ describe("authoritative Song V2 reads in controller and Undo/Redo paths", () => 
     expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words)
       .toBe("Authorized disjoint merge");
     expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+  });
+
+  it("keeps an authorized selection reconciliation valid after its first write while suppressing stale activation", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-disjoint"] });
+    const merged = clone(env.baseline);
+    merged.arrangements[0].slides[0].boxes[0].words = "Authorized disjoint merge";
+    let guardAfterSelectionChange: (() => boolean) | undefined;
+    jest.spyOn(env.replicationConflicts, "loadReconciledSongV2Snapshot")
+      .mockImplementation(async (...args: unknown[]) => {
+        const [database, , snapshot, guard] = args as [any, string, any, (() => boolean) & { onWriteCommitted?: () => void }];
+        expect(guard()).toBe(true);
+        await database.put({ ...arrangement, updatedAt: "first durable reconciliation write" });
+        guard.onWriteCommitted?.();
+        await env.store.dispatch(env.selectControllerItem(
+          { _id: "other-item", listId: "next-outline", type: "free" }, env.db as never,
+        ));
+        guardAfterSelectionChange = guard;
+        return { ...snapshot, conflicts: undefined, hydrated: merged };
+      });
+
+    await env.store.dispatch(env.selectControllerItem(
+      { _id: songId, listId: "editor-outline", type: "song" }, env.db as never,
+    ));
+
+    expect(guardAfterSelectionChange?.()).toBe(true);
+    expect(env.store.getState().undoable.present.item._id).toBe("other-item");
+    expect(env.store.getState().undoable.present.item.arrangements).toEqual([]);
   });
 
   it("does not reconcile or retire conflict leaves on a view-only replication refresh", async () => {

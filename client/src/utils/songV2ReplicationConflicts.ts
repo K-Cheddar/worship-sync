@@ -126,7 +126,10 @@ async function prune(
   for (const conflict of pending) {
     for (const rev of conflict.revisions) {
       assertSongV2MutationAllowed(mutationGuard);
-      try { await db.remove(conflict.documentId, rev); }
+      try {
+        await db.remove(conflict.documentId, rev);
+        mutationGuard.onWriteCommitted?.();
+      }
       catch (error) {
         if (![404, 409].includes((error as { status?: number }).status ?? 0)) throw error;
       }

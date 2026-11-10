@@ -206,22 +206,30 @@ const createSongV2MutationGuard = (
   churchId: string | undefined,
   sessionToken: symbol | null,
   operationIsCurrent: () => boolean,
-) => () => {
-  if (
-    globalFireDbInfo.canWriteSongContent !== true ||
-    globalFireDbInfo.churchId !== churchId ||
-    getContentDatabaseSessionToken(database.name) !== sessionToken ||
-    !operationIsCurrent()
-  ) return false;
+) => {
+  let hasCommittedWrite = false;
+  return Object.assign(
+    () => {
+      if (
+        globalFireDbInfo.canWriteSongContent !== true ||
+        globalFireDbInfo.churchId !== churchId ||
+        getContentDatabaseSessionToken(database.name) !== sessionToken
+      ) return false;
 
-  const currentOwner = getActiveContentDatabaseOwner();
-  if (!contentOwner || contentOwner.scopeId === "unscoped") {
-    return !currentOwner;
-  }
-  return currentOwner?.scopeId === contentOwner.scopeId &&
-    currentOwner.databaseKey === contentOwner.databaseKey &&
-    currentOwner.churchId === contentOwner.churchId &&
-    getContentDatabaseForOwner(contentOwner) === database;
+      const currentOwner = getActiveContentDatabaseOwner();
+      const ownerIsCurrent = !contentOwner || contentOwner.scopeId === "unscoped"
+        ? !currentOwner
+        : currentOwner?.scopeId === contentOwner.scopeId &&
+          currentOwner.databaseKey === contentOwner.databaseKey &&
+          currentOwner.churchId === contentOwner.churchId &&
+          getContentDatabaseForOwner(contentOwner) === database;
+      // Supersession can stop a stale operation before it mutates. Once a
+      // physical write commits, finish the captured write plan while retaining
+      // authorization and database ownership checks at every boundary.
+      return ownerIsCurrent && (hasCommittedWrite || operationIsCurrent());
+    },
+    { onWriteCommitted: () => { hasCommittedWrite = true; } },
+  );
 };
 
 /** Broadcast credit doc(s) to other tabs. Components that persist credits directly call this after db.put. */

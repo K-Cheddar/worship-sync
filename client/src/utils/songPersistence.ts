@@ -329,6 +329,7 @@ export async function saveSong(
     assertSongV2MutationAllowed(mutationGuard);
   }
   const result = await db.put(persisted);
+  mutationGuard?.onWriteCommitted?.();
   return normalizeItemSlides({ ...persisted, _rev: result.rev });
 }
 
