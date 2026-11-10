@@ -29,6 +29,8 @@ import {
   getVideoInputErrorMessage,
   resolveLocalVideoInputBinding,
   resolveLocalVideoInputBindingForDevice,
+  restoreLocalVideoInputBinding,
+  type LocalVideoInputBinding,
 } from "../../utils/localVideoInput";
 import {
   acquireWarmLocalVideoCapture,
@@ -220,6 +222,17 @@ type BrowserShare = {
   name: string;
 };
 
+type LinkOperation = {
+  sessionId: number;
+  sourceId: string;
+  previousBinding?: LocalVideoInputBinding;
+  nextBinding: LocalVideoInputBinding;
+  share?: BrowserShare;
+  uncertain: boolean;
+  settled: boolean;
+  adopted: boolean;
+};
+
 type PreviewStatus = "idle" | "loading" | "ready" | "error";
 
 const enumerateInputs = async () => {
@@ -346,6 +359,26 @@ const LocalVideoInputPicker = ({
   const refreshRequestRef = useRef(0);
   const desktopRequestRef = useRef(0);
   const linkedShareRef = useRef<MediaStream | undefined>(undefined);
+  const linkOperationRef = useRef<LinkOperation | undefined>(undefined);
+  const pickerSessionRef = useRef(0);
+  const lastOpenRef = useRef(open);
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  useEffect(() => {
+    if (lastOpenRef.current !== open) {
+      pickerSessionRef.current += 1;
+      lastOpenRef.current = open;
+      if (open) {
+        setIsLoading(false);
+        setError("");
+      }
+    }
+  }, [open]);
+  const browserShareRef = useRef(browserShare);
+  browserShareRef.current = browserShare;
   const previewVideoRef = useRef<HTMLVideoElement | null>(null);
   const desktopPreviewImageRef = useRef<HTMLImageElement | null>(null);
   const captureGenerationRef = useRef(0);
@@ -558,12 +591,27 @@ const LocalVideoInputPicker = ({
   useEffect(() => {
     if (open) return;
     setBrowserShare((current) => {
-      if (current && current.stream !== linkedShareRef.current) {
+      const pendingOperation = linkOperationRef.current;
+      if (
+        current &&
+        current.stream !== linkedShareRef.current &&
+        !(pendingOperation?.share?.stream === current.stream && !pendingOperation.settled)
+      ) {
         stopShare(current);
       }
       return undefined;
     });
   }, [open]);
+
+  useEffect(() => () => {
+    const current = browserShareRef.current;
+    const pendingOperation = linkOperationRef.current;
+    if (
+      current &&
+      current.stream !== linkedShareRef.current &&
+      !(pendingOperation?.share?.stream === current.stream && !pendingOperation.settled)
+    ) stopShare(current);
+  }, []);
 
   // Live muted preview of the selected camera. A shared Electron join and a
   // browser-owned stream each retain a picker-specific cleanup path.
@@ -877,6 +925,7 @@ const LocalVideoInputPicker = ({
     nextSource: LocalVideoInputMediaSource,
     nextCaptureKind: LocalVideoCaptureKind,
     audioEnabled: boolean,
+    sessionId: number,
   ): Promise<boolean> => {
     const suggestedLabel = isDesktopMode
       ? (selectedDesktopSource?.name ?? browserShare?.name)
@@ -891,29 +940,61 @@ const LocalVideoInputPicker = ({
       fit,
       audioEnabled,
     };
+    if (sessionId !== pickerSessionRef.current || !open) return false;
+    const operation = linkOperationRef.current;
     try {
       if (currentCapturedFrame && !capturedThumbnailSaved && !thumbnailRemoved) {
         await onLinked(linkedSource, currentCapturedFrame.frame);
       } else {
         await onLinked(linkedSource);
       }
+      if (operation) {
+        operation.settled = true;
+        operation.adopted = true;
+      }
+      if (operation?.share && !runningInElectron) {
+        linkedShareRef.current = operation.share.stream;
+        keepBrowserDesktopShare(operation.sourceId, operation.share.stream);
+      }
     } catch (saveError) {
-      setError(
-        saveError instanceof Error
-          ? saveError.message
-          : "The video input could not be saved to Media. Try again.",
-      );
+      const unknownOutcome = saveError instanceof Error &&
+        saveError.name === "VideoInputMediaWriteOutcomeUnknownError";
+      if (operation) {
+        operation.settled = true;
+        operation.uncertain = unknownOutcome;
+        if (unknownOutcome && operation.share && !runningInElectron) {
+          linkedShareRef.current = operation.share.stream;
+          keepBrowserDesktopShare(operation.sourceId, operation.share.stream);
+        }
+      }
+      if (
+        !unknownOutcome &&
+        operation?.share &&
+        (!mountedRef.current || sessionId !== pickerSessionRef.current || !open)
+      ) stopShare(operation.share);
+      if (mountedRef.current && sessionId === pickerSessionRef.current && open) {
+        setError(
+          saveError instanceof Error
+            ? saveError.message
+            : "The video input could not be saved to Media. Try again.",
+        );
+      }
       return false;
     }
+    if (!mountedRef.current || sessionId !== pickerSessionRef.current) return false;
     if (!source) pendingNewSourceRef.current = undefined;
     setOpen(false);
     return true;
   };
 
-  const linkDesktopShare = async (nextSource: LocalVideoInputMediaSource) => {
+  const linkDesktopShare = async (
+    nextSource: LocalVideoInputMediaSource,
+    sessionId: number,
+  ) => {
     if (!canListDesktopSources) {
       const share = browserShare;
       if (!share) return false;
+      const previousBinding = resolveLocalVideoInputBinding(nextSource.sourceId);
       const linked = bindLocalVideoInput(
         nextSource.sourceId,
         // Browser shares have no reusable handle; keep one binding per source.
@@ -929,17 +1010,27 @@ const LocalVideoInputPicker = ({
         );
         return false;
       }
-      linkedShareRef.current = share.stream;
-      keepBrowserDesktopShare(nextSource.sourceId, share.stream);
+      linkOperationRef.current = {
+        sessionId,
+        sourceId: nextSource.sourceId,
+        previousBinding,
+        nextBinding: linked,
+        share,
+        uncertain: false,
+        settled: false,
+        adopted: false,
+      };
       return finishLink(
         nextSource,
         share.captureKind,
         share.stream.getAudioTracks().length > 0,
+        sessionId,
       );
     }
 
     const desktopSource = selectedDesktopSource;
     if (!desktopSource) return false;
+    const previousBinding = resolveLocalVideoInputBinding(nextSource.sourceId);
     const linked = bindLocalVideoInput(
       nextSource.sourceId,
       desktopSource.id,
@@ -958,6 +1049,15 @@ const LocalVideoInputPicker = ({
       );
       return false;
     }
+    linkOperationRef.current = {
+      sessionId,
+      sourceId: nextSource.sourceId,
+      previousBinding,
+      nextBinding: linked,
+      uncertain: false,
+      settled: false,
+      adopted: false,
+    };
     await acquireWarmLocalVideoCapture(
       nextSource.sourceId,
       linked,
@@ -968,14 +1068,19 @@ const LocalVideoInputPicker = ({
       nextSource,
       desktopSource.kind,
       useSystemAudio || Boolean(selectedAudioInput),
+      sessionId,
     );
   };
 
-  const linkVideoInput = async (nextSource: LocalVideoInputMediaSource) => {
+  const linkVideoInput = async (
+    nextSource: LocalVideoInputMediaSource,
+    sessionId: number,
+  ) => {
     const video = videoInputs.find(
       (device) => device.deviceId === videoDeviceId,
     );
     if (!video) return false;
+    const previousBinding = resolveLocalVideoInputBinding(nextSource.sourceId);
     const linked = bindLocalVideoInput(
       nextSource.sourceId,
       video.deviceId,
@@ -989,16 +1094,27 @@ const LocalVideoInputPicker = ({
       );
       return false;
     }
+    linkOperationRef.current = {
+      sessionId,
+      sourceId: nextSource.sourceId,
+      previousBinding,
+      nextBinding: linked,
+      uncertain: false,
+      settled: false,
+      adopted: false,
+    };
     await acquireWarmLocalVideoCapture(
       nextSource.sourceId,
       linked,
       true,
       pickerCaptureConsumerId,
     );
-    return finishLink(nextSource, "device", Boolean(selectedAudioInput));
+    return finishLink(nextSource, "device", Boolean(selectedAudioInput), sessionId);
   };
 
   const link = async () => {
+    const sessionId = pickerSessionRef.current;
+    linkOperationRef.current = undefined;
     const nextSource = source ?? pendingNewSourceRef.current ??
       createLocalVideoInputMediaSource(
         label,
@@ -1015,16 +1131,17 @@ const LocalVideoInputPicker = ({
         throw new PreviewCapturePendingError();
       }
       if (isDesktopMode) {
-        linked = await linkDesktopShare(nextSource);
+        linked = await linkDesktopShare(nextSource, sessionId);
         return;
       }
-      linked = await linkVideoInput(nextSource);
+      linked = await linkVideoInput(nextSource, sessionId);
     } catch (nextError) {
       if (nextError instanceof LocalVideoCaptureOwnedError) {
         linked = await finishLink(
           nextSource,
           isDesktopMode ? captureKind : "device",
           useSystemAudio || Boolean(selectedAudioInput),
+          sessionId,
         );
         return;
       }
@@ -1048,8 +1165,24 @@ const LocalVideoInputPicker = ({
           releaseError,
         ),
       );
-      setIsLoading(false);
-      if (!linked && !isDesktopMode && open) {
+      const operation = linkOperationRef.current as LinkOperation | undefined;
+      if (
+        operation?.sessionId === sessionId &&
+        !linked &&
+        !operation.uncertain &&
+        !operation.adopted
+      ) {
+        restoreLocalVideoInputBinding(
+          operation.sourceId,
+          operation.nextBinding,
+          operation.previousBinding,
+        );
+        if (operation.share && operation.share.stream !== linkedShareRef.current) {
+          if (!open || sessionId !== pickerSessionRef.current) stopShare(operation.share);
+        }
+      }
+      if (mountedRef.current && sessionId === pickerSessionRef.current) setIsLoading(false);
+      if (!linked && !isDesktopMode && open && mountedRef.current && sessionId === pickerSessionRef.current) {
         previewPausedRef.current = false;
         setPreviewPaused(false);
         setPreviewRefreshKey((current) => current + 1);

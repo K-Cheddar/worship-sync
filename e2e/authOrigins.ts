@@ -1,4 +1,21 @@
 /** Trusted auth API origins for the app's configured browser/Electron dev setup. */
+const localDevelopmentHosts = new Set([
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "local.worshipsync.net",
+]);
+
+export const shouldIgnoreE2EHTTPSErrors = (baseURL: string): boolean => {
+  try {
+    return localDevelopmentHosts.has(
+      new URL(baseURL).hostname.replace(/^\[|\]$/g, ""),
+    );
+  } catch {
+    return false;
+  }
+};
+
 export const allowedE2EAuthOrigins = (baseURL: string): Set<string> => {
   const appURL = new URL(baseURL);
   const origins = new Set([appURL.origin]);
@@ -33,8 +50,14 @@ export const isTrustedFirebaseAuthOrigin = (
     const hostname = provider === "identitytoolkit"
       ? "identitytoolkit.googleapis.com"
       : "securetoken.googleapis.com";
-    return url.protocol === "https:" && url.hostname === hostname;
+    return url.protocol === "https:" && url.hostname === hostname && url.port === "";
   } catch {
     return false;
   }
 };
+
+/** Match the exact Firebase auth hosts, including insecure or unexpected ports, so the guard can reject them. */
+export const firebaseAuthRequestMatchers = {
+  identitytoolkit: /^https?:\/\/identitytoolkit\.googleapis\.com(?::\d+)?(?:[/?#]|$)/i,
+  securetoken: /^https?:\/\/securetoken\.googleapis\.com(?::\d+)?(?:[/?#]|$)/i,
+} as const;

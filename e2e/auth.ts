@@ -6,6 +6,7 @@ import {
   allowedE2EAuthOrigins,
   isObservedSharedDataSignIn,
   isTrustedFirebaseAuthOrigin,
+  shouldIgnoreE2EHTTPSErrors,
 } from "./authOrigins";
 import {
   authorizeSilentSessionRequest,
@@ -109,13 +110,6 @@ const makeAppURL = (baseURL: string, route: "/" | "/login") => {
   url.hash = route;
   return url.toString();
 };
-
-const localDevelopmentHosts = new Set([
-  "localhost",
-  "127.0.0.1",
-  "::1",
-  "local.worshipsync.net",
-]);
 
 const hasFile = async (path: string) =>
   access(path).then(() => true).catch(() => false);
@@ -644,7 +638,7 @@ export async function validateSavedSession(
       // Match auth-refresh and controller projects in both headed and headless Chromium.
       userAgent: devices["Desktop Chrome"].userAgent,
       storageState: files.authFile,
-      ignoreHTTPSErrors: localDevelopmentHosts.has(new URL(baseURL).hostname),
+      ignoreHTTPSErrors: shouldIgnoreE2EHTTPSErrors(baseURL),
     });
   } catch {
     return {

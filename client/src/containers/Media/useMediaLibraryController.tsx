@@ -26,7 +26,11 @@ import {
 import { mediaInfoType } from "./cloudinaryTypes";
 import type { MediaUploadInputRef } from "./MediaUploadInput";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
-import { deleteLocalImage, getLocalImageUploadJob } from "../../utils/localImageAssets";
+import {
+  deleteLocalImage,
+  enqueueLocalImageCloudCleanup,
+  getLocalImageUploadJob,
+} from "../../utils/localImageAssets";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import {
   isDesktopCaptureKind,
@@ -1259,6 +1263,7 @@ export function useMediaLibraryController({
     ): Promise<MediaType[]> => {
       const failed: MediaType[] = [];
       let providerUsageChanged = false;
+      const deletedCloudinaryIds = new Set<string>();
       for (const row of rows) {
         if (!canContinue()) break;
         const provider = row.providerStorage?.provider ||
@@ -1285,10 +1290,17 @@ export function useMediaLibraryController({
           row.muxAssetId ||
           row.localVideoFile?.cloudMediaId;
         try {
-          const deletedCloudinaryIds = new Set<string>();
+          if (row.localVideoInput && !row.localImage && thumbnailCloudPublicId) {
+            if (!churchId) throw new Error("Church session is unavailable.");
+            await enqueueLocalImageCloudCleanup({
+              mediaId: row.id,
+              workspaceId: churchId,
+              cloudPublicId: thumbnailCloudPublicId,
+            });
+          }
           if (provider === "cloudinary") {
             const publicId = cloudinaryPublicId || extractPublicId(row.background) ||
-              thumbnailCloudPublicId || "";
+              (!row.localVideoInput ? thumbnailCloudPublicId : "") || "";
             if (publicId) {
               providerUsageChanged = await deleteCloudinaryAssetOnce(
                 churchId,

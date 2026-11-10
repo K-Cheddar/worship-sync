@@ -63,7 +63,7 @@ export function smokePrerequisiteFailure(prerequisite: SmokePrerequisite): strin
         auth.authenticated !== true ||
         auth.sessionKind !== "human" ||
         auth.churchId !== E2E_CHURCH_ID ||
-        auth.matchesConfiguredAccount === false
+        auth.matchesConfiguredAccount !== true
       ) {
         return `Saved-session authentication failed: smoke requires the configured human account in church ${E2E_CHURCH_ID} (bootstrap HTTP ${auth.bootstrapStatus ?? "unavailable"}, authenticated ${auth.authenticated ?? "unknown"}, session ${auth.sessionKind ?? "unknown"}). No password or verification-code flow was attempted.`;
       }

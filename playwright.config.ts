@@ -2,6 +2,7 @@ import { defineConfig, devices } from "@playwright/test";
 import dotenv from "dotenv";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { shouldIgnoreE2EHTTPSErrors } from "./e2e/authOrigins";
 
 dotenv.config({ quiet: true });
 
@@ -50,13 +51,6 @@ if (requestedTrace && requestedTrace !== "off") {
   );
 }
 
-const localDevelopmentHosts = new Set([
-  "localhost",
-  "127.0.0.1",
-  "::1",
-  "local.worshipsync.net",
-]);
-
 export default defineConfig({
   testDir: "./e2e",
   testMatch: /\.(setup|spec)\.ts$/,
@@ -75,7 +69,7 @@ export default defineConfig({
     baseURL,
     actionTimeout: 15_000,
     navigationTimeout: 30_000,
-    ignoreHTTPSErrors: localDevelopmentHosts.has(new URL(baseURL).hostname),
+    ignoreHTTPSErrors: shouldIgnoreE2EHTTPSErrors(baseURL),
   },
   projects: [
     {

@@ -9,7 +9,10 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { isElectron } from "../../utils/environment";
 import * as localVideoCapturePool from "../../utils/localVideoCapturePool";
-import { bindLocalVideoInput } from "../../utils/localVideoInput";
+import {
+  bindLocalVideoInput,
+  resolveLocalVideoInputBinding,
+} from "../../utils/localVideoInput";
 import LocalVideoInputPicker from "./LocalVideoInputPicker";
 
 const mockIsElectron = jest.mocked(isElectron);
@@ -547,7 +550,7 @@ describe("LocalVideoInputPicker", () => {
     enumerateDevices.mockResolvedValue([
       createDevice("videoinput", "camera-1", "USB Capture"),
     ]);
-    bindLocalVideoInput("live-source", "camera-1", "USB Capture");
+    bindLocalVideoInput("live-source", "camera-before", "Previous camera");
     mockWarmVideoLink();
     const source = {
       kind: "local-video-input" as const,
@@ -590,9 +593,88 @@ describe("LocalVideoInputPicker", () => {
       ).toHaveAttribute("role", "alert");
       expect(screen.getByRole("button", { name: "Save local link" })).toBeInTheDocument();
       expect(onLinked).toHaveBeenCalledTimes(1);
+      expect(resolveLocalVideoInputBinding("live-source")).toMatchObject({
+        deviceId: "camera-before",
+        deviceLabel: "Previous camera",
+      });
     } finally {
       restoreCanvas();
     }
+  });
+
+  it("retains the provisional camera binding when Media outcome is unknown", async () => {
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    bindLocalVideoInput("live-source", "camera-before", "Previous camera");
+    mockWarmVideoLink();
+    const unknown = new Error("Media could not be verified.");
+    unknown.name = "VideoInputMediaWriteOutcomeUnknownError";
+    const onLinked = jest.fn().mockRejectedValue(unknown);
+    render(
+      <LocalVideoInputPicker
+        open
+        hideTrigger
+        source={{ kind: "local-video-input", sourceId: "live-source", label: "USB Capture" }}
+        onLinked={onLinked}
+      />,
+    );
+    await screen.findByLabelText("Input preview");
+    fireEvent.click(screen.getByRole("button", { name: "Save local link" }));
+    expect(await screen.findByText("Media could not be verified.")).toHaveAttribute("role", "alert");
+    expect(resolveLocalVideoInputBinding("live-source")).toMatchObject({
+      deviceId: "camera-1",
+      deviceLabel: "USB Capture",
+    });
+  });
+
+  it("does not close or replace a reopened picker draft when an older link finishes", async () => {
+    enumerateDevices.mockResolvedValue([
+      createDevice("videoinput", "camera-1", "USB Capture"),
+    ]);
+    mockWarmVideoLink();
+    const save = createDeferred<void>();
+    const onLinked = jest.fn(() => save.promise);
+    const source = {
+      kind: "local-video-input" as const,
+      sourceId: "live-source",
+      label: "USB Capture",
+    };
+    const PickerHost = () => {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Reopen picker</button>
+          <LocalVideoInputPicker
+            open={open}
+            hideTrigger
+            onOpenChange={setOpen}
+            source={source}
+            onLinked={onLinked}
+          />
+        </>
+      );
+    };
+
+    render(<PickerHost />);
+    await screen.findByLabelText("Input preview");
+    fireEvent.click(screen.getByRole("button", { name: "Save local link" }));
+    await waitFor(() => expect(onLinked).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reopen picker" }));
+    const labelInput = await screen.findByLabelText(/^Input name:?$/);
+    fireEvent.change(labelInput, { target: { value: "New picker draft" } });
+    expect(labelInput).toHaveValue("New picker draft");
+
+    await act(async () => {
+      save.resolve();
+      await save.promise;
+    });
+
+    expect(screen.getByRole("button", { name: "Save local link" })).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Input name:?$/)).toHaveValue("New picker draft");
+    expect(onLinked).toHaveBeenCalledTimes(1);
   });
 
   it("preserves the reviewed frame when a failed Media save restarts the same camera preview", async () => {
@@ -855,6 +937,12 @@ describe("LocalVideoInputPicker", () => {
     enumerateDevices.mockResolvedValue([
       createDevice("videoinput", "camera-1", "USB Capture"),
     ]);
+    const stopTrack = jest.fn();
+    getUserMedia.mockResolvedValue({
+      getTracks: () => [{ stop: stopTrack }],
+      getVideoTracks: () => [{ stop: stopTrack }],
+      getAudioTracks: () => [],
+    } as unknown as MediaStream);
     const originalGetContext = Object.getOwnPropertyDescriptor(
       HTMLCanvasElement.prototype,
       "getContext",
@@ -864,6 +952,8 @@ describe("LocalVideoInputPicker", () => {
       "toBlob",
     );
     let finishEncoding: BlobCallback | undefined;
+    let originalCreateObjectURL: PropertyDescriptor | undefined;
+    const createObjectURL = jest.fn(() => "blob:late-frame");
     Object.defineProperty(HTMLCanvasElement.prototype, "getContext", {
       configurable: true,
       value: () => ({ drawImage: jest.fn() }),
@@ -894,13 +984,26 @@ describe("LocalVideoInputPicker", () => {
       fireEvent.click(screen.getByRole("button", { name: "Capture thumbnail" }));
       await waitFor(() => expect(finishEncoding).toBeDefined());
 
+      originalCreateObjectURL = Object.getOwnPropertyDescriptor(URL, "createObjectURL");
+      Object.defineProperty(URL, "createObjectURL", {
+        configurable: true,
+        value: createObjectURL,
+      });
+
       view.unmount();
       await act(async () => {
         finishEncoding?.(new Blob(["late frame"], { type: "image/webp" }));
       });
 
       expect(onLinked).not.toHaveBeenCalled();
+      expect(createObjectURL).not.toHaveBeenCalled();
+      await waitFor(() => expect(stopTrack).toHaveBeenCalled());
     } finally {
+      if (originalCreateObjectURL) {
+        Object.defineProperty(URL, "createObjectURL", originalCreateObjectURL);
+      } else {
+        Reflect.deleteProperty(URL, "createObjectURL");
+      }
       if (originalGetContext) {
         Object.defineProperty(
           HTMLCanvasElement.prototype,
@@ -1698,6 +1801,39 @@ describe("LocalVideoInputPicker", () => {
         }),
       );
       expect(stop).not.toHaveBeenCalled();
+    });
+
+    it("releases a browser share after a definitive save failure and dismissal", async () => {
+      Object.defineProperty(navigator, "mediaDevices", {
+        configurable: true,
+        value: { enumerateDevices, getUserMedia, getDisplayMedia },
+      });
+      const stop = jest.fn();
+      const track = {
+        stop,
+        readyState: "live",
+        addEventListener: jest.fn(),
+        label: "Slides window",
+        getSettings: () => ({ displaySurface: "window" }),
+      };
+      getDisplayMedia.mockResolvedValue({
+        getTracks: () => [track],
+        getVideoTracks: () => [track],
+        getAudioTracks: () => [],
+      } as unknown as MediaStream);
+      const onLinked = openDesktopPicker(
+        jest.fn().mockRejectedValue(new Error("Media save failed.")),
+      );
+
+      fireEvent.click(await screen.findByRole("button", { name: "Choose what to share" }));
+      await screen.findByRole("button", { name: "Choose a different share" });
+      fireEvent.click(screen.getByRole("button", { name: "Add to Media" }));
+      expect(await screen.findByText("Media save failed.")).toHaveAttribute("role", "alert");
+      expect(onLinked).toHaveBeenCalledTimes(1);
+      expect(stop).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      await waitFor(() => expect(stop).toHaveBeenCalled());
     });
   });
 

@@ -1,5 +1,6 @@
+import { request as playwrightRequest } from "@playwright/test";
 import type { APIResponse, BrowserContext } from "@playwright/test";
-import { allowedE2EAuthOrigins } from "./authOrigins";
+import { allowedE2EAuthOrigins, shouldIgnoreE2EHTTPSErrors } from "./authOrigins";
 
 const deviceIdentityKey = "worshipsync_device_id";
 const silentSessionPath = "/api/auth/session";
@@ -179,6 +180,11 @@ export async function installSavedSessionAuthRequestGuard(
   let blockedRequests = 0;
   let recoveryAttempts = 0;
   const recoveryDiagnostics: AuthRecoveryDiagnostic[] = [];
+  const isolatedRecoveryRequest = smokeIdentity
+    ? await playwrightRequest.newContext({
+        ignoreHTTPSErrors: shouldIgnoreE2EHTTPSErrors(baseURL),
+      })
+    : undefined;
 
   await context.route(/\/api\/auth(?:\/|$)|mailslurp\.com/i, async (route) => {
     const request = route.request();
@@ -239,9 +245,25 @@ export async function installSavedSessionAuthRequestGuard(
 
     let response: APIResponse;
     let payload: unknown;
+    let responseBody = "";
     try {
-      response = await route.fetch();
-      payload = await response.json().catch(() => null);
+      if (!isolatedRecoveryRequest) throw new Error("Isolated recovery is unavailable.");
+      const requestHeaders = await request.allHeaders();
+      const headers = { ...requestHeaders };
+      for (const header of [
+        "host",
+        "cookie",
+        "content-length",
+        "connection",
+        "accept-encoding",
+        "transfer-encoding",
+      ]) delete headers[header];
+      response = await isolatedRecoveryRequest.post(request.url(), {
+        headers,
+        data: request.postData() || "",
+      });
+      responseBody = await response.text();
+      try { payload = JSON.parse(responseBody); } catch { payload = null; }
     } catch {
       recoveryDiagnostics.push({
         method: request.method(),
@@ -261,12 +283,21 @@ export async function installSavedSessionAuthRequestGuard(
       return;
     }
 
-    const outcome = classifySmokeRecoveryResponse(
+    let outcome = classifySmokeRecoveryResponse(
       response.status(),
       payload,
       smokeIdentity.email,
       smokeIdentity.churchId,
     );
+    const responseUrl = new URL(request.url());
+    const approvedSessionCookies = (await isolatedRecoveryRequest!.cookies(request.url()))
+      .filter((cookie) =>
+        cookie.name === "worshipsync_sid" &&
+        cookie.domain.replace(/^\./, "").toLowerCase() === responseUrl.hostname.toLowerCase(),
+      );
+    if (outcome === "authenticated" && approvedSessionCookies.length === 0) {
+      outcome = "invalid_authenticated_session";
+    }
     recoveryDiagnostics.push({
       method: request.method(),
       path: silentSessionPath,
@@ -274,12 +305,27 @@ export async function installSavedSessionAuthRequestGuard(
       outcome,
     });
     if (outcome === "authenticated") {
+      await context.addCookies(approvedSessionCookies.map((cookie) => ({
+        name: cookie.name,
+        value: cookie.value,
+        domain: responseUrl.hostname,
+        path: cookie.path,
+        expires: cookie.expires,
+        httpOnly: cookie.httpOnly,
+        secure: cookie.secure,
+        sameSite: cookie.sameSite,
+      })));
+      const headers = await response.headers();
+      delete headers["set-cookie"];
+      delete headers["content-length"];
+      delete headers["content-encoding"];
       await route.fulfill({
-        response,
         headers: {
-          ...response.headers(),
+          ...headers,
           "x-e2e-auth-recovery-outcome": outcome,
         },
+        status: response.status(),
+        body: responseBody,
       });
       return;
     }
@@ -298,5 +344,6 @@ export async function installSavedSessionAuthRequestGuard(
   return {
     blockedRequests: () => blockedRequests,
     recoveryDiagnostics: () => [...recoveryDiagnostics],
+    dispose: async () => isolatedRecoveryRequest?.dispose(),
   };
 }

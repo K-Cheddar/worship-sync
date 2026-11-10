@@ -1269,34 +1269,79 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     removeVideoInputThumbnail,
   } = useLocalVideoInputThumbnailPersistence();
   const pendingInitialVideoRowsRef = useRef(new Map<string, MediaType>());
+  const videoInputRelinkTargetRef = useRef<{
+    itemId: string;
+    itemType: DBItem["type"];
+    expectedOwner: ItemMutationOwner | null;
+    arrangementId?: string;
+    slideId: string;
+    mediaSource: LocalVideoInputMediaSource;
+    expectedSlideSource: string;
+  } | undefined>(undefined);
+  const openVideoInputRelink = useCallback(() => {
+    const currentItem = reduxStore.getState().undoable.present.item;
+    const arrangementId = currentItem.type === "song"
+      ? currentItem.arrangements[currentItem.selectedArrangement]?.id
+      : undefined;
+    const currentArrangement = arrangementId
+      ? currentItem.arrangements.find((candidate) => candidate.id === arrangementId)
+      : undefined;
+    const currentSlides = currentArrangement?.slides ?? currentItem.slides;
+    const targetSlide = currentSlides[currentItem.selectedSlide];
+    if (targetSlide?.mediaSource?.kind !== "local-video-input") return;
+    videoInputRelinkTargetRef.current = {
+      itemId: currentItem._id,
+      itemType: currentItem.type,
+      expectedOwner: getItemMutationOwner(currentItem),
+      ...(arrangementId ? { arrangementId } : {}),
+      slideId: targetSlide.id,
+      mediaSource: targetSlide.mediaSource,
+      expectedSlideSource: JSON.stringify(targetSlide.mediaSource),
+    };
+    setIsVideoInputRelinkOpen(true);
+  }, [reduxStore]);
 
   const handleVideoInputRelinked = useCallback(
     async (
       source: LocalVideoInputMediaSource,
       initialThumbnail?: LocalVideoThumbnailFrame,
     ) => {
+      const relinkTarget = videoInputRelinkTargetRef.current;
+      if (!relinkTarget) {
+        throw new Error("The target slide changed. Reopen it and try again.");
+      }
       const startState = reduxStore.getState();
       const startItem = startState.undoable.present.item;
-      const expectedOwner = getItemMutationOwner(startItem);
-      const targetArrangementId = startItem.type === "song"
-        ? startItem.arrangements[startItem.selectedArrangement]?.id
-        : undefined;
+      const expectedOwner = relinkTarget.expectedOwner;
+      const targetArrangementId = relinkTarget.arrangementId;
+      const currentOwner = getItemMutationOwner(startItem);
+      const sameOwnerAtStart = expectedOwner
+        ? sameItemMutationOwner(currentOwner, expectedOwner)
+        : currentOwner === null;
+      if (
+        startItem._id !== relinkTarget.itemId ||
+        startItem.type !== relinkTarget.itemType ||
+        !sameOwnerAtStart
+      ) {
+        throw new Error("The active item changed while the video input was opening. Reopen it and try again.");
+      }
       const startArrangement = targetArrangementId
         ? startItem.arrangements.find(
             (candidate) => candidate.id === targetArrangementId,
           )
         : undefined;
       const startSlides = startArrangement?.slides ?? startItem.slides;
-      const targetSlide = startSlides[startItem.selectedSlide];
+      const targetSlide = startSlides.find((slide) => slide.id === relinkTarget.slideId);
       if (
         !targetSlide?.mediaSource ||
-        targetSlide.mediaSource.kind !== "local-video-input"
+        targetSlide.mediaSource.kind !== "local-video-input" ||
+        JSON.stringify(targetSlide.mediaSource) !== relinkTarget.expectedSlideSource
       ) {
         throw new Error("The selected slide changed. Reopen it and try again.");
       }
-      const targetSlideId = targetSlide.id;
-      const expectedSlideSource = JSON.stringify(targetSlide.mediaSource);
-      const previous = targetSlide.mediaSource;
+      const targetSlideId = relinkTarget.slideId;
+      const expectedSlideSource = relinkTarget.expectedSlideSource;
+      const previous = relinkTarget.mediaSource;
       const ownedSource: LocalVideoInputMediaSource = {
         ...source,
         ownerDeviceId: getOrCreateDeviceId(),
@@ -1487,7 +1532,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
             className="w-full"
             source={selectedSlideMediaSource}
             canEdit={canRelinkVideoInputInPresentMode}
-            onEdit={() => setIsVideoInputRelinkOpen(true)}
+            onEdit={openVideoInputRelink}
           />
         );
       }
@@ -1509,7 +1554,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           className="lg:flex-[0_0_30%] w-full"
           source={selectedSlideMediaSource}
           canEdit={canEdit}
-          onEdit={() => setIsVideoInputRelinkOpen(true)}
+          onEdit={openVideoInputRelink}
         />
       );
     }
@@ -1536,6 +1581,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   }, [
     type,
     item,
+    openVideoInputRelink,
     canEdit,
     sectionText,
     handleSectionTextChange,

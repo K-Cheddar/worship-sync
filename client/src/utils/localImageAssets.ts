@@ -738,6 +738,138 @@ export const stageLocalImageUploadCleanupJobAtomically = async (
   return staged && job ? { job, previous } : undefined;
 };
 
+/** Activate a staged cleanup only while the exact staged snapshot still owns the job. */
+export const activateStagedLocalImageUploadCleanupJobAtomically = async (
+  staged: LocalImageUploadJob,
+  now: number,
+) =>
+  mutateLocalImageUploadJob(staged.assetId, (current) => {
+    if (
+      !current ||
+      current.updatedAt !== staged.updatedAt ||
+      !current.cleanupOnly ||
+      current.cleanupReady !== false ||
+      current.cleanupTargetMediaId !== staged.cleanupTargetMediaId ||
+      current.cleanupCloudPublicId !== staged.cleanupCloudPublicId
+    ) return current;
+    return {
+      ...current,
+      status: "pending",
+      phase: "queued",
+      cleanupReady: true,
+      nextAttemptAt: 0,
+      updatedAt: new Date(now).toISOString(),
+    };
+  });
+
+/** Queue a Cloudinary image cleanup for the upload manager's authoritative reference checks. */
+export const enqueueLocalImageCloudCleanup = async ({
+  mediaId,
+  workspaceId,
+  cloudPublicId,
+}: {
+  mediaId: string;
+  workspaceId: string;
+  cloudPublicId: string;
+}) => {
+  const existingJobs = await listLocalImageUploadJobs(workspaceId);
+  const existing = existingJobs.find((job) =>
+    job.cleanupOnly &&
+    job.workspaceId === workspaceId &&
+    job.cleanupCloudPublicId === cloudPublicId &&
+    job.status !== "complete" &&
+    job.status !== "cancelled"
+  );
+  if (existing) return existing;
+
+  const assetId = `thumbnail-cloud-cleanup-${encodeURIComponent(JSON.stringify([workspaceId, cloudPublicId]))}`;
+  const now = new Date().toISOString();
+  const candidate: LocalImageUploadJob = {
+    id: assetId,
+    assetId,
+    itemId: "",
+    workspaceId,
+    uploadPreset: "bpqu4ma5",
+    mediaId: assetId,
+    status: "pending",
+    phase: "queued",
+    progress: null,
+    cancelRequested: false,
+    attemptCount: 0,
+    nextAttemptAt: 0,
+    cleanupOnly: true,
+    cleanupReady: true,
+    cleanupTargetMediaId: mediaId,
+    cleanupCloudPublicId: cloudPublicId,
+    cleanupCloudComplete: false,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const staged = await stageLocalImageUploadCleanupJobAtomically(candidate, Date.now());
+  if (!staged) {
+    const current = await getLocalImageUploadJob(assetId);
+    if (
+      current?.cleanupOnly &&
+      current.workspaceId === workspaceId &&
+      current.cleanupCloudPublicId === cloudPublicId &&
+      current.status !== "complete" &&
+      current.status !== "cancelled"
+    ) return current;
+    throw new Error("The Cloudinary thumbnail cleanup could not be queued.");
+  }
+  return staged.job;
+};
+
+export const LOCAL_IMAGE_CLOUD_CLEANUP_COMPLETE_EVENT =
+  "worshipsync:local-image-cloud-cleanup-complete";
+
+export const notifyLocalImageCloudCleanupComplete = (workspaceId: string) => {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(LOCAL_IMAGE_CLOUD_CLEANUP_COMPLETE_EVENT, {
+    detail: { workspaceId },
+  }));
+};
+
+/** Restore or discard a staged cleanup only while that exact staged job still owns the slot. */
+export const restoreStagedLocalImageUploadCleanupJob = async (
+  staged: LocalImageUploadJob,
+  previous?: LocalImageUploadJob,
+) => {
+  const db = await openLocalAssetDb();
+  let restored = false;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(UPLOAD_JOB_STORE_NAME, "readwrite");
+      const store = transaction.objectStore(UPLOAD_JOB_STORE_NAME);
+      const request = store.get(staged.assetId);
+      request.onsuccess = () => {
+        const current = request.result as LocalImageUploadJob | undefined;
+        if (
+          !current ||
+          current.updatedAt !== staged.updatedAt ||
+          !current.cleanupOnly ||
+          current.cleanupReady !== false ||
+          current.cleanupTargetMediaId !== staged.cleanupTargetMediaId ||
+          current.cleanupCloudPublicId !== staged.cleanupCloudPublicId
+        ) return;
+        if (previous) store.put(previous);
+        else store.delete(staged.assetId);
+        restored = true;
+      };
+      request.onerror = () =>
+        reject(request.error ?? new Error("The upload job could not be read."));
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () =>
+        reject(transaction.error ?? new Error("The upload job could not be restored."));
+      transaction.onabort = transaction.onerror;
+    });
+  } finally {
+    db.close();
+  }
+  if (restored) notifyLocalImageChange(staged.assetId, "upload-job");
+  return restored;
+};
+
 export const enqueueLocalImageUploadJobAtomically = async (
   candidate: LocalImageUploadJob,
   now: number,
@@ -956,6 +1088,67 @@ export const finishStagedLocalVideoThumbnailReferenceCheck = async ({
     }
     next.updatedAt = new Date(now).toISOString();
     return next;
+  });
+
+/** Recover an upload intent after its staged job was removed by a late reference cleanup. */
+export const restoreCommittedLocalVideoThumbnailUploadJobAtomically = async (
+  candidate: LocalImageUploadJob,
+  now: number,
+) =>
+  mutateLocalImageUploadJob(candidate.assetId, (current) => {
+    if (current) {
+      if (
+        !current.localVideoInputThumbnail ||
+        current.localVideoInputThumbnail.targetMediaId !==
+          candidate.localVideoInputThumbnail?.targetMediaId ||
+        current.localVideoInputThumbnail.targetSourceId !==
+          candidate.localVideoInputThumbnail?.targetSourceId ||
+        current.cleanupOnly ||
+        current.status === "complete" ||
+        (current.leaseOwnerId && (current.leaseExpiresAt ?? 0) > now) ||
+        (current.thumbnailReferenceOwnerId &&
+          (current.thumbnailReferenceLeaseExpiresAt ?? 0) > now)
+      ) return current;
+      if (current.thumbnailReferenceState === "confirmed") return current;
+
+      const next: LocalImageUploadJob = {
+        ...current,
+        localVideoInputThumbnail: mergeThumbnailUploadMetadata(
+          current.localVideoInputThumbnail,
+          candidate.localVideoInputThumbnail,
+        ),
+        thumbnailReferenceState: "confirmed",
+        status: current.cloudMedia ? "uploaded" : "pending",
+        phase: current.cloudMedia ? "finalizing" : "queued",
+        progress: current.cloudMedia ? 95 : 0,
+        cancelRequested: false,
+        nextAttemptAt: 0,
+        lastError: undefined,
+        updatedAt: new Date(now).toISOString(),
+      };
+      delete next.thumbnailReferenceOwnerId;
+      delete next.thumbnailReferenceLeaseExpiresAt;
+      delete next.leaseOwnerId;
+      delete next.leaseExpiresAt;
+      return next;
+    }
+
+    const restored: LocalImageUploadJob = {
+      ...candidate,
+      thumbnailReferenceState: "confirmed",
+      status: candidate.cloudMedia ? "uploaded" : "pending",
+      phase: candidate.cloudMedia ? "finalizing" : "queued",
+      progress: candidate.cloudMedia ? 95 : 0,
+      cancelRequested: false,
+      nextAttemptAt: 0,
+      lastError: undefined,
+      updatedAt: new Date(now).toISOString(),
+    };
+    delete restored.thumbnailReferenceOwnerId;
+    delete restored.thumbnailReferenceLeaseExpiresAt;
+    delete restored.leaseOwnerId;
+    delete restored.leaseExpiresAt;
+    return restored;
   });
 
 export const retryLocalImageUploadJobAtomically = async (
