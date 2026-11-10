@@ -53,6 +53,8 @@ export type FlushMediaLibraryDocOptions = {
   allowOriginalOwnerPersistenceAfterScopeChange?: boolean;
   /** Keeps that original-owner write within its authenticated church session. */
   canPersist?: () => boolean;
+  /** Validates row ownership against the persisted document on every conflict retry. */
+  canUpdateMediaItem?: (id: string, current: MediaType | undefined) => boolean | Promise<boolean>;
   /** Controls current-scope side effects such as broadcasts, Electron cache, and Redux cache publication. */
   publishIfCurrent?: () => boolean;
   /** Media rows relocated only because their folder is being deleted with Keep Contents. */
@@ -131,6 +133,7 @@ export async function flushMediaLibraryDocToPouch(
           canPersist,
           options.automaticMediaRehomeIds,
           options.automaticFolderRehomeIds,
+          options.canUpdateMediaItem,
         )
       : await persistMediaLibrarySnapshot(
           db,
@@ -138,6 +141,7 @@ export async function flushMediaLibraryDocToPouch(
           folders,
           readLatestState,
           canPersist,
+          options.canUpdateMediaItem,
         );
     const { list: listToPersist } = stateToPersist;
     // The intended database was updated, but do not publish/cache its result

@@ -5,6 +5,7 @@ export type PlanningCenterStatus = {
   connected: boolean;
   accountLabel: string;
   accountId?: string;
+  connectionRevision?: string;
 };
 
 export type PlanningCenterConnectResponse = {
@@ -20,6 +21,7 @@ export type PlanningCenterConnectStatus = {
   errorMessage: string;
   accountLabel?: string;
   accountId?: string;
+  connectionRevision?: string;
 };
 
 type JsonInit = Omit<RequestInit, "body"> & {

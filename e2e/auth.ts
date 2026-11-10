@@ -2,7 +2,16 @@ import { createHash } from "node:crypto";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { devices, expect, type Browser, type Page } from "@playwright/test";
-import { allowedE2EAuthOrigins, isObservedSharedDataSignIn } from "./authOrigins";
+import {
+  allowedE2EAuthOrigins,
+  isObservedSharedDataSignIn,
+  isTrustedFirebaseAuthOrigin,
+  shouldIgnoreE2EHTTPSErrors,
+} from "./authOrigins";
+import {
+  authorizeSilentSessionRequest,
+  readSavedE2EDeviceIdentity,
+} from "./authRequestPolicy";
 
 type AuthStateFiles = { authFile: string; metadataFile: string };
 
@@ -102,13 +111,6 @@ const makeAppURL = (baseURL: string, route: "/" | "/login") => {
   return url.toString();
 };
 
-const localDevelopmentHosts = new Set([
-  "localhost",
-  "127.0.0.1",
-  "::1",
-  "local.worshipsync.net",
-]);
-
 const hasFile = async (path: string) =>
   access(path).then(() => true).catch(() => false);
 
@@ -197,12 +199,7 @@ const inspectSavedStorageState = (
     };
   }
 
-  const deviceIdentity = origin.localStorage?.find(
-    (entry) =>
-      entry.name === deviceIdentityKey &&
-      typeof entry.value === "string" &&
-      entry.value.trim().length > 0,
-  );
+  const deviceIdentity = readSavedE2EDeviceIdentity(state, baseURL);
   if (!deviceIdentity) {
     return {
       ok: false,
@@ -229,7 +226,7 @@ const inspectSavedStorageState = (
   return {
     ok: true,
     cookieValue: hasUsableServerCookie ? cookie?.value as string : null,
-    deviceIdentity: deviceIdentity.value as string,
+    deviceIdentity,
     hasUsableServerCookie,
   };
 };
@@ -513,10 +510,13 @@ const observeSilentSessionRecovery = async (
       }
       if (
         attempts !== 1 ||
-        body.requestNewCode !== false ||
-        typeof body.idToken !== "string" ||
-        !body.idToken.trim() ||
-        body.deviceId !== expectedDeviceIdentity
+        !authorizeSilentSessionRequest({
+          method: request.method(),
+          url: request.url(),
+          body,
+          trustedOrigins: allowedOrigins,
+          expectedDeviceIdentity,
+        }).allowed
       ) {
         blockedRequest = true;
         await route.abort("blockedbyclient");
@@ -534,13 +534,21 @@ const observeSilentSessionRecovery = async (
 
   await page.route("**/identitytoolkit.googleapis.com/**", async (route) => {
     const pathname = new URL(route.request().url()).pathname;
-    if (pathname.endsWith("/accounts:lookup")) {
+    if (
+      isTrustedFirebaseAuthOrigin(route.request().url(), "identitytoolkit") &&
+      route.request().method() === "POST" &&
+      pathname === "/v1/accounts:lookup"
+    ) {
       await route.continue();
       return;
     }
     let body: unknown;
     try { body = route.request().postDataJSON(); } catch { /* fail closed */ }
-    if (route.request().method() === "POST" && isObservedSharedDataSignIn(pathname, body, (await Promise.all(sharedDataTokens)).filter(Boolean))) {
+    if (
+      isTrustedFirebaseAuthOrigin(route.request().url(), "identitytoolkit") &&
+      route.request().method() === "POST" &&
+      isObservedSharedDataSignIn(pathname, body, (await Promise.all(sharedDataTokens)).filter(Boolean))
+    ) {
       await route.continue();
       return;
     }
@@ -552,7 +560,12 @@ const observeSilentSessionRecovery = async (
 
   await page.route("**/securetoken.googleapis.com/**", async (route) => {
     const body = route.request().postData() || "";
-    if (route.request().method() === "POST" && /(?:^|&)grant_type=refresh_token(?:&|$)/.test(body)) {
+    if (
+      isTrustedFirebaseAuthOrigin(route.request().url(), "securetoken") &&
+      route.request().method() === "POST" &&
+      new URL(route.request().url()).pathname === "/v1/token" &&
+      /(?:^|&)grant_type=refresh_token(?:&|$)/.test(body)
+    ) {
       await route.continue();
       return;
     }
@@ -625,7 +638,7 @@ export async function validateSavedSession(
       // Match auth-refresh and controller projects in both headed and headless Chromium.
       userAgent: devices["Desktop Chrome"].userAgent,
       storageState: files.authFile,
-      ignoreHTTPSErrors: localDevelopmentHosts.has(new URL(baseURL).hostname),
+      ignoreHTTPSErrors: shouldIgnoreE2EHTTPSErrors(baseURL),
     });
   } catch {
     return {

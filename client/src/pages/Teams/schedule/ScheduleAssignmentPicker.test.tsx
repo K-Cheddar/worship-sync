@@ -284,6 +284,41 @@ describe("ScheduleAssignmentPicker guests", () => {
     expect(screen.getByRole("option", { name: /Alex Rivera.*Guest/i })).toBeInTheDocument();
   });
 
+  it("scrolls a keyboard-highlighted guest into view in a long results list", async () => {
+    const recentGuests = Array.from({ length: 24 }, (_, index) => ({
+      guestId: `scheduleGuest_${index + 1}`,
+      name: `Guest person ${index + 1}`,
+    }));
+    const onAssignGuest = jest.fn().mockResolvedValue(undefined);
+    renderPicker({ recentGuests, onAssignGuest });
+    const input = screen.getByRole("combobox", { name: "Sunday Camera" });
+    fireEvent.change(input, { target: { value: "Guest" } });
+    const list = screen.getByTestId("schedule-assignment-options");
+    const finalGuest = within(list).getByRole("option", { name: /Guest person 24.*Guest/i });
+    Object.defineProperty(list, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ top: 100, bottom: 340, left: 0, right: 300, width: 300, height: 240 }),
+    });
+    for (const [index, option] of within(list).getAllByRole("option").entries()) {
+      Object.defineProperty(option, "getBoundingClientRect", {
+        configurable: true,
+        value: () => {
+          const top = 100 + index * 40 - list.scrollTop;
+          return { top, bottom: top + 40, left: 0, right: 300, width: 300, height: 40 };
+        },
+      });
+    }
+    for (let index = 0; index < recentGuests.length - 1; index += 1) {
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+    }
+    expect(finalGuest).toHaveAttribute("aria-selected", "true");
+    expect(list.scrollTop).toBeGreaterThan(0);
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onAssignGuest).toHaveBeenCalledWith(
+      expect.objectContaining({ guestId: "scheduleGuest_24", name: "Guest person 24" }),
+    ));
+  });
+
   it("excludes the guest already assigned to the active slot from search results", () => {
     renderPicker({
       currentPrimaryMemberId: "scheduleGuest_1",

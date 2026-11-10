@@ -2,6 +2,7 @@ import type { LocalImageUploadJob } from "./localImageAssets";
 import {
   getLocalImageUploadRetryDelay,
   getNextLocalImageUploadAttemptAt,
+  isLocalImageUploadJobRunnable,
   getRunnableLocalImageUploadJobs,
 } from "./localImageUploadScheduling";
 
@@ -61,6 +62,23 @@ describe("local image upload scheduling", () => {
       "failed",
     ]);
     expect(result).not.toContain(activeUpload);
+  });
+
+  it("keeps staged video thumbnail uploads out of the runnable queue", () => {
+    const staged = {
+      ...job("pending"),
+      localVideoInputThumbnail: { targetMediaId: "camera-row", targetSourceId: "camera-1" },
+      thumbnailReferenceState: "staged" as const,
+    };
+    const confirmed = {
+      ...staged,
+      thumbnailReferenceState: "confirmed" as const,
+    };
+
+    expect(getRunnableLocalImageUploadJobs([staged, confirmed], 10_000)).toEqual([
+      confirmed,
+    ]);
+    expect(isLocalImageUploadJobRunnable(staged, 10_000)).toBe(false);
   });
 
   it("uses bounded exponential retry timing and finds the next wake-up", () => {

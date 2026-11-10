@@ -211,7 +211,13 @@ export const createPlanningCenterService = ({
     }
   };
 
-  const saveToken = async (churchId, data, accountLabel = "", accountId = "") => {
+  const saveToken = async (
+    churchId,
+    data,
+    accountLabel = "",
+    accountId = "",
+    connectionRevision = "",
+  ) => {
     await setDoc(TOKEN_COLLECTION, churchId, {
       accessToken: encrypt(data.access_token),
       refreshToken: encrypt(data.refresh_token),
@@ -219,6 +225,7 @@ export const createPlanningCenterService = ({
       scope: data.scope || SCOPES,
       accountLabel,
       accountId,
+      connectionRevision,
       updatedAt: now(),
     });
   };
@@ -230,7 +237,13 @@ export const createPlanningCenterService = ({
         grant_type: "refresh_token",
         refresh_token: decrypt(tokenDoc.refreshToken),
       });
-      await saveToken(churchId, data, tokenDoc.accountLabel, tokenDoc.accountId);
+      await saveToken(
+        churchId,
+        data,
+        tokenDoc.accountLabel,
+        tokenDoc.accountId,
+        tokenDoc.connectionRevision || "",
+      );
       return data.access_token;
     })().finally(() => refreshes.delete(churchId));
     refreshes.set(churchId, pending);
@@ -262,7 +275,9 @@ export const createPlanningCenterService = ({
         await updateStatus(churchId, {
           enabled: false,
           connected: false,
+          accountLabel: "",
           accountId: "",
+          connectionRevision: "",
           lastError:
             "The Planning Center connection expired. Connect it again.",
         });
@@ -383,18 +398,33 @@ export const createPlanningCenterService = ({
           profileError?.message,
         );
       }
-      await saveToken(stateDoc.churchId, token, accountLabel, accountId);
+      const connectionRevision = randomValue(18);
+      await saveToken(
+        stateDoc.churchId,
+        token,
+        accountLabel,
+        accountId,
+        connectionRevision,
+      );
       await updateStatus(stateDoc.churchId, {
         enabled: true,
         connected: true,
         accountLabel,
         accountId,
+        connectionRevision,
         lastError: "",
       });
-      await finish({ status: "completed", accountLabel, accountId, completedAt: now() });
+      await finish({
+        status: "completed",
+        accountLabel,
+        accountId,
+        connectionRevision,
+        completedAt: now(),
+      });
       return {
         accountLabel,
         accountId,
+        connectionRevision,
         returnTo: stateDoc.returnTo,
         desktop: stateDoc.desktop,
       };
@@ -436,6 +466,7 @@ export const createPlanningCenterService = ({
       errorMessage: doc.errorMessage || "",
       accountLabel: doc.accountLabel || "",
       accountId: doc.accountId || "",
+      connectionRevision: doc.connectionRevision || "",
       expiresAt: doc.expiresAt,
       completedAt: doc.completedAt,
     };
@@ -448,6 +479,7 @@ export const createPlanningCenterService = ({
       connected: Boolean(doc),
       accountLabel: doc?.accountLabel || "",
       accountId: doc?.accountId || "",
+      connectionRevision: doc?.connectionRevision || "",
     };
   };
 
@@ -485,6 +517,7 @@ export const createPlanningCenterService = ({
       connected: false,
       accountLabel: "",
       accountId: "",
+      connectionRevision: "",
       lastError: "",
     });
   };

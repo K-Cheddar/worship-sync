@@ -3,8 +3,14 @@ import type { ReactNode } from "react";
 import OverlayEditor from "./OverlayEditor";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import type { OverlayInfo } from "../../types";
+import overlayReducer, {
+  clearOverlayDraftPending,
+  markOverlayDraftPending,
+  selectOverlay,
+} from "../../store/overlaySlice";
 
 const mockShowToast = jest.fn();
+const mockDispatch = jest.fn();
 const mockState = {
   undoable: {
     present: {
@@ -15,7 +21,7 @@ const mockState = {
 };
 
 jest.mock("../../hooks", () => ({
-  useDispatch: () => jest.fn(),
+  useDispatch: () => mockDispatch,
   useSelector: (selector: (state: typeof mockState) => unknown) => selector(mockState),
   useWindowWidth: () => ({ windowWidth: 1024, windowRef: { current: null } }),
 }));
@@ -39,6 +45,7 @@ jest.mock("../../components/Select/Select", () => () => null);
 describe("OverlayEditor Service Plan review removal", () => {
   beforeEach(() => {
     mockShowToast.mockReset();
+    mockDispatch.mockReset();
     mockState.undoable.present.overlay.hasRemoteUpdate = false;
   });
 
@@ -102,6 +109,54 @@ describe("OverlayEditor Service Plan review removal", () => {
     unmount();
     expect(saveB).toHaveBeenCalledWith(expect.objectContaining({ id: "X", imageUrl: "B pending" }));
     expect(saveA).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it("clears a stale same-ID draft marker after its owner becomes inactive", () => {
+    jest.useFakeTimers();
+    const ownerA = { isCurrent: jest.fn(() => true) };
+    const ownerB = { isCurrent: jest.fn(() => true) };
+    const tree = (draftOwner: typeof ownerA, imageUrl: string) => <OverlayEditor
+      selectedOverlay={{ id: "X", type: "image", imageUrl }}
+      isOverlayLoading={false} isMobile={false} showPreview={false}
+      setShowPreview={jest.fn()} setIsStyleDrawerOpen={jest.fn()} setIsTemplateDrawerOpen={jest.fn()}
+      handleOverlayUpdate={jest.fn()} handleFormattingChange={jest.fn()} draftOwner={draftOwner}
+    />;
+    const { rerender } = render(tree(ownerA, "A original"));
+    fireEvent.change(screen.getByLabelText(/Image URL/), { target: { value: "A pending" } });
+    const markA = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.type === "overlay/markOverlayDraftPending");
+    expect(markA).toBeDefined();
+
+    ownerA.isCurrent.mockReturnValue(false);
+    rerender(tree(ownerB, "B original"));
+    const clearA = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => action.type === "overlay/clearOverlayDraftPending");
+    expect(clearA).toMatchObject({ payload: markA.payload });
+
+    fireEvent.change(screen.getByLabelText(/Image URL/), { target: { value: "B pending" } });
+    const markB = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .filter((action) => action.type === "overlay/markOverlayDraftPending")
+      .at(-1);
+    expect(markB).toBeDefined();
+
+    const selectedOverlay: OverlayInfo = {
+      id: "X",
+      type: "image",
+      imageUrl: "A original",
+      name: "Overlay",
+      duration: 0,
+    };
+    let state = overlayReducer(undefined, { type: "init" });
+    state = overlayReducer(state, selectOverlay(selectedOverlay));
+    state = overlayReducer(state, markOverlayDraftPending(markA.payload));
+    state = overlayReducer(state, markOverlayDraftPending(markB.payload));
+    state = overlayReducer(state, clearOverlayDraftPending(clearA.payload));
+    expect(state.pendingDraftOverlayId).toBe("X");
+    expect(state.pendingDraftId).toBe(markB.payload.draftId);
     jest.useRealTimers();
   });
 });

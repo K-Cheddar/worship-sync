@@ -1,6 +1,9 @@
 import { type BrowserContext } from "@playwright/test";
 import { test as diagnosticTest } from "./fixtures";
 import { getE2EChurchId } from "./testChurch";
+import { installControllerRuntime } from "./controllerRuntime";
+import { installSavedSessionAuthRequestGuard } from "./authRequestPolicy";
+import { isAllowedSmokeChurchRead } from "./smokeRequestPolicy";
 
 /**
  * Keep one authenticated browser context for the smoke project. PouchDB's
@@ -22,23 +25,46 @@ export const test = diagnosticTest.extend<{}, { smokeContext: BrowserContext }>(
       });
       // Refuse church-scoped traffic outside the explicitly selected test tenant.
       await context.route(/\/api\/churches\/[^/]+(?:\/|$)/, async (route) => {
-        const requestedChurch = new URL(route.request().url()).pathname.match(/\/api\/churches\/([^/]+)/)?.[1];
-        if (!requestedChurch || decodeURIComponent(requestedChurch) !== churchId) {
+        const request = route.request();
+        const pathname = new URL(request.url()).pathname;
+        if (!options.baseURL || !isAllowedSmokeChurchRead(
+          request.method(),
+          request.url(),
+          options.baseURL,
+          churchId,
+        )) {
           await route.abort("blockedbyclient");
-          throw new Error(`Smoke request targeted a church other than the approved E2E church (${churchId}).`);
-        }
-        if (!["GET", "HEAD", "OPTIONS"].includes(route.request().method())) {
-          await route.abort("blockedbyclient");
-          throw new Error(`Read-only smoke guard blocked ${route.request().method()} ${new URL(route.request().url()).pathname}`);
+          throw new Error(`Read-only smoke guard blocked ${request.method()} ${pathname}.`);
         }
         await route.fallback();
       });
+      const expectedEmail = process.env.E2E_TEST_EMAIL?.trim();
+      if (!expectedEmail || !options.baseURL) {
+        throw new Error("Smoke recovery requires the configured E2E account and API origin.");
+      }
+      const authGuard = await installSavedSessionAuthRequestGuard(
+        context,
+        options.baseURL,
+        { email: expectedEmail, churchId },
+      );
+      // Home's controller navigation readiness check uses the same startup
+      // snapshot as the controller suite. Install it before the first page
+      // navigates so smoke diagnostics report measured startup state.
+      await installControllerRuntime(context);
       context.setDefaultTimeout(options.actionTimeout ?? 15_000);
       context.setDefaultNavigationTimeout(options.navigationTimeout ?? 30_000);
       try {
         await use(context);
       } finally {
+        const authRecoveryDiagnostics = authGuard.recoveryDiagnostics();
+        console.info(
+          `Smoke auth guard: ${authGuard.blockedRequests()} unsafe request(s); recovery ${JSON.stringify(authRecoveryDiagnostics)}.`,
+        );
+        await authGuard.dispose();
         await context.close();
+        if (authGuard.blockedRequests() > 0) {
+          throw new Error("Smoke authentication guard blocked an unsafe request; see sanitized browser diagnostics.");
+        }
       }
     },
     { scope: "worker" },

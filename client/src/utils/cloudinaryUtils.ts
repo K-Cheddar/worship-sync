@@ -30,16 +30,52 @@ export const deleteCloudinaryAsset = async (
 
 export const extractPublicId = (url: string): string | null => {
   try {
-    // Extract public_id from Cloudinary URL
-    // Example: https://res.cloudinary.com/portable-media/image/upload/v1/backgrounds/image1.jpg
-    const match = url.match(/\/upload\/v\d+\/(.+?)(?:\?|$)/);
-    if (match) {
-      // Remove file extension for the public_id
-      return match[1].replace(/\.[^/.]+$/, "");
+    const parsed = new URL(url);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.hostname.toLowerCase() !== "res.cloudinary.com" ||
+      parsed.port ||
+      parsed.username ||
+      parsed.password
+    ) return null;
+
+    const parts = parsed.pathname.split("/").filter(Boolean).map((part) =>
+      decodeURIComponent(part),
+    );
+    if (
+      parts.length < 4 ||
+      !/^[a-z0-9_-]+$/i.test(parts[0]) ||
+      parts[1] !== "image" ||
+      parts[2] !== "upload"
+    ) return null;
+
+    const deliveryParts = parts.slice(3);
+    const transformationKeys = new Set([
+      "a", "ar", "b", "bo", "br", "c", "cs", "d", "dpr", "e", "f",
+      "fl", "g", "h", "l", "o", "q", "r", "t", "u", "w", "x", "y", "z",
+    ]);
+    let firstAssetPart = 0;
+    while (firstAssetPart < deliveryParts.length) {
+      const tokens = deliveryParts[firstAssetPart].split(",");
+      const isTransformation = tokens.length > 0 && tokens.every((token) => {
+        const separator = token.indexOf("_");
+        return separator > 0 && transformationKeys.has(token.slice(0, separator));
+      });
+      if (!isTransformation) break;
+      firstAssetPart += 1;
     }
-    return null;
-  } catch (error) {
-    console.error("Error extracting public_id:", error);
+    const hasVersion = /^v\d+$/.test(deliveryParts[firstAssetPart] || "");
+    const publicIdParts = deliveryParts.slice(firstAssetPart + Number(hasVersion));
+
+    if (
+      publicIdParts.length === 0 ||
+      publicIdParts.some((part) => !part || part === "." || part === "..")
+    ) return null;
+    const lastPart = publicIdParts[publicIdParts.length - 1];
+    publicIdParts[publicIdParts.length - 1] = lastPart.replace(/\.[a-z0-9]+$/i, "");
+    const publicId = publicIdParts.join("/");
+    return publicId && !publicId.endsWith("/") ? publicId : null;
+  } catch {
     return null;
   }
 };

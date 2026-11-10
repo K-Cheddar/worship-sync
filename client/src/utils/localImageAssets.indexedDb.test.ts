@@ -3,12 +3,15 @@ import "fake-indexeddb/auto";
 import type { DBItem } from "../types";
 import { isLocalImageUploadJobRunnable } from "./localImageUploadScheduling";
 import {
+  claimStagedLocalVideoThumbnailReference,
   claimLocalImageUploadJob,
   cleanupLocalImagesForDeletedItem,
   cleanupOrphanedLocalImages,
   deleteLocalImage,
   deleteLocalImageUploadJob,
+  enqueueLocalImageCloudCleanup,
   enqueueLocalImageUploadJobAtomically,
+  finishStagedLocalVideoThumbnailReferenceCheck,
   getLocalImage,
   getLocalImageThumbnail,
   getLocalImageUploadJob,
@@ -20,6 +23,9 @@ import {
   retryLocalImageUploadJobAtomically,
   saveLocalImage,
   saveLocalImageThumbnail,
+  stageLocalImageUploadCleanupJobAtomically,
+  stageLocalVideoInputThumbnailUploadJobAtomically,
+  subscribeLocalImageUploadJobChanges,
   updateLeasedLocalImageUploadJob,
   type LocalImageUploadJob,
 } from "./localImageAssets";
@@ -150,6 +156,11 @@ describe("localImageAssets IndexedDB lifecycle", () => {
       uploadPreset: "preset",
       mediaId: "media-1",
       status: "pending",
+      localVideoInputThumbnail: {
+        targetMediaId: "local_input_camera-1",
+        previousAssetId: "previous-thumbnail",
+        previousCloudPublicId: "previous-cloud-public-id",
+      },
       attemptCount: 0,
       nextAttemptAt: 0,
       createdAt: "2026-08-12T00:00:00.000Z",
@@ -169,6 +180,148 @@ describe("localImageAssets IndexedDB lifecycle", () => {
     await deleteLocalImageUploadJob("asset-1");
     await expect(getLocalImageUploadJob("asset-1")).resolves.toBeUndefined();
     await expect(getLocalImage("asset-1")).resolves.toBeDefined();
+  });
+
+  it("durably stages thumbnail jobs without making them runnable before reference confirmation", async () => {
+    await saveLocalImage(storedImage("staged-thumbnail"));
+    const previousAssets = [{
+      assetId: "previous-thumbnail",
+      cloudPublicId: "previous-cloud-id",
+      cloudCleanupComplete: true,
+      localCleanupScheduled: true,
+    }];
+    const checkpoint: LocalImageUploadJob = {
+      id: "staged-thumbnail",
+      assetId: "staged-thumbnail",
+      itemId: "",
+      workspaceId: "church-1",
+      uploadPreset: "preset",
+      mediaId: "durable-cloud-media-id",
+      status: "failed",
+      phase: "failed",
+      attemptCount: 2,
+      nextAttemptAt: 0,
+      providerUploadId: "durable-provider-intent",
+      providerExpectedPublicId: "durable-public-id",
+      cloudMedia: {
+        id: "durable-cloud-media-id",
+        publicId: "durable-public-id",
+        background: "https://res.cloudinary.com/example/durable.webp",
+        type: "image",
+      } as LocalImageUploadJob["cloudMedia"],
+      localVideoInputThumbnail: {
+        targetMediaId: "local_input_camera-1",
+        previousAssetId: "previous-thumbnail",
+        previousAssets,
+        staleCloudCleanupComplete: true,
+      },
+      createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+    await putLocalImageUploadJob(checkpoint);
+    const candidate: LocalImageUploadJob = {
+      ...checkpoint,
+      mediaId: "new-candidate-media-id",
+      status: "pending",
+      localVideoInputThumbnail: {
+        targetMediaId: "local_input_camera-1",
+        targetSourceId: "camera-1",
+      },
+      cloudMedia: undefined,
+      providerUploadId: undefined,
+      providerExpectedPublicId: undefined,
+    };
+
+    const staged = await stageLocalVideoInputThumbnailUploadJobAtomically(
+      candidate,
+      10_000,
+      "thumbnail-save-owner",
+      5_000,
+    );
+
+    expect(staged).toEqual(expect.objectContaining({
+      status: "failed",
+      mediaId: "durable-cloud-media-id",
+      providerUploadId: "durable-provider-intent",
+      providerExpectedPublicId: "durable-public-id",
+      cloudMedia: checkpoint.cloudMedia,
+      thumbnailReferenceState: "staged",
+      thumbnailReferenceOwnerId: "thumbnail-save-owner",
+      localVideoInputThumbnail: expect.objectContaining({
+        targetSourceId: "camera-1",
+        previousAssetId: "previous-thumbnail",
+        previousAssets,
+        staleCloudCleanupComplete: true,
+      }),
+    }));
+    await expect(getLocalImageUploadJob("staged-thumbnail")).resolves.toEqual(staged);
+    expect(isLocalImageUploadJobRunnable(staged!, 10_001)).toBe(false);
+    await expect(
+      claimLocalImageUploadJob({
+        assetId: "staged-thumbnail",
+        leaseOwnerId: "upload-manager",
+        now: 10_001,
+        leaseDurationMs: 5_000,
+      }),
+    ).resolves.toBeUndefined();
+
+    const claimedReference = await claimStagedLocalVideoThumbnailReference({
+      assetId: "staged-thumbnail",
+      ownerId: "recovery-manager",
+      now: 15_001,
+      leaseDurationMs: 5_000,
+    });
+    expect(claimedReference).toEqual(expect.objectContaining({
+      thumbnailReferenceOwnerId: "recovery-manager",
+    }));
+    const confirmed = await finishStagedLocalVideoThumbnailReferenceCheck({
+      assetId: "staged-thumbnail",
+      ownerId: "recovery-manager",
+      result: "confirmed",
+      now: 15_002,
+    });
+    expect(confirmed).toEqual(expect.objectContaining({
+      status: "uploaded",
+      thumbnailReferenceState: "confirmed",
+      providerUploadId: "durable-provider-intent",
+      providerExpectedPublicId: "durable-public-id",
+      cloudMedia: checkpoint.cloudMedia,
+    }));
+    expect(isLocalImageUploadJobRunnable(confirmed!, 15_003)).toBe(true);
+    await expect(getLocalImageUploadJob("staged-thumbnail")).resolves.toEqual(confirmed);
+  });
+
+  it("does not restage a thumbnail job with an outstanding cancellation request", async () => {
+    const cancelling: LocalImageUploadJob = {
+      id: "cancelled-thumbnail-stage",
+      assetId: "cancelled-thumbnail-stage",
+      itemId: "",
+      workspaceId: "church-1",
+      uploadPreset: "preset",
+      mediaId: "cloud-media-id",
+      status: "failed",
+      cancelRequested: true,
+      attemptCount: 1,
+      nextAttemptAt: 0,
+      createdAt: "2026-08-12T00:00:00.000Z",
+      updatedAt: "2026-08-12T00:00:00.000Z",
+    };
+    await putLocalImageUploadJob(cancelling);
+
+    const result = await stageLocalVideoInputThumbnailUploadJobAtomically(
+      {
+        ...cancelling,
+        cancelRequested: false,
+        localVideoInputThumbnail: { targetMediaId: "local_input_camera-1" },
+      },
+      20_000,
+      "new-owner",
+      5_000,
+    );
+
+    expect(result).toEqual(cancelling);
+    expect(result?.cancelRequested).toBe(true);
+    expect(result?.thumbnailReferenceState).toBeUndefined();
   });
 
   it("allows only one controller tab to claim an upload job", async () => {
@@ -271,6 +424,110 @@ describe("localImageAssets IndexedDB lifecycle", () => {
     await expect(getLocalImageUploadJob(leased.assetId)).resolves.toEqual(
       leased,
     );
+  });
+
+  it("does not stage cleanup over an active upload lease or provider checkpoint", async () => {
+    const active: LocalImageUploadJob = {
+      id: "thumbnail-a",
+      assetId: "thumbnail-a",
+      itemId: "",
+      workspaceId: "church-1",
+      uploadPreset: "preset",
+      mediaId: "thumbnail-a-cloud-media",
+      status: "uploading",
+      phase: "uploading",
+      attemptCount: 1,
+      nextAttemptAt: 0,
+      providerUploadId: "upload-intent-a",
+      providerExpectedPublicId: "thumbnail-a-public-id",
+      leaseOwnerId: "tab-a",
+      leaseExpiresAt: 20_000,
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+    };
+    await putLocalImageUploadJob(active);
+
+    await expect(
+      stageLocalImageUploadCleanupJobAtomically(
+        {
+          ...active,
+          status: "failed",
+          phase: "failed",
+          cleanupOnly: true,
+          cleanupReady: false,
+          cleanupTargetMediaId: "local_input_camera-1",
+          providerUploadId: undefined,
+          providerExpectedPublicId: undefined,
+          leaseOwnerId: undefined,
+          leaseExpiresAt: undefined,
+        },
+        10_000,
+      ),
+    ).resolves.toBeUndefined();
+    await expect(getLocalImageUploadJob(active.assetId)).resolves.toEqual(active);
+  });
+
+  it("durably queues a Cloudinary thumbnail cleanup for the upload manager", async () => {
+    const queued = await enqueueLocalImageCloudCleanup({
+      mediaId: "local_input_camera-1",
+      workspaceId: "church-1",
+      cloudPublicId: "thumbnails/camera-1",
+    });
+
+    expect(queued).toMatchObject({
+      workspaceId: "church-1",
+      cleanupOnly: true,
+      cleanupReady: true,
+      cleanupTargetMediaId: "local_input_camera-1",
+      cleanupCloudPublicId: "thumbnails/camera-1",
+      cleanupCloudComplete: false,
+      status: "pending",
+    });
+    await expect(listLocalImageUploadJobs("church-1")).resolves.toContainEqual(queued);
+
+    const repeated = await enqueueLocalImageCloudCleanup({
+      mediaId: "local_input_camera-2",
+      workspaceId: "church-1",
+      cloudPublicId: "thumbnails/camera-1",
+    });
+    expect(repeated.assetId).toBe(queued.assetId);
+    expect(repeated.cleanupTargetMediaId).toBe(queued.cleanupTargetMediaId);
+  });
+
+  it("preserves a manager lease claimed on the cleanup staging notification", async () => {
+    const workspaceId = "church-1";
+    const cloudPublicId = "thumbnails/claimed-immediately";
+    const assetId = `thumbnail-cloud-cleanup-${encodeURIComponent(
+      JSON.stringify([workspaceId, cloudPublicId]),
+    )}`;
+    let claimPromise: Promise<LocalImageUploadJob | undefined> | undefined;
+    const unsubscribe = subscribeLocalImageUploadJobChanges((changedAssetId) => {
+      if (changedAssetId !== assetId || claimPromise) return;
+      claimPromise = claimLocalImageUploadJob({
+        assetId,
+        leaseOwnerId: "upload-manager-tab",
+        now: Date.now(),
+        leaseDurationMs: 60_000,
+      });
+    });
+
+    try {
+      await enqueueLocalImageCloudCleanup({
+        mediaId: "local_input_camera-1",
+        workspaceId,
+        cloudPublicId,
+      });
+      await expect(claimPromise).resolves.toMatchObject({
+        assetId,
+        leaseOwnerId: "upload-manager-tab",
+      });
+      await expect(getLocalImageUploadJob(assetId)).resolves.toMatchObject({
+        leaseOwnerId: "upload-manager-tab",
+        cleanupReady: true,
+      });
+    } finally {
+      unsubscribe();
+    }
   });
 
   it("repairs a legacy unsigned ownership failure only on explicit retry", async () => {

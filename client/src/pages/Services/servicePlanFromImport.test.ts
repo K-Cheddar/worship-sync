@@ -6,7 +6,10 @@ import {
 import { servicePlanToImportData } from "../../integrations/servicePlanning/servicePlanToImportData";
 import { richTextToPlainText } from "../../types/richText";
 import { getServicePlanResourceText } from "./servicePlanResources";
-import type { ServicePlanningImportData } from "../../containers/Overlays/eventParser";
+import {
+  parseServicePlanningImportFromHtml,
+  type ServicePlanningImportData,
+} from "../../containers/Overlays/eventParser";
 
 describe("guessServicePlanElementType", () => {
   it.each([
@@ -60,6 +63,27 @@ describe("buildServicePlanSectionsFromImport", () => {
   };
   const songs = [{ _id: "song-1", name: "Great Are You Lord" }];
 
+  it("saves sequence-resolved Service Planning times on imported elements", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table class="service-info-table-printout">
+        <tr class="datetime"><td>Date:</td><th class="left">May 2, 2026 - 12:51 PM</th></tr>
+      </table>
+      <table>
+        <tr class="divider-1"><td colspan="6">Welcome</td></tr>
+        <tr class="main-row"><td>12:56</td><td>5m</td><td>Welcome</td><td>Opening</td><td>Team</td><td></td></tr>
+        <tr class="divider-2"><td colspan="6">Music</td></tr>
+        <tr class="main-row"><td>1:01</td><td>5m</td><td>Song</td><td>Welcome Song</td><td>Team</td><td></td></tr>
+        <tr class="main-row"><td>1:06</td><td>5m</td><td>Prayer</td><td>Opening Prayer</td><td>Pastor</td><td></td></tr>
+      </table>
+    `);
+    const sections = buildServicePlanSectionsFromImport(parsed, songs);
+
+    expect(sections.flatMap((section) => section.elements.map((element) => element.startTime))).toEqual([
+      "12:56",
+      "13:01",
+      "13:06",
+    ]);
+  });
   it("maps each Service Planning section 1:1 onto a ServicePlanSection", () => {
     const sections = buildServicePlanSectionsFromImport(data, songs);
     expect(sections).toHaveLength(2);

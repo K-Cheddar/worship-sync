@@ -1,5 +1,5 @@
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
-import { ItemSlideType, TimerInfo } from "../../types";
+import { ItemSlideType, MediaType, TimerInfo } from "../../types";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortable } from "@dnd-kit/sortable";
 import cn from "classnames";
@@ -19,6 +19,8 @@ import { type SlideDragData, type SlideInsertData } from "../../utils/presentati
 import StaticSlideThumbnail from "./StaticSlideThumbnail";
 import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import type { ResolvedDisplaySettings } from "../../utils/displaySettings";
+import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
+import { isLocalImageUrl } from "../../utils/localImageAssets";
 
 /** Stable empty list: a fresh [] re-renders every slide on any action. */
 const EMPTY_SLIDE_IDS: string[] = [];
@@ -62,6 +64,7 @@ type ItemSlideProps = {
   onRenameSection?: (sectionNum: number, name: string) => void;
   isDragOverlay?: boolean;
   thumbnailScaleFactor?: number;
+  localVideoInputThumbnail?: Pick<MediaType, "localImage" | "thumbnail">;
 };
 
 const MediaSlideInsertTarget = ({
@@ -125,7 +128,17 @@ const ItemSlide = ({
   onRenameSection,
   isDragOverlay = false,
   thumbnailScaleFactor = 0,
+  localVideoInputThumbnail,
 }: ItemSlideProps) => {
+  const resolvedLocalThumbnail = useLocalImageUrl(
+    localVideoInputThumbnail?.localImage,
+  );
+  const localVideoThumbnailUrl = resolvedLocalThumbnail.url || (
+    localVideoInputThumbnail?.thumbnail &&
+    !isLocalImageUrl(localVideoInputThumbnail.thumbnail)
+      ? localVideoInputThumbnail.thumbnail
+      : undefined
+  );
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
       state.undoable.present.item.backgroundTargetSlideIds ?? EMPTY_SLIDE_IDS,
@@ -429,6 +442,7 @@ const ItemSlide = ({
           monitorSettings={monitorSettings}
           timerInfo={timerInfo}
           scaleFactor={thumbnailScaleFactor}
+          localVideoInputThumbnailUrl={localVideoThumbnailUrl}
           bibleInfo={
             itemType === "bible" ? getBibleInfo(index) : undefined
           }
@@ -437,6 +451,8 @@ const ItemSlide = ({
           <LocalVideoInputSlideBadge
             label={slide.mediaSource.label}
             captureKind={slide.mediaSource.captureKind}
+            variant={localVideoThumbnailUrl ? "indicator" : "overlay"}
+            className={localVideoThumbnailUrl ? "!bottom-2 !left-2 !right-auto !max-w-[65%]" : undefined}
           />
         ) : null}
       </div>

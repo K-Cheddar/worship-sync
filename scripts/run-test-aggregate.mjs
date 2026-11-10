@@ -194,6 +194,14 @@ function splitNpmCommand(script, client = false) {
   return ["run", script, ...(client ? ["--prefix", "client"] : [])];
 }
 
+export function e2eSuiteInvocationArgs(suite) {
+  const args = splitNpmCommand(suite.script, suite.client);
+  // runE2ESuites validates the saved session once before starting any suite.
+  // Authenticated suite commands can therefore skip Playwright's per-process
+  // setup dependency without skipping the aggregate's no-email validation.
+  return suite.auth ? [...args, "--", "--no-deps"] : args;
+}
+
 function safeSlug(value) {
   return value
     .toLowerCase()
@@ -1013,7 +1021,7 @@ async function runE2ESuites(logDirectory, logIndexStart) {
     return {
       name: suite.name,
       script: suite.script,
-      args: splitNpmCommand(suite.script, suite.client),
+      args: e2eSuiteInvocationArgs(suite),
       skipReason,
     };
   });

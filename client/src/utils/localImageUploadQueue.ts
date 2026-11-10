@@ -4,6 +4,9 @@ import {
   deleteCloudinaryMediaAsset,
 } from "../api/providerStorage";
 import {
+  finishStagedLocalVideoThumbnailReferenceCheck,
+  stageLocalVideoInputThumbnailUploadJobAtomically,
+  renewStagedLocalVideoThumbnailReferenceLease,
   enqueueLocalImageUploadJobAtomically,
   finishLocalImageUploadCancellationAtomically,
   getLocalImageUploadJob as getLocalImageUploadJobAtomically,
@@ -12,6 +15,7 @@ import {
   subscribeLocalImageUploadJobChanges,
   type LocalImageUploadJob,
 } from "./localImageAssets";
+import { LOCAL_IMAGE_THUMBNAIL_REFERENCE_LEASE_MS } from "./localImageUploadScheduling";
 
 const activeUploads = new Map<string, XMLHttpRequest>();
 const processingUploads = new Set<string>();
@@ -23,12 +27,14 @@ export const enqueueLocalImageUpload = async ({
   workspaceId,
   uploadPreset,
   mediaId,
+  localVideoInputThumbnail,
 }: {
   assetId: string;
   itemId: string;
   workspaceId: string;
   uploadPreset: string;
   mediaId?: string;
+  localVideoInputThumbnail?: LocalImageUploadJob["localVideoInputThumbnail"];
 }) => {
   const nowMs = Date.now();
   const now = new Date(nowMs).toISOString();
@@ -39,6 +45,7 @@ export const enqueueLocalImageUpload = async ({
     workspaceId,
     uploadPreset,
     mediaId: mediaId || generateRandomId(),
+    ...(localVideoInputThumbnail ? { localVideoInputThumbnail } : {}),
     status: "pending",
     phase: "queued",
     progress: 0,
@@ -49,6 +56,82 @@ export const enqueueLocalImageUpload = async ({
   };
   return enqueueLocalImageUploadJobAtomically(job, nowMs);
 };
+
+export const stageLocalVideoInputThumbnailUpload = async ({
+  assetId,
+  workspaceId,
+  uploadPreset,
+  mediaId,
+  localVideoInputThumbnail,
+}: {
+  assetId: string;
+  workspaceId: string;
+  uploadPreset: string;
+  mediaId: string;
+  localVideoInputThumbnail: NonNullable<LocalImageUploadJob["localVideoInputThumbnail"]>;
+}) => {
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const ownerId = `thumbnail-reference-${generateRandomId()}`;
+  const candidate: LocalImageUploadJob = {
+    id: assetId,
+    assetId,
+    itemId: "",
+    workspaceId,
+    uploadPreset,
+    mediaId,
+    localVideoInputThumbnail,
+    status: "pending",
+    phase: "queued",
+    progress: 0,
+    attemptCount: 0,
+    nextAttemptAt: 0,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const job = await stageLocalVideoInputThumbnailUploadJobAtomically(
+    candidate,
+    nowMs,
+    ownerId,
+    LOCAL_IMAGE_THUMBNAIL_REFERENCE_LEASE_MS,
+  );
+  return job ? { job, ownerId } : undefined;
+};
+
+export const renewStagedLocalVideoThumbnailReference = (
+  assetId: string,
+  ownerId: string,
+) => renewStagedLocalVideoThumbnailReferenceLease(
+  assetId,
+  ownerId,
+  Date.now(),
+  LOCAL_IMAGE_THUMBNAIL_REFERENCE_LEASE_MS,
+);
+
+export const confirmStagedLocalVideoThumbnailReference = (
+  assetId: string,
+  ownerId: string,
+) => finishStagedLocalVideoThumbnailReferenceCheck({
+  assetId,
+  ownerId,
+  result: "confirmed",
+  now: Date.now(),
+}).then((job) =>
+  job?.thumbnailReferenceState === "abandoned"
+    ? retryLocalImageUpload(assetId)
+    : job,
+);
+
+export const releaseStagedLocalVideoThumbnailReference = (
+  assetId: string,
+  ownerId: string,
+) => finishStagedLocalVideoThumbnailReferenceCheck({
+  assetId,
+  ownerId,
+  result: "retry",
+  now: Date.now(),
+  retryAt: Date.now(),
+});
 
 export const retryLocalImageUpload = (assetId: string) =>
   retryLocalImageUploadJobAtomically(assetId, Date.now());

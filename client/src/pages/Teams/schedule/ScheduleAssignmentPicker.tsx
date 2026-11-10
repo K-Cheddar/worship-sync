@@ -272,6 +272,7 @@ const ScheduleAssignmentPicker = memo(({
   const inputRef = externalInputRef || internalInputRef;
   const anchorProxyRef = useRef<HTMLSpanElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const listScrollRef = useRef<HTMLDivElement>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [menuView, setMenuView] = useState<PickerMenuView>("members");
   const [memberPickerAction, setMemberPickerAction] =
@@ -685,10 +686,10 @@ const ScheduleAssignmentPicker = memo(({
     keyPrefix = "",
   ) => {
     const memberLabel = formatMemberLabel(row.member);
-    const highlighted =
-      selectableRows.findIndex(
-        (item) => item.member.memberId === row.member.memberId,
-      ) === highlightedIndex;
+    const optionIndex = selectableRows.findIndex(
+      (item) => item.member.memberId === row.member.memberId,
+    );
+    const highlighted = optionIndex === highlightedIndex;
     const showPositionGroupDivider =
       shouldShowScheduleMemberPositionGroupDivider(rows, index, positionId);
     const key = `${keyPrefix}${row.member.memberId}`;
@@ -702,10 +703,11 @@ const ScheduleAssignmentPicker = memo(({
           <div className="flex items-center gap-1">
           <button
             role="option"
+            data-picker-option-index={optionIndex}
             aria-selected={highlighted}
             type="button"
             className={cn(
-              "flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
+              "flex min-h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800",
               highlighted && "bg-gray-800",
             )}
             onMouseDown={(event) => {
@@ -748,10 +750,11 @@ const ScheduleAssignmentPicker = memo(({
         <div className="flex items-center gap-1">
         <button
           role="option"
+          data-picker-option-index={optionIndex}
           aria-selected={highlighted}
           type="button"
           className={cn(
-            "flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
+            "flex min-h-8 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded px-2 py-1 text-left text-sm font-medium text-gray-100 hover:bg-gray-800",
             highlighted && "bg-gray-800",
           )}
           onMouseDown={(event) => {
@@ -823,6 +826,21 @@ const ScheduleAssignmentPicker = memo(({
       }
     }
   };
+
+  useEffect(() => {
+    const list = listScrollRef.current;
+    const highlightedOption = list?.querySelector<HTMLElement>(
+      `[data-picker-option-index="${highlightedIndex}"]`,
+    );
+    if (!list || !highlightedOption) return;
+    const listBounds = list.getBoundingClientRect();
+    const optionBounds = highlightedOption.getBoundingClientRect();
+    if (optionBounds.top < listBounds.top) {
+      list.scrollTop -= listBounds.top - optionBounds.top;
+    } else if (optionBounds.bottom > listBounds.bottom) {
+      list.scrollTop += optionBounds.bottom - listBounds.bottom;
+    }
+  }, [highlightedIndex, matchingGuests.length, menuView, selectableRows]);
 
   if (!open || !anchorRect) return null;
 
@@ -906,7 +924,7 @@ const ScheduleAssignmentPicker = memo(({
             </div>
           </div>
         </div> : null}
-        <div className={cn(
+        <div ref={listScrollRef} data-testid="schedule-assignment-options" className={cn(
           "scrollbar-portal overflow-x-hidden overflow-y-auto",
           menuView === "createMember" ? "max-h-[min(38rem,calc(100dvh-4rem))]" : "max-h-[min(24rem,55dvh)]",
         )}>
@@ -1084,7 +1102,7 @@ const ScheduleAssignmentPicker = memo(({
                     type="button"
                     role="menuitem"
                     disabled={assigningGuest}
-                    className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800 disabled:opacity-60"
+                    className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800 disabled:opacity-60"
                     onMouseDown={(event) => {
                       event.preventDefault();
                       if (currentAssigneePresent) {
@@ -1307,9 +1325,10 @@ const ScheduleAssignmentPicker = memo(({
                             <button
                               type="button"
                               role="option"
+                              data-picker-option-index={selectableRows.length + index}
                               aria-selected={selectableRows.length + index === highlightedIndex}
                               disabled={assigningGuest}
-                              className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800 disabled:opacity-60"
+                              className="flex min-h-8 min-w-0 flex-1 items-center gap-2 rounded px-2 py-1 text-left text-sm text-gray-100 hover:bg-gray-800 disabled:opacity-60"
                               onMouseDown={(event) => {
                                 event.preventDefault();
                                 selectGuest(guest);

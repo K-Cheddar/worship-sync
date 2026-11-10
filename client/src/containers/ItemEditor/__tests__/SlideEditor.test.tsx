@@ -13,11 +13,16 @@ import {
   createMockGlobalContext,
   createMockPouchDB,
 } from "../../../test/mocks";
+import { VideoInputMediaWriteOutcomeUnknownError } from "../../../hooks/useLocalVideoInputThumbnailPersistence";
 
 const mockDispatch = jest.fn();
 let mockState: any;
 let mockActiveControllerType = "presentation";
 let mockUseRealPanels = false;
+let mockLocalVideoInputPickerProps: Record<string, any> | undefined;
+const mockPersistVideoInputMediaPatch = jest.fn().mockResolvedValue(undefined);
+const mockSaveVideoInputThumbnail = jest.fn().mockResolvedValue("Saved.");
+const mockRemoveVideoInputThumbnail = jest.fn().mockResolvedValue(undefined);
 
 const mockSetIsLyricsEditorOpen = jest.fn((value: boolean) => ({
   type: "item/setIsLyricsEditorOpen",
@@ -56,10 +61,23 @@ const mockFormatFree = jest.fn((item: any) => item);
 const mockFormatBible = jest.fn((item: any) => item);
 const mockFormatSong = jest.fn((item: any) => item);
 
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+};
+
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
   useSelector: (selector: (state: unknown) => unknown) => selector(mockState),
   useCurrentItem: () => mockState.undoable.present.item,
+}));
+
+jest.mock("react-redux", () => ({
+  ...jest.requireActual("react-redux"),
+  useStore: () => ({ getState: () => mockState }),
 }));
 
 jest.mock("../../../context/activeController", () => ({
@@ -283,8 +301,29 @@ jest.mock("../../../components/LocalVideoInputDetails/LocalVideoInputDetails", (
 
 jest.mock("../../../components/LocalVideoInputPicker/LocalVideoInputPicker", () => ({
   __esModule: true,
-  default: () => <div data-testid="local-video-input-picker" />,
+  default: (props: Record<string, any>) => {
+    mockLocalVideoInputPickerProps = props;
+    return <div data-testid="local-video-input-picker" />;
+  },
 }));
+
+jest.mock("../../../hooks/useLocalVideoInputThumbnailPersistence", () => {
+  const actual = jest.requireActual(
+    "../../../hooks/useLocalVideoInputThumbnailPersistence",
+  ) as Record<string, unknown>;
+  return {
+    ...actual,
+    useLocalVideoInputThumbnailPersistence: () => ({
+      persistVideoInputMediaPatch: (...args: unknown[]) =>
+        mockPersistVideoInputMediaPatch(...args),
+      removeOptimisticVideoInputMediaRow: jest.fn(),
+      saveVideoInputThumbnail: (...args: unknown[]) =>
+        mockSaveVideoInputThumbnail(...args),
+      removeVideoInputThumbnail: (...args: unknown[]) =>
+        mockRemoveVideoInputThumbnail(...args),
+    }),
+  };
+});
 
 jest.mock("../BibleItemActions", () => ({
   __esModule: true,
@@ -455,6 +494,13 @@ describe("SlideEditor", () => {
     );
     mockActiveControllerType = "presentation";
     mockUseRealPanels = false;
+    mockLocalVideoInputPickerProps = undefined;
+    mockPersistVideoInputMediaPatch.mockClear();
+    mockPersistVideoInputMediaPatch.mockResolvedValue(undefined);
+    mockSaveVideoInputThumbnail.mockClear();
+    mockSaveVideoInputThumbnail.mockResolvedValue("Saved.");
+    mockRemoveVideoInputThumbnail.mockClear();
+    mockRemoveVideoInputThumbnail.mockResolvedValue(undefined);
     displayWindowCapture.className = undefined;
     displayWindowCapture.showBorder = undefined;
     displayWindowCapture.onChange = null;
@@ -837,6 +883,420 @@ describe("SlideEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit" }));
     expect(screen.getByTestId("local-video-input-picker")).toBeInTheDocument();
   });
+
+  it("keeps a relink operation attached to the slide where the operator opened the picker", async () => {
+    const sourceA = {
+      kind: "local-video-input" as const,
+      sourceId: "local-video-a",
+      label: "Camera A",
+    };
+    const sourceB = {
+      kind: "local-video-input" as const,
+      sourceId: "local-video-b",
+      label: "Camera B",
+    };
+    const slideA = {
+      id: "slide-a",
+      type: "Section" as const,
+      name: "Camera A",
+      mediaSource: sourceA,
+      boxes: [{ width: 100, height: 100, words: "", x: 0, y: 0 }],
+    };
+    const slideB = {
+      id: "slide-b",
+      type: "Section" as const,
+      name: "Camera B",
+      mediaSource: sourceB,
+      boxes: [{ width: 100, height: 100, words: "", x: 0, y: 0 }],
+    };
+    mockState = makeBaseState({
+      media: {
+        list: [
+          { id: "local_input_local-video-a", name: "Camera A", type: "video", localVideoInput: sourceA },
+          { id: "local_input_local-video-b", name: "Camera B", type: "video", localVideoInput: sourceB },
+        ],
+        folders: [],
+      },
+      undoable: {
+        present: {
+          item: { selectedSlide: 0, slides: [slideA, slideB] },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" presentationMode="present" />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const linkTargetCallback = mockLocalVideoInputPickerProps?.onLinked;
+
+    mockState = {
+      ...mockState,
+      undoable: {
+        ...mockState.undoable,
+        present: {
+          ...mockState.undoable.present,
+          item: { ...mockState.undoable.present.item, selectedSlide: 1 },
+        },
+      },
+    };
+    await act(async () => {
+      await linkTargetCallback({ ...sourceA, label: "Relinked camera" });
+    });
+
+    expect(mockPersistVideoInputMediaPatch).toHaveBeenCalledWith(
+      "local_input_local-video-a",
+      sourceA.sourceId,
+      expect.objectContaining({ name: "Relinked camera" }),
+      false,
+    );
+    expect(mockUpdateSlides).toHaveBeenCalledWith(expect.objectContaining({
+      slides: [
+        expect.objectContaining({ id: "slide-a", mediaSource: expect.objectContaining({ label: "Relinked camera" }) }),
+        expect.objectContaining({ id: "slide-b", mediaSource: sourceB }),
+      ],
+    }));
+  });
+
+  it("rejects a relink when the active item changes while the picker is open", async () => {
+    const source = {
+      kind: "local-video-input" as const,
+      sourceId: "local-video-a",
+      label: "Camera A",
+    };
+    const slide = {
+      id: "slide-a",
+      type: "Section" as const,
+      name: "Camera A",
+      mediaSource: source,
+      boxes: [{ width: 100, height: 100, words: "", x: 0, y: 0 }],
+    };
+    mockState = makeBaseState({
+      media: {
+        list: [{ id: "local_input_local-video-a", name: "Camera A", type: "video", localVideoInput: source }],
+        folders: [],
+      },
+      undoable: {
+        present: {
+          item: { selectedSlide: 0, slides: [slide] },
+        },
+      },
+    });
+
+    render(<SlideEditor access="full" presentationMode="present" />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    const linkTargetCallback = mockLocalVideoInputPickerProps?.onLinked;
+    const originalItem = mockState.undoable.present.item;
+    mockState = {
+      ...mockState,
+      undoable: {
+        ...mockState.undoable,
+        present: {
+          ...mockState.undoable.present,
+          item: { ...originalItem, _id: "different-active-item" },
+        },
+      },
+    };
+
+    if (!linkTargetCallback) throw new Error("The relink picker callback was not rendered.");
+    await expect(linkTargetCallback({ ...source, label: "Relinked camera" })).rejects.toThrow(
+      "The active item changed while the video input was opening.",
+    );
+    expect(mockPersistVideoInputMediaPatch).not.toHaveBeenCalled();
+  });
+
+  it("waits for Media before updating a relinked slide and exposes thumbnail controls", async () => {
+    const source = {
+      kind: "local-video-input" as const,
+      sourceId: "local_video_1",
+      label: "Booth camera",
+    };
+    const mediaId = "local_input_local_video_1";
+    mockState = makeBaseState({
+      media: {
+        list: [
+          {
+            id: mediaId,
+            name: "Original camera name",
+            createdAt: "created-before-relink",
+            updatedAt: "updated-before-relink",
+            format: "live",
+            height: 1080,
+            width: 1920,
+            publicId: mediaId,
+            type: "video",
+            background: "local-video-input://local_video_1",
+            thumbnail: "https://images.example.com/original.jpg",
+            localImage: {
+              id: "existing-image",
+              ownerDeviceId: "device-owner",
+              ownerLabel: "Owner",
+              fileName: "original.jpg",
+              contentType: "image/jpeg",
+              storagePolicy: "local-only",
+            },
+            folderId: "existing-folder",
+            localVideoInput: source,
+            customField: "preserved",
+          },
+        ],
+        folders: [{ id: "existing-folder", name: "Existing", parentId: null }],
+      },
+      undoable: {
+        present: {
+          item: {
+            slides: [
+              {
+                id: "s1",
+                type: "Section",
+                name: "Booth camera",
+                mediaSource: source,
+                boxes: [{ width: 100, height: 100, words: "", x: 0, y: 0 }],
+              },
+            ],
+          },
+        },
+      },
+    });
+    const frame = {
+      blob: new Blob(["new frame"], { type: "image/webp" }),
+      width: 640,
+      height: 360,
+    };
+    mockSaveVideoInputThumbnail
+      .mockRejectedValueOnce(
+        new VideoInputMediaWriteOutcomeUnknownError(
+          "The thumbnail could not be saved to Media. Try again.",
+        ),
+      )
+      .mockResolvedValueOnce("Thumbnail saved.");
+
+    render(<SlideEditor access="full" presentationMode="present" />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+
+    expect(mockLocalVideoInputPickerProps?.hasThumbnail).toBe(true);
+    expect(mockLocalVideoInputPickerProps?.onSaveThumbnail).toEqual(
+      expect.any(Function),
+    );
+    expect(mockLocalVideoInputPickerProps?.onRemoveThumbnail).toEqual(
+      expect.any(Function),
+    );
+    await act(async () => {
+      await expect(
+        mockLocalVideoInputPickerProps?.onLinked(
+          { ...source, label: "Relinked camera" },
+          frame,
+        ),
+      ).rejects.toBeInstanceOf(VideoInputMediaWriteOutcomeUnknownError);
+    });
+
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+    expect(mockUpdateArrangements).not.toHaveBeenCalled();
+    expect(mockLocalVideoInputPickerProps?.open).toBe(true);
+
+    await act(async () => {
+      await mockLocalVideoInputPickerProps?.onLinked(
+        { ...source, label: "Relinked camera" },
+        frame,
+      );
+    });
+
+    expect(mockPersistVideoInputMediaPatch).not.toHaveBeenCalled();
+    expect(mockSaveVideoInputThumbnail).toHaveBeenCalledTimes(2);
+    expect(mockSaveVideoInputThumbnail).toHaveBeenCalledWith(
+      mediaId,
+      frame,
+      expect.objectContaining({
+        mediaPatch: expect.objectContaining({
+          name: "Relinked camera",
+          localVideoInput: expect.objectContaining({
+            sourceId: source.sourceId,
+            label: "Relinked camera",
+          }),
+        }),
+        allowCreate: false,
+      }),
+    );
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "media/updateMediaItemFields" }),
+    );
+    expect(mockDispatch).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "media/addItemToMediaList" }),
+    );
+    expect(mockUpdateSlides).toHaveBeenCalledWith(expect.objectContaining({
+      slides: [expect.objectContaining({
+        mediaSource: expect.objectContaining({
+          sourceId: source.sourceId,
+          label: "Relinked camera",
+        }),
+      })],
+      expectedOwner: expect.objectContaining({ itemId: "default-item" }),
+    }));
+  });
+
+  it("applies the relink to the latest slides after another slide changes during Media save", async () => {
+    const source = {
+      kind: "local-video-input" as const,
+      sourceId: "local_video_a",
+      label: "Camera A",
+    };
+    const mediaId = "local_input_local_video_a";
+    const slideA = {
+      id: "slide-a",
+      type: "Section" as const,
+      name: "Camera A",
+      mediaSource: source,
+      boxes: [{ width: 100, height: 100, words: "", x: 0, y: 0 }],
+    };
+    const slideB = {
+      id: "slide-b",
+      type: "Section" as const,
+      name: "Slide B",
+      boxes: [],
+    };
+    mockState = makeBaseState({
+      media: {
+        list: [{ id: mediaId, name: "Camera A", type: "video", localVideoInput: source }],
+        folders: [],
+      },
+      undoable: {
+        present: {
+          item: { selectedSlide: 0, slides: [slideA, slideB] },
+        },
+      },
+    });
+    const save = createDeferred<string>();
+    mockSaveVideoInputThumbnail.mockReturnValueOnce(save.promise);
+    const frame = {
+      blob: new Blob(["frame"], { type: "image/webp" }),
+      width: 640,
+      height: 360,
+    };
+
+    render(<SlideEditor access="full" presentationMode="present" />);
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    let saving!: Promise<void>;
+    act(() => {
+      saving = mockLocalVideoInputPickerProps?.onLinked(
+        { ...source, label: "Relinked camera" },
+        frame,
+      );
+    });
+    expect(mockSaveVideoInputThumbnail).toHaveBeenCalledTimes(1);
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+
+    const startItem = mockState.undoable.present.item;
+    mockState = {
+      ...mockState,
+      undoable: {
+        ...mockState.undoable,
+        present: {
+          ...mockState.undoable.present,
+          item: {
+            ...startItem,
+            slides: [slideA, { ...slideB, name: "Edited while saving" }],
+          },
+        },
+      },
+    };
+
+    await act(async () => {
+      save.resolve("Thumbnail saved.");
+      await saving;
+    });
+
+    const update = mockUpdateSlides.mock.calls[0][0];
+    expect(update.slides).toEqual([
+      expect.objectContaining({
+        id: "slide-a",
+        mediaSource: expect.objectContaining({
+          sourceId: source.sourceId,
+          label: "Relinked camera",
+        }),
+      }),
+      expect.objectContaining({ id: "slide-b", name: "Edited while saving" }),
+    ]);
+    expect(update.expectedOwner).toEqual(
+      expect.objectContaining({ itemId: "default-item" }),
+    );
+  });
+
+  it.each(["active item", "target slide source"] as const)(
+    "does not apply a pending relink after the %s changes",
+    async (changedTarget) => {
+      const source = {
+        kind: "local-video-input" as const,
+        sourceId: "local_video_a",
+        label: "Camera A",
+      };
+      const mediaId = "local_input_local_video_a";
+      const slideA = {
+        id: "slide-a",
+        type: "Section" as const,
+        name: "Camera A",
+        mediaSource: source,
+        boxes: [{ width: 100, height: 100, words: "", x: 0, y: 0 }],
+      };
+      mockState = makeBaseState({
+        media: {
+          list: [{ id: mediaId, name: "Camera A", type: "video", localVideoInput: source }],
+          folders: [],
+        },
+        undoable: {
+          present: {
+            item: { selectedSlide: 0, slides: [slideA] },
+          },
+        },
+      });
+      const save = createDeferred<string>();
+      mockSaveVideoInputThumbnail.mockReturnValueOnce(save.promise);
+      const frame = {
+        blob: new Blob(["frame"], { type: "image/webp" }),
+        width: 640,
+        height: 360,
+      };
+
+      render(<SlideEditor access="full" presentationMode="present" />);
+      fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+      let saving!: Promise<void>;
+      act(() => {
+        saving = mockLocalVideoInputPickerProps?.onLinked(
+          { ...source, label: "Relinked camera" },
+          frame,
+        );
+      });
+
+      const startItem = mockState.undoable.present.item;
+      const changedItem = changedTarget === "active item"
+        ? { ...startItem, _id: "different-active-item" }
+        : {
+            ...startItem,
+            slides: [{
+              ...slideA,
+              mediaSource: { ...source, deviceId: "different-camera" },
+            }],
+          };
+      mockState = {
+        ...mockState,
+        undoable: {
+          ...mockState.undoable,
+          present: {
+            ...mockState.undoable.present,
+            item: changedItem,
+          },
+        },
+      };
+      await act(async () => {
+        save.resolve("Thumbnail saved.");
+        await expect(saving).rejects.toThrow(
+          changedTarget === "active item"
+            ? "The active item changed"
+            : "The target slide changed",
+        );
+      });
+
+      expect(mockUpdateSlides).not.toHaveBeenCalled();
+      expect(mockUpdateArrangements).not.toHaveBeenCalled();
+    },
+  );
 
   it("shows video input details left of the preview instead of section text", () => {
     mockState = makeBaseState({

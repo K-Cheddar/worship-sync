@@ -370,6 +370,14 @@ const ItemSlidesContent = () => {
   } = useSelector((state: RootState) => state.undoable.present.preferences);
 
   const mediaList = useSelector((state: RootState) => state.media.list);
+  const videoInputMediaBySourceId = useMemo(() => {
+    const mediaBySourceId = new Map<string, (typeof mediaList)[number]>();
+    mediaList.forEach((mediaItem) => {
+      const sourceId = mediaItem.localVideoInput?.sourceId;
+      if (sourceId) mediaBySourceId.set(sourceId, mediaItem);
+    });
+    return mediaBySourceId;
+  }, [mediaList]);
 
   const { isMobile, db } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
@@ -2175,6 +2183,11 @@ const ItemSlidesContent = () => {
                 <ItemSlide
                   timerInfo={timerInfo}
                   slide={slide}
+                  localVideoInputThumbnail={
+                    slide.mediaSource?.kind === "local-video-input"
+                      ? videoInputMediaBySourceId.get(slide.mediaSource.sourceId)
+                      : undefined
+                  }
                   index={index}
                   selectSlide={selectSlide}
                   isSelected={index === selectedSlide}
@@ -2252,6 +2265,13 @@ const ItemSlidesContent = () => {
             <ItemSlide
               timerInfo={timerInfo}
               slide={activeSlide}
+              localVideoInputThumbnail={
+                activeSlide.mediaSource?.kind === "local-video-input"
+                  ? videoInputMediaBySourceId.get(
+                      activeSlide.mediaSource.sourceId,
+                    )
+                  : undefined
+              }
               index={renderedSlides.findIndex(
                 (slide) => slide.id === activeSlide.id,
               )}
