@@ -19,7 +19,7 @@ export type SongV2MutationGuard = (() => boolean) & {
 };
 
 export class SongV2MutationNotAuthorizedError extends Error {
-  constructor() {
+  constructor(readonly recovery?: { progress: SongV2WriteProgress }) {
     super("Song changes are no longer authorized for this session.");
     this.name = "SongV2MutationNotAuthorizedError";
   }
@@ -173,6 +173,25 @@ function remember(documents: SongV2Documents, document: Document): void {
   }
 }
 
+function forget(documents: SongV2Documents, document: Document): void {
+  if (document.docType === "song-v2-arrangement") {
+    documents.arrangements = documents.arrangements.filter(doc => doc._id !== document._id);
+  } else if (document.docType === "song-v2-slide") {
+    documents.slides = documents.slides.filter(doc => doc._id !== document._id);
+  }
+}
+
+function snapshotFromDocuments(documents: SongV2Documents): SongV2Snapshot {
+  const { root } = documents;
+  const arrangements = documents.arrangements.filter(doc => root.arrangementIds.includes(doc.arrangementId));
+  const slides = documents.slides.filter(doc => arrangements.some(arr =>
+    arr.arrangementId === doc.arrangementId && arr.slideIds.includes(doc.id)));
+  return {
+    root, arrangements, slides,
+    hydrated: hydrateSongFromV2Documents(root, arrangements, slides, true),
+  };
+}
+
 async function execute(
   db: PouchDB.Database,
   initial: WriteState,
@@ -202,24 +221,30 @@ async function execute(
         if (mutationGuard) assertSongV2MutationAllowed(mutationGuard);
         await db.remove(doc._id, doc._rev!);
         mutationGuard?.onWriteCommitted?.();
+        forget(state.documents, doc);
         state.progress.deleted.push(doc._id);
       }
     } catch (cause) {
-      if (cause instanceof SongV2MutationNotAuthorizedError) throw cause;
+      if (cause instanceof SongV2MutationNotAuthorizedError) {
+        if (state.progress.written.length || state.progress.deleted.length) {
+          throw new SongV2MutationNotAuthorizedError({
+            progress: {
+              written: [...state.progress.written],
+              created: [...state.progress.created],
+              deleted: [...state.progress.deleted],
+              cleanupErrors: [...state.progress.cleanupErrors],
+            },
+          });
+        }
+        throw cause;
+      }
       if (step.kind === "put") throw new SongV2WriteError(doc._id, cause, state);
       // All references have already been removed; cleanup is not logical failure.
       state.progress.cleanupErrors.push({ documentId: doc._id, revision: doc._rev, cause });
     }
     state.steps.shift();
   }
-  const { root } = state.documents;
-  const arrangements = state.documents.arrangements.filter(doc => root.arrangementIds.includes(doc.arrangementId));
-  const slides = state.documents.slides.filter(doc => arrangements.some(arr =>
-    arr.arrangementId === doc.arrangementId && arr.slideIds.includes(doc.id)));
-  const snapshot: SongV2Snapshot = {
-    root, arrangements, slides,
-    hydrated: hydrateSongFromV2Documents(root, arrangements, slides, true),
-  };
+  const snapshot = snapshotFromDocuments(state.documents);
   return { ...state.progress, snapshot, song: snapshot.hydrated };
 }
 

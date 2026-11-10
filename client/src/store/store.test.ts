@@ -216,6 +216,7 @@ const loadStoreWithItemPersistence = () => {
   let itemSliceModule: any;
   let songPersistenceModule: any;
   let deferredMutations!: typeof import("./deferredItemMutations");
+  let contentReplicationActivity!: typeof import("../utils/contentReplicationActivity");
   let replicationConflicts: any;
   let selectionModule: typeof import("./controllerItemSelection");
   const postMessage = jest.fn();
@@ -265,6 +266,8 @@ const loadStoreWithItemPersistence = () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     deferredMutations = require("./deferredItemMutations");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
+    contentReplicationActivity = require("../utils/contentReplicationActivity");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     replicationConflicts = require("../utils/songV2ReplicationConflicts");
     selectionModule = require("./controllerItemSelection");
   });
@@ -282,6 +285,7 @@ const loadStoreWithItemPersistence = () => {
     setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
     songPersistence: songPersistenceModule,
     deferredMutations,
+    contentReplicationActivity,
     replicationConflicts,
     songV2DocumentsChanged: storeModule.songV2DocumentsChanged,
   };
@@ -501,6 +505,77 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     expect(env.docs.get(env.physical.root._id).name).not.toBe("First save title");
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).not.toBe("First save lyrics");
     expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("recovers an interrupted partial V2 save after the same authorized session owner returns", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const firstSession = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+
+    const originalPut = env.db.put.getMockImplementation()!;
+    let committedFirstDocument!: () => void;
+    let releaseFirstDocument!: () => void;
+    const firstCommit = new Promise<void>(resolve => { committedFirstDocument = resolve; });
+    const firstCommitGate = new Promise<void>(resolve => { releaseFirstDocument = resolve; });
+    let writes = 0;
+    env.db.put.mockImplementation(async next => {
+      const result = await originalPut(next);
+      writes += 1;
+      if (writes === 1) {
+        committedFirstDocument();
+        await firstCommitGate;
+      }
+      return result;
+    });
+
+    env.editSong("First save title", "First save lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await firstCommit;
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First save lyrics");
+    expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
+
+    // A newer edit is coalesced while the first operation is already durable
+    // on one slide document but has not yet published its root metadata.
+    env.editSong("Latest save title", "Latest save lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    env.globalFireDbInfo.canWriteSongContent = false;
+    env.globalFireDbInfo.churchId = "";
+    firstSession.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+    releaseFirstDocument();
+    await flushListenerEffects();
+
+    expect(writes).toBe(1);
+    expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First save lyrics");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+
+    env.globalFireDbInfo.churchId = owner.churchId;
+    env.globalFireDbInfo.canWriteSongContent = true;
+    const restoredSession = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    for (let attempt = 0; attempt < 100 &&
+      env.docs.get(env.physical.root._id).name !== "Latest save title"; attempt += 1) {
+      await Promise.resolve();
+    }
+    await flushListenerEffects();
+
+    const latest = (await env.songPersistence.loadSongV2Snapshot(env.db as never, env.baseline._id)).hydrated;
+    expect(latest.name).toBe("Latest save title");
+    expect(latest.arrangements[0].slides[0].boxes[0].words).toBe("Latest save lyrics");
+    expect(env.docs.get(env.physical.root._id).name).not.toBe("First save title");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).not.toBe("First save lyrics");
+    expect(writes).toBeGreaterThanOrEqual(4);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+
+    restoredSession.release();
+    env.deferredMutations.setActiveContentDatabase(null);
   });
 
   it("re-reads an older remote response after a successful save instead of replacing the saved content", async () => {

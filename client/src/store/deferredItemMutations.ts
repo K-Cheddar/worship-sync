@@ -9,6 +9,10 @@ export type ItemMutationOwner = ItemContentOwner & {
 const pendingByOwner = new Map<string, Map<symbol, () => void>>();
 const contentDatabasesByScope = new Map<string, PouchDB.Database>();
 let activeContentDatabaseOwner: ItemContentOwner | null = null;
+const contentDatabaseActivationHandlers = new Set<(
+  owner: ItemContentOwner,
+  database: PouchDB.Database,
+) => void>();
 const contentDatabaseFlushHandlers = new Set<(
   owner: ItemContentOwner,
   database: PouchDB.Database,
@@ -35,7 +39,17 @@ export const setActiveContentDatabase = (
   database?: PouchDB.Database,
 ) => {
   activeContentDatabaseOwner = owner;
-  if (owner && database) contentDatabasesByScope.set(owner.scopeId, database);
+  if (owner && database) {
+    contentDatabasesByScope.set(owner.scopeId, database);
+    contentDatabaseActivationHandlers.forEach(handler => handler(owner, database));
+  }
+};
+
+export const registerContentDatabaseActivationHandler = (
+  handler: (owner: ItemContentOwner, database: PouchDB.Database) => void,
+) => {
+  contentDatabaseActivationHandlers.add(handler);
+  return () => contentDatabaseActivationHandlers.delete(handler);
 };
 
 export const getActiveContentDatabaseOwner = () => activeContentDatabaseOwner;

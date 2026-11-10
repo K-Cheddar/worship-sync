@@ -43,6 +43,12 @@ Authorization: the “WorshipSync Song v2 — Fix Blocking Conflict Screen and R
 - A later browser can recover the song after the original editors close. Unconflicted songs keep their normal opening and editing flow; migrations and unrelated songs are unchanged.
 - A conflict-review completion may write to its captured original database, but it only updates the editor or conflict state while the original database session, church, item, and outline occurrence still own the view. An item/database switch or unmount suppresses stale UI publication.
 
+### Interrupted Song V2 autosaves (November 10, 2026)
+
+Authorization: the current high-priority code-review remediation request.
+
+- If authorization or the content database session ends after part of a multi-document autosave is durable, retain that authored intent and its original owner. When the same account, church, and database returns with song-edit permission, reread the authoritative V2 documents, recognize already-applied intent, and finish the save before applying newer pending edits. A different owner never resumes it, and explicit Use Their Changes retires the retained autosave.
+
 ### Read-only hydration and authorized automatic reconciliation
 
 Authorization: the current high-priority code-review remediation request, November 10, 2026.
