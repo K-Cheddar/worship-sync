@@ -4,6 +4,12 @@ import DisplayBox from "../../components/DisplayWindow/DisplayBox";
 import StaticSlideThumbnail from "./StaticSlideThumbnail";
 import { resolveDisplaySettings } from "../../utils/displaySettings";
 
+const queryRenderedVideo = () => {
+  // A native <video> has no implicit testing-library role.
+  // eslint-disable-next-line testing-library/no-node-access
+  return document.querySelector("video");
+};
+
 jest.mock("../../hooks/useCachedMediaUrl", () => ({
   useCachedMediaUrl: (url?: string) => url,
   useResolvedCachedMediaUrl: (url?: string) => url,
@@ -79,7 +85,7 @@ describe("StaticSlideThumbnail", () => {
       expect(screen.getByTestId("static-video-input-thumbnail")).toHaveClass(
         "object-cover",
       );
-      expect(screen.queryByRole("video")).not.toBeInTheDocument();
+      expect(queryRenderedVideo()).toBeNull();
     },
   );
 
@@ -100,7 +106,7 @@ describe("StaticSlideThumbnail", () => {
       "src",
       "https://example.test/background.jpg",
     );
-    expect(screen.queryByRole("video")).not.toBeInTheDocument();
+    expect(queryRenderedVideo()).toBeNull();
   });
 
   it("uses a video poster or still and keeps stream free text lightweight", () => {
@@ -168,7 +174,7 @@ describe("StaticSlideThumbnail", () => {
       />,
     );
     expect(screen.getByText("Welcome")).toBeInTheDocument();
-    expect(screen.queryByRole("video")).not.toBeInTheDocument();
+    expect(queryRenderedVideo()).toBeNull();
   });
 
   it("uses the shared Bible stream formatting in static mode", () => {
@@ -247,7 +253,7 @@ describe("StaticSlideThumbnail", () => {
     expect(screen.getByText("Monitor current")).toBeInTheDocument();
     expect(screen.getByText("Monitor next")).toBeInTheDocument();
     expect(screen.getByTestId("monitor-preview-timer")).toHaveTextContent("05:00");
-    expect(screen.queryByRole("video")).not.toBeInTheDocument();
+    expect(queryRenderedVideo()).toBeNull();
   });
 
   it("uses the static single-slide Monitor layout when next-slide is off", () => {

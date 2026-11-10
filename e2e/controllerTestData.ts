@@ -1,12 +1,17 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { readDocument, resetLocalOutputs, waitForControllerDatabase } from "./controllerRuntime";
 import {
-  hasControllerOperatorAccess,
+  readDocument,
+  resetLocalOutputs,
+  waitForControllerDatabase,
+  waitForControllerStartup,
+} from "./controllerRuntime";
+import {
   homeNavigationDiagnostics,
   openHome,
   type E2EAuthFlags,
 } from "./smokeNavigation";
+import { smokePrerequisiteFailure } from "./smokePrerequisites";
 
 // A failed test restarts its worker. A fresh identity prevents that worker
 // from reusing a deleted document or adopting an interrupted worker's records.
@@ -70,12 +75,16 @@ export const requirePresentationControllerHomeLink = async (
   page: Page,
   auth: E2EAuthFlags,
 ) => {
-  if (!hasControllerOperatorAccess(auth)) {
+  const missingControllerAccess = smokePrerequisiteFailure({
+    kind: "controller-access",
+    auth,
+  });
+  if (missingControllerAccess) {
     throw new Error(
       await homeNavigationDiagnostics(
         page,
         auth,
-        "The saved account lacks operator-controller access (Controller access must be View, Music, or Full).",
+        missingControllerAccess,
       ),
     );
   }
@@ -85,6 +94,15 @@ export const requirePresentationControllerHomeLink = async (
     exact: true,
   });
   try {
+    await expect.poll(async () => page.evaluate(() => {
+      const state = window.__controllerE2EStartupSnapshot?.();
+      return Boolean(
+        state?.controllerProfiles?.loaded &&
+        state.controllerProfiles.syncedToCurrentChurch &&
+        state?.displayOutputs?.loaded &&
+        state.displayOutputs.syncedToCurrentChurch,
+      );
+    }), { timeout: 60_000 }).toBe(true);
     await expect(controllersRegion).toBeVisible({ timeout: 15_000 });
     await expect(controllersRegion).not.toHaveAttribute("aria-busy", "true", {
       timeout: 60_000,
@@ -130,16 +148,7 @@ export const openPresentationController = async (page: Page) => {
       `Clicking the #/controller Home link opened an unexpected route (${new URL(page.url()).hash || "unknown"}).\n${homeSnapshot}`,
     );
   }
-  const startupOverlay = page.getByTestId("controller-loading-overlay");
-  try {
-    await expect(startupOverlay).toBeHidden({ timeout: 90_000 });
-  } catch {
-    throw new Error(
-      `Presentation Controller startup did not resolve; current route is ${new URL(page.url()).hash || "unknown"} and the startup overlay is still visible.\n${homeSnapshot}`,
-    );
-  }
-  await expect(page.locator("#controller-main")).toBeVisible();
-  await waitForControllerDatabase(page);
+  await waitForControllerStartup(page);
   await expect(page.getByRole("link", { name: "Songs", exact: true })).toBeVisible();
   const editMode = page.getByRole("button", { name: "Edit", exact: true });
   await editMode.click();
@@ -285,7 +294,7 @@ export const waitForControllerAutosave = async (page: Page) => {
 export const outlineSongRow = (page: Page, title: string) =>
   page
     .locator("#service-items-list")
-    .getByRole("link", { name: title, exact: true })
+    .getByRole("button", { name: title, exact: true })
     .locator('xpath=ancestor::li[@data-list-id]');
 
 export const cleanFixtureOutline = async (page: Page) => {
@@ -350,7 +359,7 @@ export const addSongToOutline = async (page: Page, title: string) => {
 export const openSongFromOutline = async (page: Page, title: string) => {
   const row = outlineSongRow(page, title);
   await expect(row).toHaveCount(1);
-  await row.getByRole("link", { name: title, exact: true }).click();
+  await row.getByRole("button", { name: title, exact: true }).click();
   await expect(page).toHaveURL(/#\/controller\/?$/);
   await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
   await expect(page.locator("#item-slides-container")).toBeVisible();

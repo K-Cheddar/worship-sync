@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import test from "node:test";
-import { aggregateExitCode, E2E_SUITES, evaluateApplicationWorkflowAccess, getReservedSchedulingTeamId, npmInvocation, redactText, runAggregateGroups, runSequential } from "./run-test-aggregate.mjs";
+import { aggregateExitCode, E2E_SUITES, e2eSuiteInvocationArgs, evaluateApplicationWorkflowAccess, getReservedSchedulingTeamId, npmInvocation, redactText, runAggregateGroups, runSequential } from "./run-test-aggregate.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -50,6 +50,18 @@ test("records skipped suites distinctly and excludes them from execution", async
   assert.equal(results[0].status, "SKIPPED");
   assert.match(results[0].details, /Saved authentication/);
   assert.equal(aggregateExitCode(results), 1);
+});
+
+test("aggregate reuses its single saved-session validation for authenticated suites", () => {
+  for (const script of ["test:e2e:smoke", "test:e2e:scheduling", "test:e2e:controller"]) {
+    const suite = E2E_SUITES.find((candidate) => candidate.script === script);
+    assert.ok(suite, `registered ${script}`);
+    assert.deepEqual(e2eSuiteInvocationArgs(suite), ["run", script, "--", "--no-deps"]);
+  }
+  assert.deepEqual(
+    e2eSuiteInvocationArgs({ script: "test:e2e:home-launcher", client: true }),
+    ["run", "test:e2e:home-launcher", "--prefix", "client"],
+  );
 });
 
 test("redacts credential fields, bearer values, emails, and one-time codes", () => {
@@ -165,7 +177,7 @@ test("maps each standalone client browser script exactly once and excludes auth 
   assert.deepEqual(mappedClientScripts, clientScripts);
   assert.deepEqual(mappedRootScripts, ["test:e2e:controller", "test:e2e:scheduling", "test:e2e:smoke"]);
   assert.equal(new Set(E2E_SUITES.map((suite) => suite.script)).size, E2E_SUITES.length);
-  assert.equal(E2E_SUITES.length, 16);
+  assert.equal(E2E_SUITES.length, 17);
   assert.ok(!E2E_SUITES.some((suite) => ["test:e2e:auth", "test:e2e:auth:refresh"].includes(suite.script)));
   assert.ok(!E2E_SUITES.some((suite) => suite.script.startsWith("test:e2e:auth:")));
   assert.ok(!E2E_SUITES.some((suite) => suite.script === "test:e2e:browser"));

@@ -20,6 +20,7 @@ import StaticSlideThumbnail from "./StaticSlideThumbnail";
 import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import type { ResolvedDisplaySettings } from "../../utils/displaySettings";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
+import { isLocalImageUrl } from "../../utils/localImageAssets";
 
 /** Stable empty list: a fresh [] re-renders every slide on any action. */
 const EMPTY_SLIDE_IDS: string[] = [];
@@ -132,8 +133,12 @@ const ItemSlide = ({
   const resolvedLocalThumbnail = useLocalImageUrl(
     localVideoInputThumbnail?.localImage,
   );
-  const localVideoThumbnailUrl =
-    resolvedLocalThumbnail.url || localVideoInputThumbnail?.thumbnail;
+  const localVideoThumbnailUrl = resolvedLocalThumbnail.url || (
+    localVideoInputThumbnail?.thumbnail &&
+    !isLocalImageUrl(localVideoInputThumbnail.thumbnail)
+      ? localVideoInputThumbnail.thumbnail
+      : undefined
+  );
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
       state.undoable.present.item.backgroundTargetSlideIds ?? EMPTY_SLIDE_IDS,
@@ -447,6 +452,7 @@ const ItemSlide = ({
             label={slide.mediaSource.label}
             captureKind={slide.mediaSource.captureKind}
             variant={localVideoThumbnailUrl ? "indicator" : "overlay"}
+            className={localVideoThumbnailUrl ? "!bottom-2 !left-2 !right-auto !max-w-[65%]" : undefined}
           />
         ) : null}
       </div>

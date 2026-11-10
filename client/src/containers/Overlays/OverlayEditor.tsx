@@ -87,7 +87,7 @@ const OverlayEditor = ({
 
   const handleDraftPendingChange = useCallback(
     (overlayId: string, isPending: boolean, draftId: string) => {
-      if (draftOwner && !draftOwner.isCurrent()) return;
+      if (isPending && draftOwner && !draftOwner.isCurrent()) return;
       dispatch(
         isPending
           ? markOverlayDraftPending({ overlayId, draftId })

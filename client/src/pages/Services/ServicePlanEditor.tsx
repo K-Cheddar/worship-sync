@@ -589,8 +589,11 @@ const ServicePlanEditor = ({
     churchId: churchId || "",
     enabled: Boolean(churchIntegrations?.planningCenter?.enabled),
     connected: Boolean(churchIntegrations?.planningCenter?.connected),
-    accountId: churchIntegrations?.planningCenter?.accountId || "",
-    accountLabel: churchIntegrations?.planningCenter?.accountLabel || "",
+    accountIdentity:
+      churchIntegrations?.planningCenter?.accountId ||
+      churchIntegrations?.planningCenter?.connectionRevision ||
+      churchIntegrations?.planningCenter?.accountLabel ||
+      "",
     lastError: churchIntegrations?.planningCenter?.lastError || "",
   });
   const { db } = useContext(ControllerInfoContext) || {};

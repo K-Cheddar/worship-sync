@@ -302,11 +302,8 @@ export const createVolunteerIdentityOperations = ({
               "This account's roster link changed during the request. Try again.",
             );
           }
-          // Firestore retries conflicts within one runTransaction call. A
-          // removal and roster link may still exhaust those retries while
-          // committing their shared identity state, so start a fresh
-          // transaction and re-check membership before treating it as a
-          // competing link.
+          // A fresh transaction lets a contending link or removal finish and
+          // rechecks the current membership and roster identity before failing.
         }
       }
     }

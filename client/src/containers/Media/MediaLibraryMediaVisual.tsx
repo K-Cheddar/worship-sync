@@ -24,11 +24,11 @@ const MediaLibraryMediaVisual = ({
     mediaItem.localVideoFile,
     "thumbnail",
   );
-  const fallbackThumbnail = isLocalImageUrl(mediaItem.thumbnail)
-    ? undefined
-    : mediaItem.thumbnail;
+  const thumbnailFallback = mediaItem.thumbnail && !isLocalImageUrl(mediaItem.thumbnail)
+    ? mediaItem.thumbnail
+    : undefined;
   const resolvedThumbnail = localImage.isLocalImage
-    ? localImage.status === "ready" ? localImage.url ?? fallbackThumbnail : fallbackThumbnail
+    ? localImage.url || thumbnailFallback
     : localVideo.isLocalVideoFile
       ? localVideo.url || mediaItem.thumbnail
       : mediaItem.thumbnail;

@@ -30,8 +30,9 @@ test("safePlanningCenterReturnTo accepts only local application paths", () => {
   }
 });
 
-const createConnectedService = async ({ getHandler } = {}) => {
+const createConnectedService = async ({ getHandler, userInfoResponses, now } = {}) => {
   const calls = [];
+  let profileResponseIndex = 0;
   const httpClient = {
     async post(url, body) {
       calls.push({ method: "post", url, body });
@@ -53,8 +54,10 @@ const createConnectedService = async ({ getHandler } = {}) => {
     async get(url, config) {
       calls.push({ method: "get", url, params: config?.params });
       if (url.endsWith("/oauth/userinfo")) {
+        const profile = userInfoResponses?.[profileResponseIndex++];
+        if (profile instanceof Error) throw profile;
         return {
-          data: {
+          data: profile || {
             name: "Jordan Admin",
             organization_name: "Example Church",
             organization_id: "org-123",
@@ -76,16 +79,21 @@ const createConnectedService = async ({ getHandler } = {}) => {
     clientId: "client-id",
     clientSecret: "client-secret",
     tokenEncryptionKey: "a-test-encryption-secret-that-is-not-checked-in",
+    ...(now ? { now } : {}),
   });
 
-  const pending = await service.startConnect({
-    churchId: "church-1",
-    userId: "admin-1",
-    returnTo: "/account/integrations",
-  });
-  const state = new URL(pending.authorizeUrl).searchParams.get("state");
-  await service.completeConnect({ state, code: "authorization-code" });
-  return { service, pending, calls, httpClient };
+  const connect = async () => {
+    const pending = await service.startConnect({
+      churchId: "church-1",
+      userId: "admin-1",
+      returnTo: "/account/integrations",
+    });
+    const state = new URL(pending.authorizeUrl).searchParams.get("state");
+    await service.completeConnect({ state, code: "authorization-code" });
+    return pending;
+  };
+  const pending = await connect();
+  return { service, pending, calls, httpClient, connect };
 };
 
 test("Planning Center date discovery returns actual related service times", async () => {
@@ -293,6 +301,7 @@ test("Planning Center connect uses PKCE and records a church-scoped connection",
   assert.equal(status.connected, true);
   assert.equal(status.accountLabel, "Example Church");
   assert.equal(status.accountId, "org-123");
+  assert.ok(status.connectionRevision);
   assert.equal(status.oauthConfigured, true);
 
   const connectStatus = await service.getConnectStatus({
@@ -302,6 +311,83 @@ test("Planning Center connect uses PKCE and records a church-scoped connection",
   });
   assert.equal(connectStatus.status, "completed");
   assert.equal(connectStatus.accountId, "org-123");
+  assert.equal(connectStatus.connectionRevision, status.connectionRevision);
+});
+
+test("Planning Center connections distinguish organizations with the same label", async () => {
+  const { service, connect } = await createConnectedService({
+    userInfoResponses: [
+      { organization_name: "Shared Church", organization_id: "org-a" },
+      { organization_name: "Shared Church", organization_id: "org-b" },
+    ],
+  });
+  const first = await service.getStatusForChurch({ churchId: "church-1" });
+  const secondPending = await connect();
+  const second = await service.getStatusForChurch({ churchId: "church-1" });
+  const secondConnectStatus = await service.getConnectStatus({
+    churchId: "church-1",
+    connectRequestId: secondPending.connectRequestId,
+    connectRequestSecret: secondPending.connectRequestSecret,
+  });
+
+  assert.equal(first.accountLabel, second.accountLabel);
+  assert.equal(first.accountId, "org-a");
+  assert.equal(second.accountId, "org-b");
+  assert.notEqual(first.connectionRevision, second.connectionRevision);
+  assert.equal(secondConnectStatus.connectionRevision, second.connectionRevision);
+});
+
+test("a successful reconnect gets a new revision when both profile lookups fail", async () => {
+  const originalWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const { service, connect } = await createConnectedService({
+      userInfoResponses: [
+        new Error("profile unavailable"),
+        new Error("profile unavailable"),
+      ],
+    });
+    const first = await service.getStatusForChurch({ churchId: "church-1" });
+    const secondPending = await connect();
+    const second = await service.getStatusForChurch({ churchId: "church-1" });
+    const secondConnectStatus = await service.getConnectStatus({
+      churchId: "church-1",
+      connectRequestId: secondPending.connectRequestId,
+      connectRequestSecret: secondPending.connectRequestSecret,
+    });
+
+    assert.equal(first.accountLabel, "Connected Planning Center account");
+    assert.equal(second.accountLabel, first.accountLabel);
+    assert.equal(first.accountId, "");
+    assert.equal(second.accountId, "");
+    assert.ok(first.connectionRevision);
+    assert.notEqual(first.connectionRevision, second.connectionRevision);
+    assert.equal(secondConnectStatus.connectionRevision, second.connectionRevision);
+  } finally {
+    console.warn = originalWarn;
+  }
+});
+
+test("normal token refresh preserves the Planning Center account revision", async () => {
+  let currentTime = Date.parse("2026-11-01T12:00:00.000Z");
+  const { service, calls } = await createConnectedService({
+    now: () => currentTime,
+    getHandler: async (url) => url.endsWith("/services/v2/service_types")
+      ? { data: { data: [] } }
+      : null,
+  });
+  const before = await service.getStatusForChurch({ churchId: "church-1" });
+  currentTime += 7_200_000;
+
+  await service.listServiceTypes({ churchId: "church-1" });
+
+  const after = await service.getStatusForChurch({ churchId: "church-1" });
+  const tokenGrantTypes = calls
+    .filter((call) => call.method === "post" && call.url.endsWith("/oauth/token"))
+    .map((call) => new URLSearchParams(call.body).get("grant_type"));
+  assert.equal(after.accountId, before.accountId);
+  assert.equal(after.connectionRevision, before.connectionRevision);
+  assert.deepEqual(tokenGrantTypes, ["authorization_code", "refresh_token"]);
 });
 
 test("Planning Center disconnect revokes the refresh token and clears status", async () => {
@@ -316,6 +402,7 @@ test("Planning Center disconnect revokes the refresh token and clears status", a
   );
   const status = await service.getStatusForChurch({ churchId: "church-1" });
   assert.equal(status.connected, false);
+  assert.equal(status.connectionRevision, "");
 });
 
 test("Planning Center getPlanImport maps items into import sections", async () => {

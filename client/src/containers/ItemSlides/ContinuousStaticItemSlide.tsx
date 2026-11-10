@@ -1,5 +1,5 @@
 import { memo } from "react";
-import type { FormattedSection, ItemSlideType, TimerInfo } from "../../types";
+import type { FormattedSection, ItemSlideType, MediaType, TimerInfo } from "../../types";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import { getFreeSectionDisplayName, getFreeSectionNumber } from "../../utils/freeSectionNames";
 import { cn } from "../../utils/cnHelper";
@@ -7,9 +7,12 @@ import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadg
 import StaticSlideThumbnail from "./StaticSlideThumbnail";
 import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import type { ResolvedDisplaySettings } from "../../utils/displaySettings";
+import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
+import { isLocalImageUrl } from "../../utils/localImageAssets";
 
 type ContinuousStaticItemSlideProps = {
   slide: ItemSlideType;
+  localVideoInputThumbnail?: Pick<MediaType, "localImage" | "thumbnail">;
   index: number;
   itemType: string;
   previewMode: ThumbnailPreviewMode;
@@ -30,6 +33,7 @@ type ContinuousStaticItemSlideProps = {
 
 const ContinuousStaticItemSlide = ({
   slide,
+  localVideoInputThumbnail,
   index,
   itemType,
   previewMode,
@@ -47,6 +51,16 @@ const ContinuousStaticItemSlide = ({
   borderWidth = "1px",
   thumbnailScaleFactor = 0,
 }: ContinuousStaticItemSlideProps) => {
+  const resolvedLocalThumbnail = useLocalImageUrl(
+    localVideoInputThumbnail?.localImage,
+    "thumbnail",
+  );
+  const localVideoThumbnailUrl = resolvedLocalThumbnail.url || (
+    localVideoInputThumbnail?.thumbnail &&
+    !isLocalImageUrl(localVideoInputThumbnail.thumbnail)
+      ? localVideoInputThumbnail.thumbnail
+      : undefined
+  );
   const freeSectionNumber =
     itemType === "free" ? getFreeSectionNumber(slide) : null;
   const displayName =
@@ -119,11 +133,14 @@ const ContinuousStaticItemSlide = ({
         timerInfo={timerInfo}
         scaleFactor={thumbnailScaleFactor}
         bibleInfo={bibleInfo}
+        localVideoInputThumbnailUrl={localVideoThumbnailUrl}
       />
       {slide.mediaSource?.kind === "local-video-input" ? (
         <LocalVideoInputSlideBadge
           label={slide.mediaSource.label}
           captureKind={slide.mediaSource.captureKind}
+          variant={localVideoThumbnailUrl ? "indicator" : "overlay"}
+          className={localVideoThumbnailUrl ? "!bottom-2 !left-2 !right-auto !max-w-[65%]" : undefined}
         />
       ) : null}
     </li>

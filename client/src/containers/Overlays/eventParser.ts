@@ -79,6 +79,16 @@ export interface EventData {
   customDocumentRefs?: Array<{ documentId: string; title: string }>;
 }
 
+type ParsedPlanningStartTime = {
+  minuteOfDay: number;
+  interpretation: "ambiguous" | "explicit" | "24-hour";
+  ambiguousCandidates?: [number, number];
+};
+
+type ParsedEventData = EventData & {
+  parsedPlanningStartTime?: ParsedPlanningStartTime;
+};
+
 export interface ServicePlanningSection {
   sectionName: string;
   rows: EventData[];
@@ -226,17 +236,51 @@ const getSongMarkerTitle = (cell?: Element | null): string | undefined => {
 const getDirectTableCells = (row: Element) =>
   Array.from(row.children).filter((child) => child.tagName.toLowerCase() === "td");
 
-const parsePlanningStartTime = (value: string): string | undefined => {
+const parsePlanningStartTime = (
+  value: string,
+): ParsedPlanningStartTime | undefined => {
   const match = normalizeCellText(value)
     .toLowerCase()
-    .match(/^\s*(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*([ap])?m?(?=\s|\(|$)/);
+    .match(/^\s*(\d{1,2})(?::(\d{2}))?(?::\d{2})?\s*([ap])?\s*m?(?=\s|\(|$)/);
   if (!match) return undefined;
-  let hours = Number(match[1]);
+  const hours = Number(match[1]);
   const minutes = Number(match[2] || 0);
   const period = match[3];
-  if (minutes > 59 || hours > 23 || hours === 0) return undefined;
-  if (period === "a" && hours === 12) hours = 0;
-  if (period === "p" && hours < 12) hours += 12;
+  if (minutes > 59 || hours > (period ? 12 : 23) || (period && hours === 0)) {
+    return undefined;
+  }
+
+  if (period) {
+    const normalizedHours = (hours % 12) + (period === "p" ? 12 : 0);
+    return {
+      minuteOfDay: normalizedHours * 60 + minutes,
+      interpretation: "explicit",
+    };
+  }
+
+  if (hours === 0 || hours > 12) {
+    return {
+      minuteOfDay: hours * 60 + minutes,
+      interpretation: "24-hour",
+    };
+  }
+
+  const am = (hours % 12) * 60 + minutes;
+  const pm = am + 12 * 60;
+  // Keep the parser's existing default when there is no contextual evidence:
+  // 12 defaults to noon, while 1–11 default to AM.
+  const defaultMinute = hours === 12 ? pm : am;
+  return {
+    minuteOfDay: defaultMinute,
+    interpretation: "ambiguous",
+    ambiguousCandidates: [am, pm],
+  };
+};
+
+const formatPlanningStartTime = (minuteOfDay: number): string => {
+  const normalized = ((minuteOfDay % 1440) + 1440) % 1440;
+  const hours = Math.floor(normalized / 60);
+  const minutes = normalized % 60;
   return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 };
 
@@ -249,10 +293,188 @@ const parsePlanningDurationMinutes = (value: string): number | undefined => {
   return total > 0 ? total : undefined;
 };
 
-const getPlanningTimeFields = (value: string) => ({
-  startTime: parsePlanningStartTime(value),
-  durationMinutes: parsePlanningDurationMinutes(value),
-});
+const getPlanningTimeFields = (value: string) => {
+  const parsedPlanningStartTime = parsePlanningStartTime(value);
+  const durationMinutes = parsePlanningDurationMinutes(value);
+  return {
+    ...(parsedPlanningStartTime ? { parsedPlanningStartTime } : {}),
+    ...(durationMinutes ? { durationMinutes } : {}),
+  };
+};
+
+const getExpectedElapsedMinutes = (
+  rows: ParsedEventData[],
+  fromRowIndex: number,
+  toRowIndex: number,
+): number | undefined => {
+  if (fromRowIndex < 0 || toRowIndex <= fromRowIndex) return undefined;
+  let total = 0;
+  for (let index = fromRowIndex; index < toRowIndex; index += 1) {
+    const duration = rows[index].durationMinutes;
+    if (typeof duration !== "number") return undefined;
+    total += duration;
+  }
+  return total;
+};
+
+const getNextOccurrence = (minuteOfDay: number, reference: number): number =>
+  minuteOfDay + Math.max(0, Math.ceil((reference - minuteOfDay) / 1440)) * 1440;
+
+const isDurationConsistent = (actual: number, expected: number): boolean =>
+  Math.abs(actual - expected) <= Math.max(10, expected * 0.2);
+
+const scoreTimeGap = (
+  gap: number,
+  expectedMinutes: number | undefined,
+): number => {
+  if (gap < 0) return -2;
+  if (expectedMinutes !== undefined) {
+    return isDurationConsistent(gap, expectedMinutes) ? 4 : -2;
+  }
+  // Without a duration, only a modest forward step is enough evidence to
+  // select a meridiem. A long gap or a clock decrease alone is not.
+  return gap <= 360 ? 2 : 0;
+};
+
+const getServiceStartTimeAnchor = (
+  planLabel: string,
+): ParsedPlanningStartTime | undefined => {
+  const match = planLabel.match(
+    /[-–—]\s*(\d{1,2}(?::\d{2}(?::\d{2})?)?\s*(?:A\.?M\.?|P\.?M\.?)?)\s*$/i,
+  );
+  // Ambiguous header values retain the same conservative default as row times.
+  if (!match) return undefined;
+  return parsePlanningStartTime(match[1]);
+};
+
+/** Resolve ambiguous source times over the whole plan while leaving every
+ * explicit/24-hour value and every missing timestamp as supplied. */
+const resolvePlanningStartTimes = (
+  sections: Array<{ sectionName: string; rows: ParsedEventData[] }>,
+  anchor?: ParsedPlanningStartTime,
+): ServicePlanningSection[] => {
+  const rows = sections.flatMap((section) => section.rows);
+  let previousAbsoluteTime = anchor?.minuteOfDay;
+  let previousTimedRowIndex = -1;
+
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    const parsed = row.parsedPlanningStartTime;
+    if (!parsed) continue;
+    const isFirstTimedRow = previousTimedRowIndex < 0;
+
+    if (parsed.interpretation !== "ambiguous") {
+      const isPlausiblePreServiceTime = Boolean(
+        isFirstTimedRow &&
+        anchor &&
+        parsed.minuteOfDay < anchor.minuteOfDay &&
+        anchor.minuteOfDay - parsed.minuteOfDay <= 180,
+      );
+      const absoluteTime = previousAbsoluteTime === undefined
+        ? parsed.minuteOfDay
+        : isPlausiblePreServiceTime
+          ? parsed.minuteOfDay
+          : getNextOccurrence(parsed.minuteOfDay, previousAbsoluteTime);
+      previousAbsoluteTime = absoluteTime;
+      previousTimedRowIndex = index;
+      row.startTime = formatPlanningStartTime(parsed.minuteOfDay);
+      continue;
+    }
+
+    const candidates = parsed.ambiguousCandidates || [
+      parsed.minuteOfDay,
+      parsed.minuteOfDay,
+    ];
+    const previousTime = previousAbsoluteTime;
+    const candidateTimes = candidates.map((minuteOfDay) => {
+      const isPlausiblePreServiceTime = Boolean(
+        isFirstTimedRow &&
+        anchor &&
+        minuteOfDay < anchor.minuteOfDay &&
+        anchor.minuteOfDay - minuteOfDay <= 180,
+      );
+      return previousTime === undefined
+        ? minuteOfDay
+        : isPlausiblePreServiceTime
+          ? minuteOfDay
+          : getNextOccurrence(minuteOfDay, previousTime);
+    });
+    const defaultCandidateIndex = candidates.findIndex(
+      (candidate) => candidate === parsed.minuteOfDay,
+    );
+    let favoredIndex = defaultCandidateIndex;
+
+    const supportedCandidates = new Set<number>();
+    const addSupportedCandidate = (scores: number[]) => {
+      if (
+        scores[0] >= scores[1] + 2 &&
+        scores[0] > 0
+      ) {
+        supportedCandidates.add(0);
+      } else if (scores[1] >= scores[0] + 2 && scores[1] > 0) {
+        supportedCandidates.add(1);
+      }
+    };
+
+    if (previousTime !== undefined) {
+      const expected = getExpectedElapsedMinutes(
+        rows,
+        previousTimedRowIndex,
+        index,
+      );
+      addSupportedCandidate(
+        candidateTimes.map((candidateTime) => {
+          const gap = candidateTime - previousTime;
+          if (
+            isFirstTimedRow && anchor && gap < 0 &&
+            -gap <= 180
+          ) return 3;
+          return scoreTimeGap(gap, expected);
+        }),
+      );
+    }
+
+    const nextKnownIndex = rows.findIndex(
+      (candidateRow, candidateIndex) =>
+        candidateIndex > index &&
+        candidateRow.parsedPlanningStartTime &&
+        candidateRow.parsedPlanningStartTime.interpretation !== "ambiguous",
+    );
+    if (nextKnownIndex >= 0) {
+      const nextKnownTime = rows[nextKnownIndex].parsedPlanningStartTime!;
+      const expected = getExpectedElapsedMinutes(rows, index, nextKnownIndex);
+      addSupportedCandidate(
+        candidateTimes.map((candidateTime) => {
+          const nextAbsoluteTime = getNextOccurrence(
+            nextKnownTime.minuteOfDay,
+            candidateTime,
+          );
+          return scoreTimeGap(nextAbsoluteTime - candidateTime, expected);
+        }),
+      );
+    }
+
+    // Conflicting evidence on the two sides leaves the original interpretation
+    // intact instead of letting one signal silently override the other.
+    if (supportedCandidates.size === 1) {
+      const supportedIndex = Array.from(supportedCandidates)[0];
+      if (supportedIndex !== defaultCandidateIndex) {
+        favoredIndex = supportedIndex;
+      }
+    }
+    const resolvedMinute = candidates[favoredIndex];
+    const resolvedAbsoluteTime = candidateTimes[favoredIndex];
+
+    row.startTime = formatPlanningStartTime(resolvedMinute);
+    previousAbsoluteTime = resolvedAbsoluteTime;
+    previousTimedRowIndex = index;
+  }
+
+  return sections.map(({ sectionName, rows: sectionRows }) => ({
+    sectionName,
+    rows: sectionRows.map(({ parsedPlanningStartTime: _parsed, ...row }) => row),
+  }));
+};
 
 /**
  * Share-link (serviceFlow.cfm) rows keep their notes out of the visible row: a
@@ -318,7 +540,7 @@ const parseAccordionDetailNotes = (panel: Element | null) => {
 const buildAccordionRowEventData = (
   tds: NodeListOf<Element>,
   detailPanel: Element | null,
-): EventData => {
+): ParsedEventData => {
   const middleCellLines = Array.from(tds[1].childNodes)
     .map((node) =>
       normalizeCellText(
@@ -348,7 +570,7 @@ const buildAccordionRowEventData = (
   };
 };
 
-const buildWorshipFlowRowEventData = (tds: NodeListOf<Element>): EventData => {
+const buildWorshipFlowRowEventData = (tds: NodeListOf<Element>): ParsedEventData => {
   const songTitle = getSongMarkerTitle(tds[2]);
   return {
     elementType: getElementText(tds[1]),
@@ -361,12 +583,12 @@ const buildWorshipFlowRowEventData = (tds: NodeListOf<Element>): EventData => {
 };
 
 const getMainRowOptionalFields = (tds: NodeListOf<Element>) => {
-  const startTime = parsePlanningStartTime(getElementText(tds[0]));
+  const parsedPlanningStartTime = parsePlanningStartTime(getElementText(tds[0]));
   const durationMinutes = parsePlanningDurationMinutes(getElementText(tds[1]));
   const note = getNoteText(tds[5]);
   const songTitle = getSongMarkerTitle(tds[3]);
   return {
-    ...(startTime ? { startTime } : {}),
+    ...(parsedPlanningStartTime ? { parsedPlanningStartTime } : {}),
     ...(durationMinutes ? { durationMinutes } : {}),
     ...(note ? { note } : {}),
     ...(songTitle ? { songTitle } : {}),
@@ -376,84 +598,19 @@ const getMainRowOptionalFields = (tds: NodeListOf<Element>) => {
 const parseEventData = (textHtml: string): EventData[] => {
   const el = document.createElement("html");
   el.innerHTML = stripResourceTagsForLocalParse(textHtml);
-
-  // Custom-columns printouts use a plain table rather than the classes below.
-  // Reuse the full parser so controller imports receive the same rows too.
-  if (getCustomColumnsLayout(el)) {
-    return parseServicePlanningImportFromHtml(textHtml).sections.flatMap(
-      (section) => section.rows,
-    );
-  }
-
-  const data: EventData[] = [];
-
-  const mainRows = el.querySelectorAll("tr.main-row");
-  const worshipFlowRows = el.querySelectorAll(
-    "table.worship-flow-table tbody tr",
+  const rows = parseServicePlanningImportFromHtml(textHtml).sections.flatMap(
+    (section) => section.rows,
   );
 
-  if (mainRows.length > 0) {
-    mainRows.forEach((tr) => {
-      const tds = tr.querySelectorAll("td");
-      if (tds.length < 6) return;
-      data.push({
-        elementType: getElementText(tds[2]),
-        title: getElementText(tds[3]),
-        ledBy: getElementText(tds[4]),
-      });
-    });
-    appendLegacyCollapsedAssignments(el, data);
-    return data;
+  // Keep the Controller's legacy nested-assignment rows while sharing the
+  // exact same source-time interpretation as Service Plan imports.
+  if (
+    !getCustomColumnsLayout(el) &&
+    el.querySelectorAll("table.worship-flow-table tbody tr").length === 0
+  ) {
+    appendLegacyCollapsedAssignments(el, rows);
   }
-
-  if (worshipFlowRows.length > 0) {
-    worshipFlowRows.forEach((tr) => {
-      if (
-        Array.from(tr.classList).some(
-          (className) =>
-            className === "divider" || className.startsWith("divider-"),
-        )
-      ) {
-        return;
-      }
-      const tds = tr.querySelectorAll("td");
-      if (tds.length < 5) return;
-      data.push(buildWorshipFlowRowEventData(tds));
-    });
-    return data;
-  }
-
-  const rows = el.querySelectorAll("table tr");
-
-  const accordionRows = Array.from(
-    el.querySelectorAll("tr.accordion-toggle"),
-  ).map((tr) => {
-    const tds = tr.querySelectorAll("td");
-    if (tds.length !== 3) return null;
-    return buildAccordionRowEventData(tds, getAccordionDetailPanel(el, tr));
-  });
-
-  if (accordionRows.length > 0) {
-    data.push(...accordionRows.filter((row): row is EventData => Boolean(row)));
-    appendLegacyCollapsedAssignments(el, data);
-    return data;
-  }
-
-  const legacyThreeCol = Array.from(rows)
-    .filter((tr) => tr.querySelectorAll("td").length === 3)
-    .map((tr) => {
-      const tds = tr.querySelectorAll("td");
-      return {
-        elementType: getElementText(tds[1]),
-        title: "",
-        ledBy: getElementText(tds[2]),
-      };
-    });
-  data.push(...legacyThreeCol);
-
-  appendLegacyCollapsedAssignments(el, data);
-
-  return data;
+  return rows;
 };
 
 export const parseSectionsFromHtml = (
@@ -555,8 +712,10 @@ const getCustomColumnsLayout = (root: HTMLElement): CustomColumnsLayout | null =
 const buildCustomColumnsRowEventData = (
   cells: Element[],
   layout: CustomColumnsLayout,
-): EventData => {
-  const startTime = parsePlanningStartTime(getElementText(cells[layout.startTimeIndex]));
+): ParsedEventData => {
+  const parsedPlanningStartTime = parsePlanningStartTime(
+    getElementText(cells[layout.startTimeIndex]),
+  );
   const durationMinutes = parsePlanningDurationMinutes(
     getElementText(cells[layout.durationIndex]),
   );
@@ -570,7 +729,7 @@ const buildCustomColumnsRowEventData = (
     elementType: getElementText(cells[layout.elementTypeIndex]),
     title: getElementText(cells[layout.titleIndex]),
     ledBy: getLedByText(cells[layout.ledByIndex]),
-    ...(startTime ? { startTime } : {}),
+    ...(parsedPlanningStartTime ? { parsedPlanningStartTime } : {}),
     ...(durationMinutes ? { durationMinutes } : {}),
     ...(note ? { note } : {}),
     ...(teamNotes.length ? { teamNotes } : {}),
@@ -600,8 +759,11 @@ export const parseServicePlanningImportFromHtml = (
   const el = document.createElement("html");
   el.innerHTML = stripResourceTagsForLocalParse(textHtml);
 
-  const sections: ServicePlanningSection[] = [];
-  let current: ServicePlanningSection = { sectionName: "", rows: [] };
+  const sections: Array<{ sectionName: string; rows: ParsedEventData[] }> = [];
+  let current: { sectionName: string; rows: ParsedEventData[] } = {
+    sectionName: "",
+    rows: [],
+  };
 
   const allRows = el.querySelectorAll("table tr");
 
@@ -710,9 +872,13 @@ export const parseServicePlanningImportFromHtml = (
     sections.push(current);
   }
 
+  const planLabel = extractPlanLabel(el);
   return {
-    planLabel: extractPlanLabel(el),
-    sections,
+    planLabel,
+    sections: resolvePlanningStartTimes(
+      sections,
+      getServiceStartTimeAnchor(planLabel),
+    ),
     teamAssignments: parseTeamAssignments(el),
   };
 };

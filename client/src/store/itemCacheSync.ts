@@ -28,9 +28,8 @@ export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => 
       if (sequence === undefined) {
         const snapshot = await db.allDocs<DBItem | DBHeading>({ include_docs: true, update_seq: true });
         if (!active) return;
-        // Replay writes made during loading or before .changes is installed.
-        if (snapshot.update_seq === undefined) throw new Error("Missing PouchDB snapshot sequence");
-        sequence = snapshot.update_seq;
+        // An empty IndexedDB database can omit the sequence; replay from zero.
+        sequence = snapshot.update_seq ?? 0;
         const snapshotDocs = snapshot.rows.map((row): unknown => row.doc);
         const songLibrary = discoverSongLibrary(snapshotDocs);
         const otherItems = snapshotDocs.filter((doc): doc is DBItem | DBHeading =>

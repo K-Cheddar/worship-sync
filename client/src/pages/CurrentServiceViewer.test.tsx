@@ -1055,6 +1055,65 @@ describe("CurrentServiceViewer", () => {
     expect(screen.queryByText("Obsolete Published Church")).not.toBeInTheDocument();
   });
 
+  it("clears stale detailed team data and its cache when refresh omits the snapshot", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
+    const updatedPlan = { ...plan, name: "Updated live service" };
+    const tomorrowPlan = {
+      ...plan,
+      planKey: "svc-2@2026-09-14",
+      serviceId: "svc-2",
+      date: "2026-09-14",
+      name: "Tomorrow Service",
+    };
+    let resolveReturnToService: ((value: {
+      success: true;
+      plan: ServicePlan;
+      snapshot: PublicServiceFlowSnapshot;
+    }) => void) | undefined;
+    jest.mocked(getServicePlanViewer)
+      .mockResolvedValueOnce({
+        success: true,
+        plan,
+        snapshot: buildDetailedSnapshot(plan, "Old Team Member", "Old Team Equipment"),
+      })
+      .mockResolvedValueOnce({ success: true, plan: updatedPlan, snapshot: null })
+      .mockResolvedValueOnce({
+        success: true,
+        plan: tomorrowPlan,
+        snapshot: buildDetailedSnapshot(tomorrowPlan, "Tomorrow Member"),
+      })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveReturnToService = resolve; }));
+    const user = userEvent.setup();
+
+    renderViewer([morningService, tomorrowService], false, { sessionKind: "workstation" });
+    expect(await screen.findByText("Old Team Member")).toBeInTheDocument();
+    const onMessage = jest.mocked(useServicePlanLiveSync).mock.calls[0]?.[1];
+    act(() => onMessage?.({ type: "service-plan-updated", planKey: plan.planKey }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Detailed service information is unavailable.",
+    );
+    expect(screen.queryByText("Old Team Member")).not.toBeInTheDocument();
+    expect(screen.queryByText("Old Team Equipment")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("combobox", { name: /Choose a service/ }));
+    await user.click(await screen.findByRole("option", { name: /svc-2/ }));
+    expect(await screen.findByText("Tomorrow Member")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /return to current service/i }));
+    await waitFor(() => expect(getServicePlanViewer).toHaveBeenCalledTimes(4));
+    expect(screen.queryByText("Old Team Member")).not.toBeInTheDocument();
+
+    await act(async () => {
+      resolveReturnToService?.({
+        success: true,
+        plan: updatedPlan,
+        snapshot: buildDetailedSnapshot(updatedPlan, "Fresh Team Member"),
+      });
+      await Promise.resolve();
+    });
+    expect(await screen.findByText("Fresh Team Member")).toBeInTheDocument();
+  });
+
   it("does not invalidate the initial request when the stream first connects", async () => {
     jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-13T12:00:00.000Z"));
     let resolveInitial: ((value: { success: true; plan: ServicePlan; snapshot: null }) => void) | undefined;

@@ -4,7 +4,7 @@
 
 **Approval source:** Current user request, November 5, 2026.
 
-**Last reviewed:** November 5, 2026
+**Last reviewed:** November 6, 2026
 
 ## Purpose
 
@@ -12,13 +12,17 @@ Let operators recognize a local camera or screen input in Media and static item-
 
 ## Operator workflow
 
-An operator opens Add/Relink for a local video input, captures a frame from its current preview, reviews it, and saves it as the input thumbnail. They can retake or remove the saved thumbnail. When adding a new input, Add to Media can save a captured frame with it.
+An operator opens Add/Relink for a local video input, captures a frame from its current preview, reviews it, and saves it as the input thumbnail. For a new input, Add to Media saves the input and captured frame together. For an existing input, Save local link saves the relink and any newly captured frame together. The separate Save thumbnail action remains available, and Save local link does not upload a frame that was already saved. Operators can retake or remove the saved thumbnail.
 
 ## Expected behavior
 
 - Capture happens only after an operator asks for it.
 - The saved still appears in the Media Library and in static item-slide previews that reference the same source.
-- Replacing a thumbnail keeps the prior cloud copy available until the replacement is uploaded and committed.
+- A cloud-backed replacement keeps the prior cloud copy until the new one is uploaded and committed. A local-only replacement keeps it until the new local reference commits, then clears the old cloud reference and durably schedules its deletion.
+- A cloud-backed thumbnail upload is durably staged before its Media reference is written and cannot run until that reference is confirmed. After an interruption, the upload manager reconciles the staged job against authoritative Media state before resuming or cleaning it up.
+- Replacing a thumbnail does not overwrite an active upload job; its lease and provider checkpoints remain until upload cancellation or completion is reconciled.
+- Relinking without a new capture leaves the existing thumbnail and local image reference unchanged.
+- An explicit thumbnail removal remains in effect when the operator saves the local link.
 - Removing a thumbnail keeps the Media input and its live binding; only the representative image is removed.
 - A saved thumbnail remains separate from the live input source ID and device ownership metadata.
 - Thumbnail storage follows the existing local image storage preference and its cloud upload and quota lifecycle.
@@ -34,7 +38,7 @@ An operator opens Add/Relink for a local video input, captures a frame from its 
 
 | Scenario | Confirmed expected behavior | Current implementation or test evidence | Status / open question |
 | --- | --- | --- | --- |
-| Normal workflow | Capture, preview, and save the selected input's current frame. | `LocalVideoInputPicker` uses the visible preview and the local image asset pipeline. | Confirmed by current request |
+| Normal workflow | Capture, preview, and save the selected input's current frame; Save local link includes a newly captured frame for existing inputs. | Picker regression tests cover existing input capture plus Save local link and the optional separate Save thumbnail action. | Confirmed by current request |
 | Repeated or explicit action | Retake replaces only after save; removal leaves the input. | Upload jobs target the existing Media ID and carry cleanup checkpoints. | Confirmed by current request |
 | Manual change | Users choose when to capture and may remove the still. | Capture, save, retake, and remove controls are explicit. | Confirmed by current request |
 | Missing or unavailable source | Keep the saved still recognizable and report capture unavailability. | Media and static slide renderers resolve stored or cloud thumbnails. | Confirmed by current request |
@@ -49,6 +53,11 @@ An operator opens Add/Relink for a local video input, captures a frame from its 
 - **Material alternative rejected:** A separate thumbnail store or embedding the image in Media/slide documents.
 - **Approval source/date:** Current user request, November 5, 2026.
 - **Affected workflow/contract:** Media management and static item-slide previews.
+- **Question/problem:** What should happen to the prior cloud thumbnail when an operator chooses a local-only replacement while its upload is still running?
+- **Approved behavior:** Commit the local-only reference with the old cloud URL cleared and cloud deletion durably scheduled. Preserve the existing upload job and its provider checkpoints until the upload is cancelled or completes safely; retire its job only after reconciliation.
+- **Why:** Other devices should not keep displaying a retired cloud thumbnail, and an in-flight provider operation must retain enough state to finish or recover safely.
+- **Approval source/date:** Current user request, November 6, 2026.
+- **Affected workflow/contract:** Media management and thumbnail upload recovery.
 
 ## Implementation references
 
@@ -60,4 +69,4 @@ An operator opens Add/Relink for a local video input, captures a frame from its 
 
 ## Technical design notes
 
-The picker encodes one frame from its already-visible video or desktop preview, capped at 640×360 with aspect ratio preserved. The Media row stores only a `LocalImageAssetReference`. The upload job names the existing input row as its target, guards stale retakes, preserves the live source fields, and retries prior asset cleanup.
+The picker encodes one frame from its already-visible video or desktop preview, capped at 640×360 with aspect ratio preserved. The Media row stores only a `LocalImageAssetReference`. Source relinks and thumbnail changes patch the existing Media row through the v2 document merge, preserving unrelated fields. Thumbnail save and removal share one per-database, per-row mutation queue. Cloud-backed saves stage a non-runnable upload job before writing the Media reference; the upload manager confirms the matching Media row, source, and asset after restart before activating the job. The upload job names the existing input row as its target, guards stale retakes, preserves the live source fields, and retries prior asset cleanup.

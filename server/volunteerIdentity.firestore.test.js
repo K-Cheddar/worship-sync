@@ -20,10 +20,12 @@ const httpError = (statusCode, message) =>
   Object.assign(new Error(message), { statusCode });
 
 test("Firestore transaction aborts during roster linking are retryable conflicts", async () => {
+  let attempts = 0;
   const operations = createVolunteerIdentityOperations({
     COLLECTIONS: {},
     requireFirestore: () => ({
       runTransaction: async () => {
+        attempts += 1;
         throw Object.assign(new Error("Transaction failed all retries."), {
           code: 10,
         });
@@ -48,6 +50,45 @@ test("Firestore transaction aborts during roster linking are retryable conflicts
       return true;
     },
   );
+  assert.equal(attempts, 3);
+});
+
+test("Firestore roster linking rechecks state after an aborted transaction", async () => {
+  let attempts = 0;
+  const operations = createVolunteerIdentityOperations({
+    COLLECTIONS: {},
+    requireFirestore: () => ({
+      runTransaction: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw Object.assign(new Error("Transaction contention."), {
+            code: "aborted",
+          });
+        }
+        throw Object.assign(new Error("That account is not active."), {
+          statusCode: 404,
+        });
+      },
+    }),
+    getDoc: async () => null,
+    queryDocs: async () => [],
+    setDoc: async () => {},
+    deleteDoc: async () => {},
+    nowIso: () => "2026-10-23T00:00:00.000Z",
+  });
+
+  await assert.rejects(
+    operations.linkRosterMember({
+      churchId: "church",
+      memberId: "member",
+      userId: "user",
+    }),
+    (error) => {
+      assert.equal(error.statusCode, 404);
+      return true;
+    },
+  );
+  assert.equal(attempts, 2);
 });
 
 test("Firestore roster linking retries an aborted transaction and surfaces the refreshed result", async () => {
@@ -196,7 +237,16 @@ test("Firestore serializes simultaneous roster links for one account", { skip: !
     ));
     assert.equal(attempts.filter((item) => item.status === "fulfilled").length, 1);
     const rejected = attempts.find((item) => item.status === "rejected");
-    assert.equal(rejected.reason.statusCode, 409);
+    assert.equal(
+      rejected.reason.statusCode,
+      409,
+      `Expected the losing link to return HTTP 409; received ${JSON.stringify({
+        name: rejected.reason.name,
+        code: rejected.reason.code,
+        statusCode: rejected.reason.statusCode,
+        message: rejected.reason.message,
+      })}`,
+    );
 
     const linked = await db
       .collection(COLLECTIONS.teamRosterMembers)
