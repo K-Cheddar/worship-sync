@@ -1,6 +1,9 @@
 import type { ItemContentOwner, SongV2Documents } from "../types";
 import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
+import PouchDB from "pouchdb-browser";
+import { loadSongV2Snapshot } from "../utils/songPersistence";
+import { createSongV2 } from "../utils/songV2Writer";
 
 const mockedCrossWindowLocks = new Map<string, Promise<void>>();
 if (typeof navigator !== "undefined") {
@@ -239,6 +242,7 @@ let mockActiveItemDb: any;
 const loadStoreWithItemPersistence = (
   recoveryStore = new Map<string, any>(),
   useRealRecoveryStorage = false,
+  databaseOverride?: PouchDB.Database,
 ) => {
   let storeModule: any;
   let itemSliceModule: any;
@@ -256,7 +260,7 @@ const loadStoreWithItemPersistence = (
     remove: jest.fn(),
     allDocs: jest.fn(),
   };
-  mockActiveItemDb = db;
+  mockActiveItemDb = databaseOverride ?? db;
   const globalFireDbInfo = {
     db: undefined,
     database: undefined,
@@ -360,9 +364,15 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       source?: any;
       seedDocuments?: Map<string, any>;
       sharedDocuments?: Map<string, any>;
+      database?: PouchDB.Database;
+      baseline?: any;
     } = {},
   ) {
-    const env = loadStoreWithItemPersistence(recoveryStore, options.useRealRecoveryStorage);
+    const env = loadStoreWithItemPersistence(
+      recoveryStore,
+      options.useRealRecoveryStorage,
+      options.database,
+    );
     const source = options.source ?? createSongDoc({ arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [],
       slides: ["A", "B"].map(id => ({ id, name: `Verse 1${id}`, type: "Verse", boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }] })),
     }] });
@@ -370,20 +380,22 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     const docs = options.sharedDocuments ?? (options.seedDocuments
       ? new Map([...options.seedDocuments.entries()].map(([id, document]) => [id, structuredClone(document)]))
       : new Map<string, any>([physical.root, ...physical.arrangements, ...physical.slides].map(doc => [doc._id, { ...doc, _rev: "1-base" }])));
-    env.db.get.mockImplementation(async id => {
-      const doc = docs.get(id);
-      if (!doc) throw Object.assign(new Error("missing"), { status: 404 });
-      return structuredClone(doc);
-    });
-    mockV2AllDocs(env.db, docs);
-    env.db.put.mockImplementation(async next => {
-      const old = docs.get(next._id);
-      if (old && old._rev !== next._rev) throw Object.assign(new Error("conflict"), { status: 409 });
-      const rev = `${Number(old?._rev.split("-")[0] ?? 0) + 1}-saved`;
-      docs.set(next._id, structuredClone({ ...next, _rev: rev }));
-      return { ok: true, id: next._id, rev };
-    });
-    const baseline = env.songPersistence.hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map(doc => docs.get(doc._id)), physical.slides.map(doc => docs.get(doc._id)), true);
+    if (!options.database) {
+      env.db.get.mockImplementation(async id => {
+        const doc = docs.get(id);
+        if (!doc) throw Object.assign(new Error("missing"), { status: 404 });
+        return structuredClone(doc);
+      });
+      mockV2AllDocs(env.db, docs);
+      env.db.put.mockImplementation(async next => {
+        const old = docs.get(next._id);
+        if (old && old._rev !== next._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+        const rev = `${Number(old?._rev.split("-")[0] ?? 0) + 1}-saved`;
+        docs.set(next._id, structuredClone({ ...next, _rev: rev }));
+        return { ok: true, id: next._id, rev };
+      });
+    }
+    const baseline = options.baseline ?? env.songPersistence.hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map(doc => docs.get(doc._id)), physical.slides.map(doc => docs.get(doc._id)), true);
     env.store.dispatch(env.itemSlice.actions.setActiveItem(baseline));
     const edit = (words: string) => {
       const slides = structuredClone(env.store.getState().undoable.present.item.arrangements[0].slides);
@@ -618,58 +630,154 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     env.deferredMutations.setActiveContentDatabase(null);
   });
 
-  it("finishes an already committed V2 write before accepting a remote conflict decision", async () => {
+  it("adopts the current PouchDB snapshot after a remote title conflicts with a partial save", async () => {
     jest.useRealTimers();
-    const env = setup(undefined, { useRealRecoveryStorage: true });
-    await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
-    const owner: ItemContentOwner = {
-      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
-    };
-    env.globalFireDbInfo.churchId = owner.churchId;
-    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
-    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
-    session.markInitialReplicationComplete();
-    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
-
-    const originalPut = env.db.put.getMockImplementation()!;
-    let firstWriteCommitted!: () => void;
+    const songId = `store-v2-remote-choice-${Date.now()}-${Math.random()}`;
+    const localDb = new PouchDB(`${songId}-local`, { adapter: "idb" });
+    const remoteDb = new PouchDB(`${songId}-remote`, { adapter: "idb" });
+    const source = createSongDoc({
+      _id: songId,
+      arrangements: [{
+        id: "a", name: "Master", formattedLyrics: [], songOrder: [],
+        slides: ["A", "B"].map(id => ({
+          id, name: `Verse ${id}`, type: "Verse",
+          boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }],
+        })),
+      }],
+    }) as Parameters<typeof createSongV2>[1];
     let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>(resolve => { releaseFirstWrite = resolve; });
+    let firstWriteCommitted!: () => void;
     const firstWrite = new Promise<void>(resolve => { firstWriteCommitted = resolve; });
-    const gate = new Promise<void>(resolve => { releaseFirstWrite = resolve; });
-    env.db.put.mockImplementationOnce(async document => {
-      const result = await originalPut(document);
-      firstWriteCommitted();
-      await gate;
-      return result;
-    });
+    let env: ReturnType<typeof setup> | undefined;
+    let session: { release: () => void } | undefined;
+    let applyingRemote: Promise<unknown> | undefined;
+    let put: jest.SpyInstance | undefined;
+    let consoleErrorSpy: jest.SpyInstance | undefined;
 
-    env.editSong("Local title", "Local lyrics");
-    await new Promise(resolve => setTimeout(resolve, 1600));
-    await firstWrite;
-    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Local lyrics");
-    expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
-    expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toHaveLength(1);
+    try {
+      consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+      await createSongV2(localDb, source);
+      await localDb.replicate.to(remoteDb);
+      const baseline = (await loadSongV2Snapshot(localDb, songId)).hydrated;
+      const startingRootRevision = baseline._rev;
+      env = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: localDb,
+        baseline,
+      });
+      await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      const owner: ItemContentOwner = {
+        scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+      };
+      env.globalFireDbInfo.churchId = owner.churchId;
+      const contentSession = env.contentReplicationActivity.beginContentDatabaseSession(localDb.name);
+      session = contentSession;
+      env.deferredMutations.setActiveContentDatabase(owner, localDb as never);
+      contentSession.markInitialReplicationComplete();
+      env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(true));
 
-    const remote = { ...env.baseline, name: "Remote title" };
-    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(remote));
-    env.store.dispatch(env.itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
-    const applyingRemote = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
-    await new Promise(resolve => setTimeout(resolve, 10));
-    releaseFirstWrite();
-    await applyingRemote;
+      const originalPut = localDb.put.bind(localDb);
+      put = jest.spyOn(localDb, "put").mockImplementation(async document => {
+        const result = await originalPut(document);
+        if (document._id === `song-v2:slide:${songId}:a:A`) {
+          firstWriteCommitted();
+          await firstWriteGate;
+        }
+        return result;
+      });
 
-    expect(env.docs.get(env.physical.root._id).name).toBe("Local title");
-    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Local lyrics");
-    expect(env.store.getState().undoable.present.item.name).toBe("Remote title");
-    expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([expect.objectContaining({
-      owner,
-      itemId: env.baseline._id,
-      status: "discarded",
-    })]);
+      env.editSong("Local title", "Local lyrics");
+      await firstWrite;
+      const partial = await loadSongV2Snapshot(localDb, songId);
+      expect(partial.hydrated.name).toBe(baseline.name);
+      expect(partial.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      const partialSlideA = partial.slides.find(slide => slide.id === "A");
+      const remoteSlideA = (await loadSongV2Snapshot(remoteDb, songId)).slides.find(slide => slide.id === "A");
+      expect(partialSlideA?.boxes[0].words).toBe("Local lyrics");
+      expect(remoteSlideA?.boxes[0].words).toBe("A");
 
-    await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
-    session.release();
-    env.deferredMutations.setActiveContentDatabase(null);
+      const remoteBaseline = await loadSongV2Snapshot(remoteDb, songId);
+      const remoteEdit = structuredClone(remoteBaseline.hydrated);
+      remoteEdit.name = "Remote title";
+      await env.songPersistence.saveSong(
+        remoteDb,
+        remoteEdit,
+        remoteBaseline.hydrated,
+        undefined,
+        remoteBaseline,
+      );
+      const remoteSaved = await loadSongV2Snapshot(remoteDb, songId);
+      expect(remoteSaved.root._rev).not.toBe(startingRootRevision);
+      await remoteDb.replicate.to(localDb);
+
+      const replicated = await loadSongV2Snapshot(localDb, songId, true);
+      expect(replicated.root._rev).toBe(remoteSaved.root._rev);
+      expect(replicated.hydrated.name).toBe("Remote title");
+      expect(replicated.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(env.store.getState().undoable.present.item.pendingRemoteItem).toBeNull();
+
+      env.store.dispatch(env.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: localDb as never,
+        owner,
+        sessionToken: contentSession.token,
+      }]));
+      await new Promise(resolve => setTimeout(resolve, 70));
+      await flushListenerEffects();
+
+      const buffered = env.store.getState().undoable.present.item;
+      expect(buffered.hasRemoteUpdate).toBe(true);
+      expect(buffered.pendingRemoteItem?.name).toBe("Remote title");
+      expect(buffered.pendingRemoteItem?.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(buffered.isLyricsEditorOpen).toBe(true);
+      const remoteDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      applyingRemote = remoteDecision;
+      let remoteDecisionSettled = false;
+      void remoteDecision.then(
+        () => { remoteDecisionSettled = true; },
+        () => { remoteDecisionSettled = true; },
+      );
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(remoteDecisionSettled).toBe(false);
+      releaseFirstWrite();
+      await remoteDecision;
+
+      const physical = await loadSongV2Snapshot(localDb, songId, true);
+      const editor = env.store.getState().undoable.present.item;
+      expect(put?.mock.calls.map(([document]) => document._id)).toContain(physical.root._id);
+      expect(physical.hydrated.name).toBe("Remote title");
+      expect(physical.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(editor.name).toBe(physical.hydrated.name);
+      expect(editor.arrangements[0].slides[0].boxes[0].words).toBe(physical.hydrated.arrangements[0].slides[0].boxes[0].words);
+      expect(editor.baseItem?._rev).toBe(physical.root._rev);
+      expect(editor.hasPendingUpdate).toBe(false);
+      expect(editor.hasRemoteUpdate).toBe(false);
+      expect(editor.pendingRemoteItem).toBeNull();
+      expect(editor.pendingSongV2Conflicts).toBeUndefined();
+      expect(editor.remoteUpdateReason).toBeNull();
+      expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([expect.objectContaining({ status: "discarded" })]);
+      expect(physical.root._rev).toBe(remoteSaved.root._rev);
+      expect(physical.root._rev).not.toBe(startingRootRevision);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "Could not save active song draft",
+        expect.objectContaining({ name: "SongV2ConcurrentEditError" }),
+      );
+    } finally {
+      releaseFirstWrite();
+      await applyingRemote?.catch(() => undefined);
+      if (put) put.mockRestore();
+      consoleErrorSpy?.mockRestore();
+      if (session) {
+        session.release();
+        env?.deferredMutations.setActiveContentDatabase(null);
+      }
+      await env?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await Promise.all([localDb.destroy(), remoteDb.destroy()]);
+    }
   });
 
   it("ignores unrelated slides, coalesces active notifications, and uses only scoped reads", async () => {
