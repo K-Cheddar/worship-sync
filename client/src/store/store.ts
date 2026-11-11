@@ -2628,7 +2628,7 @@ listenerMiddleware.startListening({
     const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
     let persistenceSucceeded = false;
     try {
-      const persisted = revisionResolution
+      const persisted = revisionResolution?.conflict
         ? await resolveServiceListRevisionConflict(
             dbAtStart,
             selectedList._id,
@@ -2640,7 +2640,7 @@ listenerMiddleware.startListening({
         : await persistServiceListItems(
             dbAtStart,
             selectedList._id,
-            [...list],
+            [...submittedItems],
             [...baseline],
             sessionIsCurrent,
           );
@@ -5296,7 +5296,7 @@ const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) =
     if (historyOutline && outlineId && retained.remoteConflicts[outlineId]) {
       const conflict = retained.remoteConflicts[outlineId];
       itemList.remoteConflicts = { ...retained.remoteConflicts, [outlineId]: { ...conflict, localItems: itemList.list } };
-      itemList.syncBaseline = conflict.baselineItems;
+      itemList.syncBaseline = conflict.remoteItems;
       itemList.hasPendingUpdate = true;
     }
     next = {

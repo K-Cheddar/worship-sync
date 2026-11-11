@@ -385,7 +385,7 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     { compatible: false, onUpdate: false, viewOnly: false }, { compatible: true, onUpdate: false, viewOnly: false },
     { compatible: false, onUpdate: true, viewOnly: false }, { compatible: true, onUpdate: true, viewOnly: false },
     { compatible: true, onUpdate: false, viewOnly: true }, { compatible: true, onUpdate: true, viewOnly: true },
-  ])("detects offline saved revisions without a local edit (compatible: $compatible, on update: $onUpdate, view-only: $viewOnly)", async ({ compatible, onUpdate, viewOnly }) => {
+  ])("displays the winner without reviewing or reconciling offline saved revisions (compatible: $compatible, on update: $onUpdate, view-only: $viewOnly)", async ({ compatible, onUpdate, viewOnly }) => {
     const id = `lifecycle-branches-${Date.now()}-${Math.random()}`;
     const a = new PouchDB(`${id}-a`);
     const b = new PouchDB(`${id}-b`);
@@ -410,21 +410,16 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       if (onUpdate) await b.replicate.from(a);
       // For the update case, replication introduced the graph only after the
       // initial conflict-free outline was already open on the controller.
-      const head = await b.get("outline", { conflicts: true });
+      const head = await b.get<{ items: typeof rows }>("outline", { conflicts: true });
       const eventRevision = head._conflicts?.[0] ?? head._rev;
       if (onUpdate) {
         await act(async () => {
           updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "outline", _rev: eventRevision }] }));
         });
       }
-      const shouldMerge = compatible && !viewOnly;
-      await waitFor(() => expect(Boolean(store.getState().undoable.present.itemList.remoteConflicts.outline?.revisionConflict)).toBe(!shouldMerge));
-      await waitFor(() => {
-        const current: RootState["undoable"]["present"]["itemList"] = store.getState().undoable.present.itemList;
-        const names = shouldMerge ? current.list.map((item) => item.name) :
-          current.remoteConflicts.outline?.revisionConflict?.versions.flatMap((version) => version.items.map((item) => item.name)) ?? [];
-        expect(names).toEqual(expect.arrayContaining(compatible ? ["A from device A", "B from device B"] : ["A from device A", "A from device B"]));
-      });
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list).toEqual(head.items));
+      expect(store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
       const state: RootState["undoable"]["present"]["itemList"] = store.getState().undoable.present.itemList;
       const inspections = reads.mock.calls.filter(([, options]) => options && "revs" in options).length;
       await act(async () => {
@@ -442,9 +437,8 @@ describe("useControllerPageLifecycle selected outline loading", () => {
         savedBranches: saved._conflicts?.length ?? 0,
         names: state.list.map((item) => item.name),
       };
-      const expectedNames = shouldMerge ? ["A from device A", "B from device B"] : state.list.map((item) => item.name);
-      expect(outcome).toEqual({ hasConflict: !shouldMerge, savedBranches: shouldMerge ? 0 : 1, names: expectedNames });
-      expect(writes.mock.calls.filter(([document]) => document._id === "outline")).toHaveLength(shouldMerge ? 1 : 0);
+      expect(outcome).toEqual({ hasConflict: false, savedBranches: 1, names: head.items.map((item: { name: string }) => item.name) });
+      expect(writes.mock.calls.filter(([document]) => document._id === "outline")).toHaveLength(0);
       // Repeated unresolved graphs use cached branch review, with only metadata
       // checked for the first new replication event.
       const branchReadsAfter = reads.mock.calls.filter(([, options]) => options && "revs" in options).length;

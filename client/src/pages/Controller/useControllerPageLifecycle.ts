@@ -23,10 +23,8 @@ import {
   setIsInitialized as setItemListIsInitialized,
   setItemListIsLoading,
   updateItemListFromRemote,
-  recordOutlineConflict,
   setItemListIsRetrying,
 } from "../../store/itemListSlice";
-import { inspectServiceListRevisions } from "../../utils/persistServiceListField";
 import {
   initiateOverlayList,
   mergeOverlayHistoryFromDb,
@@ -101,7 +99,6 @@ import {
 } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
 import { loadOrCreateControllerMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
-import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { beginOutlineContentLifecycle, getOutlineDatabaseKey, getOutlineOwnerKey, setOutlineContentDatabase } from "../../store/outlineContent";
 import type { ItemContentOwner } from "../../types";
 import { getActiveContentDatabaseOwner, getContentDatabaseForOwner } from "../../store/deferredItemMutations";
@@ -137,50 +134,7 @@ export const useControllerPageLifecycle = () => {
     (state) => state.undoable.present.itemLists.scope,
   );
   const outlineLoadAttempt = useSelector((state) => state.undoable.present.itemList.loadAttempt);
-  const allowRevisionReconciliation = !isViewOnlyAccess(access);
-  const revisionReviewsRef = useRef({
-    db,
-    graphs: new Map<string, Promise<Awaited<ReturnType<typeof inspectServiceListRevisions>>>>(),
-    events: new Set<string>(),
-  });
-  if (revisionReviewsRef.current.db !== db) {
-    revisionReviewsRef.current = { db, graphs: new Map(), events: new Set() };
-  }
-  const inspectOutline = useCallback(async (database: NonNullable<typeof db>, id: string, head: DBItemListDetails & { _conflicts?: string[] }) => {
-    if (!head._conflicts?.length) return { document: head };
-    const key = [id, allowRevisionReconciliation, head._rev, ...[...head._conflicts].sort()].join(":");
-    const graphs = revisionReviewsRef.current.graphs;
-    let inspection = graphs.get(key);
-    if (!inspection) {
-      inspection = inspectServiceListRevisions(database, id, head, allowRevisionReconciliation);
-      graphs.set(key, inspection);
-      if (graphs.size > 100) graphs.delete(graphs.keys().next().value!);
-      try {
-        const result = await inspection;
-        // Cache only unresolved graphs; successful reconciliation changed the DB.
-        if (!result.conflict) graphs.delete(key);
-        return result;
-      } catch (error) {
-        graphs.delete(key);
-        throw error;
-      }
-    }
-    return inspection;
-  }, [allowRevisionReconciliation]);
-  const recordDetectedConflict = useCallback((id: string, inspection: Awaited<ReturnType<typeof inspectServiceListRevisions>>) => {
-    if (!inspection.conflict) return;
-    const current = (store.getState() as RootState).undoable.present.itemList;
-    const previous = current.remoteConflicts?.[id]?.revisionConflict;
-    if (_.isEqual(previous, inspection.conflict.revisionConflict)) return;
-    dispatch(recordOutlineConflict({
-      outlineId: id,
-      baselineItems: current.loadedOutlineId === id ? current.syncBaseline : inspection.document.items ?? [],
-      localItems: current.loadedOutlineId === id ? current.list : current.remoteConflicts?.[id]?.localItems ??
-        (cloudRef.current ? formatItemList(inspection.document.items ?? [], cloudRef.current) : inspection.document.items ?? []),
-      remoteItems: inspection.conflict.remoteItems,
-      revisionConflict: inspection.conflict.revisionConflict,
-    }));
-  }, [dispatch, store]);
+  const outlineEventsRef = useRef(new Set<string>());
   const outlineLoadGeneration = useSelector((state) => state.undoable.present.itemList.outlineLoadGeneration);
   useLayoutEffect(() => {
     dispatch(setOutlineContentDatabase(db ? getOutlineDatabaseKey(db) : ""));
@@ -300,31 +254,34 @@ export const useControllerPageLifecycle = () => {
             if (!dbAtRead) continue;
             const selectionIdentity = selectedOutlineIdentityRef.current;
             const eventKey = _update._rev ? `${selectionIdentity.generation}:${_update._id}:${_update._rev}` : undefined;
-            const events = revisionReviewsRef.current.events;
+            const events = outlineEventsRef.current;
             if (eventKey && events.has(eventKey)) continue;
             if (eventKey) events.add(eventKey);
             if (events.size > 200) events.delete(events.values().next().value!);
             const outlineGeneration = currentState.undoable.present.itemList.outlineLoadGeneration;
             const syncGeneration = ++serviceListSyncGenerationRef.current;
-            let inspection: Awaited<ReturnType<typeof inspectServiceListRevisions>>;
+            const isCurrentUpdate = () => {
+              const current = (store.getState() as RootState).undoable.present;
+              return databaseRef.current === dbAtRead &&
+                selectedOutlineIdentityRef.current.generation === selectionIdentity.generation &&
+                serviceListSyncGenerationRef.current === syncGeneration &&
+                current.itemLists.selectedList?._id === _update._id &&
+                current.itemList.outlineLoadGeneration === outlineGeneration;
+            };
+            let update: DBItemListDetails;
             try {
               const head = await dbAtRead.get(_update._id, { conflicts: true }) as DBItemListDetails;
-              if (databaseRef.current !== dbAtRead ||
-                  selectedOutlineIdentityRef.current.generation !== selectionIdentity.generation ||
-                  serviceListSyncGenerationRef.current !== syncGeneration) continue;
+              if (!isCurrentUpdate()) continue;
               if (!head) throw new Error("The selected outline document was not returned by the database");
-              inspection = await inspectOutline(dbAtRead, _update._id, head);
+              update = head;
             } catch (error) {
               if (eventKey) events.delete(eventKey);
-              if (databaseRef.current === dbAtRead && selectedOutlineIdentityRef.current.generation === selectionIdentity.generation) {
+              if (isCurrentUpdate()) {
                 dispatch(setItemListLoadError("Could not check this outline for updates. Check the connection and try again."));
               }
               throw error;
             }
-            if (databaseRef.current !== dbAtRead ||
-                selectedOutlineIdentityRef.current.generation !== selectionIdentity.generation ||
-                serviceListSyncGenerationRef.current !== syncGeneration) continue;
-            const update = inspection.document;
+            if (!isCurrentUpdate()) continue;
             dispatch(
               setServicePlanningOutlinePlanBinding(
                 update.servicePlanBinding ?? null,
@@ -332,9 +289,9 @@ export const useControllerPageLifecycle = () => {
             );
             if (cloud) {
               const remoteItems = formatItemList(update.items || [], cloud);
-              const itemListState = currentState.undoable.present.itemList;
+              const itemListState = (store.getState() as RootState).undoable.present.itemList;
               if (
-                itemListState.loadedOutlineId === update._id &&
+                itemListState.isInitialized && itemListState.loadedOutlineId === update._id &&
                 !_.isEqual(itemListState.syncBaseline, remoteItems)
               ) {
                 dispatch(updateItemListFromRemote({
@@ -346,7 +303,6 @@ export const useControllerPageLifecycle = () => {
                 }
               }
             }
-            recordDetectedConflict(update._id, inspection);
 
             const remoteOverlayIds = update.overlays || [];
             const currentOverlayState = currentState.undoable.present.overlays;
@@ -455,7 +411,7 @@ export const useControllerPageLifecycle = () => {
         console.error(e);
       }
     },
-    [dispatch, cloud, db, inspectOutline, recordDetectedConflict, store],
+    [dispatch, cloud, db, store],
   );
 
   const updateMediaFromExternal = useCallback(
@@ -886,7 +842,6 @@ export const useControllerPageLifecycle = () => {
       dispatch(setItemListLoadError(null));
       try {
         let response: DBItemListDetails | undefined;
-        let inspection: Awaited<ReturnType<typeof inspectServiceListRevisions>> | undefined;
         let contentSyncGeneration = serviceListSyncGenerationRef.current;
         let readWasStable = false;
         for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -894,8 +849,7 @@ export const useControllerPageLifecycle = () => {
           const head = await db.get(selectedListId, { conflicts: true }) as DBItemListDetails;
           if (!isCurrentLoad()) return;
           if (!head || typeof head !== "object") throw new Error("The selected outline document was not returned by the database");
-          inspection = await inspectOutline(db, selectedListId, head);
-          response = inspection.document;
+          response = head;
           if (!isCurrentLoad()) return;
           if (serviceListSyncGenerationRef.current === contentSyncGeneration) {
             readWasStable = true;
@@ -943,7 +897,6 @@ export const useControllerPageLifecycle = () => {
         ) {
           dispatch(forceItemListUpdate());
         }
-        if (inspection) recordDetectedConflict(selectedListId, inspection);
         lastLoadedOutlineContextRef.current = {
           db,
           controllerId: activeControllerId,
@@ -988,7 +941,7 @@ export const useControllerPageLifecycle = () => {
     return () => {
       cancelled = true;
     };
-  }, [dispatch, db, selectedListId, hasCloud, cloud, bootstrapReady, activeControllerId, outlineScope, outlineLoadAttempt, outlineLoadGeneration, inspectOutline, recordDetectedConflict, store]);
+  }, [dispatch, db, selectedListId, hasCloud, cloud, bootstrapReady, activeControllerId, outlineScope, outlineLoadAttempt, outlineLoadGeneration, store]);
 
   useEffect(() => {
     if (!updater) return;

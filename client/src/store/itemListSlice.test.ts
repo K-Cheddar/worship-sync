@@ -15,6 +15,7 @@ import itemListReducer, {
   resolveOutlineConflict,
   failOutlineResolution,
 } from "./itemListSlice";
+import { activateOutlineContent } from "./outlineContent";
 import { createServiceItem } from "../test/fixtures";
 import type { ServiceItem } from "../types";
 import generateRandomId from "../utils/generateRandomId";
@@ -35,6 +36,75 @@ describe("itemListSlice", () => {
     beforeEach(() => {
       let n = 0;
       mockGenerateRandomId.mockImplementation(() => `list-id-${++n}`);
+    });
+
+    it("retires identity and baseline with loading content without corrupting a retained genuine draft", () => {
+      const store = createStore();
+      const base = [createServiceItem({ _id: "a", listId: "row", name: "Base" })];
+      const draft = [{ ...base[0], name: "My draft" }];
+      const remote = [{ ...base[0], name: "Other edit" }];
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-a", hasSelection: true }));
+      store.dispatch(initiateItemList({ outlineId: "a", items: base }));
+      store.dispatch(updateItemList(draft));
+      store.dispatch(updateItemListFromRemote({ outlineId: "a", items: remote }));
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-b", hasSelection: true }));
+      store.dispatch(setItemListIsLoading(true));
+      store.dispatch(updateItemListFromRemote({ outlineId: "a", items: [] }));
+      expect(store.getState().itemList.remoteConflicts.a.localItems).toEqual(draft);
+      expect(store.getState().itemList.loadedOutlineId).toBeUndefined();
+      expect(store.getState().itemList.syncBaseline).toEqual([]);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(false);
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-a", hasSelection: true }));
+      store.dispatch(setItemListIsLoading(true));
+      store.dispatch(initiateItemList({ outlineId: "a", items: remote }));
+      expect(store.getState().itemList.list).toEqual(draft);
+      expect(store.getState().itemList.remoteConflicts.a.baselineItems).toEqual(base);
+    });
+
+    it("does not discard an initialized empty authored draft on owner activation and hydration", () => {
+      const store = createStore();
+      const base = [createServiceItem({ _id: "a", listId: "row", name: "A" })];
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-a", hasSelection: true }));
+      store.dispatch(initiateItemList({ outlineId: "a", items: base }));
+      store.dispatch(updateItemList([]));
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-b", hasSelection: true }));
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-a", hasSelection: true }));
+      store.dispatch(initiateItemList({ outlineId: "a", items: base }));
+      expect(store.getState().itemList.list).toEqual([]);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
+    });
+
+    it("rejects a current-edit choice when the saved edits changed after rendering", () => {
+      const store = createStore();
+      const base = [createServiceItem({ _id: "a", listId: "row", name: "Base" })];
+      const draft = [{ ...base[0], name: "My edit" }];
+      const remote = [{ ...base[0], name: "Saved edit" }];
+      store.dispatch(initiateItemList({ outlineId: "a", items: base }));
+      store.dispatch(updateItemList(draft));
+      store.dispatch(updateItemListFromRemote({ outlineId: "a", items: remote }));
+      store.dispatch(updateItemListFromRemote({ outlineId: "a", items: [{ ...remote[0], name: "New saved edit" }] }));
+      store.dispatch(resolveOutlineConflict({ outlineId: "a", choice: "keep-local", reviewedItems: remote, draftItems: draft, reviewedRemoteItems: remote }));
+      expect(store.getState().itemList.remoteConflicts.a.resolutionChoice).toBeUndefined();
+      expect(store.getState().itemList.list).toEqual(draft);
+    });
+
+    it("requires a fresh decision when the winner changes while a selected resolution is retained", () => {
+      const store = createStore();
+      const base = [createServiceItem({ _id: "a", listId: "row", name: "Base" })];
+      const draft = [{ ...base[0], name: "My edit" }];
+      const remote = [{ ...base[0], name: "Saved edit" }];
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-a", hasSelection: true }));
+      store.dispatch(initiateItemList({ outlineId: "a", items: base }));
+      store.dispatch(updateItemList(draft));
+      store.dispatch(updateItemListFromRemote({ outlineId: "a", items: remote }));
+      store.dispatch(resolveOutlineConflict({ outlineId: "a", choice: "keep-local", reviewedItems: remote, draftItems: draft, reviewedRemoteItems: remote }));
+      expect(store.getState().itemList.pendingRevisionResolutions.a.items).toEqual(remote);
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-b", hasSelection: true }));
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-a", hasSelection: true }));
+      store.dispatch(initiateItemList({ outlineId: "a", items: [{ ...remote[0], name: "Unseen saved edit" }] }));
+      expect(store.getState().itemList.remoteConflicts.a.resolutionChoice).toBeUndefined();
+      expect(store.getState().itemList.pendingRevisionResolutions.a).toBeUndefined();
+      expect(store.getState().itemList.list).toEqual(draft);
     });
 
     it("initiateItemList sets list and isInitialized", () => {

@@ -3,5 +3,5 @@
   "date": "2026-10-27",
   "type": "improved",
   "title": "Outline synchronization",
-  "description": "Outlines open from the saved version without prompts about old versions. Compatible changes sync across devices, while conflicting rows keep their review choices and drafts stay available during controller navigation. Signing out clears drafts from the session."
+  "description": "Outlines open normally without prompts about old saved versions. Compatible edits sync across devices, while overlapping changes get a focused review and unsaved drafts stay available during controller navigation."
 }

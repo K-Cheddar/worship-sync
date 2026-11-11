@@ -18,6 +18,13 @@ An existing church opens its saved content safely, including offline, and overla
 - Complete legitimate outgoing-outline saves against their original owner. A church/database change cannot redirect persistence, pending/saved acknowledgments, cleanup opportunities, or broadcasts to the new owner.
 - Acknowledgments and publication describe the exact persisted intent; an older save cannot clear a newer pending draft.
 
+## Historical outline revisions
+Authorized by the November 11, 2026 outline revision conflict strategy request:
+- Read and display the winning outline without automatically merging, deleting or reviewing losing leaves. Historical leaves are not necessarily older edits and remain available for separately authorized maintenance.
+- Save genuine current edits against their loaded baseline and the latest winner. A successful CAS extends that leaf; replication carries the new descendant and preserves other leaves. A disconnected writer extending another leaf may create another historical conflict; it is preserved rather than automatically discarded.
+- Active edits that overlap the latest winner require focused decisions, with compatible edits retained. The draft remains visible until the choice is durably acknowledged.
+- Retire loaded outline identity and baseline atomically with content on owner changes. Initialization and replication alone never create a draft. Intentional removal of all initialized rows remains a valid edit.
+
 ## Switching outlines
 - Dirty content belongs to a concrete database and outline, not to the current selection alone. A refresh of that same owner preserves local drafts; selecting another owner loads its items, overlays, and service-plan binding independently of outgoing saves.
 - Retire old rows and binding atomically with every selection path, including scope changes and remote registry fallback. Loading or failed reads cannot leave the prior outline editable under the new selection. Outline-specific undo history cannot cross this boundary.

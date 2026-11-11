@@ -390,40 +390,10 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
 
   for (let attempt = 0; attempt < SERVICE_LIST_PUT_MAX_ATTEMPTS; attempt += 1) {
     if (!isCurrent()) throw new Error("The outline save session ended");
-    let current = await db.get(listId, { conflicts: true }) as RevisionDoc;
+    const current = await db.get(listId, { conflicts: true }) as RevisionDoc;
     if (!isLatest()) return { document: current, didWrite: false, intent: value };
-    let reviewedGraph: OutlineRevisionGraph | undefined;
-    let revisionConflict: OutlineRevisionConflict | undefined;
-
-    if (current._conflicts?.length) {
-      const branches = await readRevisionBranchSet(db, listId);
-      if (!isLatest()) return { document: current, didWrite: false, intent: value };
-      const mergedRemote = await mergeRevisionBranches(db, listId, branches);
-      if (!mergedRemote) {
-        throw new ServiceListConflictError(
-          (branches.winner.items ?? []) as ServiceItem[],
-          conflictDetails(branches),
-        );
-      }
-      if (mergedRemote.requiresReview) {
-        throw new ServiceListConflictError(
-          mergedRemote.document.items ?? [],
-          conflictDetails(branches, mergedRemote.document, mergedRemote.itemReview, mergedRemote.documentConflicts),
-        );
-      }
-      const latestBranches = await readRevisionBranchSet(db, listId);
-      if (!isLatest()) return { document: current, didWrite: false, intent: value };
-      if (!sameRevisionGraph(branches.graph, latestBranches.graph)) {
-        throw new ServiceListConflictError(
-          (latestBranches.winner.items ?? []) as ServiceItem[],
-          conflictDetails(latestBranches),
-        );
-      }
-      current = mergedRemote.document as RevisionDoc;
-      reviewedGraph = branches.graph;
-      revisionConflict = conflictDetails(branches, mergedRemote.document);
-    }
-
+    // Ordinary edits extend the winner using its CAS revision. Historical
+    // losing leaves are preserved for separately authorized maintenance.
     let nextValue = value;
     if (field === "items" && baseline) {
       const reconciled = reconcileOutlineItems(
@@ -434,73 +404,19 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
       if (reconciled.kind === "conflict") {
         throw new ServiceListConflictError(
           reconciled.remoteItems,
-          revisionConflict
-            ? { ...revisionConflict, remoteDocument: current }
-            : undefined,
         );
       }
       nextValue = reconciled.items as typeof value;
-    } else if (field === "overlays" && reviewedGraph) {
-      const commonHistory = Object.values(reviewedGraph.histories);
-      const commonRevision = commonHistory[0]?.find((revision) =>
-        commonHistory.every((history) => history.includes(revision)),
-      );
-      const baseDoc = commonRevision
-        ? await db.get(listId, { rev: commonRevision }) as DBItemListDetails
-        : undefined;
-      if (!baseDoc) {
-        throw new ServiceListConflictError(
-          (current.items ?? []) as ServiceItem[],
-          revisionConflict,
-        );
-      }
-      const baseOverlays = baseDoc.overlays ?? [];
-      const remoteOverlays = current.overlays ?? [];
-      if (
-        !isEqual(value, baseOverlays) &&
-        !isEqual(remoteOverlays, baseOverlays) &&
-        !isEqual(value, remoteOverlays)
-      ) {
-        throw new ServiceListConflictError(
-          (current.items ?? []) as ServiceItem[],
-          revisionConflict,
-        );
-      }
-      if (isEqual(value, baseOverlays)) nextValue = remoteOverlays as typeof value;
     }
 
     const next = updatedDocument(current, field, nextValue);
 
     try {
-      if (reviewedGraph) {
-        const latestBranches = await readRevisionBranchSet(db, listId);
-        if (!sameRevisionGraph(reviewedGraph, latestBranches.graph)) {
-          throw new ServiceListConflictError(
-            (latestBranches.winner.items ?? []) as ServiceItem[],
-            conflictDetails(latestBranches),
-          );
-        }
-      }
       if (!isCurrent()) throw new Error("The outline save session ended");
       if (!isLatest()) return { document: current, didWrite: false, intent: value };
       const result = await db.put(next);
       const rev = resultRevision(result);
-      if (reviewedGraph && !rev) {
-        throw new Error("The outline merge was not acknowledged with a revision");
-      }
       const saved = rev ? { ...next, _rev: rev } : next;
-      if (reviewedGraph && rev) {
-        const retired = await retireReviewedBranches(db, listId, reviewedGraph, rev, saved, isCurrent);
-        if (!retired) {
-          const latestBranches = await readRevisionBranchSet(db, listId);
-          throw new ServiceListConflictError(
-            (latestBranches.winner.items ?? []) as ServiceItem[],
-            latestBranches.graph.conflictRevisions.length
-              ? conflictDetails(latestBranches)
-              : undefined,
-          );
-        }
-      }
       return { document: saved, didWrite: true, intent: value };
     } catch (error) {
       lastError = error;
@@ -533,29 +449,20 @@ export const persistServiceListOverlays = (
   isCurrent?: () => boolean,
 ) => persistServiceListField(db, listId, "overlays", overlays, undefined, isCurrent);
 
-/** The normal read requests only leaf metadata. Branch bodies/history are
- * inspected only when the database reports competing saved versions. */
+/** Explicit diagnostic/maintenance inspection only. Controller reads and
+ * ordinary saves never inspect or reconcile historical branches. */
 export const inspectServiceListRevisions = async (
   db: ServiceListFieldDb,
   listId: string,
   head: DBItemListDetails & { _conflicts?: string[] },
-  allowReconciliation = true,
 ): Promise<{ document: DBItemListDetails; conflict?: ServiceListConflictError }> => {
   if (!head._conflicts?.length) return { document: head };
-  if (!allowReconciliation) {
-    const branches = await readRevisionBranchSet(db, listId);
-    const merged = await mergeRevisionBranches(db, listId, branches);
-    return { document: branches.winner, conflict: new ServiceListConflictError(
-      (merged?.document.items ?? branches.winner.items ?? []) as ServiceItem[],
-      conflictDetails(branches, merged?.document, merged?.itemReview, merged?.documentConflicts),
-    ) };
-  }
-  try {
-    return { document: await persistServiceListItems(db, listId, head.items ?? [], head.items ?? []) };
-  } catch (error) {
-    if (!(error instanceof ServiceListConflictError)) throw error;
-    return { document: head, conflict: error };
-  }
+  const branches = await readRevisionBranchSet(db, listId);
+  const merged = await mergeRevisionBranches(db, listId, branches);
+  return { document: branches.winner, conflict: new ServiceListConflictError(
+    (merged?.document.items ?? branches.winner.items ?? []) as ServiceItem[],
+    conflictDetails(branches, merged?.document, merged?.itemReview, merged?.documentConflicts),
+  ) };
 };
 
 /** Commits the previewed row or whole-version choice after graph validation. */

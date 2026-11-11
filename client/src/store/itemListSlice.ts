@@ -24,7 +24,7 @@ export type OutlineRemoteConflict = {
 
 type PendingOutlineRevisionResolution = {
   choice: "keep-local" | "use-remote";
-  conflict: OutlineRevisionConflict;
+  conflict?: OutlineRevisionConflict;
   selection?: OutlineRevisionSelection;
   items?: ServiceItem[];
   draftItems?: ServiceItem[];
@@ -145,6 +145,12 @@ export const itemListSlice = createSlice({
         ? state.remoteConflicts[payload.outlineId]
         : undefined;
       if (conflict) {
+        if (!isSameRows(conflict.remoteItems, remoteItems)) {
+          // A saved choice belongs to the winner that was reviewed. Returning
+          // after another save must not apply it over unseen competing edits.
+          delete conflict.resolutionChoice;
+          delete state.pendingRevisionResolutions[payload.outlineId!];
+        }
         const latestLocal = previouslyLoadedOutlineId === payload.outlineId
           ? previousList
           : conflict.localItems;
@@ -167,7 +173,7 @@ export const itemListSlice = createSlice({
           !isSameRows(merged.items, merged.remoteItems);
         if (merged.kind === "conflict") {
           state.remoteConflicts[payload.outlineId] = {
-            baselineItems: merged.remoteItems.map((item) => ({ ...item })),
+            baselineItems: retainedBaseline ?? [],
             localItems: merged.items,
             originalLocalItems: merged.items.map((item) => ({ ...item })),
             remoteItems: merged.remoteItems.map((item) => ({ ...item })),
@@ -197,18 +203,14 @@ export const itemListSlice = createSlice({
       if (!state.syncBaseline) state.syncBaseline = [];
       if (!state.remoteConflicts) state.remoteConflicts = {};
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
-      if (state.outlineOwnerKey) {
-        delete state.pendingByOutline?.[state.outlineOwnerKey];
-        delete state.syncBaselineByOutline?.[state.outlineOwnerKey];
-      }
       const payload = Array.isArray(action.payload)
         ? { items: action.payload }
         : action.payload;
-      if (payload.outlineId && state.loadedOutlineId !== payload.outlineId) return;
+      if (!state.isInitialized || (payload.outlineId && state.loadedOutlineId !== payload.outlineId)) return;
       state.loadError = null;
       const remoteItems = payload.items;
       const result = reconcileOutlineItems(
-        state.syncBaseline,
+        state.remoteConflicts[state.loadedOutlineId ?? ""]?.baselineItems ?? state.syncBaseline,
         state.list,
         remoteItems,
       );
@@ -219,7 +221,7 @@ export const itemListSlice = createSlice({
         : undefined;
       if (unresolvedConflict && outlineId) {
         state.remoteConflicts[outlineId] = {
-          baselineItems: result.remoteItems.map((item) => ({ ...item })),
+          baselineItems: unresolvedConflict.baselineItems,
           localItems: result.items,
           originalLocalItems: unresolvedConflict.originalLocalItems ??
             unresolvedConflict.localItems.map((item) => ({ ...item })),
@@ -235,7 +237,7 @@ export const itemListSlice = createSlice({
         state.hasPendingUpdate = true;
       } else if (result.kind === "conflict" && outlineId) {
         state.remoteConflicts[outlineId] = {
-          baselineItems: result.remoteItems.map((item) => ({ ...item })),
+          baselineItems: state.syncBaseline.map((item) => ({ ...item })),
           localItems: result.items,
           originalLocalItems: result.items.map((item) => ({ ...item })),
           remoteItems: result.remoteItems,
@@ -265,6 +267,7 @@ export const itemListSlice = createSlice({
       action: PayloadAction<{
         outlineId: string; choice: "keep-local" | "use-remote";
         reviewedItems?: ServiceItem[];
+        reviewedRemoteItems?: ServiceItem[];
         draftItems?: ServiceItem[];
         revisionSelection?: OutlineRevisionSelection;
         reviewedRevisionConflict?: OutlineRevisionConflict;
@@ -275,6 +278,7 @@ export const itemListSlice = createSlice({
       const conflict = state.remoteConflicts[action.payload.outlineId];
       if (!conflict || state.loadedOutlineId !== action.payload.outlineId) return;
       if (action.payload.draftItems && !isSameRows(action.payload.draftItems, state.list)) return;
+      if (action.payload.reviewedRemoteItems && !isSameRows(action.payload.reviewedRemoteItems, conflict.remoteItems)) return;
       if (action.payload.revisionSelection && !isEqual(action.payload.reviewedRevisionConflict, conflict.revisionConflict)) return;
       delete conflict.saveError;
       if (action.payload.choice === "keep-local") {
@@ -287,7 +291,7 @@ export const itemListSlice = createSlice({
         state.syncBaseline = conflict.remoteItems.map((item) => ({ ...item }));
         state.hasPendingUpdate = false;
       }
-      if (conflict.revisionConflict) {
+      if (conflict.revisionConflict || action.payload.reviewedItems) {
         state.pendingRevisionResolutions[action.payload.outlineId] = {
           choice: action.payload.choice,
           conflict: conflict.revisionConflict,
@@ -300,8 +304,8 @@ export const itemListSlice = createSlice({
         delete state.pendingRevisionResolutions[action.payload.outlineId];
       }
       if (action.payload.choice === "use-remote" && !conflict.revisionConflict) {
-        // Explicit discard needs no write when the authoritative saved version
-        // has no competing leaves.
+        // Adopting the current winner needs no write; historical leaves
+        // remain untouched.
         delete state.remoteConflicts[action.payload.outlineId];
       } else {
         conflict.resolutionChoice = action.payload.choice;
@@ -360,7 +364,7 @@ export const itemListSlice = createSlice({
       if (result.kind === "conflict" || state.remoteConflicts[action.payload.outlineId]) {
         const previous = state.remoteConflicts[action.payload.outlineId];
         state.remoteConflicts[action.payload.outlineId] = {
-          baselineItems: result.remoteItems.map((item) => ({ ...item })),
+          baselineItems: previous?.baselineItems ?? action.payload.baselineItems,
           localItems: result.items,
           originalLocalItems: previous?.originalLocalItems ?? localItems.map((item) => ({ ...item })),
           remoteItems: result.remoteItems,
@@ -641,7 +645,7 @@ export const itemListSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(activateOutlineContent, (state, action) => {
-      if (state.outlineOwnerKey && state.hasPendingUpdate) {
+      if (state.outlineOwnerKey && state.isInitialized && state.hasPendingUpdate) {
         state.pendingByOutline ??= {};
         state.pendingByOutline[state.outlineOwnerKey] = state.list;
         state.syncBaselineByOutline ??= {};
@@ -655,7 +659,10 @@ export const itemListSlice = createSlice({
       state.outlineOwnerKey = action.payload.ownerKey;
       state.outlineLoadGeneration = (state.outlineLoadGeneration ?? 0) + 1;
       state.list = draft ?? [];
-      if (baseline) state.syncBaseline = baseline.map((item) => ({ ...item }));
+      // Activation retires content and its identity together. A loading list
+      // is not a draft or a deletion of the previously loaded outline.
+      state.loadedOutlineId = undefined;
+      state.syncBaseline = (baseline ?? []).map((item) => ({ ...item }));
       state.hasPendingUpdate = !!draft;
       state.isInitialized = !!draft || !action.payload.hasSelection;
       state.isLoading = action.payload.hasSelection;
@@ -669,7 +676,6 @@ export const itemListSlice = createSlice({
       const conflict = state.loadedOutlineId && state.remoteConflicts?.[state.loadedOutlineId];
       if (conflict) {
         conflict.localItems = state.list;
-        conflict.baselineItems = state.syncBaseline;
       }
     });
   },
