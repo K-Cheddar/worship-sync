@@ -1000,9 +1000,10 @@ export type TeamIntakeSubmission = {
   title?: string;
   birthDate?: BirthDate | null;
   normalizedName: string;
-  positionIds: string[];
-  occurrenceAvailability: Record<string, "available" | "unavailable">;
-  blockoutRanges: TeamIntakeBlockoutRange[];
+  /** Absent when the form did not collect this field; empty means explicitly cleared. */
+  positionIds?: string[];
+  occurrenceAvailability?: Record<string, "available" | "unavailable">;
+  blockoutRanges?: TeamIntakeBlockoutRange[];
   notes?: string;
   servingFrequency?: TeamMemberServingFrequency;
   recurringAvailability?: TeamMemberRecurringAvailability;

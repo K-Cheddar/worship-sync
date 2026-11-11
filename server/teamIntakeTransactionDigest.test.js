@@ -224,7 +224,7 @@ const makeAvailabilityTransactionSeed = () => {
   };
 };
 
-const submitAvailabilityToken = async (token, occurrenceId) => {
+const submitAvailabilityToken = async (token, occurrenceId, body) => {
   const response = {
     statusCode: 200,
     payload: null,
@@ -243,7 +243,7 @@ const submitAvailabilityToken = async (token, occurrenceId) => {
       headers: {},
       session: {},
       query: { token, recipientOnly: "true" },
-      body: {
+      body: body ?? {
         firstName: "",
         lastName: "",
         title: "",
@@ -329,6 +329,96 @@ test("individual recipient Firestore transaction schedules the digest after comm
     storedForm.pendingDigestBatchId,
   );
 });
+
+for (const purpose of ["general_intake", "team_availability"]) {
+  for (const enabledFields of [[], ["positions", "availability", "blockoutDates", "recurringAvailability", "schedulingFrequency"]]) {
+    test(`${purpose} transaction preserves disabled or omitted member response fields (${enabledFields.length})`, async (t) => {
+      const fixture = makeAvailabilityTransactionSeed();
+      Object.assign(fixture.stores[COLLECTIONS.teamIntakeForms][fixture.formId], { purpose, enabledFields });
+      const existing = {
+        desiredPositionIds: ["saved-position"],
+        serviceAvailability: { [fixture.occurrenceId]: "unavailable", outside: "available" },
+        blockoutDates: [{ startDate: new Date().toISOString().slice(0, 10), endDate: new Date().toISOString().slice(0, 10), notes: "Saved" }],
+        servingFrequency: "weekly",
+        recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
+      };
+      Object.assign(fixture.stores[COLLECTIONS.teamRosterMembers][fixture.memberId], existing);
+      setServerFirestoreForTests(createFirestoreMock(fixture.stores));
+      t.after(() => setServerFirestoreForTests(null));
+      const response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, {});
+      assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+      const member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+      for (const [field, value] of Object.entries(existing)) assert.deepEqual(member[field], value, field);
+    });
+  }
+}
+
+test("availability transaction preserves concurrent outside dates and does not reapply an acknowledged response", async (t) => {
+  const fixture = makeAvailabilityTransactionSeed();
+  let changed = false;
+  const db = createFirestoreMock(fixture.stores, {
+    afterTransactionRead: ({ collection, id, store }) => {
+      if (!changed && collection === COLLECTIONS.teamRosterMembers && id === fixture.memberId) {
+        changed = true;
+        const member = store.get(id);
+        store.set(id, { ...member, notes: "New admin note", serviceAvailability: { ...member.serviceAvailability, concurrent: "unavailable" } });
+      }
+    },
+  });
+  setServerFirestoreForTests(db);
+  t.after(() => setServerFirestoreForTests(null));
+  const first = await submitAvailabilityToken(fixture.token, fixture.occurrenceId);
+  assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+  let member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.equal(member.serviceAvailability.concurrent, "unavailable");
+  assert.equal(member.notes, "New admin note");
+  await db.collection(COLLECTIONS.teamRosterMembers).doc(fixture.memberId).set({
+    serviceAvailability: { ...member.serviceAvailability, [fixture.occurrenceId]: "unavailable" },
+  }, { merge: true });
+  const repeated = await submitAvailabilityToken(fixture.token, fixture.occurrenceId);
+  assert.equal(repeated.statusCode, 200, JSON.stringify(repeated.payload));
+  assert.equal(repeated.payload.submissionId, first.payload.submissionId);
+  member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.equal(member.serviceAvailability[fixture.occurrenceId], "unavailable");
+  assert.equal((await queryDocs(COLLECTIONS.teamIntakeSubmissions, [{ field: "formId", value: fixture.formId }])).length, 1);
+});
+
+for (const purpose of ["general_intake", "team_availability"]) {
+  test(`${purpose} transaction applies explicit selections and clearing while retaining omitted response data`, async (t) => {
+    const fixture = makeAvailabilityTransactionSeed();
+    const form = fixture.stores[COLLECTIONS.teamIntakeForms][fixture.formId];
+    Object.assign(form, { purpose, enabledFields: ["positions", "availability", "blockoutDates", "notes"] });
+    form.availabilityOccurrences.push({ occurrenceId: "second-in-scope" });
+    fixture.stores[COLLECTIONS.teamPositions] = {
+      selected: { positionId: "selected", churchId: fixture.churchId, teamId: fixture.teamId },
+    };
+    Object.assign(fixture.stores[COLLECTIONS.teamRosterMembers][fixture.memberId], {
+      desiredPositionIds: ["old"],
+      serviceAvailability: { "second-in-scope": "unavailable", outside: "available" },
+    });
+    setServerFirestoreForTests(createFirestoreMock(fixture.stores));
+    t.after(() => setServerFirestoreForTests(null));
+    const first = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, {
+      positionIds: ["selected"], occurrenceAvailability: { [fixture.occurrenceId]: "unavailable", outside: "unavailable" },
+    });
+    assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+    let member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+    assert.deepEqual(member.desiredPositionIds, purpose === "general_intake" ? ["selected"] : ["old"]);
+    assert.deepEqual(member.serviceAvailability, { [fixture.occurrenceId]: "unavailable", outside: "available" });
+    const partial = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, { notes: "Only notes" });
+    assert.equal(partial.statusCode, 200, JSON.stringify(partial.payload));
+    assert.equal(partial.payload.submissionId, first.payload.submissionId);
+    member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+    assert.equal(member.serviceAvailability[fixture.occurrenceId], "unavailable");
+    const submission = await getDoc(COLLECTIONS.teamIntakeSubmissions, first.payload.submissionId);
+    assert.deepEqual(submission.occurrenceAvailability, { [fixture.occurrenceId]: "unavailable" });
+    const cleared = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, { positionIds: [], occurrenceAvailability: {} });
+    assert.equal(cleared.statusCode, 200, JSON.stringify(cleared.payload));
+    member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+    assert.deepEqual(member.desiredPositionIds, purpose === "general_intake" ? [] : ["old"]);
+    assert.deepEqual(member.serviceAvailability, { outside: "available" });
+  });
+}
 
 test("personalized intake transaction keeps a profile field filled concurrently after preview", async (t) => {
   const previousContactSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
@@ -508,4 +598,44 @@ test("a Team membership removal during an availability response transaction prev
   assert.deepEqual(await queryDocs(COLLECTIONS.teamIntakeSubmissions, [
     { field: "formId", value: fixture.formId },
   ]), []);
+});
+
+test("Firestore emulator intake replaces only explicit form-scoped availability", {
+  skip: !process.env.FIRESTORE_EMULATOR_HOST,
+}, async (t) => {
+  const { initializeApp, deleteApp } = await import("firebase-admin/app");
+  const { getFirestore } = await import("firebase-admin/firestore");
+  const app = initializeApp({ projectId: "demo-worshipsync-intake" }, `intake-integrity-${process.pid}`);
+  const db = getFirestore(app);
+  const fixture = makeAvailabilityTransactionSeed();
+  const secondId = `${fixture.occurrenceId}-second`;
+  fixture.stores[COLLECTIONS.teamIntakeForms][fixture.formId].availabilityOccurrences.push({ occurrenceId: secondId });
+  fixture.stores[COLLECTIONS.teamRosterMembers][fixture.memberId].serviceAvailability = {
+    [fixture.occurrenceId]: "unavailable", [secondId]: "unavailable", outside: "available",
+  };
+  for (const [collection, docs] of Object.entries(fixture.stores)) {
+    for (const [id, value] of Object.entries(docs)) await db.collection(collection).doc(id).set(value);
+  }
+  setServerFirestoreForTests(db);
+  t.after(async () => {
+    setServerFirestoreForTests(null);
+    for (const name of [COLLECTIONS.teamIntakeSubmissions, ...Object.keys(fixture.stores)]) {
+      const snapshot = await db.collection(name).where("churchId", "==", fixture.churchId).get();
+      await Promise.all(snapshot.docs.map((doc) => doc.ref.delete()));
+    }
+    await db.collection(COLLECTIONS.churches).doc(fixture.churchId).delete();
+    await deleteApp(app);
+  });
+  let response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId);
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+  let member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.deepEqual(member.serviceAvailability, { [fixture.occurrenceId]: "available", outside: "available" });
+  response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, { notes: "Omitted availability" });
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+  member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.deepEqual(member.serviceAvailability, { [fixture.occurrenceId]: "available", outside: "available" });
+  response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, { occurrenceAvailability: {} });
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+  member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.deepEqual(member.serviceAvailability, { outside: "available" });
 });

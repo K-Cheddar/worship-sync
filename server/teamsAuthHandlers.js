@@ -3749,6 +3749,11 @@ export const createTeamsAuthHandlers = ({
     replacementAvailability,
     form,
   }) => {
+    if (
+      !form ||
+      !normalizeTeamIntakeFields(undefined, form.enabledFields).includes("availability") ||
+      replacementAvailability === undefined
+    ) return existingAvailability || {};
     const formOccurrenceIds = new Set(
       (Array.isArray(form?.availabilityOccurrences)
         ? form.availabilityOccurrences
@@ -3762,7 +3767,9 @@ export const createTeamsAuthHandlers = ({
         ([occurrenceId]) => !formOccurrenceIds.has(occurrenceId),
       ),
     );
-    return { ...preserved, ...(replacementAvailability || {}) };
+    return { ...preserved, ...Object.fromEntries(
+      Object.entries(replacementAvailability || {}).filter(([id]) => formOccurrenceIds.has(id)),
+    ) };
   };
 
   // Combine the notes of merged blockout ranges, de-duplicating individual
@@ -8175,6 +8182,7 @@ export const createTeamsAuthHandlers = ({
       occurrenceAvailability[occurrenceId] =
         availability === "unavailable" ? "unavailable" : "available";
     });
+    const collects = (field, key) => enabledFields.has(field) && Object.hasOwn(body || {}, key);
     return {
       firstName,
       lastName,
@@ -8183,38 +8191,24 @@ export const createTeamsAuthHandlers = ({
       birthDate,
       ...(personalizedMember ? { submittedMemberDetails } : {}),
       normalizedName: normalizePersonNameKey(firstName, lastName),
-      positionIds,
-      occurrenceAvailability,
-      blockoutRanges: enabledFields.has("blockoutDates")
-        ? normalizeIntakeBlockoutRanges(
-            body?.blockoutRanges,
-            form.startDate,
-            form.endDate,
-          )
-        : [],
+      ...(collects("positions", "positionIds") ? { positionIds } : {}),
+      ...(collects("availability", "occurrenceAvailability") ? { occurrenceAvailability } : {}),
+      ...(collects("blockoutDates", "blockoutRanges") ? {
+        blockoutRanges: normalizeIntakeBlockoutRanges(
+          body.blockoutRanges,
+          form.startDate,
+          form.endDate,
+        ),
+      } : {}),
       notes: enabledFields.has("notes")
         ? normalizeLongText(body?.notes, { max: 2000 })
         : "",
-      ...(enabledFields.has("schedulingFrequency") ||
-      enabledFields.has("recurringAvailability")
-        ? {
-            ...(enabledFields.has("schedulingFrequency")
-              ? {
-                  servingFrequency: normalizeTeamMemberServingFrequency(
-                    body?.servingFrequency,
-                  ),
-                }
-              : {}),
-            ...(enabledFields.has("recurringAvailability")
-              ? {
-                  recurringAvailability:
-                    normalizeTeamMemberRecurringAvailability(
-                      body?.recurringAvailability,
-                    ),
-                }
-              : {}),
-          }
-        : {}),
+      ...(collects("schedulingFrequency", "servingFrequency") ? {
+        servingFrequency: normalizeTeamMemberServingFrequency(body.servingFrequency),
+      } : {}),
+      ...(collects("recurringAvailability", "recurringAvailability") ? {
+        recurringAvailability: normalizeTeamMemberRecurringAvailability(body.recurringAvailability),
+      } : {}),
     };
   };
 
@@ -9221,20 +9215,48 @@ export const createTeamsAuthHandlers = ({
     now = nowIso(),
   }) => {
     const formBelongsToChurch = Boolean(form && form.churchId === churchId);
+    const enabledFields = new Set(formBelongsToChurch
+      ? normalizeTeamIntakeFields(undefined, form.enabledFields) : []);
+    const collects = (field, key) => enabledFields.has(field) && Object.hasOwn(submission, key);
+    const db = requireFirestore?.();
+    const memberRef = memberId ? db?.collection(COLLECTIONS.teamRosterMembers).doc(memberId) : null;
+    const readMember = async (transaction) => {
+      if (formBelongsToChurch) {
+        const currentForm = transaction
+          ? (await transaction.get(db.collection(COLLECTIONS.teamIntakeForms).doc(submission.formId))).data()
+          : await getDoc(COLLECTIONS.teamIntakeForms, submission.formId);
+        const fields = ["churchId", "purpose", "enabledFields", "teamIds", "startDate", "endDate", "availabilityOccurrences"];
+        if (!currentForm || fields.some((field) => !isDeepStrictEqual(currentForm[field], form[field]))) {
+          throw httpError(409, "This form changed somewhere else. Reload and try again.");
+        }
+      }
+      if (!transaction) return assertTeamEntityInChurch("member", memberId, churchId, { label: "Member", active: false });
+      const snapshot = await transaction.get(memberRef);
+      if (!snapshot.exists || snapshot.data().churchId !== churchId) throw httpError(404, "Member not found.");
+      return { ...snapshot.data(), memberId: snapshot.id };
+    };
+    const writeMember = async (transaction, member, patch) => {
+      if (transaction) {
+        transaction.update(memberRef, {
+          ...patch,
+          ...volunteerContactIndexFields({ ...member, ...patch }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET),
+        });
+      } else {
+        await setDoc(COLLECTIONS.teamRosterMembers, member.memberId, patch, { merge: true });
+      }
+      return { ...member, ...patch };
+    };
     if (formBelongsToChurch && form.purpose === "team_availability") {
       if (createMember) {
         throw httpError(400, "Availability responses can only update an existing Team member.");
       }
-      const updateMember = async () => {
-        const member = await assertTeamEntityInChurch("member", memberId, churchId, {
-          label: "Member",
-          active: false,
-        });
+      const updateMember = async (transaction) => {
+        const member = await readMember(transaction);
         const serviceAvailability = replaceServiceAvailabilityForForm({
           existingAvailability: member.serviceAvailability,
-          replacementAvailability: normalizeServiceAvailability(
+          replacementAvailability: collects("availability", "occurrenceAvailability") ? normalizeServiceAvailability(
             submission.occurrenceAvailability,
-          ),
+          ) : undefined,
           form,
         });
         const memberDetailPatch = personalizedSubmission
@@ -9244,21 +9266,18 @@ export const createTeamsAuthHandlers = ({
               form,
             })
           : {};
-        await setDoc(
-          COLLECTIONS.teamRosterMembers,
-          member.memberId,
+        await writeMember(transaction, member,
           {
-            serviceAvailability,
+            ...(collects("availability", "occurrenceAvailability") ? { serviceAvailability } : {}),
             ...memberDetailPatch,
             updatedAt: now,
             updatedByUid: adminUserId,
           },
-          { merge: true },
         );
         return member.memberId;
       };
-      const memberIdForResponse = requireFirestore?.()?.runTransaction
-        ? await updateMember()
+      const memberIdForResponse = db?.runTransaction
+        ? await db.runTransaction(updateMember)
         : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       return {
         member: await getTeamEntity("member", memberIdForResponse),
@@ -9275,19 +9294,17 @@ export const createTeamsAuthHandlers = ({
     const formCollectsBlockouts =
       formBelongsToChurch &&
       Boolean(form.startDate && form.endDate) &&
-      normalizeTeamIntakeFields(undefined, form.enabledFields).includes(
-        "blockoutDates",
-      );
+      collects("blockoutDates", "blockoutRanges");
     const blockoutDates = mergeBlockoutDateRanges(
-      (submission.blockoutRanges || []).map((range) => ({
+      (collects("blockoutDates", "blockoutRanges") ? submission.blockoutRanges || [] : []).map((range) => ({
         startDate: range.startDate,
         endDate: range.endDate,
         notes: "From intake form",
       })),
     );
-    const desiredPositionIds = submission.positionIds || [];
+    const desiredPositionIds = collects("positions", "positionIds") ? submission.positionIds : [];
     const submissionAvailability = normalizeServiceAvailability(
-      submission.occurrenceAvailability,
+      collects("availability", "occurrenceAvailability") ? submission.occurrenceAvailability : undefined,
     );
     const formTeamIds = formBelongsToChurch
       ? normalizeIdArray(form.teamIds)
@@ -9308,9 +9325,9 @@ export const createTeamsAuthHandlers = ({
           email: normalizeMemberEmail(submission.email),
           birthDate: normalizeBirthDate(submission.birthDate),
           isMinor: isMinorFromBirthDate(submission.birthDate) ?? false,
-          servingFrequency: submission.servingFrequency || "as_needed",
+          servingFrequency: (collects("schedulingFrequency", "servingFrequency") && submission.servingFrequency) || "as_needed",
           recurringAvailability:
-            submission.recurringAvailability ||
+            (collects("recurringAvailability", "recurringAvailability") && submission.recurringAvailability) ||
             normalizeTeamMemberRecurringAvailability(null),
           positionIds: [],
           desiredPositionIds,
@@ -9341,11 +9358,8 @@ export const createTeamsAuthHandlers = ({
       const submittedEmail = normalizeMemberEmail(submission.email);
       const submittedTitle = normalizeShortText(submission.title, { max: 40 });
       const submittedBirthDate = normalizeBirthDate(submission.birthDate);
-      const updateMember = async () => {
-        const currentMember = await assertTeamEntityInChurch("member", memberId, churchId, {
-          label: "Member",
-          active: false,
-        });
+      const updateMember = async (transaction) => {
+        const currentMember = await readMember(transaction);
         const nextBlockoutDates = formCollectsBlockouts
           ? replaceBlockoutDateRangesInPeriod({
               existingRanges: currentMember.blockoutDates,
@@ -9353,15 +9367,10 @@ export const createTeamsAuthHandlers = ({
               startDate: form.startDate,
               endDate: form.endDate,
             })
-          : formBelongsToChurch
-            ? currentMember.blockoutDates || []
-            : mergeBlockoutDateRanges([
-                ...(currentMember.blockoutDates || []),
-                ...blockoutDates,
-              ]);
+          : currentMember.blockoutDates || [];
         const nextServiceAvailability = replaceServiceAvailabilityForForm({
           existingAvailability: currentMember.serviceAvailability,
-          replacementAvailability: submissionAvailability,
+          replacementAvailability: collects("availability", "occurrenceAvailability") ? submissionAvailability : undefined,
           form,
         });
         const memberDetailPatch = personalizedSubmission
@@ -9388,29 +9397,25 @@ export const createTeamsAuthHandlers = ({
                   }
                 : {}),
             };
-        await setDoc(
-          COLLECTIONS.teamRosterMembers,
-          currentMember.memberId,
+        return writeMember(transaction, currentMember,
           {
-            desiredPositionIds: nextDesiredPositionIds,
-            serviceAvailability: nextServiceAvailability,
-            blockoutDates: nextBlockoutDates,
+            ...(collects("positions", "positionIds") ? { desiredPositionIds: nextDesiredPositionIds } : {}),
+            ...(collects("availability", "occurrenceAvailability") ? { serviceAvailability: nextServiceAvailability } : {}),
+            ...(formCollectsBlockouts ? { blockoutDates: nextBlockoutDates } : {}),
             ...memberDetailPatch,
-            ...(submission.servingFrequency
+            ...(collects("schedulingFrequency", "servingFrequency") && submission.servingFrequency
               ? { servingFrequency: submission.servingFrequency }
               : {}),
-            ...(submission.recurringAvailability
+            ...(collects("recurringAvailability", "recurringAvailability") && submission.recurringAvailability
               ? { recurringAvailability: submission.recurringAvailability }
               : {}),
             updatedAt: now,
             updatedByUid: adminUserId,
           },
-          { merge: true },
         );
-        return getTeamEntity("member", currentMember.memberId);
       };
-      member = requireFirestore?.()?.runTransaction
-        ? await updateMember()
+      member = db?.runTransaction
+        ? await db.runTransaction(updateMember)
         : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       trackTeams(
         await addMemberToTeamsForPositions({
@@ -9516,6 +9521,10 @@ export const createTeamsAuthHandlers = ({
       const submissionId =
         recipient.submissionId ||
         `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
+      const submissionRef = db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId);
+      const previousSubmissionSnapshot = await transaction.get(submissionRef);
+      const previousSubmission = previousSubmissionSnapshot.exists ? previousSubmissionSnapshot.data() : null;
+      const responseDigest = hashValue(stablePortableJson(body || {}));
 
       const desiredPositionIds = normalizeIdArray(currentPayload.positionIds);
       const positionSnapshots = [];
@@ -9565,8 +9574,16 @@ export const createTeamsAuthHandlers = ({
         throw httpError(404, "This request is no longer available.");
       }
 
+      // A lost acknowledgment must not replay a completed write over a later
+      // member edit. Authorization and current form scope still run above.
+      if (previousSubmission?.status === "applied" && previousSubmission.responseDigest === responseDigest &&
+          previousSubmission.appliedMemberId === member.memberId) {
+        return { success: true, submissionId, formId: form.formId, submittedAt: previousSubmission.submittedAt };
+      }
+
       const formCollectsBlockouts =
         Boolean(form.startDate && form.endDate) &&
+        Object.hasOwn(currentPayload, "blockoutRanges") &&
         normalizeTeamIntakeFields(undefined, form.enabledFields).includes(
           "blockoutDates",
         );
@@ -9587,9 +9604,9 @@ export const createTeamsAuthHandlers = ({
         : member.blockoutDates || [];
       const nextServiceAvailability = replaceServiceAvailabilityForForm({
         existingAvailability: member.serviceAvailability,
-        replacementAvailability: normalizeServiceAvailability(
+        replacementAvailability: Object.hasOwn(currentPayload, "occurrenceAvailability") ? normalizeServiceAvailability(
           currentPayload.occurrenceAvailability,
-        ),
+        ) : undefined,
         form,
       });
       const memberDetailPatch = buildTeamIntakeMissingMemberDetailPatch({
@@ -9599,9 +9616,9 @@ export const createTeamsAuthHandlers = ({
       });
       const adminUserId = `recipient:${recipient.recipientId}`;
       const memberUpdate = {
-        desiredPositionIds,
-        serviceAvailability: nextServiceAvailability,
-        blockoutDates: nextBlockoutDates,
+        ...(Object.hasOwn(currentPayload, "positionIds") ? { desiredPositionIds } : {}),
+        ...(Object.hasOwn(currentPayload, "occurrenceAvailability") ? { serviceAvailability: nextServiceAvailability } : {}),
+        ...(formCollectsBlockouts ? { blockoutDates: nextBlockoutDates } : {}),
         ...memberDetailPatch,
         ...(currentPayload.servingFrequency
           ? { servingFrequency: currentPayload.servingFrequency }
@@ -9624,7 +9641,9 @@ export const createTeamsAuthHandlers = ({
         ...submissionPayload
       } = currentPayload;
       const submission = {
+        ...previousSubmission,
         ...submissionPayload,
+        responseDigest,
         submissionId,
         formId: form.formId,
         churchId: form.churchId,
@@ -9638,7 +9657,7 @@ export const createTeamsAuthHandlers = ({
       };
       const memberPatch = availabilityOnly
         ? {
-            serviceAvailability: nextServiceAvailability,
+            ...(Object.hasOwn(currentPayload, "occurrenceAvailability") ? { serviceAvailability: nextServiceAvailability } : {}),
             ...memberDetailPatch,
             updatedAt: submittedAt,
             updatedByUid: adminUserId,
@@ -9653,15 +9672,13 @@ export const createTeamsAuthHandlers = ({
         transaction,
         formRef,
         formSnapshot,
-        submissionRef: db
-          .collection(COLLECTIONS.teamIntakeSubmissions)
-          .doc(submissionId),
+        submissionRef,
         submission,
       });
-      transaction.set(memberRef, {
+      transaction.update(memberRef, {
         ...memberPatch,
         ...volunteerContactIndexFields({ ...member, ...memberPatch }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET),
-      }, { merge: true });
+      });
       for (const teamSnapshot of availabilityOnly ? [] : teamSnapshots) {
         if (!teamSnapshot.exists) continue;
         const team = teamSnapshot.data();
@@ -9760,8 +9777,26 @@ export const createTeamsAuthHandlers = ({
         const submissionId =
           recipient.submissionId ||
           `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
+        const previousSubmission = await getDoc(COLLECTIONS.teamIntakeSubmissions, submissionId);
+        const responseDigest = hashValue(stablePortableJson(req.body || {}));
+        if (previousSubmission?.status === "applied" && previousSubmission.responseDigest === responseDigest &&
+            previousSubmission.appliedMemberId === member.memberId) {
+          // Resume after the member/application checkpoint if the final
+          // recipient write was interrupted; never replay the member changes.
+          if (recipient.submissionId !== submissionId || !recipient.respondedAt) {
+            await setDoc(COLLECTIONS.teamIntakeRecipients, recipient.recipientId, {
+              submissionId,
+              respondedAt: previousSubmission.submittedAt,
+              updatedAt: nowIso(),
+              updatedByUid: `recipient:${recipient.recipientId}`,
+            }, { merge: true });
+          }
+          return { success: true, submissionId, formId: form.formId, submittedAt: previousSubmission.submittedAt };
+        }
         const submission = {
+          ...previousSubmission,
           ...submissionPayload,
+          responseDigest,
           submissionId,
           formId: form.formId,
           churchId: form.churchId,
@@ -9783,7 +9818,7 @@ export const createTeamsAuthHandlers = ({
           );
         }
         const application = await applyTeamIntakeSubmissionToMember({
-          submission,
+          submission: { ...submissionPayload, submissionId, formId: form.formId },
           form,
           churchId: form.churchId,
           memberId: member.memberId,

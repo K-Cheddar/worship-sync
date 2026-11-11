@@ -348,6 +348,78 @@ const callHandler = async (handler, { context, params = {}, body = {} }) => {
   return response;
 };
 
+for (const purpose of ["general_intake", "team_availability"]) {
+  test(`${purpose} administrative intake application retries against concurrent member changes`, async (t) => {
+    const db = createFirestoreMock();
+    const fixture = await createFixture(db, `apply-${purpose}`);
+    t.after(() => setServerFirestoreForTests(null));
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, fixture.formId);
+    await db.collection(COLLECTIONS.teamIntakeForms).doc(fixture.formId).update({ purpose });
+    const occurrenceId = form.availabilityOccurrences[0].occurrenceId;
+    const submissionId = `apply-race-${purpose}`;
+    await db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId).set({
+      submissionId, formId: fixture.formId, churchId: fixture.context.churchId,
+      occurrenceAvailability: { [occurrenceId]: "unavailable" }, email: "old@example.test",
+    });
+    let interrupted = false;
+    const editMember = async () => {
+      interrupted = true;
+      await db.collection(COLLECTIONS.teamRosterMembers).doc(fixture.memberId).update({
+        serviceAvailability: { concurrent: "available" }, email: "new@example.test", notes: "New admin note",
+        desiredPositionIds: ["new-preference"],
+      });
+    };
+    // Both hooks reproduce the same read/commit boundary. The direct-set hook
+    // exposes the pre-fix failure; the transaction hook forces a retry now.
+    db.setBeforeDirectSet(async (ref) => {
+      if (ref.collectionName !== COLLECTIONS.teamRosterMembers) return;
+      db.setBeforeDirectSet(null);
+      await editMember();
+    });
+    db.setBeforeCommit(async (writes) => {
+      if (interrupted || !writes.some(({ ref }) => ref.collectionName === COLLECTIONS.teamRosterMembers)) return;
+      db.setBeforeCommit(null);
+      await editMember();
+    });
+    const applied = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+      context: fixture.context, params: { submissionId }, body: { action: "applied", memberId: fixture.memberId },
+    });
+    assert.equal(applied.statusCode, 200, JSON.stringify(applied.payload));
+    assert.equal(interrupted, true);
+    const member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+    assert.deepEqual(member.serviceAvailability, { concurrent: "available", [occurrenceId]: "unavailable" });
+    assert.equal(member.email, "new@example.test");
+    assert.equal(member.notes, "New admin note");
+    assert.deepEqual(member.desiredPositionIds, ["new-preference"]);
+  });
+}
+
+test("administrative intake application rejects form enablement changed before commit", async (t) => {
+  const db = createFirestoreMock();
+  const fixture = await createFixture(db, "apply-form-change");
+  t.after(() => setServerFirestoreForTests(null));
+  const form = await getDoc(COLLECTIONS.teamIntakeForms, fixture.formId);
+  const occurrenceId = form.availabilityOccurrences[0].occurrenceId;
+  await db.collection(COLLECTIONS.teamRosterMembers).doc(fixture.memberId).update({
+    serviceAvailability: { [occurrenceId]: "unavailable" },
+  });
+  const submissionId = "form-enablement-race";
+  await db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId).set({
+    submissionId, formId: fixture.formId, churchId: fixture.context.churchId, occurrenceAvailability: {},
+  });
+  db.setBeforeCommit(async (writes) => {
+    if (!writes.some(({ ref }) => ref.collectionName === COLLECTIONS.teamRosterMembers)) return;
+    db.setBeforeCommit(null);
+    await db.collection(COLLECTIONS.teamIntakeForms).doc(fixture.formId).update({ enabledFields: [] });
+  });
+  const applied = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context: fixture.context, params: { submissionId }, body: { action: "applied", memberId: fixture.memberId },
+  });
+  assert.equal(applied.statusCode, 409, JSON.stringify(applied.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.deepEqual(member.serviceAvailability, { [occurrenceId]: "unavailable" });
+});
+
 test("scope change that commits before first recipient issuance cannot use the stale form snapshot", async (t) => {
   const db = createFirestoreMock();
   const fixture = await createFixture(db, "scope-first");

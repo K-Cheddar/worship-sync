@@ -19,6 +19,7 @@ import express from "express";
 import twilio from "twilio";
 import { createHash, randomBytes } from "node:crypto";
 import { smsConsentIdForChurchPhone } from "./smsConsent.js";
+import { createTeamIntakeRecipientToken, hashTeamIntakeRecipientToken, resolveTeamIntakeRecipientTokenSecret } from "./teamIntakeRecipientToken.js";
 import { isPublicSharePathname } from "../client/src/utils/publicSharePathRedirect.ts";
 import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
 import { generateScheduleOccurrences } from "../client/src/utils/teamScheduleOccurrences.ts";
@@ -39,6 +40,7 @@ import {
   removeServiceFlowSseClient,
 } from "../server/serviceFlowSse.js";
 
+const intakeRecipientTestSecret = resolveTeamIntakeRecipientTokenSecret();
 const {
   authHandlers,
   requireBroadTeamsViewSession,
@@ -8538,6 +8540,151 @@ test("applying intake to an existing member sets desire without granting eligibi
   // Linking an existing member is not a create.
   assert.notEqual(applyRes.payload.submission.appliedMemberCreated, true);
 });
+
+test("intake application preserves uncollected fields and accepts explicit replacements in the fallback store", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("intake_field_integrity");
+  const roster = await seedTeam(context, {
+    teamName: "Intake integrity",
+    positions: [{ name: "Vocal", icon: "mic" }, { name: "Keys", icon: "piano" }],
+    members: [{ firstName: "Sam", lastName: "Lee", positions: ["Vocal"] }],
+  });
+  const memberId = roster.memberIds.Sam;
+  const formId = "intake_field_integrity_form";
+  const occurrenceId = "service@2099-11-08T10:00:00.000Z";
+  const saved = {
+    desiredPositionIds: [roster.positionIds.Vocal],
+    serviceAvailability: { [occurrenceId]: "unavailable", outside: "unavailable" },
+    blockoutDates: [{ startDate: "2099-11-10", endDate: "2099-11-11", notes: "Saved" }],
+    servingFrequency: "weekly",
+    recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
+  };
+  await setDoc(COLLECTIONS.teamRosterMembers, memberId, saved, { merge: true });
+  const form = {
+    formId, churchId: context.churchId, purpose: "general_intake", active: true,
+    teamIds: [roster.teamId], startDate: "2099-11-01", endDate: "2099-11-30",
+    availabilityOccurrences: [{ occurrenceId, startsAt: "2099-11-08T10:00:00.000Z" }],
+    enabledFields: [], publicTokenHash: createHash("sha256").update("intake-integrity-public").digest("hex"),
+  };
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, form);
+  const publicResponse = createRes();
+  await authHandlers.submitTeamIntake({
+    params: {}, headers: {}, session: createSession(), query: { token: "intake-integrity-public" },
+    body: { positionIds: [], occurrenceAvailability: {}, blockoutRanges: [] },
+  }, publicResponse);
+  assert.equal(publicResponse.statusCode, 200, JSON.stringify(publicResponse.payload));
+  const apply = (submissionId) => callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context, params: { submissionId }, body: { action: "applied", memberId },
+  });
+  let applied = await apply(publicResponse.payload.submissionId);
+  assert.equal(applied.statusCode, 200, JSON.stringify(applied.payload));
+  for (const [key, value] of Object.entries(saved)) assert.deepEqual(applied.payload.member[key], value, key);
+  // Legacy records already contain normalized empty fields. Current server
+  // enablement must remain authoritative when processing or reapplying them.
+  await setDoc(COLLECTIONS.teamIntakeSubmissions, "legacy-disabled-integrity", {
+    formId, churchId: context.churchId, positionIds: [], occurrenceAvailability: {}, blockoutRanges: [],
+    servingFrequency: "as_needed", recurringAvailability: {},
+  });
+  applied = await apply("legacy-disabled-integrity");
+  assert.equal(applied.statusCode, 200, JSON.stringify(applied.payload));
+  for (const [key, value] of Object.entries(saved)) assert.deepEqual(applied.payload.member[key], value, key);
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    enabledFields: ["positions", "availability", "blockoutDates", "recurringAvailability", "schedulingFrequency"],
+  }, { merge: true });
+  for (const [suffix, payload, expectedPositions] of [
+    ["omitted", {}, saved.desiredPositionIds],
+    ["selected", { positionIds: [roster.positionIds.Keys] }, [roster.positionIds.Keys]],
+    ["cleared", { positionIds: [], occurrenceAvailability: {}, blockoutRanges: [] }, []],
+  ]) {
+    const submissionId = `integrity-${suffix}`;
+    await setDoc(COLLECTIONS.teamIntakeSubmissions, submissionId, { formId, churchId: context.churchId, ...payload });
+    applied = await apply(submissionId);
+    assert.equal(applied.statusCode, 200, JSON.stringify(applied.payload));
+    assert.deepEqual(applied.payload.member.desiredPositionIds, expectedPositions);
+    assert.deepEqual(applied.payload.member.serviceAvailability, suffix === "cleared" ? { outside: "unavailable" } : saved.serviceAvailability);
+    assert.deepEqual(applied.payload.member.blockoutDates, suffix === "cleared" ? [] : saved.blockoutDates);
+    assert.equal(applied.payload.member.servingFrequency, saved.servingFrequency);
+    assert.deepEqual(applied.payload.member.recurringAvailability, saved.recurringAvailability);
+  }
+});
+
+for (const purpose of ["general_intake", "team_availability"]) {
+  test(`${purpose} fallback recipient preserves omitted answers and completed retries`, async (t) => {
+    if (skipUnlessInMemoryAuth(t)) return;
+    const context = await createAdminContext(`intake_integrity_${purpose}`);
+    const memberId = `integrity_member_${purpose}`;
+    const formId = `integrity_form_${purpose}`;
+    const recipientId = `integrity_recipient_${purpose}`;
+    const token = createTeamIntakeRecipientToken();
+    const occurrenceId = "service@2099-11-08T10:00:00.000Z";
+    const secondId = "service@2099-11-15T10:00:00.000Z";
+    const teamId = `integrity_team_${purpose}`;
+    await setDoc(COLLECTIONS.teams, teamId, { teamId, churchId: context.churchId, memberIds: [memberId] });
+    await setDoc(COLLECTIONS.teamRosterMembers, memberId, {
+      memberId, churchId: context.churchId, firstName: "Sam", lastName: "Lee", desiredPositionIds: ["keep"],
+      serviceAvailability: { [occurrenceId]: "unavailable", [secondId]: "available", outside: "unavailable" },
+    });
+    await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+      formId, churchId: context.churchId, purpose, active: true, teamIds: [teamId],
+      startDate: "2099-11-01", endDate: "2099-11-30", responseDeadline: "2099-11-30", enabledFields: [],
+      availabilityOccurrences: [occurrenceId, secondId].map((id) => ({ occurrenceId: id })),
+    });
+    await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+      recipientId, formId, churchId: context.churchId, memberId, recipientTokenHash: hashTeamIntakeRecipientToken(token, intakeRecipientTestSecret),
+    });
+    const submit = async (body) => {
+      const response = createRes();
+      await authHandlers.submitTeamIntake({ params: {}, headers: {}, session: createSession(), query: { token, recipientOnly: "true" }, body }, response);
+      assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+      return response.payload.submissionId;
+    };
+    let concurrentEdit = false;
+    setAuthReadObserverForServerTests(({ type, collectionName, id }) => {
+      if (type !== "getDoc" || collectionName !== COLLECTIONS.teamRosterMembers || id !== memberId) return;
+      setAuthReadObserverForServerTests(null);
+      queueMicrotask(() => {
+        concurrentEdit = true;
+        void setDoc(COLLECTIONS.teamRosterMembers, memberId, {
+          desiredPositionIds: ["keep-newer"], notes: "Concurrent admin note",
+        }, { merge: true });
+      });
+    });
+    t.after(() => setAuthReadObserverForServerTests(null));
+    const submissionId = await submit({ positionIds: [], occurrenceAvailability: {} });
+    let member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    assert.equal(concurrentEdit, true);
+    assert.deepEqual(member.desiredPositionIds, ["keep-newer"]);
+    assert.equal(member.notes, "Concurrent admin note");
+    assert.equal(member.serviceAvailability[occurrenceId], "unavailable");
+    await setDoc(COLLECTIONS.teamIntakeForms, formId, { enabledFields: ["availability", "notes"] }, { merge: true });
+    assert.equal(await submit({ occurrenceAvailability: { [occurrenceId]: "available", injected: "available" } }), submissionId);
+    member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    assert.deepEqual(member.serviceAvailability, { [occurrenceId]: "available", outside: "unavailable" });
+    assert.equal(await submit({ notes: "Other field only" }), submissionId);
+    member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    assert.deepEqual(member.serviceAvailability, { [occurrenceId]: "available", outside: "unavailable" });
+    const stored = await getDoc(COLLECTIONS.teamIntakeSubmissions, submissionId);
+    assert.deepEqual(stored.occurrenceAvailability, { [occurrenceId]: "available" });
+    // Simulate interruption after the applied response checkpoint, before the
+    // fallback's final recipient write.
+    await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, { submissionId: null, respondedAt: null }, { merge: true });
+    await setDoc(COLLECTIONS.teamRosterMembers, memberId, { serviceAvailability: { ...member.serviceAvailability, newer: "available" } }, { merge: true });
+    await submit({ notes: "Other field only" });
+    const repairedRecipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+    assert.equal(repairedRecipient.submissionId, submissionId);
+    assert.ok(repairedRecipient.respondedAt);
+    member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    assert.equal(member.serviceAvailability.newer, "available");
+    await submit({ occurrenceAvailability: {} });
+    member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    assert.deepEqual(member.serviceAvailability, { outside: "unavailable", newer: "available" });
+    await setDoc(COLLECTIONS.teamRosterMembers, memberId, { serviceAvailability: { ...member.serviceAvailability, [occurrenceId]: "unavailable" } }, { merge: true });
+    await submit({ occurrenceAvailability: {} });
+    member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+    assert.equal(member.serviceAvailability[occurrenceId], "unavailable");
+    assert.equal((await queryDocs(COLLECTIONS.teamIntakeSubmissions, [{ field: "formId", value: formId }])).length, 1);
+  });
+}
 
 test("a dismissed intake submission can be restored to the active queue", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;

@@ -43,6 +43,17 @@ A volunteer opens their recipient-bound link and sees the existing form. Enabled
 
 ## Product decisions
 
+- **Data-integrity clarification (2026-11-10 request):** Disabled or entirely
+  omitted response fields preserve existing member values. Server form enablement
+  remains authoritative when processing older responses. Enabled, explicitly
+  submitted empty positions or blockouts still clear their existing scope.
+  An explicitly submitted availability map is a complete replacement for the
+  form's occurrence IDs, including an empty map; dates outside the form remain
+  unchanged. Omitting the whole map preserves saved answers. Availability-only
+  forms continue to update availability and missing personal details only.
+  Identical completed recipient requests return the existing response identity
+  without reapplying member edits. See the [audit](../intake-data-integrity-audit.md).
+
 - **Question/problem:** Personalized links hid profile inputs even when the linked roster member lacked those values.
 - **Approved behavior:** Show enabled missing fields within the existing form and save nonblank, still-missing values to the linked member without replacing populated values.
 - **Why:** Volunteers can complete missing information while responding without a separate profile workflow.

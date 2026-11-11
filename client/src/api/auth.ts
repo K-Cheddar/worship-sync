@@ -1408,8 +1408,8 @@ export type TeamIntakeSubmissionPayload = {
   title?: string;
   birthDate?: import("./authTypes").BirthDate | null;
   positionIds: string[];
-  occurrenceAvailability: TeamIntakeSubmission["occurrenceAvailability"];
-  blockoutRanges: TeamIntakeSubmission["blockoutRanges"];
+  occurrenceAvailability: NonNullable<TeamIntakeSubmission["occurrenceAvailability"]>;
+  blockoutRanges: NonNullable<TeamIntakeSubmission["blockoutRanges"]>;
   notes?: string;
   servingFrequency?: TeamIntakeSubmission["servingFrequency"];
   recurringAvailability?: TeamIntakeSubmission["recurringAvailability"];

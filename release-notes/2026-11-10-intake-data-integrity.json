@@ -1,0 +1,7 @@
+{
+  "id": "2026-11-10-intake-data-integrity",
+  "date": "2026-11-10",
+  "type": "fixed",
+  "title": "Safer volunteer form responses",
+  "description": "Volunteer forms preserve saved preferences and availability for fields they don't collect, and repeated requests preserve later member updates."
+}
