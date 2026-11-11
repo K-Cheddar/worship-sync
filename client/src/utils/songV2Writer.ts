@@ -49,8 +49,8 @@ export class SongV2ConcurrentEditError extends Error {
 }
 
 // Compare authored JSON values, ignoring object key order and absent/undefined
-// equivalence. Only top-level physical revision and audit fields are excluded.
-const auditKeys = new Set(["_rev", "createdAt", "createdBy", "updatedAt", "updatedBy"]);
+// equivalence. Top-level Pouch revision/conflict and audit metadata are excluded.
+const auditKeys = new Set(["_rev", "_conflicts", "createdAt", "createdBy", "updatedAt", "updatedBy"]);
 const canonicalValue = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(canonicalValue);
   if (value !== null && typeof value === "object") {
@@ -65,6 +65,21 @@ const authoredContent = (doc: Document) => JSON.stringify(canonicalValue(
   Object.fromEntries(Object.entries(doc).filter(([key]) => !auditKeys.has(key))),
 ));
 const changed = (a: Document, b: Document) => authoredContent(a) !== authoredContent(b);
+
+/** Compares complete authored document sets while ignoring Pouch revisions and audit fields. */
+export function sameSongV2AuthoredContent(left: SongV2Documents, right: SongV2Documents): boolean {
+  const sameDocuments = <T extends Document>(leftDocuments: T[], rightDocuments: T[]) => {
+    if (leftDocuments.length !== rightDocuments.length) return false;
+    const rightById = new Map(rightDocuments.map(document => [document._id, document]));
+    return leftDocuments.every(document => {
+      const matching = rightById.get(document._id);
+      return !!matching && !changed(document, matching);
+    });
+  };
+  return !changed(left.root, right.root) &&
+    sameDocuments(left.arrangements, right.arrangements) &&
+    sameDocuments(left.slides, right.slides);
+}
 
 function planChildren<T extends Document>(current: T[], desired: T[]): Changes<T> {
   const before = new Map(current.map(doc => [doc._id, doc]));

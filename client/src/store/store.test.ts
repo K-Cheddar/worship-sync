@@ -985,6 +985,193 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     }
   });
 
+  it("detects an optional slide field added while a remote choice is being verified", async () => {
+    jest.useRealTimers();
+    const songId = `store-v2-remote-optional-slide-field-${Date.now()}-${Math.random()}`;
+    const localDb = new PouchDB(`${songId}-local`, { adapter: "idb" });
+    const remoteDb = new PouchDB(`${songId}-remote`, { adapter: "idb" });
+    const source = createSongDoc({
+      _id: songId,
+      arrangements: [{
+        id: "a", name: "Master", formattedLyrics: [], songOrder: [],
+        slides: ["A", "B"].map(id => ({
+          id, name: `Verse ${id}`, type: "Verse",
+          boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }],
+        })),
+      }],
+    }) as Parameters<typeof createSongV2>[1];
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>(resolve => { releaseFirstWrite = resolve; });
+    let firstWriteCommitted!: () => void;
+    const firstWrite = new Promise<void>(resolve => { firstWriteCommitted = resolve; });
+    let releaseSnapshotRead!: () => void;
+    const snapshotReadGate = new Promise<void>(resolve => { releaseSnapshotRead = resolve; });
+    let verificationReadStarted!: () => void;
+    const verificationRead = new Promise<void>(resolve => { verificationReadStarted = resolve; });
+    let env: ReturnType<typeof setup> | undefined;
+    let session: { release: () => void } | undefined;
+    let put: jest.SpyInstance | undefined;
+    let snapshotSpy: jest.SpyInstance<
+      ReturnType<typeof loadSongV2Snapshot>,
+      Parameters<typeof loadSongV2Snapshot>
+    > | undefined;
+    let unsubscribe: (() => void) | undefined;
+    let applyingRemote: Promise<unknown> | undefined;
+
+    try {
+      await createSongV2(localDb, source);
+      await localDb.replicate.to(remoteDb);
+      const baseline = (await loadSongV2Snapshot(localDb, songId)).hydrated;
+      env = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: localDb,
+        baseline,
+      });
+      await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      const owner: ItemContentOwner = {
+        scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+      };
+      env.globalFireDbInfo.churchId = owner.churchId;
+      const contentSession = env.contentReplicationActivity.beginContentDatabaseSession(localDb.name);
+      session = contentSession;
+      env.deferredMutations.setActiveContentDatabase(owner, localDb as never);
+      contentSession.markInitialReplicationComplete();
+      env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(true));
+
+      const originalPut = localDb.put.bind(localDb);
+      put = jest.spyOn(localDb, "put").mockImplementation(async document => {
+        const result = await originalPut(document);
+        if (document._id === `song-v2:slide:${songId}:a:A`) {
+          firstWriteCommitted();
+          await firstWriteGate;
+        }
+        return result;
+      });
+
+      let pauseNextSnapshotRead = false;
+      unsubscribe = env.store.subscribe(() => {
+        const current = env!.store.getState().undoable.present.item;
+        if (current.arrangements[0]?.slides[0]?.boxes[0]?.words === "Local slide A" &&
+          !current.hasPendingUpdate && !current.pendingRemoteItem) {
+          pauseNextSnapshotRead = true;
+        }
+      });
+      const originalLoadSnapshot = env.songPersistence.loadSongV2Snapshot.bind(env.songPersistence);
+      snapshotSpy = jest.spyOn(env.songPersistence, "loadSongV2Snapshot") as unknown as NonNullable<typeof snapshotSpy>;
+      snapshotSpy.mockImplementation(
+        async (database: PouchDB.Database, requestedSongId: string, includeConflicts?: boolean) => {
+          if (pauseNextSnapshotRead && requestedSongId === songId) {
+            pauseNextSnapshotRead = false;
+            verificationReadStarted();
+            await snapshotReadGate;
+          }
+          return originalLoadSnapshot(database, requestedSongId, includeConflicts);
+        },
+      );
+
+      env.edit("Local slide A");
+      await firstWrite;
+      const remoteBaseline = await loadSongV2Snapshot(remoteDb, songId);
+      const firstRemoteEdit = structuredClone(remoteBaseline.hydrated);
+      firstRemoteEdit.arrangements[0].slides[1].boxes[0].words = "Remote slide B";
+      await env.songPersistence.saveSong(
+        remoteDb,
+        firstRemoteEdit,
+        remoteBaseline.hydrated,
+        undefined,
+        remoteBaseline,
+      );
+      const firstRemoteSave = await loadSongV2Snapshot(remoteDb, songId);
+      expect(firstRemoteSave.root._rev).toBe(baseline._rev);
+      await remoteDb.replicate.to(localDb);
+      env.store.dispatch(env.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: localDb as never,
+        owner,
+        sessionToken: contentSession.token,
+      }]));
+      await new Promise(resolve => setTimeout(resolve, 70));
+      await flushListenerEffects();
+
+      const offeredItem = env.store.getState().undoable.present.item.pendingRemoteItem;
+      expect(offeredItem?.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+      expect(offeredItem?.arrangements[0].slides[1].mediaSource).toBeUndefined();
+      const remoteDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      applyingRemote = remoteDecision;
+      let remoteDecisionSettled = false;
+      void remoteDecision.then(
+        () => { remoteDecisionSettled = true; },
+        () => { remoteDecisionSettled = true; },
+      );
+
+      releaseFirstWrite();
+      await verificationRead;
+      expect(remoteDecisionSettled).toBe(false);
+
+      // Keep the Redux offer at the earlier revision while the physical child
+      // update arrives during the authoritative reread.
+      const latestRemoteBaseline = await loadSongV2Snapshot(remoteDb, songId);
+      const latestRemoteEdit = structuredClone(latestRemoteBaseline.hydrated);
+      latestRemoteEdit.arrangements[0].slides[1].mediaSource = {
+        kind: "local-video-input",
+        sourceId: "camera-1",
+        label: "Camera 1",
+      };
+      await env.songPersistence.saveSong(
+        remoteDb,
+        latestRemoteEdit,
+        latestRemoteBaseline.hydrated,
+        undefined,
+        latestRemoteBaseline,
+      );
+      const latestRemoteSave = await loadSongV2Snapshot(remoteDb, songId);
+      expect(latestRemoteSave.root._rev).toBe(baseline._rev);
+      expect(latestRemoteSave.hydrated.arrangements[0].slides[1].mediaSource)
+        .toEqual(latestRemoteEdit.arrangements[0].slides[1].mediaSource);
+      await remoteDb.replicate.to(localDb);
+      releaseSnapshotRead();
+      await remoteDecision;
+
+      const physical = await loadSongV2Snapshot(localDb, songId, true);
+      expect(physical.root._rev).toBe(baseline._rev);
+      expect(physical.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local slide A");
+      expect(physical.hydrated.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+      expect(physical.hydrated.arrangements[0].slides[1].mediaSource)
+        .toEqual(latestRemoteEdit.arrangements[0].slides[1].mediaSource);
+
+      const refreshedEditor = env.store.getState().undoable.present.item;
+      expect(refreshedEditor.hasRemoteUpdate).toBe(true);
+      expect(refreshedEditor.pendingRemoteItem?.arrangements[0].slides[1].mediaSource)
+        .toEqual(physical.hydrated.arrangements[0].slides[1].mediaSource);
+
+      const refreshedDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      if (refreshedDecision instanceof Promise) applyingRemote = refreshedDecision;
+      await refreshedDecision;
+      const editor = env.store.getState().undoable.present.item;
+      expect(editor.arrangements[0].slides[1].mediaSource)
+        .toEqual(physical.hydrated.arrangements[0].slides[1].mediaSource);
+      expect(editor.hasRemoteUpdate).toBe(false);
+      expect(editor.pendingRemoteItem).toBeNull();
+      expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([]);
+    } finally {
+      releaseFirstWrite();
+      releaseSnapshotRead();
+      await applyingRemote?.catch(() => undefined);
+      unsubscribe?.();
+      snapshotSpy?.mockRestore();
+      put?.mockRestore();
+      if (session) {
+        session.release();
+        env?.deferredMutations.setActiveContentDatabase(null);
+      }
+      await env?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await Promise.all([localDb.destroy(), remoteDb.destroy()]);
+    }
+  });
+
   it("ignores unrelated slides, coalesces active notifications, and uses only scoped reads", async () => {
     const env = setup();
     env.store.dispatch(env.songV2DocumentsChanged([{ songId: "unrelated", libraryChanged: false }]));

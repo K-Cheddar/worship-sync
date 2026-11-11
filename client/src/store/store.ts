@@ -173,7 +173,10 @@ import { applyPouchAudit } from "@/utils/pouchAudit";
 import {
   loadReconciledSongV2Snapshot, pruneResolvedSongV2Conflicts, SongV2ReplicationConflictError,
 } from "../utils/songV2ReplicationConflicts";
-import { SongV2MutationNotAuthorizedError } from "../utils/songV2Writer";
+import {
+  sameSongV2AuthoredContent,
+  SongV2MutationNotAuthorizedError,
+} from "../utils/songV2Writer";
 import {
   isFirebasePermissionDenied,
   logFirebaseOperationFailure,
@@ -5487,31 +5490,12 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
             finishExplicitRemoteDecision();
             return action;
           }
-          const requestedDocuments = serializeSongToV2Documents(requestedRemoteItem);
-          const withoutRevisionMetadata = (document: Record<string, unknown>) =>
-            Object.fromEntries(Object.entries(document).filter(([key]) =>
-              !["_rev", "_conflicts", "createdAt", "updatedAt", "createdBy", "updatedBy"].includes(key),
-            ));
-          const requestedPhysicalDocuments = [
-            requestedDocuments.root,
-            ...requestedDocuments.arrangements,
-            ...requestedDocuments.slides,
-          ];
-          const currentPhysicalDocuments = [
-            currentSnapshot.root,
-            ...currentSnapshot.arrangements,
-            ...currentSnapshot.slides,
-          ];
-          const requestedDocumentContents = requestedPhysicalDocuments
-            .map(document => withoutRevisionMetadata(document));
-          const currentDocumentContents = currentPhysicalDocuments.map((document, index) => {
-            const documentContents = requestedDocumentContents[index] ?? {};
-            const current = document as unknown as Record<string, unknown>;
-            return Object.fromEntries(Object.keys(documentContents).map(key => [key, current[key]]));
-          });
           const remoteSnapshotIsCurrent =
             requestedRemoteItem._rev === currentSnapshot.root._rev &&
-            _.isEqual(requestedDocumentContents, currentDocumentContents) &&
+            sameSongV2AuthoredContent(
+              serializeSongToV2Documents(requestedRemoteItem),
+              currentSnapshot,
+            ) &&
             requestedConflicts === songV2ConflictFingerprint(currentSnapshot.conflicts);
           if (!remoteSnapshotIsCurrent) {
             // A successful save may have advanced this song after the UI
