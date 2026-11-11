@@ -535,10 +535,15 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       env.store.getState().undoable.present.item.name !== desired.name; attempt += 1) {
       await flushListenerEffects();
     }
-    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate({
+    const remoteItem = {
       ...env.baseline,
       name: "Remote title",
-    }));
+    };
+    env.docs.set(env.physical.root._id, {
+      ...env.docs.get(env.physical.root._id),
+      name: remoteItem.name,
+    });
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(remoteItem));
     env.store.dispatch(env.itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
     env.recoveryStorage.markSongV2AutosaveRecoveryDiscarded.mockRejectedValueOnce(
       new Error("IndexedDB transaction aborted"),
@@ -561,6 +566,65 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       status: "discarded",
     });
 
+    session.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("keeps a remote choice pending when authoritative snapshot verification fails", async () => {
+    const recoveryStore = new Map<string, any>();
+    const env = setup(recoveryStore);
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const desired = { ...env.baseline, contentOwner: owner, name: "Rejected local title" };
+    const record = {
+      id: env.recoveryStorage.createSongV2AutosaveRecoveryId(owner, desired._id),
+      owner,
+      itemId: desired._id,
+      desired,
+      baseline: env.baseline,
+      mutationVersion: 1,
+      status: "needs-review",
+    };
+    recoveryStore.set(record.id, record);
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    session.markInitialReplicationComplete();
+    for (let attempt = 0; attempt < 100 &&
+      env.store.getState().undoable.present.item.name !== desired.name; attempt += 1) {
+      await flushListenerEffects();
+    }
+
+    const remoteItem = { ...env.baseline, name: "Remote title" };
+    env.docs.set(env.physical.root._id, {
+      ...env.docs.get(env.physical.root._id),
+      name: remoteItem.name,
+    });
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(remoteItem));
+    env.store.dispatch(env.itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+    const snapshotReadError = new Error("PouchDB temporarily unavailable");
+    const snapshotSpy = jest.spyOn(env.songPersistence, "loadSongV2Snapshot")
+      .mockRejectedValueOnce(snapshotReadError);
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+
+    const current = env.store.getState().undoable.present.item;
+    expect(current.name).toBe(desired.name);
+    expect(current.pendingRemoteItem?.name).toBe("Remote title");
+    expect(current.remoteUpdateReason).toBe("song-recovery-discard-failed");
+    expect(recoveryStore.get(record.id).status).toBe("needs-review");
+    expect(env.recoveryStorage.markSongV2AutosaveRecoveryDiscarded).not.toHaveBeenCalled();
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Could not verify the current song before applying the remote snapshot",
+      snapshotReadError,
+    );
+
+    snapshotSpy.mockRestore();
+    errorSpy.mockRestore();
     session.release();
     env.deferredMutations.setActiveContentDatabase(null);
   });
@@ -591,10 +655,16 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       env.store.getState().undoable.present.item.name !== desired.name; attempt += 1) {
       await flushListenerEffects();
     }
-    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate({
-      ...env.baseline,
-      name: "Remote title",
-    }));
+    const remoteItem = structuredClone(env.baseline);
+    remoteItem.arrangements[0].slides[1].boxes[0].words = "Remote slide B";
+    const remoteDocuments = env.songPersistence.serializeSongToV2Documents(remoteItem) as SongV2Documents;
+    const remoteSlideB = remoteDocuments.slides.find(slide => slide.id === "B");
+    expect(remoteSlideB).toBeDefined();
+    env.docs.set(remoteSlideB!._id, {
+      ...remoteSlideB,
+      _rev: env.docs.get(remoteSlideB!._id)._rev,
+    });
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(remoteItem));
     env.store.dispatch(env.itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
 
     let discardStarted!: () => void;
@@ -624,6 +694,7 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     expect(current.hasRemoteUpdate).toBe(true);
     expect(env.docs.get(env.physical.root._id).name).toBe("Local title");
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Typed while discarding");
+    expect(env.docs.get(env.physical.slides[1]._id).boxes[0].words).toBe("Remote slide B");
     expect(recoveryStore.get(record.id).status).toBe("discarded");
 
     session.release();
@@ -771,6 +842,140 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       await applyingRemote?.catch(() => undefined);
       if (put) put.mockRestore();
       consoleErrorSpy?.mockRestore();
+      if (session) {
+        session.release();
+        env?.deferredMutations.setActiveContentDatabase(null);
+      }
+      await env?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await Promise.all([localDb.destroy(), remoteDb.destroy()]);
+    }
+  });
+
+  it("does not leave a stale remote slide snapshot after an in-flight local save succeeds", async () => {
+    jest.useRealTimers();
+    const songId = `store-v2-remote-slide-choice-${Date.now()}-${Math.random()}`;
+    const localDb = new PouchDB(`${songId}-local`, { adapter: "idb" });
+    const remoteDb = new PouchDB(`${songId}-remote`, { adapter: "idb" });
+    const source = createSongDoc({
+      _id: songId,
+      arrangements: [{
+        id: "a", name: "Master", formattedLyrics: [], songOrder: [],
+        slides: ["A", "B"].map(id => ({
+          id, name: `Verse ${id}`, type: "Verse",
+          boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }],
+        })),
+      }],
+    }) as Parameters<typeof createSongV2>[1];
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>(resolve => { releaseFirstWrite = resolve; });
+    let firstWriteCommitted!: () => void;
+    const firstWrite = new Promise<void>(resolve => { firstWriteCommitted = resolve; });
+    let env: ReturnType<typeof setup> | undefined;
+    let session: { release: () => void } | undefined;
+    let applyingRemote: Promise<unknown> | undefined;
+    let put: jest.SpyInstance | undefined;
+
+    try {
+      await createSongV2(localDb, source);
+      await localDb.replicate.to(remoteDb);
+      const baseline = (await loadSongV2Snapshot(localDb, songId)).hydrated;
+      env = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: localDb,
+        baseline,
+      });
+      await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      const owner: ItemContentOwner = {
+        scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+      };
+      env.globalFireDbInfo.churchId = owner.churchId;
+      const contentSession = env.contentReplicationActivity.beginContentDatabaseSession(localDb.name);
+      session = contentSession;
+      env.deferredMutations.setActiveContentDatabase(owner, localDb as never);
+      contentSession.markInitialReplicationComplete();
+      env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(true));
+
+      const originalPut = localDb.put.bind(localDb);
+      put = jest.spyOn(localDb, "put").mockImplementation(async document => {
+        const result = await originalPut(document);
+        if (document._id === `song-v2:slide:${songId}:a:A`) {
+          firstWriteCommitted();
+          await firstWriteGate;
+        }
+        return result;
+      });
+
+      env.editSong("Local title", "Local lyrics");
+      await firstWrite;
+      const remoteBaseline = await loadSongV2Snapshot(remoteDb, songId);
+      const remoteEdit = structuredClone(remoteBaseline.hydrated);
+      remoteEdit.arrangements[0].slides[1].boxes[0].words = "Remote slide B";
+      await env.songPersistence.saveSong(
+        remoteDb,
+        remoteEdit,
+        remoteBaseline.hydrated,
+        undefined,
+        remoteBaseline,
+      );
+      const remoteSaved = await loadSongV2Snapshot(remoteDb, songId);
+      expect(remoteSaved.root._rev).toBe(baseline._rev);
+      await remoteDb.replicate.to(localDb);
+
+      const replicated = await loadSongV2Snapshot(localDb, songId, true);
+      expect(replicated.hydrated.name).toBe(baseline.name);
+      expect(replicated.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(replicated.hydrated.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+      env.store.dispatch(env.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: localDb as never,
+        owner,
+        sessionToken: contentSession.token,
+      }]));
+      await new Promise(resolve => setTimeout(resolve, 70));
+      await flushListenerEffects();
+
+      const buffered = env.store.getState().undoable.present.item;
+      expect(buffered.hasRemoteUpdate).toBe(true);
+      expect(buffered.pendingRemoteItem?.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+      const remoteDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      applyingRemote = remoteDecision;
+      releaseFirstWrite();
+      await remoteDecision;
+
+      const physical = await loadSongV2Snapshot(localDb, songId, true);
+      expect(put?.mock.calls.map(([document]) => document._id)).toContain(physical.root._id);
+      expect(physical.hydrated.name).toBe("Local title");
+      expect(physical.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(physical.hydrated.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+
+      const refreshedEditor = env.store.getState().undoable.present.item;
+      expect(refreshedEditor.hasRemoteUpdate).toBe(true);
+      expect(refreshedEditor.pendingRemoteItem?.name).toBe(physical.hydrated.name);
+      expect(refreshedEditor.pendingRemoteItem?.arrangements[0].slides[0].boxes[0].words)
+        .toBe(physical.hydrated.arrangements[0].slides[0].boxes[0].words);
+      expect(refreshedEditor.pendingRemoteItem?.arrangements[0].slides[1].boxes[0].words)
+        .toBe(physical.hydrated.arrangements[0].slides[1].boxes[0].words);
+
+      const refreshedRemoteDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      if (refreshedRemoteDecision instanceof Promise) applyingRemote = refreshedRemoteDecision;
+      await refreshedRemoteDecision;
+      const editor = env.store.getState().undoable.present.item;
+      expect(editor.name).toBe(physical.hydrated.name);
+      expect(editor.arrangements[0].slides[0].boxes[0].words).toBe(physical.hydrated.arrangements[0].slides[0].boxes[0].words);
+      expect(editor.arrangements[0].slides[1].boxes[0].words).toBe(physical.hydrated.arrangements[0].slides[1].boxes[0].words);
+      expect(editor.baseItem?._rev).toBe(physical.root._rev);
+      expect(editor.hasPendingUpdate).toBe(false);
+      expect(editor.hasRemoteUpdate).toBe(false);
+      expect(editor.pendingRemoteItem).toBeNull();
+      expect(editor.pendingSongV2Conflicts).toBeUndefined();
+      expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([]);
+    } finally {
+      releaseFirstWrite();
+      await applyingRemote?.catch(() => undefined);
+      if (put) put.mockRestore();
       if (session) {
         session.release();
         env?.deferredMutations.setActiveContentDatabase(null);
@@ -1114,6 +1319,10 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       await new Promise(resolve => setTimeout(resolve, 10));
       await flushListenerEffects();
     }
+    env.docs.set(env.physical.root._id, {
+      ...env.docs.get(env.physical.root._id),
+      name: "Accepted remote title",
+    });
     env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate({
       ...env.baseline,
       name: "Accepted remote title",

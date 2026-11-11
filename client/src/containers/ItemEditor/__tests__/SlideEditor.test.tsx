@@ -1817,7 +1817,7 @@ describe("SlideEditor", () => {
       type: "song",
       docType: "song-v2-root",
       hasRemoteUpdate: true,
-      hasPendingUpdate: true,
+      hasPendingUpdate: false,
       isLyricsEditorOpen: false,
       remoteUpdateReason: "song-recovery-discard-failed",
       pendingRemoteItem: { _id: "default-item", type: "song", docType: "song-v2-root" },

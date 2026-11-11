@@ -342,7 +342,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       }
       return;
     }
-    if (hasRemoteUpdate && !isLyricsEditorOpen && !hasPendingUpdate) {
+    if (hasRemoteUpdate && !isLyricsEditorOpen && !hasPendingUpdate &&
+      remoteUpdateReason !== "song-recovery-discard-failed") {
       dispatch(applyPendingRemoteItem(true));
       return;
     }
