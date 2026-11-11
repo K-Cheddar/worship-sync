@@ -333,7 +333,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   useEffect(() => {
     const isSongV2 = type === "song" && item.docType === "song-v2-root";
     const hasActionableSongV2Update = remoteUpdateReason === "song-content-conflict" ||
-      remoteUpdateReason === "song-version-transition";
+      remoteUpdateReason === "song-version-transition" ||
+      remoteUpdateReason === "song-recovery-discard-failed";
     if (pendingSongV2Conflicts?.length) {
       if (remoteUpdateToastIdRef.current && removeToast) {
         removeToast(remoteUpdateToastIdRef.current);
@@ -356,11 +357,15 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
     if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
 
+    let conflictMessage = `Someone else updated this ${itemTypeLabel}.`;
+    if (remoteUpdateReason === "song-recovery-discard-failed") {
+      conflictMessage = "We couldn't save that choice. Your song draft is still safe; try again.";
+    } else if (remoteUpdateReason === "song-version-transition") {
+      conflictMessage = "This song was migrated while it was open. Copy any draft changes before reloading the current version.";
+    }
     remoteUpdateToastIdRef.current = showToast({
-      message: remoteUpdateReason === "song-version-transition"
-        ? "This song was migrated while it was open. Copy any draft changes before reloading the current version."
-        : `Someone else updated this ${itemTypeLabel}.`,
-      variant: "info",
+      message: conflictMessage,
+      variant: remoteUpdateReason === "song-recovery-discard-failed" ? "error" : "info",
       persist: true,
       showCloseButton: false,
       children: (toastId) => (

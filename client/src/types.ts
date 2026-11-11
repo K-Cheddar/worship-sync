@@ -404,7 +404,7 @@ export type ItemState = ItemProperties & {
   isItemFormatting?: boolean;
   hasPendingUpdate?: boolean;
   hasRemoteUpdate?: boolean;
-  remoteUpdateReason?: "song-version-transition" | "song-content-conflict" | null;
+  remoteUpdateReason?: "song-version-transition" | "song-content-conflict" | "song-recovery-discard-failed" | null;
   baseItem?: DBItem | null;
   pendingRemoteItem?: DBItem | null;
   /** Runtime-only revision leaves shown with the current conflict decision. */

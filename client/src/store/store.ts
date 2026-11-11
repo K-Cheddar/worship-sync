@@ -137,11 +137,12 @@ import {
 } from "../utils/contentReplicationActivity";
 import {
   deleteSongV2AutosaveRecovery,
-  getSongV2AutosaveRecoveryId,
+  createSongV2AutosaveRecoveryId,
   listSongV2AutosaveRecoveries,
   markSongV2AutosaveRecoveryDiscarded,
   markSongV2AutosaveRecoveryNeedsReview,
   putSongV2AutosaveRecovery,
+  withSongV2AutosaveLock,
 } from "../utils/songV2AutosaveRecovery";
 import {
   getControllerPresenceScope,
@@ -215,6 +216,7 @@ const createSongV2MutationGuard = (
   churchId: string | undefined,
   sessionToken: symbol | null,
   operationIsCurrent: () => boolean,
+  operationIsNotExplicitlyDiscarded: () => boolean = () => true,
 ) => {
   let hasCommittedWrite = false;
   return Object.assign(
@@ -235,7 +237,9 @@ const createSongV2MutationGuard = (
       // Supersession can stop a stale operation before it mutates. Once a
       // physical write commits, finish the captured write plan while retaining
       // authorization and database ownership checks at every boundary.
-      return ownerIsCurrent && (hasCommittedWrite || operationIsCurrent());
+      return ownerIsCurrent && (hasCommittedWrite || (
+        operationIsCurrent() && operationIsNotExplicitlyDiscarded()
+      ));
     },
     { onWriteCommitted: () => { hasCommittedWrite = true; } },
   );
@@ -1067,11 +1071,9 @@ type PendingItemAutosave = {
   owner: ReturnType<typeof getItemMutationOwner>;
   mutationVersion: number;
   resolveReplicationConflicts?: ItemState["pendingSongV2Conflicts"];
-  authorizationInterrupted?: boolean;
   recoveryRecordId?: string;
-  recoveryNeedsReview?: boolean;
-  recoveryDiscarded?: boolean;
-  recoveryCheckpointFailed?: boolean;
+  recoveryState?: "interrupted" | "checkpoint-failed" | "needs-review" | "discard-failed" | "discarded";
+  recoveryCheckpointRetryCount?: number;
 };
 const itemAutosaveDebounces = new Map<string, ItemAutosaveDebounce>();
 const itemAutosaveWriteQueues = new Map<string, Promise<void>>();
@@ -1081,6 +1083,20 @@ const pendingItemAutosaves = new Map<string, PendingItemAutosave>();
 const pendingSongV2WriteRecoveries = new Map<string, PendingItemAutosave>();
 const queuedItemAutosaveRetries = new Set<string>();
 let itemAutosaveMutationVersion = 0;
+const explicitRemoteDecisionByItem = new Map<string, { version: number; discarding: boolean }>();
+const songRecoveryCheckpointRetryTimers = new Map<string, {
+  timer: ReturnType<typeof setTimeout>;
+  mutationVersion: number;
+  sessionToken: symbol;
+}>();
+const SONG_RECOVERY_CHECKPOINT_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000] as const;
+
+const clearSongRecoveryCheckpointRetry = (saveKey: string) => {
+  const scheduled = songRecoveryCheckpointRetryTimers.get(saveKey);
+  if (!scheduled) return;
+  clearTimeout(scheduled.timer);
+  songRecoveryCheckpointRetryTimers.delete(saveKey);
+};
 
 const retainInterruptedSongV2Autosave = (
   saveKey: string,
@@ -1094,7 +1110,7 @@ const retainInterruptedSongV2Autosave = (
   if (latestPending?.mutationVersion === pending.mutationVersion) {
     pendingItemAutosaves.set(saveKey, {
       ...latestPending,
-      authorizationInterrupted: true,
+      recoveryState: "interrupted",
     });
   }
 };
@@ -1107,7 +1123,7 @@ const retainSongV2AutosaveForReview = async (
     pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion === pending.mutationVersion,
   );
   if (!wasRecovery) return;
-  const reviewed = { ...pending, recoveryNeedsReview: true };
+  const reviewed = { ...pending, recoveryState: "needs-review" as const };
   pendingSongV2WriteRecoveries.set(saveKey, reviewed);
   if (reviewed.recoveryRecordId && reviewed.owner) {
     await markSongV2AutosaveRecoveryNeedsReview(
@@ -1118,8 +1134,8 @@ const retainSongV2AutosaveForReview = async (
 };
 const pauseAuthorizationAutosaveRetry = (saveKey: string) => {
   const pending = pendingItemAutosaves.get(saveKey);
-  if (pending?.authorizationInterrupted) {
-    pendingItemAutosaves.set(saveKey, { ...pending, authorizationInterrupted: false });
+  if (pending?.recoveryState === "interrupted") {
+    pendingItemAutosaves.set(saveKey, { ...pending, recoveryState: undefined });
   }
 };
 
@@ -1299,6 +1315,8 @@ listenerMiddleware.startListening({
         (contentOwner.scopeId === "unscoped" ? db : undefined)
       : db);
     const saveKey = retryRequest?.saveKey ?? itemAutosaveKey(item);
+    const explicitRemoteDecisionVersionAtStart =
+      explicitRemoteDecisionByItem.get(saveKey)?.version ?? 0;
     let priorPending = pendingItemAutosaves.get(saveKey);
     const churchIdAtStart = globalFireDbInfo.churchId;
     const sessionTokenAtStart = dbAtStart
@@ -1317,29 +1335,6 @@ listenerMiddleware.startListening({
       )
       : () => false;
     if (itemSlice.actions.applyPendingRemoteItem.match(_action)) {
-      cancelItemAutosaveDebounce(saveKey);
-      pendingItemAutosaves.delete(saveKey);
-      const discardedRecovery = pendingSongV2WriteRecoveries.get(saveKey);
-      if (discardedRecovery?.recoveryRecordId && discardedRecovery.owner) {
-        try {
-          await markSongV2AutosaveRecoveryDiscarded(
-            discardedRecovery.recoveryRecordId,
-            discardedRecovery.owner,
-          );
-          await deleteSongV2AutosaveRecovery(
-            discardedRecovery.recoveryRecordId,
-            discardedRecovery.owner,
-          );
-        } catch (error) {
-          console.error("Could not discard the saved song recovery", error);
-          pendingSongV2WriteRecoveries.set(saveKey, {
-            ...discardedRecovery,
-            recoveryDiscarded: true,
-          });
-          return;
-        }
-      }
-      pendingSongV2WriteRecoveries.delete(saveKey);
       if (dbAtStart && item.docType === "song-v2-root" && previousItem.pendingSongV2Conflicts?.length) {
         // The operator explicitly adopted the displayed revision. Retire only
         // conflict leaves belonging to that still-current persisted content.
@@ -1360,7 +1355,9 @@ listenerMiddleware.startListening({
       // Its next authorized save replaces the durable recovery with the new
       // remote baseline and the chosen local content.
       const reviewedRecovery = pendingSongV2WriteRecoveries.get(saveKey);
-      if (reviewedRecovery?.recoveryNeedsReview) {
+      if (reviewedRecovery?.recoveryState === "needs-review" ||
+        reviewedRecovery?.recoveryState === "discard-failed" ||
+        reviewedRecovery?.recoveryState === "discarded") {
         priorPending ??= reviewedRecovery;
         pendingSongV2WriteRecoveries.delete(saveKey);
       }
@@ -1388,9 +1385,10 @@ listenerMiddleware.startListening({
       mutationVersion,
       resolveReplicationConflicts: itemSlice.actions.keepLocalItemChanges.match(_action)
         ? previousItem.pendingSongV2Conflicts : priorPending?.resolveReplicationConflicts,
-      authorizationInterrupted: priorPending?.authorizationInterrupted,
+      recoveryState: priorPending?.recoveryState === "interrupted"
+        ? "interrupted" : undefined,
       recoveryRecordId: priorPending?.recoveryRecordId,
-      recoveryCheckpointFailed: priorPending?.recoveryCheckpointFailed,
+      recoveryCheckpointRetryCount: 0,
     };
     if (
       isPersistedAudioUpdate &&
@@ -1402,7 +1400,10 @@ listenerMiddleware.startListening({
       );
       return;
     }
-    if (!retryRequest) pendingItemAutosaves.set(saveKey, nextPending);
+    if (!retryRequest) {
+      clearSongRecoveryCheckpointRetry(saveKey);
+      pendingItemAutosaves.set(saveKey, nextPending);
+    }
 
     if (retryRequest) {
       cancelItemAutosaveDebounce(saveKey);
@@ -1416,374 +1417,443 @@ listenerMiddleware.startListening({
     }
 
     await enqueueItemAutosaveWrite(saveKey, async () => {
-      let currentPending = retryPending ?? pendingItemAutosaves.get(saveKey);
-      if (currentPending?.mutationVersion !== mutationVersion) return;
-      if (!retryRequest && pendingSongV2WriteRecoveries.has(saveKey)) return;
-      if (retryRequest && !retryRequest.recovery &&
-        pendingItemAutosaves.get(saveKey)?.mutationVersion !== mutationVersion) return;
-      if (retryRequest?.recovery &&
-        pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion !== mutationVersion) return;
-      if (
-        (retryRequest?.recovery || currentPending.authorizationInterrupted) &&
-        (!currentPending.owner || !songRecoveryIsReadyForOwner(currentPending.owner, currentPending.database))
-      ) return;
-      const operationIsRetained = () => retryRequest?.recovery
-        ? pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion === mutationVersion
-        : pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion;
-      const desired = currentPending.desired;
-      const writeBaseline = currentPending.baseline;
-      const writeDatabase = currentPending.database;
-      const writeChurchId = globalFireDbInfo.churchId;
-      const writeSessionToken = getContentDatabaseSessionToken(writeDatabase.name);
-      const writeContentOwner = desired.contentOwner;
-      const writeMutationGuard = createSongV2MutationGuard(
-        writeDatabase,
-        writeContentOwner,
-        writeChurchId,
-        writeSessionToken,
-        operationIsRetained,
-      );
-      let snapshot = writeBaseline.docType === "song-v2-root"
-        ? await loadSongV2Snapshot(writeDatabase, desired._id, true) : undefined;
-      if (snapshot?.conflicts?.length) {
-        const bufferRevisionConflict = (conflictSnapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>>) => {
-          pauseAuthorizationAutosaveRetry(saveKey);
-          const activeItem = (listenerApi.getState() as RootState).undoable.present.item;
-          if (
-            operationIsRetained() &&
-            sameItemMutationScope(desired, activeItem)
-          ) {
-            listenerApi.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
-              item: conflictSnapshot.hydrated,
-              conflicts: conflictSnapshot.conflicts ?? [],
-            }));
-          }
+      const pendingForLock = retryPending ?? pendingItemAutosaves.get(saveKey);
+      const performWrite = async () => {
+        let currentPending = retryPending ?? pendingItemAutosaves.get(saveKey);
+        if (currentPending?.mutationVersion !== mutationVersion) return;
+        if (!retryRequest && pendingSongV2WriteRecoveries.has(saveKey)) return;
+        if (retryRequest && !retryRequest.recovery &&
+          pendingItemAutosaves.get(saveKey)?.mutationVersion !== mutationVersion) return;
+        if (retryRequest?.recovery &&
+          pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion !== mutationVersion) return;
+        if (
+          (retryRequest?.recovery || currentPending.recoveryState === "interrupted") &&
+          (!currentPending.owner || !songRecoveryIsReadyForOwner(currentPending.owner, currentPending.database))
+        ) return;
+        const operationIsRetained = () => retryRequest?.recovery
+          ? pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion === mutationVersion
+          : pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion;
+        const desired = currentPending.desired;
+        const writeBaseline = currentPending.baseline;
+        const writeDatabase = currentPending.database;
+        const writeChurchId = globalFireDbInfo.churchId;
+        const writeSessionToken = getContentDatabaseSessionToken(writeDatabase.name);
+        const writeContentOwner = desired.contentOwner;
+        const operationIsNotExplicitlyDiscarded = () => {
+          const decision = explicitRemoteDecisionByItem.get(saveKey);
+          return decision?.discarding !== true &&
+            (decision?.version ?? 0) === explicitRemoteDecisionVersionAtStart;
         };
-        if (!globalFireDbInfo.canWriteSongContent) {
-          bufferRevisionConflict(snapshot);
-          return;
-        }
-        try {
-          snapshot = await loadReconciledSongV2Snapshot(
-            writeDatabase,
-            desired._id,
-            snapshot,
-            writeMutationGuard,
-          );
-        } catch (error) {
-          if (error instanceof SongV2ReplicationConflictError) {
-            await retainSongV2AutosaveForReview(saveKey, currentPending);
-            pauseAuthorizationAutosaveRetry(saveKey);
-            bufferRevisionConflict(error.snapshot);
-            return;
-          }
-          if (isSongV2MutationNotAuthorizedError(error)) {
-            retainInterruptedSongV2Autosave(saveKey, currentPending, error);
-            const latest = await loadSongV2Snapshot(writeDatabase, desired._id, true).catch(() => null);
-            if (latest?.conflicts?.length) bufferRevisionConflict(latest);
-            return;
-          }
-          throw error;
-        }
-      }
-      let db_item: DBItem = snapshot?.hydrated ?? await loadItemWithSongHydration(writeDatabase, desired._id);
-      if (!operationIsRetained()) return;
-      const changedFields = getItemPersistenceChanges(desired, writeBaseline);
-      const conflicts = getItemPersistenceConflicts(
-        desired,
-        writeBaseline,
-        db_item,
-      );
-      if (conflicts.length > 0) {
-        await retainSongV2AutosaveForReview(saveKey, currentPending);
-        pauseAuthorizationAutosaveRetry(saveKey);
-        const latestState = listenerApi.getState() as RootState;
-        const activeItem = latestState.undoable.present.item;
-        if (
-          sameItemMutationOwner(
-            getItemMutationOwner(activeItem),
-            getItemMutationOwner(desired),
-          )
-        ) {
-          listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(db_item));
-          if (writeBaseline.docType === "song-v2-root") {
-            listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
-          }
-        }
-        return;
-      }
-
-      if (changedFields.length === 0) {
-        let conflictResolutionComplete = !currentPending.resolveReplicationConflicts?.length;
-        if (currentPending.resolveReplicationConflicts?.length) {
-          const resolved = await pruneResolvedSongV2Conflicts(
-            writeDatabase,
-            db_item,
-            currentPending.resolveReplicationConflicts,
-            writeMutationGuard,
-          );
-          if (resolved) {
-            db_item = resolved;
-            conflictResolutionComplete = true;
-          }
-          if (!operationIsRetained()) return;
-        }
-        const latestState = listenerApi.getState() as RootState;
-        const activeItem = latestState.undoable.present.item;
-        if (
-          sameItemMutationOwner(
-            getItemMutationOwner(activeItem),
-            getItemMutationOwner(desired),
-          )
-        ) {
-          listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item, desired));
-        }
-        if (pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion) {
-          pendingItemAutosaves.delete(saveKey);
-        }
-        const newerPending = pendingItemAutosaves.get(saveKey);
-        if (!newerPending || newerPending.mutationVersion <= mutationVersion) {
-          if (conflictResolutionComplete && currentPending.recoveryRecordId && currentPending.owner) {
-            await deleteSongV2AutosaveRecovery(
-              currentPending.recoveryRecordId,
-              currentPending.owner,
-            ).catch(error => console.error("Could not clear the completed song recovery", error));
-            if (
-              pendingSongV2WriteRecoveries.get(saveKey)?.recoveryRecordId === currentPending.recoveryRecordId
-            ) pendingSongV2WriteRecoveries.delete(saveKey);
-          }
-        }
-        return;
-      }
-
-      const updatedAt = new Date().toISOString();
-      const nextItem: DBItem = {
-        ...db_item,
-        ...(Object.fromEntries(
-          changedFields.map((field) => [field, desired[field]]),
-        ) as Partial<DBItem>),
-        updatedAt,
-      };
-      const isSongV2Write = nextItem.type === "song" && (
-        writeBaseline.docType === "song-v2-root" ||
-        db_item.docType === "song-v2-root"
-      );
-      const durableOwner = currentPending.owner;
-      if (
-        isSongV2Write &&
-        durableOwner &&
-        durableOwner.scopeId !== "unscoped" &&
-        durableOwner.accountId
-      ) {
-        const recoveryRecordId = getSongV2AutosaveRecoveryId(durableOwner, desired._id);
-        try {
-          // Durable intent is captured before the writer can commit its first
-          // slide, arrangement, or root document. The guard is checked at the
-          // local checkpoint boundary and again before the physical writer.
-          if (!writeMutationGuard()) {
-            if (!operationIsRetained()) return;
-            throw new SongV2MutationNotAuthorizedError();
-          }
-          await putSongV2AutosaveRecovery({
-            id: recoveryRecordId,
-            owner: durableOwner,
-            itemId: desired._id,
-            desired: currentPending.desired,
-            baseline: writeBaseline,
-            mutationVersion,
-            resolveReplicationConflicts: currentPending.resolveReplicationConflicts,
-            status: "pending",
-          });
-          currentPending = {
-            ...currentPending,
-            recoveryRecordId,
-            recoveryNeedsReview: false,
-            recoveryCheckpointFailed: false,
-          };
-          if (retryRequest?.recovery) {
-            pendingSongV2WriteRecoveries.set(saveKey, currentPending);
-          } else if (pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion) {
-            pendingItemAutosaves.set(saveKey, currentPending);
-          }
-          if (!writeMutationGuard()) {
-            if (!operationIsRetained()) return;
-            throw new SongV2MutationNotAuthorizedError();
-          }
-        } catch (error) {
-          if (isSongV2MutationNotAuthorizedError(error)) {
-            retainInterruptedSongV2Autosave(saveKey, currentPending, error);
-            return;
-          }
-          // Do not start a multi-document save if its restart recovery record
-          // could not be committed. The editor keeps the pending draft visible.
-          console.error("Could not persist Song V2 autosave recovery", error);
-          const latestPending = pendingItemAutosaves.get(saveKey);
-          if (latestPending?.mutationVersion === mutationVersion) {
-            pendingItemAutosaves.set(saveKey, {
-              ...latestPending,
-              recoveryCheckpointFailed: true,
-            });
-          }
-          return;
-        }
-      }
-      let result: { rev: string };
-      try {
-        if (nextItem.type === "song") {
-          const authoredBaseline = writeBaseline;
-          const usesV2Baseline = authoredBaseline?.docType === "song-v2-root";
-          const saveArgs = [
-            writeDatabase,
-            nextItem,
-            usesV2Baseline
-              ? authoredBaseline
-              : db_item.docType === "song-v2-root" ? undefined : db_item,
-          ] as const;
-          db_item = snapshot
-            ? await saveSong(...saveArgs, undefined, snapshot, writeMutationGuard)
-            : await saveSong(...saveArgs, undefined, undefined, writeMutationGuard);
-          result = { rev: db_item._rev! };
-        } else {
-          db_item = applyPouchAudit(db_item, nextItem, {
-            // Doc came from db.get — always an update (legacy rows may lack createdAt).
-            isNew: false,
-          });
-          result = await writeDatabase.put(db_item);
-          db_item = { ...db_item, _rev: result.rev };
-        }
-      } catch (error) {
-        const errorName = error instanceof Error ? error.name : "";
-        const isSongV2ContentConflict = errorName === "SongV2ConcurrentEditError" ||
-          ((error as { status?: number })?.status === 409 && writeBaseline.docType === "song-v2-root");
-        const isSongV2VersionTransition = errorName === "SongV2VersionTransitionError";
-        const isSongV2Conflict = error instanceof Error && (
-          isSongV2ContentConflict || isSongV2VersionTransition
+        const writeMutationGuard = createSongV2MutationGuard(
+          writeDatabase,
+          writeContentOwner,
+          writeChurchId,
+          writeSessionToken,
+          operationIsRetained,
+          operationIsNotExplicitlyDiscarded,
         );
-        if ((error as { status?: number })?.status === 409 || isSongV2Conflict) {
-          if (currentPending.recoveryRecordId) {
-            await retainSongV2AutosaveForReview(saveKey, currentPending);
+        let snapshot = writeBaseline.docType === "song-v2-root"
+          ? await loadSongV2Snapshot(writeDatabase, desired._id, true) : undefined;
+        if (snapshot?.conflicts?.length) {
+          const bufferRevisionConflict = (conflictSnapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>>) => {
+            pauseAuthorizationAutosaveRetry(saveKey);
+            const activeItem = (listenerApi.getState() as RootState).undoable.present.item;
+            if (
+              operationIsRetained() &&
+              sameItemMutationScope(desired, activeItem)
+            ) {
+              listenerApi.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+                item: conflictSnapshot.hydrated,
+                conflicts: conflictSnapshot.conflicts ?? [],
+              }));
+            }
+          };
+          if (!globalFireDbInfo.canWriteSongContent) {
+            bufferRevisionConflict(snapshot);
+            return;
           }
+          try {
+            snapshot = await loadReconciledSongV2Snapshot(
+              writeDatabase,
+              desired._id,
+              snapshot,
+              writeMutationGuard,
+            );
+          } catch (error) {
+            if (error instanceof SongV2ReplicationConflictError) {
+              await retainSongV2AutosaveForReview(saveKey, currentPending);
+              pauseAuthorizationAutosaveRetry(saveKey);
+              bufferRevisionConflict(error.snapshot);
+              return;
+            }
+            if (isSongV2MutationNotAuthorizedError(error)) {
+              retainInterruptedSongV2Autosave(saveKey, currentPending, error);
+              const latest = await loadSongV2Snapshot(writeDatabase, desired._id, true).catch(() => null);
+              if (latest?.conflicts?.length) bufferRevisionConflict(latest);
+              return;
+            }
+            throw error;
+          }
+        }
+        let db_item: DBItem = snapshot?.hydrated ?? await loadItemWithSongHydration(writeDatabase, desired._id);
+        if (!operationIsRetained()) return;
+        const changedFields = getItemPersistenceChanges(desired, writeBaseline);
+        const conflicts = getItemPersistenceConflicts(
+          desired,
+          writeBaseline,
+          db_item,
+        );
+        if (conflicts.length > 0) {
+          await retainSongV2AutosaveForReview(saveKey, currentPending);
           pauseAuthorizationAutosaveRetry(saveKey);
-          const latest = (await loadItemWithSongHydration(
-            writeDatabase,
-            desired._id,
-          )
-            .catch(() => null)) as DBItem | null;
           const latestState = listenerApi.getState() as RootState;
           const activeItem = latestState.undoable.present.item;
           if (
-            latest &&
             sameItemMutationOwner(
               getItemMutationOwner(activeItem),
               getItemMutationOwner(desired),
             )
           ) {
-            listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(latest));
-            if (isSongV2VersionTransition) {
-              listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-version-transition"));
-            } else if (isSongV2ContentConflict) {
+            listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(db_item));
+            if (writeBaseline.docType === "song-v2-root") {
               listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
             }
           }
-          if (isSongV2Conflict || isSongV2ContentConflict) {
-            console.error("Could not save active song draft", error);
+          return;
+        }
+
+        if (changedFields.length === 0) {
+          let conflictResolutionComplete = !currentPending.resolveReplicationConflicts?.length;
+          if (currentPending.resolveReplicationConflicts?.length) {
+            const resolved = await pruneResolvedSongV2Conflicts(
+              writeDatabase,
+              db_item,
+              currentPending.resolveReplicationConflicts,
+              writeMutationGuard,
+            );
+            if (resolved) {
+              db_item = resolved;
+              conflictResolutionComplete = true;
+            }
+            if (!operationIsRetained()) return;
+          }
+          const latestState = listenerApi.getState() as RootState;
+          const activeItem = latestState.undoable.present.item;
+          if (
+            sameItemMutationOwner(
+              getItemMutationOwner(activeItem),
+              getItemMutationOwner(desired),
+            )
+          ) {
+            listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item, desired));
+          }
+          if (pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion) {
+            pendingItemAutosaves.delete(saveKey);
+            clearSongRecoveryCheckpointRetry(saveKey);
+          }
+          const newerPending = pendingItemAutosaves.get(saveKey);
+          if (!newerPending || newerPending.mutationVersion <= mutationVersion) {
+            if (conflictResolutionComplete && currentPending.recoveryRecordId && currentPending.owner) {
+              await deleteSongV2AutosaveRecovery(
+                currentPending.recoveryRecordId,
+                currentPending.owner,
+              ).catch(error => console.error("Could not clear the completed song recovery", error));
+              if (
+                pendingSongV2WriteRecoveries.get(saveKey)?.recoveryRecordId === currentPending.recoveryRecordId
+              ) pendingSongV2WriteRecoveries.delete(saveKey);
+            }
+          }
+          return;
+        }
+
+        const updatedAt = new Date().toISOString();
+        const nextItem: DBItem = {
+          ...db_item,
+          ...(Object.fromEntries(
+            changedFields.map((field) => [field, desired[field]]),
+          ) as Partial<DBItem>),
+          updatedAt,
+        };
+        const isSongV2Write = nextItem.type === "song" && (
+          writeBaseline.docType === "song-v2-root" ||
+          db_item.docType === "song-v2-root"
+        );
+        const durableOwner = currentPending.owner;
+        if (
+          isSongV2Write &&
+          durableOwner &&
+          durableOwner.scopeId !== "unscoped" &&
+          durableOwner.accountId
+        ) {
+          const recoveryRecordId = currentPending.recoveryRecordId ??
+            createSongV2AutosaveRecoveryId(durableOwner, desired._id);
+          try {
+            // Durable intent is captured before the writer can commit its first
+            // slide, arrangement, or root document. The guard is checked at the
+            // local checkpoint boundary and again before the physical writer.
+            if (!writeMutationGuard()) {
+              if (!operationIsRetained()) return;
+              throw new SongV2MutationNotAuthorizedError();
+            }
+            const checkpointStored = await putSongV2AutosaveRecovery({
+              id: recoveryRecordId,
+              owner: durableOwner,
+              itemId: desired._id,
+              desired: currentPending.desired,
+              baseline: writeBaseline,
+              mutationVersion,
+              resolveReplicationConflicts: currentPending.resolveReplicationConflicts,
+              status: "pending",
+            });
+            if (!checkpointStored) {
+              const discarded = {
+                ...currentPending,
+                recoveryRecordId: undefined,
+                recoveryState: "discarded" as const,
+              };
+              if (
+                pendingSongV2WriteRecoveries.get(saveKey)?.recoveryRecordId === recoveryRecordId
+              ) pendingSongV2WriteRecoveries.delete(saveKey);
+              if (pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion) {
+                pendingItemAutosaves.set(saveKey, discarded);
+              }
+              return;
+            }
+            currentPending = {
+              ...currentPending,
+              recoveryRecordId,
+              recoveryState: undefined,
+              recoveryCheckpointRetryCount: 0,
+            };
+            if (retryRequest?.recovery) {
+              pendingSongV2WriteRecoveries.set(saveKey, currentPending);
+            } else if (pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion) {
+              pendingItemAutosaves.set(saveKey, currentPending);
+            }
+            if (!writeMutationGuard()) {
+              if (!operationIsRetained()) return;
+              throw new SongV2MutationNotAuthorizedError();
+            }
+          } catch (error) {
+            if (isSongV2MutationNotAuthorizedError(error)) {
+              if (operationIsNotExplicitlyDiscarded()) {
+                retainInterruptedSongV2Autosave(saveKey, currentPending, error);
+              }
+              return;
+            }
+            // Do not start a multi-document save if its restart recovery record
+            // could not be committed. The editor keeps the pending draft visible.
+            console.error("Could not persist Song V2 autosave recovery", error);
+            let failedPending: PendingItemAutosave | undefined;
+            const latestPending = pendingItemAutosaves.get(saveKey);
+            if (latestPending?.mutationVersion === mutationVersion) {
+              failedPending = { ...latestPending, recoveryState: "checkpoint-failed" };
+              pendingItemAutosaves.set(saveKey, failedPending);
+            }
+            const latestRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+            if (latestRecovery?.mutationVersion === mutationVersion) {
+              failedPending = { ...latestRecovery, recoveryState: "checkpoint-failed" };
+              pendingSongV2WriteRecoveries.set(saveKey, failedPending);
+            }
+            if (failedPending) scheduleSongRecoveryCheckpointRetry(saveKey, failedPending);
             return;
           }
         }
-        if (isSongV2MutationNotAuthorizedError(error)) {
-          retainInterruptedSongV2Autosave(saveKey, currentPending, error);
-          return;
+        let result: { rev: string };
+        try {
+          if (nextItem.type === "song") {
+            const authoredBaseline = writeBaseline;
+            const usesV2Baseline = authoredBaseline?.docType === "song-v2-root";
+            const saveArgs = [
+              writeDatabase,
+              nextItem,
+              usesV2Baseline
+                ? authoredBaseline
+                : db_item.docType === "song-v2-root" ? undefined : db_item,
+            ] as const;
+            db_item = snapshot
+              ? await saveSong(...saveArgs, undefined, snapshot, writeMutationGuard)
+              : await saveSong(...saveArgs, undefined, undefined, writeMutationGuard);
+            result = { rev: db_item._rev! };
+          } else {
+            db_item = applyPouchAudit(db_item, nextItem, {
+              // Doc came from db.get — always an update (legacy rows may lack createdAt).
+              isNew: false,
+            });
+            result = await writeDatabase.put(db_item);
+            db_item = { ...db_item, _rev: result.rev };
+          }
+        } catch (error) {
+          const errorName = error instanceof Error ? error.name : "";
+          const isSongV2ContentConflict = errorName === "SongV2ConcurrentEditError" ||
+            ((error as { status?: number })?.status === 409 && writeBaseline.docType === "song-v2-root");
+          const isSongV2VersionTransition = errorName === "SongV2VersionTransitionError";
+          const isSongV2Conflict = error instanceof Error && (
+            isSongV2ContentConflict || isSongV2VersionTransition
+          );
+          if ((error as { status?: number })?.status === 409 || isSongV2Conflict) {
+            if (currentPending.recoveryRecordId) {
+              await retainSongV2AutosaveForReview(saveKey, currentPending);
+            }
+            pauseAuthorizationAutosaveRetry(saveKey);
+            const latest = (await loadItemWithSongHydration(
+              writeDatabase,
+              desired._id,
+            )
+              .catch(() => null)) as DBItem | null;
+            const latestState = listenerApi.getState() as RootState;
+            const activeItem = latestState.undoable.present.item;
+            if (
+              latest &&
+              sameItemMutationOwner(
+                getItemMutationOwner(activeItem),
+                getItemMutationOwner(desired),
+              )
+            ) {
+              listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(latest));
+              if (isSongV2VersionTransition) {
+                listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-version-transition"));
+              } else if (isSongV2ContentConflict) {
+                listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+              }
+            }
+            if (isSongV2Conflict || isSongV2ContentConflict) {
+              console.error("Could not save active song draft", error);
+              return;
+            }
+          }
+          if (isSongV2MutationNotAuthorizedError(error)) {
+            if (operationIsNotExplicitlyDiscarded()) {
+              retainInterruptedSongV2Autosave(saveKey, currentPending, error);
+            }
+            return;
+          }
+          throw error;
         }
-        throw error;
-      }
-      db_item = { ...db_item, _rev: result.rev };
-      let conflictResolutionComplete = !currentPending.resolveReplicationConflicts?.length;
-      if (currentPending.resolveReplicationConflicts && db_item.docType === "song-v2-root") {
-        const resolved = await pruneResolvedSongV2Conflicts(
-          writeDatabase,
-          db_item,
-          currentPending.resolveReplicationConflicts,
-          writeMutationGuard,
-        )
-          .catch(error => console.error("Could not finish song conflict resolution", error));
-        if (resolved) {
-          db_item = resolved;
-          conflictResolutionComplete = true;
+        db_item = { ...db_item, _rev: result.rev };
+        let conflictResolutionComplete = !currentPending.resolveReplicationConflicts?.length;
+        if (currentPending.resolveReplicationConflicts && db_item.docType === "song-v2-root") {
+          const resolved = await pruneResolvedSongV2Conflicts(
+            writeDatabase,
+            db_item,
+            currentPending.resolveReplicationConflicts,
+            writeMutationGuard,
+          )
+            .catch(error => console.error("Could not finish song conflict resolution", error));
+          if (resolved) {
+            db_item = resolved;
+            conflictResolutionComplete = true;
+          }
         }
-      }
 
-      // Accepted input can still be in the component formatting debounce.
-      // Materialize it before deciding whether this acknowledgment is current.
-      flushPendingItemMutations(currentPending.owner);
-      const pendingAfterWrite = pendingItemAutosaves.get(saveKey);
-      if (pendingAfterWrite?.mutationVersion === mutationVersion) {
-        pendingItemAutosaves.delete(saveKey);
-      } else if (
-        pendingAfterWrite &&
-        pendingAfterWrite.mutationVersion > mutationVersion
-      ) {
-        pendingItemAutosaves.set(saveKey, {
-          ...pendingAfterWrite,
-          // Acknowledge only what this write changed. A newer edit may still
-          // compare unrelated fields against an older remote document.
-          baseline: {
-            ...pendingAfterWrite.baseline,
-            ...Object.fromEntries(changedFields.map((field) => [field,
-              db_item.docType === "song-v2-root" ? desired[field] : db_item[field]])),
+        // Accepted input can still be in the component formatting debounce.
+        // Materialize it before deciding whether this acknowledgment is current.
+        flushPendingItemMutations(currentPending.owner);
+        const pendingAfterWrite = pendingItemAutosaves.get(saveKey);
+        if (pendingAfterWrite?.mutationVersion === mutationVersion) {
+          pendingItemAutosaves.delete(saveKey);
+          clearSongRecoveryCheckpointRetry(saveKey);
+        } else if (
+          pendingAfterWrite &&
+          pendingAfterWrite.mutationVersion > mutationVersion
+        ) {
+          pendingItemAutosaves.set(saveKey, {
+            ...pendingAfterWrite,
+            // Acknowledge only what this write changed. A newer edit may still
+            // compare unrelated fields against an older remote document.
+            baseline: {
+              ...pendingAfterWrite.baseline,
+              ...Object.fromEntries(changedFields.map((field) => [field,
+                db_item.docType === "song-v2-root" ? desired[field] : db_item[field]])),
+            },
+          });
+          if (retryRequest?.recovery) {
+            requestPendingItemAutosaveRetry(saveKey, pendingItemAutosaves.get(saveKey)!, false);
+          }
+        }
+
+        if (
+          conflictResolutionComplete &&
+          pendingAfterWrite?.mutationVersion === mutationVersion &&
+          currentPending.recoveryRecordId &&
+          currentPending.owner
+        ) {
+          await deleteSongV2AutosaveRecovery(
+            currentPending.recoveryRecordId,
+            currentPending.owner,
+          ).catch(error => console.error("Could not clear the completed song recovery", error));
+          if (
+            pendingSongV2WriteRecoveries.get(saveKey)?.recoveryRecordId === currentPending.recoveryRecordId
+          ) pendingSongV2WriteRecoveries.delete(saveKey);
+        }
+
+        // A newer intent/remote decision owns publication too. Do not broadcast
+        // the older document after its acknowledgment has been superseded.
+        if (pendingAfterWrite?.mutationVersion !== mutationVersion) return;
+        const latestState = listenerApi.getState() as RootState;
+        const activeItem = latestState.undoable.present.item;
+        const isSameActiveOwner = sameItemMutationOwner(
+            getItemMutationOwner(activeItem),
+            getItemMutationOwner(desired),
+          );
+        if (isSameActiveOwner) {
+          listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item, desired));
+        }
+
+        const activeDatabaseOwner = getActiveContentDatabaseOwner();
+        const stillInOriginalDatabase = !contentOwner ||
+          contentOwner.scopeId === "unscoped"
+          ? db === writeDatabase
+          : activeDatabaseOwner?.scopeId === contentOwner.scopeId &&
+            activeDatabaseOwner.databaseKey === contentOwner.databaseKey &&
+            activeDatabaseOwner.churchId === contentOwner.churchId;
+        if (!stillInOriginalDatabase) return;
+
+        const cacheDoc = db_item.type === "song" ? songToLibraryProjection(db_item) : db_item;
+        listenerApi.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: cacheDoc._id, doc: cacheDoc }));
+        if (!isSameActiveOwner) return;
+        safePostMessage({
+          type: "update",
+          data: {
+            docs: db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
+            hostId: globalHostId,
           },
         });
-        if (retryRequest?.recovery) {
-          requestPendingItemAutosaveRetry(saveKey, pendingItemAutosaves.get(saveKey)!, false);
+      };
+      if (pendingForLock?.owner && pendingForLock.desired.docType === "song-v2-root") {
+        let acquiredLock = false;
+        try {
+          await withSongV2AutosaveLock(
+            pendingForLock.desired._id,
+            pendingForLock.database.name,
+            () => {
+              acquiredLock = true;
+              return performWrite();
+            },
+          );
+        } catch (error) {
+          if (acquiredLock) throw error;
+          console.error("Could not acquire the Song V2 write lock", error);
+          const latestPending = pendingItemAutosaves.get(saveKey);
+          const latestRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+          const failed = latestRecovery?.mutationVersion === mutationVersion
+            ? { ...latestRecovery, recoveryState: "checkpoint-failed" as const }
+            : latestPending?.mutationVersion === mutationVersion
+              ? { ...latestPending, recoveryState: "checkpoint-failed" as const }
+              : undefined;
+          if (failed) {
+            if (latestRecovery?.mutationVersion === mutationVersion) {
+              pendingSongV2WriteRecoveries.set(saveKey, failed);
+            }
+            if (latestPending?.mutationVersion === mutationVersion) {
+              pendingItemAutosaves.set(saveKey, failed);
+            }
+            scheduleSongRecoveryCheckpointRetry(saveKey, failed);
+          }
         }
+      } else {
+        await performWrite();
       }
-
-      if (
-        conflictResolutionComplete &&
-        pendingAfterWrite?.mutationVersion === mutationVersion &&
-        currentPending.recoveryRecordId &&
-        currentPending.owner
-      ) {
-        await deleteSongV2AutosaveRecovery(
-          currentPending.recoveryRecordId,
-          currentPending.owner,
-        ).catch(error => console.error("Could not clear the completed song recovery", error));
-        if (
-          pendingSongV2WriteRecoveries.get(saveKey)?.recoveryRecordId === currentPending.recoveryRecordId
-        ) pendingSongV2WriteRecoveries.delete(saveKey);
-      }
-
-      // A newer intent/remote decision owns publication too. Do not broadcast
-      // the older document after its acknowledgment has been superseded.
-      if (pendingAfterWrite?.mutationVersion !== mutationVersion) return;
-      const latestState = listenerApi.getState() as RootState;
-      const activeItem = latestState.undoable.present.item;
-      const isSameActiveOwner = sameItemMutationOwner(
-          getItemMutationOwner(activeItem),
-          getItemMutationOwner(desired),
-        );
-      if (isSameActiveOwner) {
-        listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item, desired));
-      }
-
-      const activeDatabaseOwner = getActiveContentDatabaseOwner();
-      const stillInOriginalDatabase = !contentOwner ||
-        contentOwner.scopeId === "unscoped"
-        ? db === writeDatabase
-        : activeDatabaseOwner?.scopeId === contentOwner.scopeId &&
-          activeDatabaseOwner.databaseKey === contentOwner.databaseKey &&
-          activeDatabaseOwner.churchId === contentOwner.churchId;
-      if (!stillInOriginalDatabase) return;
-
-      const cacheDoc = db_item.type === "song" ? songToLibraryProjection(db_item) : db_item;
-      listenerApi.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: cacheDoc._id, doc: cacheDoc }));
-      if (!isSameActiveOwner) return;
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
-          hostId: globalHostId,
-        },
-      });
     }).finally(() => {
       if (retryId) queuedItemAutosaveRetries.delete(retryId);
       listenerApi.dispatch(bibleCleanupOpportunity({}));
@@ -5318,8 +5388,162 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
     flushPendingItemMutations(currentOwner);
     const latestItem = (api.getState() as RootState).undoable.present.item;
     if (action.payload && (latestItem.hasPendingUpdate || (latestItem.isLyricsEditorOpen && !action.meta?.allowLyricsEditorOpen))) return action;
-    pendingItemAutosaves.delete(itemAutosaveKey(currentItem));
-    return next(action);
+
+    const saveKey = itemAutosaveKey(latestItem);
+    const recovery = pendingSongV2WriteRecoveries.get(saveKey) ?? pendingItemAutosaves.get(saveKey);
+    const recoveryRecordId = recovery?.recoveryRecordId;
+    const recoveryOwner = recovery?.owner;
+    const requestedRecoveryMutationVersion = recovery?.mutationVersion;
+    const requestedRemoteItem = latestItem.pendingRemoteItem;
+    const requestedRemoteRevision = requestedRemoteItem?._rev;
+    const requestedConflicts = JSON.stringify(
+      latestItem.pendingSongV2Conflicts
+        ?.map(conflict => ({
+          documentId: conflict.documentId,
+          winningRevision: conflict.winningRevision,
+          revisions: [...conflict.revisions].sort(),
+        }))
+        .sort((left, right) => left.documentId.localeCompare(right.documentId)),
+    );
+    const requestedMutationVersion = pendingItemAutosaves.get(saveKey)?.mutationVersion;
+    const beginExplicitRemoteDecision = (discarding: boolean) => {
+      const previous = explicitRemoteDecisionByItem.get(saveKey);
+      const nextDecision = { version: (previous?.version ?? 0) + 1, discarding };
+      explicitRemoteDecisionByItem.set(saveKey, nextDecision);
+      return nextDecision.version;
+    };
+
+    if (!recoveryRecordId || !recoveryOwner) {
+      beginExplicitRemoteDecision(false);
+      clearSongRecoveryCheckpointRetry(saveKey);
+      cancelItemAutosaveDebounce(saveKey);
+      pendingItemAutosaves.delete(saveKey);
+      pendingSongV2WriteRecoveries.delete(saveKey);
+      return next(action);
+    }
+
+    // Stop any in-flight writer before yielding to IndexedDB. If the durable
+    // discard fails, its checkpoint remains and the operator can retry or keep
+    // the draft; the stale writer does not continue in the meantime.
+    const decisionVersion = beginExplicitRemoteDecision(true);
+    const finishExplicitRemoteDecision = () => {
+      const decision = explicitRemoteDecisionByItem.get(saveKey);
+      if (decision?.version === decisionVersion) {
+        explicitRemoteDecisionByItem.set(saveKey, { ...decision, discarding: false });
+      }
+    };
+    const sameRequestedRemoteDecision = () => {
+      const active = (api.getState() as RootState).undoable.present.item;
+      const currentPending = pendingItemAutosaves.get(saveKey);
+      const decision = explicitRemoteDecisionByItem.get(saveKey);
+      return sameItemMutationOwner(getItemMutationOwner(active), currentOwner) &&
+        decision?.version === decisionVersion &&
+        active.pendingRemoteItem?._id === requestedRemoteItem?._id &&
+        active.pendingRemoteItem?._rev === requestedRemoteRevision &&
+        JSON.stringify(
+          active.pendingSongV2Conflicts
+            ?.map(conflict => ({
+              documentId: conflict.documentId,
+              winningRevision: conflict.winningRevision,
+              revisions: [...conflict.revisions].sort(),
+            }))
+            .sort((left, right) => left.documentId.localeCompare(right.documentId)),
+        ) === requestedConflicts &&
+        (requestedMutationVersion === undefined || !currentPending ||
+          currentPending.mutationVersion === requestedMutationVersion);
+    };
+    let acquiredLock = false;
+    return withSongV2AutosaveLock(
+      latestItem._id,
+      recovery.database.name,
+      async () => {
+        acquiredLock = true;
+        if (!sameRequestedRemoteDecision()) {
+          finishExplicitRemoteDecision();
+          return action;
+        }
+        try {
+          await markSongV2AutosaveRecoveryDiscarded(
+            recoveryRecordId,
+            recoveryOwner,
+            latestItem._id,
+          );
+        } catch (error) {
+          console.error("Could not durably discard the saved song recovery", error);
+          const currentRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+          if (currentRecovery?.recoveryRecordId === recoveryRecordId) {
+            pendingSongV2WriteRecoveries.set(saveKey, {
+              ...currentRecovery,
+              recoveryState: "discard-failed",
+            });
+          }
+          const currentPending = pendingItemAutosaves.get(saveKey);
+          if (currentPending?.recoveryRecordId === recoveryRecordId) {
+            pendingItemAutosaves.set(saveKey, {
+              ...currentPending,
+              recoveryState: "discard-failed",
+            });
+          }
+          finishExplicitRemoteDecision();
+          api.dispatch(itemSlice.actions.setRemoteUpdateReason("song-recovery-discard-failed"));
+          return action;
+        }
+
+        const currentRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+        const currentPending = pendingItemAutosaves.get(saveKey);
+        const recoveryVersionMatches = requestedRecoveryMutationVersion === undefined ||
+          !currentRecovery || currentRecovery.mutationVersion === requestedRecoveryMutationVersion;
+        const pendingVersionMatches = requestedMutationVersion === undefined ||
+          !currentPending || currentPending.mutationVersion === requestedMutationVersion;
+        const recoveryStillCurrent =
+          (!currentRecovery || currentRecovery.recoveryRecordId === recoveryRecordId) &&
+          (!currentPending || currentPending.recoveryRecordId === recoveryRecordId) &&
+          recoveryVersionMatches && pendingVersionMatches;
+        if (currentRecovery?.recoveryRecordId === recoveryRecordId) {
+          pendingSongV2WriteRecoveries.delete(saveKey);
+        }
+        if (currentPending?.recoveryRecordId === recoveryRecordId && pendingVersionMatches) {
+          pendingItemAutosaves.delete(saveKey);
+        } else if (currentPending?.recoveryRecordId === recoveryRecordId) {
+          pendingItemAutosaves.set(saveKey, {
+            ...currentPending,
+            recoveryRecordId: undefined,
+            recoveryState: undefined,
+          });
+        }
+        if (recoveryVersionMatches && pendingVersionMatches) {
+          clearSongRecoveryCheckpointRetry(saveKey);
+          cancelItemAutosaveDebounce(saveKey);
+        }
+        // Keep a small durable tombstone so a stale operation in another window
+        // cannot recreate the rejected checkpoint after this lock is released.
+        finishExplicitRemoteDecision();
+
+        const sameRemoteDecision = sameRequestedRemoteDecision() && pendingVersionMatches;
+        if (!recoveryStillCurrent || !sameRemoteDecision) return action;
+        return next(action);
+      },
+    ).catch(error => {
+      if (acquiredLock) throw error;
+      console.error("Could not acquire the Song V2 recovery lock", error);
+      const currentRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+      if (currentRecovery?.recoveryRecordId === recoveryRecordId) {
+        pendingSongV2WriteRecoveries.set(saveKey, {
+          ...currentRecovery,
+          recoveryState: "discard-failed",
+        });
+      }
+      const currentPending = pendingItemAutosaves.get(saveKey);
+      if (currentPending?.recoveryRecordId === recoveryRecordId) {
+        pendingItemAutosaves.set(saveKey, {
+          ...currentPending,
+          recoveryState: "discard-failed",
+        });
+      }
+      finishExplicitRemoteDecision();
+      api.dispatch(itemSlice.actions.setRemoteUpdateReason("song-recovery-discard-failed"));
+      return action;
+    });
   }
 
   if (
@@ -5392,7 +5616,7 @@ const requestPendingItemAutosaveRetry = (
 
 const queuedSongV2RecoveryReviewLoads = new Set<string>();
 const restoreSongV2RecoveryDraftInEditor = (pending: PendingItemAutosave) => {
-  if (pending.recoveryDiscarded) return;
+  if (pending.recoveryState === "discarded" || pending.recoveryState === "discard-failed") return;
   const activeItem = store.getState().undoable.present.item;
   const owner = pending.owner;
   if (!owner || !sameItemMutationOwner(owner, getItemMutationOwner(activeItem))) return;
@@ -5405,7 +5629,7 @@ const restoreSongV2RecoveryDraftInEditor = (pending: PendingItemAutosave) => {
       baseline: pending.baseline,
     }));
   }
-  if (!pending.recoveryNeedsReview || !songRecoveryIsReadyForOwner(owner, pending.database)) return;
+  if (pending.recoveryState !== "needs-review" || !songRecoveryIsReadyForOwner(owner, pending.database)) return;
   const loadKey = `${saveKey}:${pending.recoveryRecordId ?? pending.mutationVersion}`;
   if (queuedSongV2RecoveryReviewLoads.has(loadKey)) return;
   queuedSongV2RecoveryReviewLoads.add(loadKey);
@@ -5414,7 +5638,7 @@ const restoreSongV2RecoveryDraftInEditor = (pending: PendingItemAutosave) => {
       const latestItem = store.getState().undoable.present.item;
       const currentRecovery = pendingSongV2WriteRecoveries.get(saveKey);
       if (
-        !currentRecovery?.recoveryNeedsReview ||
+        currentRecovery?.recoveryState !== "needs-review" ||
         currentRecovery.recoveryRecordId !== pending.recoveryRecordId ||
         !songRecoveryIsReadyForOwner(owner, pending.database) ||
         !sameItemMutationOwner(getItemMutationOwner(latestItem), owner)
@@ -5461,6 +5685,59 @@ const songRecoveryIsReadyForOwner = (
   );
 };
 
+const scheduleSongRecoveryCheckpointRetry = (
+  saveKey: string,
+  failed: PendingItemAutosave,
+) => {
+  const owner = failed.owner;
+  const database = failed.database;
+  if (
+    failed.recoveryState !== "checkpoint-failed" ||
+    !owner ||
+    !songRecoveryIsReadyForOwner(owner, database) ||
+    globalFireDbInfo.canWriteSongContent !== true ||
+    globalFireDbInfo.churchId !== owner.churchId
+  ) return;
+
+  clearSongRecoveryCheckpointRetry(saveKey);
+  const retryCount = failed.recoveryCheckpointRetryCount ?? 0;
+  const delayMs = SONG_RECOVERY_CHECKPOINT_RETRY_DELAYS_MS[retryCount];
+  if (delayMs === undefined) return;
+  const sessionToken = getContentDatabaseSessionToken(database.name);
+  if (!sessionToken) return;
+
+  const retryVersion = retryCount + 1;
+  const withRetryCount = { ...failed, recoveryCheckpointRetryCount: retryVersion };
+  if (pendingItemAutosaves.get(saveKey)?.mutationVersion === failed.mutationVersion) {
+    pendingItemAutosaves.set(saveKey, withRetryCount);
+  }
+  if (pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion === failed.mutationVersion) {
+    pendingSongV2WriteRecoveries.set(saveKey, withRetryCount);
+  }
+
+  const timer = setTimeout(() => {
+    const scheduled = songRecoveryCheckpointRetryTimers.get(saveKey);
+    if (scheduled?.timer === timer) songRecoveryCheckpointRetryTimers.delete(saveKey);
+    const pendingRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+    const pendingAutosave = pendingItemAutosaves.get(saveKey);
+    const current = pendingRecovery?.mutationVersion === failed.mutationVersion
+      ? pendingRecovery : pendingAutosave;
+    if (
+      !current ||
+      current.mutationVersion !== failed.mutationVersion ||
+      current.recoveryState !== "checkpoint-failed" ||
+      getContentDatabaseSessionToken(database.name) !== sessionToken ||
+      !pendingAutosaveMatchesContentOwner(current, owner, database)
+    ) return;
+    retryInterruptedAutosaveForOwner(saveKey, owner, database);
+  }, delayMs);
+  songRecoveryCheckpointRetryTimers.set(saveKey, {
+    timer,
+    mutationVersion: failed.mutationVersion,
+    sessionToken,
+  });
+};
+
 const retryInterruptedAutosaveForOwner = (
   saveKey: string,
   owner: ItemContentOwner,
@@ -5472,8 +5749,10 @@ const retryInterruptedAutosaveForOwner = (
     !songRecoveryIsReadyForOwner(owner, database)) return;
   const recovery = pendingSongV2WriteRecoveries.get(saveKey);
   if (recovery) {
-    if (recovery.recoveryNeedsReview || recovery.recoveryDiscarded ||
+    if (recovery.recoveryState === "needs-review" || recovery.recoveryState === "discard-failed" ||
+      recovery.recoveryState === "discarded" ||
       !pendingAutosaveMatchesContentOwner(recovery, owner, database)) return;
+    clearSongRecoveryCheckpointRetry(saveKey);
     const rebound = { ...recovery, database };
     pendingSongV2WriteRecoveries.set(saveKey, rebound);
     requestPendingItemAutosaveRetry(saveKey, rebound, true);
@@ -5481,14 +5760,14 @@ const retryInterruptedAutosaveForOwner = (
   }
   const pending = pendingItemAutosaves.get(saveKey);
   if (
-    (!pending?.authorizationInterrupted && !pending?.recoveryCheckpointFailed) ||
+    (pending?.recoveryState !== "interrupted" && pending?.recoveryState !== "checkpoint-failed") ||
     !pendingAutosaveMatchesContentOwner(pending, owner, database)
   ) return;
+  clearSongRecoveryCheckpointRetry(saveKey);
   const rebound = {
     ...pending,
     database,
-    authorizationInterrupted: false,
-    recoveryCheckpointFailed: false,
+    recoveryState: undefined,
   };
   pendingItemAutosaves.set(saveKey, rebound);
   requestPendingItemAutosaveRetry(saveKey, rebound, false);
@@ -5525,11 +5804,10 @@ const loadPersistedSongV2RecoveriesForOwner = async (
         globalFireDbInfo.canWriteSongContent !== true ||
         globalFireDbInfo.churchId !== owner.churchId
       ) break;
-      if (record.itemId !== record.desired._id || record.desired.type !== "song") continue;
       if (record.status === "discarded") {
-        await deleteSongV2AutosaveRecovery(record.id, owner);
         continue;
       }
+      if (record.itemId !== record.desired._id || record.desired.type !== "song") continue;
       const desired = { ...record.desired, contentOwner: owner };
       const saveKey = itemAutosaveKey(desired);
       const ownerWithItem = getItemMutationOwner(desired);
@@ -5549,7 +5827,7 @@ const loadPersistedSongV2RecoveriesForOwner = async (
         mutationVersion: 0,
         resolveReplicationConflicts: record.resolveReplicationConflicts,
         recoveryRecordId: record.id,
-        recoveryNeedsReview: record.status === "needs-review",
+        recoveryState: record.status === "needs-review" ? "needs-review" : undefined,
       };
       pendingSongV2WriteRecoveries.set(saveKey, recovered);
       if (!pendingItemAutosaves.has(saveKey)) {
@@ -5576,7 +5854,7 @@ registerContentDatabaseActivationHandler((owner, database) => {
   const saveKeys = new Set([
     ...pendingSongV2WriteRecoveries.keys(),
     ...[...pendingItemAutosaves.entries()]
-      .filter(([, pending]) => pending.authorizationInterrupted || pending.recoveryCheckpointFailed)
+      .filter(([, pending]) => pending.recoveryState === "interrupted" || pending.recoveryState === "checkpoint-failed")
       .map(([saveKey]) => saveKey),
   ]);
   saveKeys.forEach(saveKey => retryInterruptedAutosaveForOwner(saveKey, owner, database));
@@ -5591,7 +5869,7 @@ subscribeToContentActivity(() => {
     const saveKeys = new Set([
       ...pendingSongV2WriteRecoveries.keys(),
       ...[...pendingItemAutosaves.entries()]
-        .filter(([, pending]) => pending.authorizationInterrupted || pending.recoveryCheckpointFailed)
+        .filter(([, pending]) => pending.recoveryState === "interrupted" || pending.recoveryState === "checkpoint-failed")
         .map(([saveKey]) => saveKey),
     ]);
     saveKeys.forEach(saveKey => retryInterruptedAutosaveForOwner(saveKey, owner, activeDatabase));

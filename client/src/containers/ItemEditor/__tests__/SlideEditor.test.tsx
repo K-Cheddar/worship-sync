@@ -1812,6 +1812,30 @@ describe("SlideEditor", () => {
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
   });
 
+  it("explains when a Song v2 recovery discard fails and keeps retry available", () => {
+    mockState = makeStateWithItem({
+      type: "song",
+      docType: "song-v2-root",
+      hasRemoteUpdate: true,
+      hasPendingUpdate: true,
+      isLyricsEditorOpen: false,
+      remoteUpdateReason: "song-recovery-discard-failed",
+      pendingRemoteItem: { _id: "default-item", type: "song", docType: "song-v2-root" },
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({
+      message: "We couldn't save that choice. Your song draft is still safe; try again.",
+      variant: "error",
+      persist: true,
+    }));
+    const { children } = mockShowToast.mock.calls[0][0];
+    render(<>{children("toast-1")}</>);
+    fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));
+    expect(mockApplyPendingRemoteItem).toHaveBeenCalled();
+  });
+
   it("still shows the Song v2 migration decision for a dirty draft", () => {
     mockState = makeStateWithItem({
       type: "song",
