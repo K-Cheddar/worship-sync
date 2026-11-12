@@ -23,6 +23,7 @@ Authorized by the November 11, 2026 outline revision conflict strategy request:
 - Read and display the winning outline without automatically merging, deleting or reviewing losing leaves. Historical leaves are not necessarily older edits and remain available for separately authorized maintenance.
 - Save genuine current edits against their loaded baseline and the latest winner. A successful CAS extends that leaf; replication carries the new descendant and preserves other leaves. A disconnected writer extending another leaf may create another historical conflict; it is preserved rather than automatically discarded.
 - Active edits that overlap the latest winner require focused decisions, with compatible edits retained. The draft remains visible until the choice is durably acknowledged.
+- Independent row moves are rebased from their recorded drag destinations onto the latest winner, then merged by stable outline occurrence IDs. A move to the same row's incompatible destination or an ambiguous legacy reorder retains the draft and opens a focused order choice. Move metadata is runtime-only and follows the outline owner across refreshes and navigation.
 - Retire loaded outline identity and baseline atomically with content on owner changes. Initialization and replication alone never create a draft. Intentional removal of all initialized rows remains a valid edit.
 
 ## Switching outlines

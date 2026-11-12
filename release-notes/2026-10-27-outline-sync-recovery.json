@@ -3,5 +3,5 @@
   "date": "2026-10-27",
   "type": "improved",
   "title": "Outline synchronization",
-  "description": "Outlines open normally without prompts about old saved versions. Compatible edits sync across devices, while overlapping changes get a focused review and unsaved drafts stay available during controller navigation."
+  "description": "Outlines open normally without prompts about old saved versions. Compatible row edits and independent moves sync across Controllers, while overlapping changes get a focused review and drafts stay available during navigation."
 }

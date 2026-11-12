@@ -9,6 +9,8 @@ import {
 import { applyPouchAudit } from "./pouchAudit";
 import { formatSong } from "./overflow";
 import { mergeLyricText } from "./mergeLyricText";
+import { canonicalSongV2Value, sameSongV2DocumentAuthoredContent } from "./songV2AuthoredContent";
+export { sameSongV2AuthoredContent } from "./songV2AuthoredContent";
 
 type Document = SongV2RootDocument | SongV2ArrangementDocument | SongV2SlideDocument;
 type Update<T> = { current: T; next: T };
@@ -48,38 +50,7 @@ export class SongV2ConcurrentEditError extends Error {
   }
 }
 
-// Compare authored JSON values, ignoring object key order and absent/undefined
-// equivalence. Top-level Pouch revision/conflict and audit metadata are excluded.
-const auditKeys = new Set(["_rev", "_conflicts", "createdAt", "createdBy", "updatedAt", "updatedBy"]);
-const canonicalValue = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonicalValue);
-  if (value !== null && typeof value === "object") {
-    return Object.fromEntries(Object.entries(value)
-      .filter(([, child]) => child !== undefined)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, child]) => [key, canonicalValue(child)]));
-  }
-  return value;
-};
-const authoredContent = (doc: Document) => JSON.stringify(canonicalValue(
-  Object.fromEntries(Object.entries(doc).filter(([key]) => !auditKeys.has(key))),
-));
-const changed = (a: Document, b: Document) => authoredContent(a) !== authoredContent(b);
-
-/** Compares complete authored document sets while ignoring Pouch revisions and audit fields. */
-export function sameSongV2AuthoredContent(left: SongV2Documents, right: SongV2Documents): boolean {
-  const sameDocuments = <T extends Document>(leftDocuments: T[], rightDocuments: T[]) => {
-    if (leftDocuments.length !== rightDocuments.length) return false;
-    const rightById = new Map(rightDocuments.map(document => [document._id, document]));
-    return leftDocuments.every(document => {
-      const matching = rightById.get(document._id);
-      return !!matching && !changed(document, matching);
-    });
-  };
-  return !changed(left.root, right.root) &&
-    sameDocuments(left.arrangements, right.arrangements) &&
-    sameDocuments(left.slides, right.slides);
-}
+const changed = (a: Document, b: Document) => !sameSongV2DocumentAuthoredContent(a, b);
 
 function planChildren<T extends Document>(current: T[], desired: T[]): Changes<T> {
   const before = new Map(current.map(doc => [doc._id, doc]));
@@ -287,7 +258,7 @@ export function classifyIntendedDocument<T extends Document>({
   return "conflict";
 }
 
-const equalValue = (a: unknown, b: unknown) => JSON.stringify(canonicalValue(a)) === JSON.stringify(canonicalValue(b));
+const equalValue = (a: unknown, b: unknown) => JSON.stringify(canonicalSongV2Value(a)) === JSON.stringify(canonicalSongV2Value(b));
 const lyricStructure = (arr: Arrangment) => ({
   ...arr, slides: undefined, monitorLayout: undefined,
   formattedLyrics: arr.formattedLyrics.map(lyric => ({ ...lyric, words: undefined, slideSpan: undefined })),

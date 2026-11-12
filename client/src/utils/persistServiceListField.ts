@@ -1,7 +1,7 @@
 import isEqual from "lodash/isEqual";
 import type { DBItemListDetails, ServiceItem } from "../types";
 import { isPouchConflict } from "./persistOverlayDoc";
-import { getOutlineItemConflicts, reconcileOutlineItems, type OutlineItemChoices } from "./outlineSync";
+import { getOutlineItemConflicts, reconcileOutlineItems, type OutlineItemChoices, type OutlineMoveIntent } from "./outlineSync";
 
 const SERVICE_LIST_PUT_MAX_ATTEMPTS = 4;
 type QueuedFieldSave = { document: DBItemListDetails; didWrite: boolean; intent: ServiceItem[] | string[] };
@@ -270,7 +270,7 @@ const mergeRevisionBranches = async (
     localItems: branches.winner.items ?? [],
     remoteItems: branches.versions[1].items ?? [],
   } : undefined;
-  return { document: merged, requiresReview, itemReview, documentConflicts };
+  return { document: merged, requiresReview, itemReview, documentConflicts, baseline };
 };
 
 const updatedDocument = <K extends "items" | "overlays">(
@@ -334,6 +334,7 @@ function persistServiceListField<K extends "items" | "overlays">(
   value: K extends "items" ? ServiceItem[] : string[],
   baseline?: ServiceItem[],
   isCurrent = () => true,
+  moveIntents: OutlineMoveIntent[] = [],
 ): Promise<DBItemListDetails> {
   let saves = savesByDatabase.get(db);
   if (!saves) {
@@ -364,6 +365,7 @@ function persistServiceListField<K extends "items" | "overlays">(
         : baseline,
       isCurrent,
       () => versions?.get(key) === version,
+      moveIntents,
     );
     if (result.didWrite) queue.lastWritten = result;
     return result;
@@ -385,12 +387,69 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
   baseline?: ServiceItem[],
   isCurrent = () => true,
   isLatest = () => true,
+  moveIntents: OutlineMoveIntent[] = [],
 ): Promise<QueuedFieldSave> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < SERVICE_LIST_PUT_MAX_ATTEMPTS; attempt += 1) {
     if (!isCurrent()) throw new Error("The outline save session ended");
-    const current = await db.get(listId, { conflicts: true }) as RevisionDoc;
+    let current = await db.get(listId, { conflicts: true }) as RevisionDoc;
+    if (!isLatest()) return { document: current, didWrite: false, intent: value };
+    if (field === "items" && baseline && current._conflicts?.length) {
+      const branches = await readRevisionBranchSet(db, listId);
+      const branchMerge = await mergeRevisionBranches(db, listId, branches);
+      const winnerHistory = branches.graph.histories[branches.graph.winningRevision] ?? [];
+      let latestBaselineRevision: string | undefined;
+      for (const revision of winnerHistory) {
+        try {
+          const ancestor = revision === branches.winner._rev
+            ? branches.winner
+            : await db.get(listId, { rev: revision }) as DBItemListDetails;
+          if (isEqual(ancestor.items ?? [], baseline)) {
+            latestBaselineRevision = revision;
+            break;
+          }
+        } catch {
+          break;
+        }
+      }
+      // A losing leaf that forked before the Controller's loaded baseline is
+      // historical, even when an older ancestor happens to have identical rows.
+      if (branchMerge && isEqual(branchMerge.baseline.items ?? [], baseline) &&
+        branchMerge.baseline._rev === latestBaselineRevision) {
+        if (branchMerge.requiresReview) {
+          if (branchMerge.itemReview && !branchMerge.documentConflicts.length) {
+            const branchesReconciled = reconcileOutlineItems(
+              branchMerge.itemReview.baselineItems,
+              branchMerge.itemReview.localItems,
+              branchMerge.itemReview.remoteItems,
+            );
+            if (branchesReconciled.kind === "merged") {
+              current = { ...branchMerge.document, items: branchesReconciled.items,
+                _rev: branches.winner._rev } as RevisionDoc;
+            } else {
+              const focusedReview = {
+                baselineItems: branchMerge.itemReview.baselineItems,
+                localItems: value as ServiceItem[],
+                remoteItems: branchMerge.itemReview.localItems,
+              };
+              throw new ServiceListConflictError(
+                focusedReview.remoteItems,
+                conflictDetails(branches, branchMerge.document, focusedReview),
+              );
+            }
+          } else {
+          throw new ServiceListConflictError(
+            (branchMerge.document.items ?? []) as ServiceItem[],
+            conflictDetails(branches, branchMerge.document, branchMerge.itemReview, branchMerge.documentConflicts),
+          );
+          }
+        } else {
+          current = { ...branchMerge.document, _rev: branches.winner._rev } as RevisionDoc;
+        }
+      }
+    }
+    if (!isCurrent()) throw new Error("The outline save session ended");
     if (!isLatest()) return { document: current, didWrite: false, intent: value };
     // Ordinary edits extend the winner using its CAS revision. Historical
     // losing leaves are preserved for separately authorized maintenance.
@@ -400,6 +459,8 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
         baseline,
         value as ServiceItem[],
         (current.items ?? []) as ServiceItem[],
+        undefined,
+        moveIntents,
       );
       if (reconciled.kind === "conflict") {
         throw new ServiceListConflictError(
@@ -440,7 +501,8 @@ export const persistServiceListItems = (
   items: ServiceItem[],
   baseline?: ServiceItem[],
   isCurrent?: () => boolean,
-) => persistServiceListField(db, listId, "items", items, baseline, isCurrent);
+  moveIntents?: OutlineMoveIntent[],
+) => persistServiceListField(db, listId, "items", items, baseline, isCurrent, moveIntents);
 
 export const persistServiceListOverlays = (
   db: ServiceListFieldDb,

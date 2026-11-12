@@ -1,6 +1,7 @@
 import { configureStore } from "@reduxjs/toolkit";
 import itemListReducer, {
   updateItemList,
+  moveItemListRows,
   setActiveItemInList,
   removeItemFromList,
   removeItemFromListById,
@@ -19,6 +20,7 @@ import { activateOutlineContent } from "./outlineContent";
 import { createServiceItem } from "../test/fixtures";
 import type { ServiceItem } from "../types";
 import generateRandomId from "../utils/generateRandomId";
+import { createOutlineMoveIntent } from "../utils/outlineSync";
 
 jest.mock("../utils/generateRandomId");
 const mockGenerateRandomId = jest.mocked(generateRandomId);
@@ -425,6 +427,33 @@ describe("itemListSlice", () => {
       expect(state.list).toHaveLength(1);
       expect(state.list[0].name).toBe("X");
       expect(state.hasPendingUpdate).toBe(true);
+    });
+
+    it("rebases an owner-scoped move over remote order and treats repeated refreshes as idempotent", () => {
+      const store = createStore();
+      const baseline = ["a", "b", "c", "d", "e"].map(id =>
+        createServiceItem({ name: id.toUpperCase(), _id: id, listId: id }));
+      const local = [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]];
+      const remote = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
+      const ownerKey = "owner-a";
+      const intent = createOutlineMoveIntent({ outlineId: "outline", ownerKey,
+        resultingItems: local, movedIds: ["b"] })!;
+
+      store.dispatch(activateOutlineContent({ ownerKey, hasSelection: true }));
+      store.dispatch(initiateItemList({ outlineId: "outline", items: baseline }));
+      store.dispatch(moveItemListRows({ items: local, intent }));
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: remote }));
+      const merged = store.getState().itemList;
+      expect(merged.list.map(item => item.listId)).toEqual(["b", "a", "c", "e", "d"]);
+      expect(merged.hasPendingUpdate).toBe(true);
+      expect(merged.pendingMoveIntents).toEqual([intent]);
+
+      store.dispatch(markItemListPersisted({ outlineId: "outline", ownerKey,
+        items: merged.list, submittedItems: local, submittedMoveIntents: [intent] }));
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: merged.list }));
+      expect(store.getState().itemList.list.map(item => item.listId)).toEqual(["b", "a", "c", "e", "d"]);
+      expect(store.getState().itemList.pendingMoveIntents).toEqual([]);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(false);
     });
 
     it("setActiveItemInList updates selectedItemListId and insertPointIndex", () => {

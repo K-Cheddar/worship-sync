@@ -7,7 +7,7 @@ import {
   isLocalImageUrl,
   type LocalImageReferencePatch,
 } from "../utils/localImageAssets";
-import { reconcileOutlineItems } from "../utils/outlineSync";
+import { reconcileOutlineItems, type OutlineMoveIntent } from "../utils/outlineSync";
 import type { OutlineRevisionConflict, OutlineRevisionSelection } from "../utils/persistServiceListField";
 
 export type OutlineRemoteConflict = {
@@ -17,6 +17,7 @@ export type OutlineRemoteConflict = {
   remoteItems: ServiceItem[];
   revisionConflict?: OutlineRevisionConflict;
   draftBaselineItems?: ServiceItem[];
+  moveIntents?: OutlineMoveIntent[];
   /** Keep the retained draft until the selected resolution is acknowledged. */
   resolutionChoice?: "keep-local" | "use-remote";
   saveError?: boolean;
@@ -43,6 +44,7 @@ type ItemListState = {
   outlineLoadGeneration?: number;
   pendingByOutline?: Record<string, ServiceItem[]>;
   syncBaselineByOutline?: Record<string, ServiceItem[]>;
+  pendingMoveIntentsByOutline?: Record<string, OutlineMoveIntent[]>;
   list: ServiceItem[];
   isLoading: boolean;
   loadError: string | null;
@@ -60,6 +62,7 @@ type ItemListState = {
   /** Remote draft retained until an operator resolves a genuine edit conflict. */
   remoteConflicts: Record<string, OutlineRemoteConflict>;
   pendingRevisionResolutions: Record<string, PendingOutlineRevisionResolution>;
+  pendingMoveIntents: OutlineMoveIntent[];
 };
 
 const initialState: ItemListState = {
@@ -77,6 +80,7 @@ const initialState: ItemListState = {
   loadedOutlineId: undefined,
   remoteConflicts: {},
   pendingRevisionResolutions: {},
+  pendingMoveIntents: [],
 };
 
 const normalizeRows = (items: ServiceItem[]) =>
@@ -110,6 +114,16 @@ export const itemListSlice = createSlice({
       );
       state.hasPendingUpdate = true;
     },
+    moveItemListRows: (state, action: PayloadAction<{ items: ServiceItem[]; intent: OutlineMoveIntent }>) => {
+      const { intent, items } = action.payload;
+      if (state.loadedOutlineId !== intent.outlineId || state.outlineOwnerKey !== intent.ownerKey) return;
+      state.list = items;
+      state.insertPointIndex = Math.max(-1, Math.min(state.insertPointIndex, items.length - 1));
+      state.pendingMoveIntents = [...(state.pendingMoveIntents ?? []), intent];
+      state.pendingMoveIntentsByOutline ??= {};
+      state.pendingMoveIntentsByOutline[intent.ownerKey] = state.pendingMoveIntents.map(move => ({ ...move }));
+      state.hasPendingUpdate = true;
+    },
     setActiveItemInList: (state, action: PayloadAction<string>) => {
       state.selectedItemListId = action.payload;
       const idx = state.list.findIndex((e) => e.listId === action.payload);
@@ -117,6 +131,7 @@ export const itemListSlice = createSlice({
     },
     initiateItemList: (state, action: PayloadAction<InitiateItemListPayload>) => {
       if (!state.syncBaseline) state.syncBaseline = [];
+      if (!state.pendingMoveIntents) state.pendingMoveIntents = [];
       if (!state.remoteConflicts) state.remoteConflicts = {};
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
       const currentOwnerKey = state.outlineOwnerKey;
@@ -134,6 +149,7 @@ export const itemListSlice = createSlice({
       state.loadError = null;
       const remoteItems = normalizeRows(payload.items);
       state.list = remoteItems;
+      state.pendingMoveIntents = (state.pendingMoveIntentsByOutline?.[currentOwnerKey ?? ""] ?? []).map(intent => ({ ...intent }));
       state.initialItems = state.list.map((item) => item.listId);
       state.syncBaseline = remoteItems.map((item) => ({ ...item }));
       if (payload.outlineId !== undefined) {
@@ -154,7 +170,8 @@ export const itemListSlice = createSlice({
         const latestLocal = previouslyLoadedOutlineId === payload.outlineId
           ? previousList
           : conflict.localItems;
-        const refreshed = reconcileOutlineItems(conflict.baselineItems, latestLocal, state.list);
+        const refreshed = reconcileOutlineItems(conflict.baselineItems, latestLocal, state.list,
+          undefined, state.pendingMoveIntents);
         state.list = refreshed.items;
         state.syncBaseline = refreshed.remoteItems;
         conflict.remoteItems = refreshed.remoteItems;
@@ -165,6 +182,8 @@ export const itemListSlice = createSlice({
           retainedBaseline ?? [],
           retainedDraft,
           remoteItems,
+          undefined,
+          state.pendingMoveIntents,
         );
         state.list = merged.items;
         state.syncBaseline = merged.remoteItems.map((item) => ({ ...item }));
@@ -184,15 +203,26 @@ export const itemListSlice = createSlice({
           state.pendingByOutline[currentOwnerKey] = merged.items;
           state.syncBaselineByOutline ??= {};
           state.syncBaselineByOutline[currentOwnerKey] = merged.remoteItems.map((item) => ({ ...item }));
+          state.pendingMoveIntentsByOutline ??= {};
+          state.pendingMoveIntentsByOutline[currentOwnerKey] = state.pendingMoveIntents.map(intent => ({ ...intent }));
+          if (merged.kind === "conflict") state.remoteConflicts[payload.outlineId] = {
+            baselineItems: retainedBaseline ?? [], localItems: merged.items,
+            originalLocalItems: merged.items.map(item => ({ ...item })),
+            remoteItems: merged.remoteItems.map(item => ({ ...item })),
+            moveIntents: state.pendingMoveIntents.map(intent => ({ ...intent })),
+          };
         } else {
           delete state.pendingByOutline?.[currentOwnerKey];
           delete state.syncBaselineByOutline?.[currentOwnerKey];
+          delete state.pendingMoveIntentsByOutline?.[currentOwnerKey];
+          delete state.remoteConflicts[payload.outlineId];
         }
       } else {
         state.hasPendingUpdate = false;
         if (currentOwnerKey) {
           delete state.pendingByOutline?.[currentOwnerKey];
           delete state.syncBaselineByOutline?.[currentOwnerKey];
+          delete state.pendingMoveIntentsByOutline?.[currentOwnerKey];
         }
       }
     },
@@ -201,6 +231,7 @@ export const itemListSlice = createSlice({
       action: PayloadAction<UpdateItemListFromRemotePayload>,
     ) => {
       if (!state.syncBaseline) state.syncBaseline = [];
+      if (!state.pendingMoveIntents) state.pendingMoveIntents = [];
       if (!state.remoteConflicts) state.remoteConflicts = {};
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
       const payload = Array.isArray(action.payload)
@@ -213,6 +244,8 @@ export const itemListSlice = createSlice({
         state.remoteConflicts[state.loadedOutlineId ?? ""]?.baselineItems ?? state.syncBaseline,
         state.list,
         remoteItems,
+        undefined,
+        state.pendingMoveIntents,
       );
       state.list = result.items;
       const outlineId = state.loadedOutlineId;
@@ -229,6 +262,7 @@ export const itemListSlice = createSlice({
           ...(unresolvedConflict.revisionConflict
             ? { revisionConflict: unresolvedConflict.revisionConflict, draftBaselineItems: unresolvedConflict.draftBaselineItems }
             : {}),
+          ...(state.pendingMoveIntents.length ? { moveIntents: state.pendingMoveIntents.map(intent => ({ ...intent })) } : {}),
           ...(isSameRows(unresolvedConflict.remoteItems, result.remoteItems)
             ? { resolutionChoice: unresolvedConflict.resolutionChoice }
             : {}),
@@ -241,6 +275,7 @@ export const itemListSlice = createSlice({
           localItems: result.items,
           originalLocalItems: result.items.map((item) => ({ ...item })),
           remoteItems: result.remoteItems,
+          ...(state.pendingMoveIntents.length ? { moveIntents: state.pendingMoveIntents.map(intent => ({ ...intent })) } : {}),
         };
         state.syncBaseline = result.remoteItems.map((item) => ({ ...item }));
         state.hasPendingUpdate = true;
@@ -255,9 +290,12 @@ export const itemListSlice = createSlice({
           state.pendingByOutline[state.outlineOwnerKey] = state.list;
           state.syncBaselineByOutline ??= {};
           state.syncBaselineByOutline[state.outlineOwnerKey] = state.syncBaseline.map((item) => ({ ...item }));
+          state.pendingMoveIntentsByOutline ??= {};
+          state.pendingMoveIntentsByOutline[state.outlineOwnerKey] = state.pendingMoveIntents.map(intent => ({ ...intent }));
         } else {
           delete state.pendingByOutline?.[state.outlineOwnerKey];
           delete state.syncBaselineByOutline?.[state.outlineOwnerKey];
+          delete state.pendingMoveIntentsByOutline?.[state.outlineOwnerKey];
         }
       }
       preserveCursor(state);
@@ -290,6 +328,8 @@ export const itemListSlice = createSlice({
         state.list = conflict.remoteItems.map((item) => ({ ...item }));
         state.syncBaseline = conflict.remoteItems.map((item) => ({ ...item }));
         state.hasPendingUpdate = false;
+        state.pendingMoveIntents = [];
+        if (state.outlineOwnerKey) delete state.pendingMoveIntentsByOutline?.[state.outlineOwnerKey];
       }
       if (conflict.revisionConflict || action.payload.reviewedItems) {
         state.pendingRevisionResolutions[action.payload.outlineId] = {
@@ -327,9 +367,11 @@ export const itemListSlice = createSlice({
         localItems: ServiceItem[];
         remoteItems: ServiceItem[];
         revisionConflict?: OutlineRevisionConflict;
+        moveIntents?: OutlineMoveIntent[];
       }>,
     ) => {
       if (!state.syncBaseline) state.syncBaseline = [];
+      if (!state.pendingMoveIntents) state.pendingMoveIntents = [];
       if (!state.remoteConflicts) state.remoteConflicts = {};
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
       delete state.pendingRevisionResolutions[action.payload.outlineId];
@@ -340,13 +382,15 @@ export const itemListSlice = createSlice({
           : state.remoteConflicts[action.payload.outlineId]?.localItems ?? action.payload.localItems;
       if (action.payload.revisionConflict) {
         const retainedLocal = localItems.map((item) => ({ ...item }));
+        const itemReview = action.payload.revisionConflict.itemReview;
         state.remoteConflicts[action.payload.outlineId] = {
-          baselineItems: remoteItems.map((item) => ({ ...item })),
+          baselineItems: (itemReview?.baselineItems ?? remoteItems).map((item) => ({ ...item })),
           localItems: retainedLocal,
           originalLocalItems: state.remoteConflicts[action.payload.outlineId]?.originalLocalItems ?? retainedLocal.map((item) => ({ ...item })),
-          remoteItems,
+          remoteItems: (itemReview?.remoteItems ?? remoteItems).map((item) => ({ ...item })),
           revisionConflict: action.payload.revisionConflict,
           draftBaselineItems: action.payload.baselineItems,
+          ...(action.payload.moveIntents?.length ? { moveIntents: action.payload.moveIntents } : {}),
         };
         if (state.loadedOutlineId === action.payload.outlineId) {
           state.list = retainedLocal;
@@ -360,6 +404,8 @@ export const itemListSlice = createSlice({
         action.payload.baselineItems,
         localItems,
         remoteItems,
+        undefined,
+        action.payload.moveIntents ?? state.pendingMoveIntents,
       );
       if (result.kind === "conflict" || state.remoteConflicts[action.payload.outlineId]) {
         const previous = state.remoteConflicts[action.payload.outlineId];
@@ -368,6 +414,7 @@ export const itemListSlice = createSlice({
           localItems: result.items,
           originalLocalItems: previous?.originalLocalItems ?? localItems.map((item) => ({ ...item })),
           remoteItems: result.remoteItems,
+          ...(action.payload.moveIntents?.length ? { moveIntents: action.payload.moveIntents } : {}),
         };
         if (state.loadedOutlineId === action.payload.outlineId) {
           state.list = result.items;
@@ -389,28 +436,45 @@ export const itemListSlice = createSlice({
         ownerKey?: string;
         items: ServiceItem[];
         submittedItems: ServiceItem[];
+        submittedMoveIntents?: OutlineMoveIntent[];
       }>,
     ) => {
       if (!state.remoteConflicts) state.remoteConflicts = {};
+      if (!state.pendingMoveIntents) state.pendingMoveIntents = [];
       if (!state.pendingRevisionResolutions) state.pendingRevisionResolutions = {};
+      const removeAcknowledgedMoves = (moves: OutlineMoveIntent[]) => {
+        const submitted = action.payload.submittedMoveIntents ?? [];
+        if (submitted.length && isEqual(moves.slice(0, submitted.length), submitted)) return moves.slice(submitted.length);
+        return moves;
+      };
       if (action.payload.ownerKey && state.outlineOwnerKey !== action.payload.ownerKey) {
         const retainedDraft = state.pendingByOutline?.[action.payload.ownerKey];
+        const remainingMoves = removeAcknowledgedMoves(state.pendingMoveIntentsByOutline?.[action.payload.ownerKey] ?? []);
         if (retainedDraft) {
           const result = reconcileOutlineItems(
             action.payload.submittedItems,
             retainedDraft,
             normalizeRows(action.payload.items),
+            undefined,
+            remainingMoves,
           );
           state.pendingByOutline![action.payload.ownerKey] = result.items;
           state.syncBaselineByOutline ??= {};
           state.syncBaselineByOutline[action.payload.ownerKey] = result.remoteItems.map((item) => ({ ...item }));
         }
+        if (remainingMoves.length) {
+          state.pendingMoveIntentsByOutline ??= {};
+          state.pendingMoveIntentsByOutline[action.payload.ownerKey] = remainingMoves;
+        } else delete state.pendingMoveIntentsByOutline?.[action.payload.ownerKey];
         return;
       }
       const retained = state.remoteConflicts[action.payload.outlineId];
       if (state.loadedOutlineId !== action.payload.outlineId && (state.loadedOutlineId !== undefined || retained)) {
         if (retained?.resolutionChoice) {
-          const result = reconcileOutlineItems(action.payload.submittedItems, retained.localItems, action.payload.items);
+          const remainingMoves = removeAcknowledgedMoves(action.payload.ownerKey
+            ? state.pendingMoveIntentsByOutline?.[action.payload.ownerKey] ?? [] : []);
+          const result = reconcileOutlineItems(action.payload.submittedItems, retained.localItems, action.payload.items,
+            undefined, remainingMoves);
           if (result.kind !== "conflict" && isSameRows(result.items, action.payload.items)) {
             delete state.remoteConflicts[action.payload.outlineId];
             delete state.pendingRevisionResolutions[action.payload.outlineId];
@@ -418,20 +482,32 @@ export const itemListSlice = createSlice({
             retained.localItems = result.items;
             retained.baselineItems = action.payload.items;
             retained.remoteItems = action.payload.items;
+            retained.moveIntents = remainingMoves;
             delete retained.revisionConflict;
             delete state.pendingRevisionResolutions[action.payload.outlineId];
           }
+        }
+        if (action.payload.ownerKey && state.pendingMoveIntentsByOutline?.[action.payload.ownerKey]) {
+          const remainingMoves = removeAcknowledgedMoves(
+            state.pendingMoveIntentsByOutline[action.payload.ownerKey],
+          );
+          if (remainingMoves.length) state.pendingMoveIntentsByOutline[action.payload.ownerKey] = remainingMoves;
+          else delete state.pendingMoveIntentsByOutline[action.payload.ownerKey];
         }
         return;
       }
       if (retained && !retained.resolutionChoice) return;
       const persistedItems = normalizeRows(action.payload.items);
+      const remainingMoves = removeAcknowledgedMoves(state.pendingMoveIntents);
       const result = reconcileOutlineItems(
         action.payload.submittedItems,
         state.list,
         persistedItems,
+        undefined,
+        remainingMoves,
       );
       state.syncBaseline = persistedItems.map((item) => ({ ...item }));
+      state.pendingMoveIntents = remainingMoves;
       delete state.pendingRevisionResolutions[action.payload.outlineId];
       state.list = result.items;
       if (result.kind === "conflict") {
@@ -439,6 +515,7 @@ export const itemListSlice = createSlice({
           baselineItems: persistedItems.map((item) => ({ ...item })),
           localItems: result.items,
           remoteItems: persistedItems.map((item) => ({ ...item })),
+          ...(remainingMoves.length ? { moveIntents: remainingMoves.map(intent => ({ ...intent })) } : {}),
         };
         state.hasPendingUpdate = true;
       } else {
@@ -451,9 +528,12 @@ export const itemListSlice = createSlice({
           state.pendingByOutline[action.payload.ownerKey] = state.list;
           state.syncBaselineByOutline ??= {};
           state.syncBaselineByOutline[action.payload.ownerKey] = persistedItems.map((item) => ({ ...item }));
+          state.pendingMoveIntentsByOutline ??= {};
+          state.pendingMoveIntentsByOutline[action.payload.ownerKey] = state.pendingMoveIntents.map(intent => ({ ...intent }));
         } else {
           delete state.pendingByOutline?.[action.payload.ownerKey];
           delete state.syncBaselineByOutline?.[action.payload.ownerKey];
+          delete state.pendingMoveIntentsByOutline?.[action.payload.ownerKey];
         }
       }
       preserveCursor(state);
@@ -624,6 +704,8 @@ export const itemListSlice = createSlice({
       if (!action.payload && state.outlineOwnerKey) {
         delete state.pendingByOutline?.[state.outlineOwnerKey];
         delete state.syncBaselineByOutline?.[state.outlineOwnerKey];
+        state.pendingMoveIntents = [];
+        delete state.pendingMoveIntentsByOutline?.[state.outlineOwnerKey];
       }
     },
     acknowledgeOutlineSave: (state, action: PayloadAction<{ ownerKey: string; list: ServiceItem[] }>) => {
@@ -634,6 +716,8 @@ export const itemListSlice = createSlice({
         state.hasPendingUpdate = false;
         delete state.pendingByOutline?.[ownerKey];
         delete state.syncBaselineByOutline?.[ownerKey];
+        state.pendingMoveIntents = [];
+        delete state.pendingMoveIntentsByOutline?.[ownerKey];
       }
     },
     forceUpdate: (state) => {
@@ -645,20 +729,25 @@ export const itemListSlice = createSlice({
   },
   extraReducers: (builder) => {
     builder.addCase(activateOutlineContent, (state, action) => {
+      if (!state.pendingMoveIntents) state.pendingMoveIntents = [];
       if (state.outlineOwnerKey && state.isInitialized && state.hasPendingUpdate) {
         state.pendingByOutline ??= {};
         state.pendingByOutline[state.outlineOwnerKey] = state.list;
         state.syncBaselineByOutline ??= {};
         state.syncBaselineByOutline[state.outlineOwnerKey] = state.syncBaseline.map((item) => ({ ...item }));
+        state.pendingMoveIntentsByOutline ??= {};
+        if (state.pendingMoveIntents.length) state.pendingMoveIntentsByOutline[state.outlineOwnerKey] = state.pendingMoveIntents.map(intent => ({ ...intent }));
       } else if (state.outlineOwnerKey) {
         delete state.pendingByOutline?.[state.outlineOwnerKey];
         delete state.syncBaselineByOutline?.[state.outlineOwnerKey];
+        delete state.pendingMoveIntentsByOutline?.[state.outlineOwnerKey];
       }
       const draft = state.pendingByOutline?.[action.payload.ownerKey];
       const baseline = state.syncBaselineByOutline?.[action.payload.ownerKey];
       state.outlineOwnerKey = action.payload.ownerKey;
       state.outlineLoadGeneration = (state.outlineLoadGeneration ?? 0) + 1;
       state.list = draft ?? [];
+      state.pendingMoveIntents = (state.pendingMoveIntentsByOutline?.[action.payload.ownerKey] ?? []).map(intent => ({ ...intent }));
       // Activation retires content and its identity together. A loading list
       // is not a draft or a deletion of the previously loaded outline.
       state.loadedOutlineId = undefined;
@@ -687,6 +776,7 @@ const isSameRows = (left: ServiceItem[], right: ServiceItem[]) =>
 
 export const {
   updateItemList,
+  moveItemListRows,
   removeItemFromList,
   removeItemsFromList,
   addItemToItemList,

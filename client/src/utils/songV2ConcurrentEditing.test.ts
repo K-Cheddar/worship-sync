@@ -47,6 +47,18 @@ function edit(song: DBItem, page: number, value: string): DBItem {
   }).join("");
   return formatSong({ ...draft, selectedSlide: page + 1, selectedBox: 1 } as ItemState) as DBItem;
 }
+function editSection(song: DBItem, sectionIndex: number, value: string): DBItem {
+  const draft = clone(song);
+  draft.arrangements[0].formattedLyrics[sectionIndex].words = value;
+  return formatSong({ ...draft, selectedArrangement: 0, selectedSlide: 1, selectedBox: 1 } as ItemState) as DBItem;
+}
+function editPhysicalSlide(song: DBItem, slideIndex: number, value: string): DBItem {
+  const draft = clone(song);
+  const box = draft.arrangements[0].slides[slideIndex].boxes[1];
+  if (!box) throw new Error(`Fixture slide ${slideIndex} has no authored text box`);
+  box.words = value;
+  return draft;
+}
 
 describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB", () => {
   let db: PouchDB.Database;
@@ -97,9 +109,6 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
     expect({ get: get.mock.calls.length, allDocs: allDocs.mock.calls.length,
       put: put.mock.calls.length, remove: remove.mock.calls.length })
       .toEqual({ get: 2, allDocs: 4, put: 4, remove: 0 });
-    console.info("AFTER two-editor save calls", { get: get.mock.calls.length, allDocs: allDocs.mock.calls.length,
-      put: put.mock.calls.length, remove: remove.mock.calls.length,
-      written: put.mock.calls.map(([doc]) => doc._id) });
     let state = itemSlice.reducer(undefined, itemSlice.actions.setActiveItem(baseline));
     state = itemSlice.reducer(state, itemSlice.actions._updateArrangements(b.arrangements));
     state = itemSlice.reducer(state, itemSlice.actions.bufferRemoteItemUpdate(savedA));
@@ -152,6 +161,9 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       expect(reloadedA).toEqual(reloadedB);
       expect(reloadedB.arrangements[0].formattedLyrics[0].words).toBe("alpha\nbeta1\ngamma\ndelta1");
       expect(stateB.hasPendingUpdate).toBe(false);
+      await Promise.all([a.replicate.to(db), b.replicate.from(db)]);
+      await Promise.all([a.replicate.to(db), b.replicate.from(db)]);
+      expect((await loadSongV2Snapshot(b, baseB._id, true)).conflicts).toBeUndefined();
     } finally { await a.destroy(); await b.destroy(); }
   });
 
@@ -162,6 +174,118 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
     const snapshot = await loadSongV2Snapshot(db, baseline._id);
     await Promise.all([saveSong(db, a, baseline, undefined, snapshot), saveSong(db, b, baseline, undefined, snapshot)]);
     expect((await loadSong(db, baseline._id)).arrangements[0].formattedLyrics[0].words).toBe("alpha\nbeta1\ngamma\ndelta1");
+  });
+
+  it("merges independent verse and chorus edits from real replicas and remains writable", async () => {
+    const a = new PouchDB(`section-a-${Math.random()}`, { adapter: "idb" });
+    const b = new PouchDB(`section-b-${Math.random()}`, { adapter: "idb" });
+    try {
+      await Promise.all([a.replicate.from(db), b.replicate.from(db)]);
+      const baseA = await loadSong(a, "better-test");
+      const baseB = await loadSong(b, "better-test");
+      await Promise.all([
+        saveSong(a, editSection(baseA, 0, "Verse from A\nbeta\ngamma\ndelta"), baseA),
+        saveSong(b, editSection(baseB, 1, "Chorus from B"), baseB),
+      ]);
+
+      await a.replicate.to(db);
+      await b.replicate.to(db);
+      await a.replicate.from(db);
+      const concurrent = await loadSongV2Snapshot(a, baseA._id, true);
+      const reconciled = await loadReconciledSongV2Snapshot(a, baseA._id, concurrent, () => true);
+
+      expect(reconciled.hydrated.arrangements[0].formattedLyrics.map(section => section.words))
+        .toEqual(["Verse from A\nbeta\ngamma\ndelta", "Chorus from B"]);
+      const editorState = itemSlice.reducer(undefined, itemSlice.actions.setActiveItem(reconciled.hydrated));
+      expect(editorState.pendingSongV2Conflicts).toBeUndefined();
+      expect(editorState.hasRemoteUpdate).toBe(false);
+      await a.replicate.to(db);
+      await b.replicate.from(db);
+      const beforeNextSave = await loadSong(b, baseB._id);
+      const savedAgain = await saveSong(b, editSection(beforeNextSave, 1, "Continued chorus edit"), beforeNextSave);
+      await b.replicate.to(db);
+      await a.replicate.from(db);
+
+      const finalA = await loadSong(a, baseA._id);
+      const finalB = await loadSong(b, baseB._id);
+      expect(finalA.arrangements[0].formattedLyrics.map(section => section.words))
+        .toEqual(["Verse from A\nbeta\ngamma\ndelta", "Continued chorus edit"]);
+      expect(finalA).toEqual(finalB);
+      expect(savedAgain.arrangements[0].formattedLyrics[0].words)
+        .toBe("Verse from A\nbeta\ngamma\ndelta");
+    } finally { await a.destroy(); await b.destroy(); }
+  });
+
+  it("preserves independent edits to separate physical slide documents", async () => {
+    const a = new PouchDB(`slide-a-${Math.random()}`, { adapter: "idb" });
+    const b = new PouchDB(`slide-b-${Math.random()}`, { adapter: "idb" });
+    try {
+      await Promise.all([a.replicate.from(db), b.replicate.from(db)]);
+      const baseA = await loadSong(a, "better-test");
+      const baseB = await loadSong(b, "better-test");
+      const draftA = editPhysicalSlide(baseA, 0, "Title changed by A");
+      const draftB = editPhysicalSlide(baseB, 2, "Blank changed by B");
+      await Promise.all([saveSong(a, draftA, baseA), saveSong(b, draftB, baseB)]);
+      await a.replicate.to(db);
+      await b.replicate.to(db);
+      await a.replicate.from(db);
+      const snapshot = await loadSongV2Snapshot(a, baseA._id, true);
+      expect(snapshot.conflicts).toBeUndefined();
+      const converged = snapshot.hydrated;
+      expect(converged.arrangements[0].slides[0].boxes[1].words).toBe("Title changed by A");
+      expect(converged.arrangements[0].slides[2].boxes[1].words).toBe("Blank changed by B");
+      const editorState = itemSlice.reducer(undefined, itemSlice.actions.setActiveItem(converged));
+      expect(editorState.pendingSongV2Conflicts).toBeUndefined();
+      expect(editorState.hasRemoteUpdate).toBe(false);
+
+      await a.replicate.to(db);
+      await b.replicate.from(db);
+      const baselineB2 = await loadSong(b, baseB._id);
+      const continued = await saveSong(b, editSection(baselineB2, 1, "continued after slide convergence"), baselineB2);
+      await b.replicate.to(db);
+      await a.replicate.from(db);
+      expect((await loadSong(a, baseA._id)).arrangements[0].formattedLyrics[1].words)
+        .toBe("continued after slide convergence");
+      expect(continued.arrangements[0].slides[0].boxes[1].words).toBe("Title changed by A");
+    } finally { await a.destroy(); await b.destroy(); }
+  });
+
+  it("ignores equivalent authored physical leaves and permits the next edit", async () => {
+    const a = new PouchDB(`equivalent-a-${Math.random()}`, { adapter: "idb" });
+    const b = new PouchDB(`equivalent-b-${Math.random()}`, { adapter: "idb" });
+    try {
+      await Promise.all([a.replicate.from(db), b.replicate.from(db)]);
+      const baseA = await loadSong(a, "better-test");
+      const baseB = await loadSong(b, "better-test");
+      const sameA = editSection(baseA, 1, "Same authored chorus");
+      const sameB = editSection(baseB, 1, "Same authored chorus");
+      await Promise.all([saveSong(a, sameA, baseA), saveSong(b, sameB, baseB)]);
+      const arrangementId = "song-v2:arrangement:better-test:master";
+      const [arrangementA, arrangementB] = await Promise.all([
+        a.get<any>(arrangementId), b.get<any>(arrangementId),
+      ]);
+      await Promise.all([
+        a.put({ ...arrangementA, updatedAt: "equivalent-branch-a" }),
+        b.put({ ...arrangementB, updatedAt: "equivalent-branch-b" }),
+      ]);
+      await a.replicate.to(db);
+      await b.replicate.to(db);
+      await a.replicate.from(db);
+
+      const rawArrangement = await a.get("song-v2:arrangement:better-test:master", { conflicts: true }) as
+        typeof baseA.arrangements[number] & { _conflicts?: string[] };
+      expect(rawArrangement._conflicts?.length).toBeGreaterThan(0);
+      const snapshot = await loadSongV2Snapshot(a, "better-test", true);
+      expect(snapshot.conflicts).toBeUndefined();
+      const editorState = itemSlice.reducer(undefined, itemSlice.actions.setActiveItem(snapshot.hydrated));
+      expect(editorState.pendingSongV2Conflicts).toBeUndefined();
+      expect(editorState.hasRemoteUpdate).toBe(false);
+
+      const nextDraft = editSection(snapshot.hydrated, 0, "Verse after convergence\nbeta\ngamma\ndelta");
+      const saved = await saveSong(a, nextDraft, snapshot.hydrated);
+      expect(saved.arrangements[0].formattedLyrics.map(section => section.words))
+        .toEqual(["Verse after convergence\nbeta\ngamma\ndelta", "Same authored chorus"]);
+    } finally { await a.destroy(); await b.destroy(); }
   });
 
   it.each(["targeted refresh", "reopen"])("converges through %s when both browser databases save before either edit replicates", async mode => {
@@ -190,9 +314,7 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       );
       expect({ get: get.mock.calls.length, allDocs: allDocs.mock.calls.length,
         put: put.mock.calls.length, remove: remove.mock.calls.length })
-        .toEqual({ get: 6, allDocs: 4, put: 1, remove: 1 });
-      console.info("Eventual-branch reconciliation calls", { get: get.mock.calls.length, allDocs: allDocs.mock.calls.length,
-        put: put.mock.calls.length, remove: remove.mock.calls.length });
+        .toEqual({ get: 8, allDocs: 4, put: 1, remove: 1 });
       expect(reconciled.hydrated.arrangements[0].formattedLyrics[0].words).toBe("alpha\nbeta1\ngamma\ndelta1");
       await a.replicate.to(db);
       await b.replicate.from(db);
@@ -455,7 +577,7 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
     } finally { await peer.destroy(); await unseen.destroy(); }
   });
 
-  it("retries failed branch retirement without repeating the durable merged write", async () => {
+  it("keeps a durable merged song editable when branch retirement fails", async () => {
     const peer = new PouchDB(`cleanup-retry-${Math.random()}`, { adapter: "idb" });
     try {
       await peer.replicate.from(db);
@@ -465,12 +587,17 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       await peer.replicate.to(db);
       const put = jest.spyOn(db, "put");
       jest.spyOn(db, "remove").mockRejectedValueOnce(new Error("cleanup offline"));
-      await expect(loadReconciledSongV2Snapshot(db, baseline._id, undefined, () => true)).rejects.toThrow("cleanup offline");
+      const first = await loadReconciledSongV2Snapshot(db, baseline._id, undefined, () => true);
       expect(put).toHaveBeenCalledTimes(1);
-      const recovered = await loadReconciledSongV2Snapshot(db, baseline._id, undefined, () => true);
+      expect(first.hydrated.arrangements[0].formattedLyrics[0].words)
+        .toBe("alpha\nbeta1\ngamma\ndelta1");
+      expect(first.conflicts).toBeUndefined();
+      const recovered = await loadSongV2Snapshot(db, baseline._id, true);
       expect(put).toHaveBeenCalledTimes(1);
       expect(recovered.hydrated.arrangements[0].formattedLyrics[0].words).toBe("alpha\nbeta1\ngamma\ndelta1");
       expect((await loadSongV2Snapshot(db, baseline._id, true)).conflicts).toBeUndefined();
+      const continued = await saveSong(db, editSection(recovered.hydrated, 1, "continued after cleanup failure"), recovered.hydrated);
+      expect(continued.arrangements[0].formattedLyrics[1].words).toBe("continued after cleanup failure");
     } finally { await peer.destroy(); }
   });
 

@@ -2625,6 +2625,7 @@ listenerMiddleware.startListening({
 
     const revisionResolution = present.itemList.pendingRevisionResolutions?.[selectedList._id];
     const submittedItems = revisionResolution?.items ?? list;
+    const submittedMoveIntents = present.itemList.pendingMoveIntents ?? [];
     const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
     let persistenceSucceeded = false;
     try {
@@ -2643,6 +2644,7 @@ listenerMiddleware.startListening({
             [...submittedItems],
             [...baseline],
             sessionIsCurrent,
+            [...submittedMoveIntents],
           );
 
       persistenceSucceeded = true;
@@ -2656,6 +2658,7 @@ listenerMiddleware.startListening({
           ownerKey,
           items: [...persisted.items],
           submittedItems: [...(revisionResolution?.draftItems ?? submittedItems)],
+          submittedMoveIntents: [...submittedMoveIntents],
         }));
         const latest = (listenerApi.getState() as RootState).undoable.present;
         if (revisionResolution && latest.itemList.loadedOutlineId === selectedList._id &&
@@ -2696,6 +2699,7 @@ listenerMiddleware.startListening({
             ...(error.revisionConflict
               ? { revisionConflict: error.revisionConflict }
               : {}),
+            ...(submittedMoveIntents.length ? { moveIntents: [...submittedMoveIntents] } : {}),
           }));
         }
       } else if (db === dbAtStart) {

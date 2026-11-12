@@ -4,7 +4,7 @@ import ServiceItems from "./ServiceItems";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
-import { removeItemsFromList, retryItemListLoad, updateItemList } from "../../store/itemListSlice";
+import { moveItemListRows, removeItemsFromList, retryItemListLoad } from "../../store/itemListSlice";
 
 const mockDispatch: jest.Mock = jest.fn((action) => {
   if (typeof action === "function") return action(mockDispatch, () => ({ ...mockState, undoable: { present: { ...mockState.undoable.present, item: {} } } }));
@@ -322,6 +322,7 @@ describe("ServiceItems", () => {
       <GlobalInfoContext.Provider value={{ access: "full" } as any}><ServiceItems /></GlobalInfoContext.Provider>
     </ControllerInfoContext.Provider>);
     expect(screen.queryByRole("button", { name: "Use remote version" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
     fireEvent.click(screen.getByRole("button", { name: /^Saved edit:/ }));
     fireEvent.click(screen.getByRole("button", { name: "Save choices" }));
     expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
@@ -331,15 +332,54 @@ describe("ServiceItems", () => {
     }));
   });
 
+  it("closes outline review when switching to another conflicted outline", () => {
+    const rows = [{ _id: "song-a", listId: "row-a", type: "song", name: "Song A" }];
+    const itemList = mockState.undoable.present.itemList;
+    itemList.loadedOutlineId = "outline-1";
+    itemList.list = rows;
+    itemList.remoteConflicts = {
+      "outline-1": { baselineItems: rows, localItems: rows, remoteItems: rows },
+      "outline-2": { baselineItems: rows, localItems: rows, remoteItems: rows },
+    };
+    const renderWorkspace = () => <ControllerInfoContext.Provider value={{ access: "full", isMobile: false } as any}>
+      <GlobalInfoContext.Provider value={{ access: "full" } as any}><ServiceItems /></GlobalInfoContext.Provider>
+    </ControllerInfoContext.Provider>;
+    const { rerender } = render(renderWorkspace());
+    fireEvent.click(screen.getByRole("button", { name: "Review changes" }));
+    expect(screen.getByRole("dialog", { name: "Review outline changes" })).toBeVisible();
+
+    itemList.loadedOutlineId = "outline-2";
+    mockState.undoable.present.itemLists.selectedList = { _id: "outline-2" };
+    rerender(renderWorkspace());
+
+    expect(screen.queryByRole("dialog", { name: "Review outline changes" })).not.toBeInTheDocument();
+  });
+
   it("shows saved-version conflicts to viewers without exposing write decisions", () => {
     mockState.undoable.present.itemList.loadedOutlineId = "outline-1";
     mockState.undoable.present.itemList.remoteConflicts = {
       "outline-1": { localItems: [], remoteItems: [], baselineItems: [] },
     };
     render(<GlobalInfoContext.Provider value={{ access: "view" } as any}><ServiceItems /></GlobalInfoContext.Provider>);
-    expect(screen.getByRole("alert")).toHaveTextContent("Ask a controller operator to review them");
+    expect(screen.getByRole("alert")).toHaveTextContent("Some outline changes need review by an editing Controller.");
     expect(screen.queryByRole("button", { name: "Keep my draft" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Use remote version" })).not.toBeInTheDocument();
+  });
+
+  it("keeps a successfully merged outline free of conflict review UI", () => {
+    const rows = [
+      { _id: "song-b", listId: "row-b", type: "song", name: "Song B" },
+      { _id: "song-a", listId: "row-a", type: "song", name: "Song A" },
+    ];
+    mockState.undoable.present.itemList.loadedOutlineId = "outline-1";
+    mockState.undoable.present.itemList.list = rows;
+    mockState.undoable.present.itemList.remoteConflicts = {};
+    render(<ControllerInfoContext.Provider value={{ access: "full", isMobile: false } as any}>
+      <GlobalInfoContext.Provider value={{ access: "full" } as any}><ServiceItems /></GlobalInfoContext.Provider>
+    </ControllerInfoContext.Provider>);
+    expect(screen.queryByRole("button", { name: "Review changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Song B" })).toBeInTheDocument();
   });
 
   it("syncs cyan list selection when selectedItemListId changes externally", () => {
@@ -423,6 +463,9 @@ describe("ServiceItems", () => {
       { name: "Song B", _id: "song-b", listId: "row-b", type: "song" },
     ];
     mockState.undoable.present.itemList.list = rows;
+    mockState.undoable.present.itemList.loadedOutlineId = "outline-1";
+    mockState.undoable.present.itemList.outlineOwnerKey = "church:outline-1";
+    mockState.undoable.present.itemList.syncBaseline = rows;
 
     render(
       <ControllerInfoContext.Provider value={{ access: "full", isMobile: false } as any}>
@@ -440,7 +483,13 @@ describe("ServiceItems", () => {
       } as never);
     });
 
-    expect(mockDispatch).toHaveBeenCalledWith(updateItemList([rows[1], rows[0]]));
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      type: moveItemListRows.type,
+      payload: expect.objectContaining({
+        items: [rows[1], rows[0]],
+        intent: expect.objectContaining({ outlineId: "outline-1", ownerKey: "church:outline-1", movedIds: ["row-a"] }),
+      }),
+    }));
   });
 
   it("multi-selects outline rows and dispatches bulk delete for the selected items", () => {

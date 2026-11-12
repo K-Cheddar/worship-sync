@@ -1,6 +1,7 @@
 import type { DBItem, SongV2ArrangementDocument, SongV2Documents, SongV2RootDocument, SongV2SlideDocument } from "../types";
 import { applyPouchAudit } from "./pouchAudit";
 import { normalizeItemSlides, normalizeSongForPersistence } from "./activeItemSlides";
+import { sameSongV2DocumentAuthoredContent } from "./songV2AuthoredContent";
 import {
   SongV2DocumentError,
   SongV2BaselineRequiredError,
@@ -137,19 +138,96 @@ const getReferencedDocuments = async <T,>(
 };
 
 export type SongV2RevisionConflict = { documentId: string; winningRevision: string; revisions: string[] };
-export type SongV2Snapshot = SongV2Documents & { hydrated: DBItem; conflicts?: SongV2RevisionConflict[] };
+export type SongV2Snapshot = SongV2Documents & {
+  hydrated: DBItem;
+  conflicts?: SongV2RevisionConflict[];
+  /** Physical revision leaves, including bodies equivalent to the winner. */
+  physicalConflicts?: SongV2RevisionConflict[];
+};
 
-const snapshotFromDocuments = (documents: SongV2Documents): SongV2Snapshot => {
+const committedMergedLeaves = new WeakMap<PouchDB.Database, Map<string, {
+  winners: Record<string, string>;
+  leaves: Record<string, string[]>;
+}>>();
+
+const snapshotFromDocuments = (documents: SongV2Documents, meaningfulConflicts?: SongV2RevisionConflict[]): SongV2Snapshot => {
   const conflicts: SongV2RevisionConflict[] = [];
+  const physicalConflicts: SongV2RevisionConflict[] = [];
   for (const doc of [documents.root, ...documents.arrangements, ...documents.slides]) {
     const physical = doc as typeof doc & { _conflicts?: string[] };
-    if (physical._conflicts?.length) conflicts.push({
-      documentId: doc._id, winningRevision: doc._rev ?? "", revisions: physical._conflicts,
-    });
+    if (physical._conflicts?.length) {
+      const record = { documentId: doc._id, winningRevision: doc._rev ?? "", revisions: [...physical._conflicts] };
+      physicalConflicts.push(record);
+      if (meaningfulConflicts === undefined) conflicts.push(record);
+    }
     delete physical._conflicts;
   }
-  return { ...documents, ...(conflicts.length ? { conflicts } : {}),
+  const activeConflicts = meaningfulConflicts ?? conflicts;
+  return { ...documents, ...(activeConflicts.length ? { conflicts: activeConflicts } : {}),
+    ...(physicalConflicts.length ? { physicalConflicts } : {}),
     hydrated: hydrateSongFromV2Documents(documents.root, documents.arrangements, documents.slides, true) };
+};
+
+const meaningfulRevisionConflicts = async (
+  db: PouchDB.Database,
+  documents: SongV2Documents,
+): Promise<SongV2RevisionConflict[]> => {
+  const conflicts: SongV2RevisionConflict[] = [];
+  for (const document of [documents.root, ...documents.arrangements, ...documents.slides]) {
+    const physical = document as typeof document & { _conflicts?: string[] };
+    if (!physical._conflicts?.length) continue;
+    const committed = committedMergedLeaves.get(db)?.get(documents.root.songId);
+    const isSameCommittedWinner = committed?.winners[document._id] === document._rev;
+    const meaningfulRevisions: string[] = [];
+    for (const revision of physical._conflicts) {
+      if (isSameCommittedWinner && committed?.leaves[document._id]?.includes(revision)) continue;
+      try {
+        const branch = await db.get<typeof document>(document._id, { rev: revision });
+        if (!sameSongV2DocumentAuthoredContent(document, branch)) meaningfulRevisions.push(revision);
+      } catch {
+        // If a leaf cannot be inspected, retain it for explicit review instead
+        // of assuming that its authored content is redundant.
+        meaningfulRevisions.push(revision);
+      }
+    }
+    if (meaningfulRevisions.length) conflicts.push({
+      documentId: document._id,
+      winningRevision: document._rev ?? "",
+      revisions: meaningfulRevisions,
+    });
+  }
+  return conflicts;
+};
+
+/** Records a verified durable merge when retiring its already-incorporated
+ * revision leaves fails. A changed winner or any new leaf is still reviewed. */
+export const rememberCommittedSongV2Merge = (
+  db: PouchDB.Database,
+  committed: SongV2Snapshot,
+  current: SongV2Snapshot,
+  approvedConflicts: SongV2RevisionConflict[] = committed.conflicts ?? [],
+): boolean => {
+  const committedDocs = new Map([committed.root, ...committed.arrangements, ...committed.slides]
+    .map(document => [document._id, document._rev ?? ""]));
+  const currentDocs = [current.root, ...current.arrangements, ...current.slides];
+  if (currentDocs.length !== committedDocs.size || currentDocs.some(document =>
+    committedDocs.get(document._id) !== (document._rev ?? ""))) return false;
+
+  const allowedLeaves = new Map(approvedConflicts.map(conflict =>
+    [conflict.documentId, new Set(conflict.revisions)]));
+  if ((current.conflicts ?? []).some(conflict =>
+    conflict.revisions.some(revision => !allowedLeaves.get(conflict.documentId)?.has(revision)))) return false;
+
+  let bySong = committedMergedLeaves.get(db);
+  if (!bySong) {
+    bySong = new Map();
+    committedMergedLeaves.set(db, bySong);
+  }
+  bySong.set(current.root.songId, {
+    winners: Object.fromEntries(currentDocs.map(document => [document._id, document._rev ?? ""])),
+    leaves: Object.fromEntries(approvedConflicts.map(conflict => [conflict.documentId, [...conflict.revisions]])),
+  });
+  return true;
 };
 
 const loadV2Documents = async (
@@ -194,7 +272,8 @@ export async function loadSongV2Snapshot(
   if (root.deletedAt) throw new SongV2DeletedError(songId);
   assertValidV2Root(root);
   const documents = await loadV2Documents(db, root, includeConflicts);
-  return snapshotFromDocuments(documents);
+  const conflicts = includeConflicts ? await meaningfulRevisionConflicts(db, documents) : undefined;
+  return snapshotFromDocuments(documents, conflicts);
 }
 
 /** Loads a document and hydrates songs into the editor's canonical shape. */

@@ -5,6 +5,7 @@ import type {
 import {
   getSongV2ArrangementDocId, getSongV2RootDocId, getSongV2SlideDocId,
   hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
+  rememberCommittedSongV2Merge,
   type SongV2RevisionConflict, type SongV2Snapshot,
 } from "./songPersistence";
 import {
@@ -86,15 +87,6 @@ const sameConflictSet = (expected: SongV2RevisionConflict[], current: SongV2Revi
     const latest = currentById.get(conflict.documentId);
     return latest?.winningRevision === conflict.winningRevision &&
       _.isEqual([...latest.revisions].sort(), [...conflict.revisions].sort());
-  });
-};
-
-const sameConflictLeaves = (expected: SongV2RevisionConflict[], current: SongV2RevisionConflict[]) => {
-  if (expected.length !== current.length) return false;
-  const currentById = new Map(current.map(conflict => [conflict.documentId, conflict]));
-  return expected.every(conflict => {
-    const latest = currentById.get(conflict.documentId);
-    return !!latest && _.isEqual([...latest.revisions].sort(), [...conflict.revisions].sort());
   });
 };
 
@@ -347,7 +339,13 @@ export async function pruneResolvedSongV2Conflicts(
 ): Promise<DBItem | undefined> {
   const snapshot = await loadSongV2Snapshot(db, adopted._id, true);
   if (expectedSnapshot && !sameRevisionGraph(expectedSnapshot, snapshot)) return;
-  if (!sameConflictLeaves(approved, snapshot.conflicts ?? [])) return;
+  const approvedById = new Map(approved.map(conflict => [conflict.documentId, new Set(conflict.revisions)]));
+  if ((snapshot.conflicts ?? []).some(conflict =>
+    conflict.revisions.some(revision => !approvedById.get(conflict.documentId)?.has(revision)))) return;
+  // After choosing a revision, some approved leaves may now be authored-body
+  // equivalents of the winner. They remain safe to retire, along with other
+  // equivalent leaves captured in this same validated physical read.
+  const retirementConflicts = snapshot.physicalConflicts ?? [];
   const canonicalContent = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(canonicalContent);
     if (value !== null && typeof value === "object") {
@@ -366,7 +364,7 @@ export async function pruneResolvedSongV2Conflicts(
       .sort((left, right) => String((left as { _id: string })._id).localeCompare(String((right as { _id: string })._id)));
   };
   if (!_.isEqual(content(snapshot.hydrated), content(adopted))) return;
-  if (!(await prune(db, approved, snapshot, mutationGuard))) return;
+  if (!(await prune(db, retirementConflicts, snapshot, mutationGuard))) return;
   clearUnresolvedFingerprint(db, adopted._id);
   return snapshot.hydrated;
 }
@@ -428,7 +426,23 @@ export async function loadReconciledSongV2Snapshot(
   }
   assertSongV2MutationAllowed(mutationGuard);
   const saved = await saveSongV2FromBaseline(db, latest.hydrated, desired, latest, mutationGuard);
-  const retired = await pruneResolvedSongV2Conflicts(db, saved.song, snapshot.conflicts, mutationGuard, saved.snapshot);
-  if (!retired) throw new SongV2ReplicationConflictError(await loadSongV2Snapshot(db, songId, true));
-  return saved.snapshot;
+  let retired = false;
+  try {
+    retired = await pruneResolvedSongV2Conflicts(db, saved.song, snapshot.conflicts, mutationGuard, saved.snapshot)
+      .then(Boolean);
+  } catch {
+    // The merged authored content is already durable. Leaf retirement is
+    // cleanup, and a failed cleanup must not disable that verified content.
+  }
+  if (retired) return saved.snapshot;
+
+  // Losing song-edit permission always remains a hard boundary, even when the
+  // content merge itself is already durable and leaf cleanup is pending.
+  assertSongV2MutationAllowed(mutationGuard);
+  const latestAfterCleanup = await loadSongV2Snapshot(db, songId, true);
+  if (rememberCommittedSongV2Merge(db, saved.snapshot, latestAfterCleanup, snapshot.conflicts)) {
+    clearUnresolvedFingerprint(db, songId);
+    return await loadSongV2Snapshot(db, songId, true);
+  }
+  throw new SongV2ReplicationConflictError(latestAfterCleanup);
 }

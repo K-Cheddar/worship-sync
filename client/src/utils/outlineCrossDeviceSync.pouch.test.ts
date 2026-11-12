@@ -10,6 +10,7 @@ import {
   resolveServiceListRevisionConflict,
   ServiceListConflictError,
 } from "./persistServiceListField";
+import { createOutlineMoveIntent, getOutlineItemConflicts } from "./outlineSync";
 
 const row = (listId: string, name: string): ServiceItem => ({
   _id: `song-${listId}`,
@@ -19,6 +20,192 @@ const row = (listId: string, name: string): ServiceItem => ({
 });
 
 describe("two-client outline synchronization with replicated PouchDB state", () => {
+  it("merges different row moves saved on independent replicas before either side replicates", async () => {
+    const suffix = Date.now();
+    const shared = new PouchDB(`outline-move-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-move-a-${suffix}`);
+    const clientB = new PouchDB(`outline-move-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d", "e"].map(id => row(id, id.toUpperCase()));
+    const ownerA = `owner-a-${suffix}`;
+    const ownerB = `owner-b-${suffix}`;
+    const outlineId = "outline-moves";
+    const moveA = [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]];
+    const moveB = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
+    const intentA = createOutlineMoveIntent({ outlineId, ownerKey: ownerA,
+      resultingItems: moveA, movedIds: ["b"] })!;
+    const intentB = createOutlineMoveIntent({ outlineId, ownerKey: ownerB,
+      resultingItems: moveB, movedIds: ["e"] })!;
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Moves", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await Promise.all([
+        persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0],
+          outlineId, moveA, baseline, undefined, [intentA]),
+        persistServiceListItems(clientB as unknown as Parameters<typeof persistServiceListItems>[0],
+          outlineId, moveB, baseline, undefined, [intentB]),
+      ]);
+
+      await Promise.all([clientA.replicate.to(shared), clientB.replicate.to(shared)]);
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      const currentDraftA = await clientA.get<{ items: ServiceItem[] }>(outlineId);
+      const merged = await persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0],
+        outlineId, currentDraftA.items, baseline, undefined, [intentA]);
+      expect(merged.items.map(item => item.listId)).toEqual(["b", "a", "c", "e", "d"]);
+
+      await clientA.replicate.to(shared);
+      await clientB.replicate.from(shared);
+      expect((await clientA.get<{ items: ServiceItem[] }>(outlineId)).items.map(item => item.listId))
+        .toEqual(["b", "a", "c", "e", "d"]);
+      expect((await clientB.get<{ items: ServiceItem[] }>(outlineId)).items.map(item => item.listId))
+        .toEqual(["b", "a", "c", "e", "d"]);
+      expect((await clientA.get(outlineId, { conflicts: true }) as { _conflicts?: string[] })._conflicts?.length)
+        .toBeGreaterThan(0);
+
+      const nextBaseline = (await clientB.get<{ items: ServiceItem[] }>(outlineId)).items;
+      const continued = await persistServiceListItems(clientB as unknown as Parameters<typeof persistServiceListItems>[0],
+        outlineId, [...nextBaseline, row("f", "F")], nextBaseline);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+      expect(continued.items.map(item => item.listId)).toEqual(["b", "a", "c", "e", "d", "f"]);
+      expect((await clientA.get<{ items: ServiceItem[] }>(outlineId)).items.map(item => item.listId))
+        .toEqual(["b", "a", "c", "e", "d", "f"]);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("keeps two incompatible moves of one row for a focused decision", async () => {
+    const suffix = Date.now();
+    const shared = new PouchDB(`outline-same-move-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-same-move-a-${suffix}`);
+    const clientB = new PouchDB(`outline-same-move-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d"].map(id => row(id, id.toUpperCase()));
+    const outlineId = "outline-same-move";
+    const local = [baseline[1], baseline[0], baseline[2], baseline[3]];
+    const remote = [baseline[0], baseline[2], baseline[3], baseline[1]];
+    const intent = createOutlineMoveIntent({ outlineId, ownerKey: "controller-a",
+      resultingItems: local, movedIds: ["b"] })!;
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Moves", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await Promise.all([
+        persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, local, baseline),
+        persistServiceListItems(clientB as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, remote, baseline),
+      ]);
+      await Promise.all([clientA.replicate.to(shared), clientB.replicate.to(shared)]);
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+
+      const current = await clientA.get<{ items: ServiceItem[] }>(outlineId);
+      await expect(persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0],
+        outlineId, local, baseline, undefined, [intent])).rejects.toMatchObject({
+        name: "ServiceListConflictError",
+        revisionConflict: expect.objectContaining({ itemReview: expect.any(Object) }),
+      });
+      expect(current.items.map(item => item.listId)).not.toHaveLength(0);
+      expect((await clientA.get(outlineId, { conflicts: true }) as { _conflicts?: string[] })._conflicts?.length)
+        .toBeGreaterThan(0);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("treats two Controllers' equivalent destination as an already-satisfied move", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-same-destination-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-same-destination-a-${suffix}`);
+    const clientB = new PouchDB(`outline-same-destination-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d"].map(id => row(id, id.toUpperCase()));
+    const outlineId = "outline-same-destination";
+    const moved = [baseline[1], baseline[0], baseline[2], baseline[3]];
+    const intent = createOutlineMoveIntent({ outlineId, ownerKey: "controller-a",
+      resultingItems: moved, movedIds: ["b"] })!;
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Moves", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await Promise.all([
+        persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, moved, baseline),
+        persistServiceListItems(clientB as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, moved, baseline),
+      ]);
+      await Promise.all([clientA.replicate.to(shared), clientB.replicate.to(shared)]);
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+
+      const saved = await persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0],
+        outlineId, moved, baseline, undefined, [intent]);
+      expect(saved.items.map(item => item.listId)).toEqual(["b", "a", "c", "d"]);
+      expect((await clientA.get<{ items: ServiceItem[] }>(outlineId)).items.map(item => item.listId))
+        .toEqual(["b", "a", "c", "d"]);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("combines a move with a saved insertion and deletion", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-move-rows-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-move-rows-a-${suffix}`);
+    const clientB = new PouchDB(`outline-move-rows-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d"].map(id => row(id, id.toUpperCase()));
+    const outlineId = "outline-move-rows";
+    const local = [baseline[1], baseline[0], baseline[2], baseline[3]];
+    const remote = [baseline[0], baseline[1], baseline[2], row("e", "E")];
+    const intent = createOutlineMoveIntent({ outlineId, ownerKey: "controller-a",
+      resultingItems: local, movedIds: ["b"] })!;
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Moves", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await Promise.all([
+        persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, local, baseline),
+        persistServiceListItems(clientB as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, remote, baseline),
+      ]);
+      await Promise.all([clientA.replicate.to(shared), clientB.replicate.to(shared)]);
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      const head = await clientA.get<{ items: ServiceItem[]; _conflicts?: string[] }>(outlineId, { conflicts: true });
+      const physicalBranches = await Promise.all([head, ...(head._conflicts ?? []).map(revision =>
+        clientA.get<{ items: ServiceItem[] }>(outlineId, { rev: revision }))]);
+      expect(physicalBranches.some(branch => branch.items.some(item => item.listId === "e"))).toBe(true);
+      const saved = await persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0],
+        outlineId, local, baseline, undefined, [intent]);
+      expect(saved.items.map(item => item.listId)).toEqual(["b", "a", "c", "e"]);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("retains a move-versus-delete decision across real replica branches", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-move-delete-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-move-delete-a-${suffix}`);
+    const clientB = new PouchDB(`outline-move-delete-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d"].map(id => row(id, id.toUpperCase()));
+    const outlineId = "outline-move-delete";
+    const local = [baseline[1], baseline[0], baseline[2], baseline[3]];
+    const remote = [baseline[0], baseline[2], baseline[3]];
+    const intent = createOutlineMoveIntent({ outlineId, ownerKey: "controller-a",
+      resultingItems: local, movedIds: ["b"] })!;
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Moves", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await Promise.all([
+        persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, local, baseline),
+        persistServiceListItems(clientB as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, remote, baseline),
+      ]);
+      await clientA.replicate.to(shared);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+
+      const error = await persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0],
+        outlineId, local, baseline, undefined, [intent]).then(() => undefined, caught => caught as ServiceListConflictError);
+      expect(error).toBeInstanceOf(ServiceListConflictError);
+      expect(getOutlineItemConflicts(baseline, local, error!.remoteItems, [intent])).toEqual([
+        expect.objectContaining({ reason: "delete-edit", listId: "b", localDestination: intent }),
+      ]);
+      expect((await clientA.get(outlineId, { conflicts: true }) as { _conflicts?: string[] })._conflicts?.length)
+        .toBeGreaterThan(0);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
   it("preserves independent outline and registry edits after replication", async () => {
     const suffix = Date.now();
     const shared = new PouchDB(`outline-shared-${suffix}`);
@@ -220,8 +407,8 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
       await clientA.replicate.to(shared);
       await clientB.replicate.to(shared);
       await clientA.replicate.from(shared);
-      // Historical maintenance must be explicitly entered; ordinary writes
-      // never create a branch-resolution review.
+      // This loser predates the latest baseline and stays historical. Ordinary
+      // writes must not turn it into an active concurrent-edit review.
       const inspected = await inspectServiceListRevisions(clientA, "outline-review", await clientA.get<DBItemListDetails>("outline-review", { conflicts: true }));
       const conflict = inspected.conflict;
       expect(conflict?.revisionConflict).toBeDefined();

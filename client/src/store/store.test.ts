@@ -1876,9 +1876,16 @@ describe("authoritative Song V2 reads in controller and Undo/Redo paths", () => 
         .map(doc => [doc._id, { ...doc, _rev: "1-base" }] as const),
       [songId, staleV1],
     ]);
-    env.db.get.mockImplementation(async (id: string) => {
+    env.db.get.mockImplementation(async (id: string, options?: { rev?: string }) => {
       const doc = docs.get(id);
       if (!doc) throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+      if (options?.rev && doc._conflicts?.includes(options.rev)) {
+        const branch = clone(doc);
+        delete branch._conflicts;
+        branch._rev = options.rev;
+        branch.name = `${branch.name} competing authored name`;
+        return branch;
+      }
       return clone(doc);
     });
     (env.db as any).changes = jest.fn(async () => ({ results: [] }));
