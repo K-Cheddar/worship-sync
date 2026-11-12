@@ -96,8 +96,12 @@ request prioritizes preservation over optimization; no fallback speedup is claim
   --target ES2022 --module ESNext --moduleResolution bundler --lib ES2022,DOM
   --jsx react-jsx --types node electron/main.ts electron/preload.ts`.
 - `node --test server/providerStorageService.test.js`: **24 tests passed**.
-- Renderer/Electron builds, package outcome and final artifact smoke are recorded
-  below after their final completion.
+- Renderer and Electron local builds passed before the last recovery correction;
+  the renderer passed again afterward. The final Electron rerun is recorded below.
+- `tsx scripts/smoke-linked-video.mts` passed with the pinned development tool
+  resources: FFmpeg generated actual H.264/AAC files; stable-ID adoption,
+  forced unsupported-hard-link publication, conflicts and source-preserving
+  linked deletion passed. ffprobe confirmed the output video/audio streams.
 
 Automatic approval review rejected a default Electron build because its Sentry
 plugin would upload source maps. Local verification uses temporary configurations
@@ -185,4 +189,43 @@ Yes. Validate/use security: Yes. Retry authority: Yes. Owner-retirement handoff:
 Yes. External adoption/compensation: Yes. Authorization projections: Yes.
 Production entry/runtime/test composition compared: Yes.
 
-Final build/runtime results and overall workflow readiness are recorded below.
+## Packaging and optional runtime limits
+
+The local unpacked Windows packaging attempt used the installed Electron runtime,
+publishing disabled and a dedicated temporary output directory. It remained in
+dependency traversal without producing the application ASAR and was stopped after
+several minutes without output progress. No successful package, installer or
+packaged UI verification is claimed. The real-video smoke used the pinned
+development resources, not an application produced by that incomplete attempt.
+
+Additional confidence not exercised: signed-in packaged UI; live Mux upload and
+deletion; public YouTube download; physical USB/exFAT behavior/disconnection;
+live projector/monitor/stream windows. Deterministic Windows filesystem and
+lifecycle regressions cover these workflows' code boundaries; they do not replace
+those hardware/network checks. Existing Pouch replication has no distributed
+transaction with native filesystem/provider side effects, as noted above.
+
+The optional Show in folder action is not implemented. No required implementation
+follow-up is known. Temporary verification configurations and partial package
+output are removed after the final build.
+
+## Final verification and readiness
+
+Final renderer and Electron main/preload/renderer builds both completed with exit
+0 after the proposed-snapshot correction. Local build logs:
+`linked-video-renderer-local-build.log` and `linked-video-electron-local-build.log`.
+The final client type check, lint, 7-suite/149-test affected-consumer rerun,
+independent 21-test relink rerun and real-video smoke also passed. Earlier native
+TypeScript, 32-suite/505-test run and 24 server tests remain applicable; no native
+or server production code changed after those checks.
+
+Temporary local build/package configurations and incomplete package output were
+removed. During verification, HEAD advanced externally to `60363742` (`chore: wip`)
+containing the implementation and intermediate report/configurations. That commit
+was not rewritten; final report corrections and temporary-config deletions remain
+as working-tree changes.
+
+**Final readiness: Ready** for the requested workflow implementation/review scope.
+No unresolved required implementation or verification remains. Packaging and the
+listed hardware/network/UI checks are additional-confidence gaps, not successful
+checks or a branch-wide production-readiness certification.
