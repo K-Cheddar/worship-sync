@@ -2,8 +2,10 @@ import { mkdir, mkdtemp, readFile, readdir, rm, unlink, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LocalAssetStore } from "./localAssetStore";
+import { Writable } from "node:stream";
 import {
   finalizeExternalVideo,
+  moveWithoutReplacing,
   normalizeExternalVideoFileName,
 } from "./externalVideoFinalization";
 
@@ -22,6 +24,58 @@ describe("external video finalization", () => {
     );
     expect(normalizeExternalVideoFileName("Sermon.MP4")).toBe("Sermon.MP4");
     expect(normalizeExternalVideoFileName("   ")).toBe("Downloaded video.mp4");
+  });
+
+  (process.platform === "win32" ? it : it.skip)("publishes a complete temporary file without hard links and refuses to overwrite a user file", async () => {
+    const temporary = join(root, "completed.partial");
+    const destination = join(root, "Sunday.mp4");
+    await writeFile(temporary, "complete-video-content");
+    const hardLink = jest.spyOn(jest.requireActual<typeof import("node:fs/promises")>("node:fs/promises"), "link")
+      .mockRejectedValue(Object.assign(new Error("unsupported"), { code: "ENOTSUP" }));
+    try {
+      // The supported downloader platform uses the real Windows exclusive move.
+      await moveWithoutReplacing(temporary, destination);
+      expect(await readFile(destination, "utf8")).toBe("complete-video-content");
+      expect(await readdir(root)).toEqual(["Sunday.mp4"]);
+      await writeFile(temporary, "second-video-content");
+      await expect(moveWithoutReplacing(temporary, destination)).rejects.toMatchObject({ code: "EEXIST" });
+      expect(await readFile(destination, "utf8")).toBe("complete-video-content");
+      expect(await readFile(temporary, "utf8")).toBe("second-video-content");
+    } finally { hardLink.mockRestore(); }
+  });
+
+  it("keeps the final MP4 invisible while copying and removes the partial file when the source changes", async () => {
+    const sourcePath = join(root, "temporary.mp4");
+    const destinationDirectory = join(root, "external");
+    await mkdir(destinationDirectory);
+    await writeFile(sourcePath, Buffer.alloc(256 * 1024, 1));
+    let copied!: () => void;
+    let resume!: () => void;
+    const copying = new Promise<void>((resolve) => { copied = resolve; });
+    const blocked = new Promise<void>((resolve) => { resume = resolve; });
+    const nativeFs = jest.requireActual<typeof import("node:fs")>("node:fs");
+    const originalWriteStream = nativeFs.createWriteStream;
+    const write = jest.spyOn(nativeFs, "createWriteStream").mockImplementation((path, options) => {
+      const output = originalWriteStream(path, options);
+      return new Writable({
+        write(chunk, encoding, callback) {
+          copied();
+          void blocked.then(() => output.write(chunk, encoding, callback));
+        },
+        final(callback) { output.end(callback); },
+      }) as ReturnType<typeof originalWriteStream>;
+    });
+    try {
+      const saving = finalizeExternalVideo({ sourcePath, sourceDirectory: root, destinationDirectory,
+        displayName: "Sunday", assetId: "in-progress", workspaceId: "church-1", width: 1920, height: 1080,
+        store: new LocalAssetStore(join(root, "managed")) });
+      await copying;
+      expect((await readdir(destinationDirectory)).filter((name) => name.endsWith(".mp4"))).toEqual([]);
+      await writeFile(sourcePath, "changed-video");
+      resume();
+      await expect(saving).rejects.toThrow("could not be saved completely");
+      expect(await readdir(destinationDirectory)).toEqual([]);
+    } finally { resume(); write.mockRestore(); }
   });
 
   it("finalizes to a linked asset without a managed duplicate and does not overwrite conflicts", async () => {

@@ -236,7 +236,7 @@ describe("LocalAssetStore", () => {
     expect(readFileSync(source, "utf8")).toBe("linked-video-bytes");
   });
 
-  it("marks a linked asset unavailable when its path is replaced, then relinks the same identity", async () => {
+  it("marks a linked asset unavailable when its path is replaced, then stages a replacement without changing its original registration", async () => {
     const source = join(root, "original.mp4");
     const replacement = join(root, "replacement.mp4");
     writeFileSync(source, "original-content");
@@ -262,15 +262,74 @@ describe("LocalAssetStore", () => {
       height: 720,
     });
 
-    expect(relinked.assetId).toBe(original.assetId);
+    expect(relinked.assetId).not.toBe(original.assetId);
+    await expect(store.getRegisteredDescriptor(original.assetId)).resolves.toEqual(original);
     expect(relinked.contentHash).not.toBe(original.contentHash);
     expect(buildLocalAssetProtocolUrl(relinked)).not.toBe(
       buildLocalAssetProtocolUrl(original),
     );
-    await expect(store.resolvePath("linked-video")).resolves.toMatchObject({
+    await expect(store.resolvePath(relinked.assetId)).resolves.toMatchObject({
       path: replacement,
       descriptor: { storageMode: "linked", fileName: "replacement.mp4" },
     });
+  });
+
+  it("keeps a working saved playback ID through staging, failed commit and successful retry", async () => {
+    const source = join(root, "playable-original.mp4");
+    const replacement = join(root, "playable-replacement.mp4");
+    writeFileSync(source, "original-playable-content");
+    writeFileSync(replacement, "replacement-playable-content");
+    const store = new LocalAssetStore(join(root, "managed"));
+    const original = await store.linkFile({ assetId: "saved-playback-id", kind: "video", sourcePath: source,
+      fileName: "original.mp4", contentType: "video/mp4", workspaceId: "church-a" });
+    const savedServiceReference = { id: original.assetId };
+    const candidate = await store.relinkFile(original.assetId, { kind: "video", sourcePath: replacement,
+      fileName: "replacement.mp4", contentType: "video/mp4" });
+    await expect(store.resolvePath(savedServiceReference.id)).resolves.toMatchObject({ path: source });
+    const persist = jest.spyOn(store as unknown as { persistIndex: () => Promise<void> }, "persistIndex")
+      .mockRejectedValueOnce(new Error("disk full"));
+    await expect(store.commitRelinkFile(original.assetId, candidate.assetId)).rejects.toThrow("disk full");
+    await expect(store.resolvePath(savedServiceReference.id)).resolves.toMatchObject({ path: source, descriptor: { contentHash: original.contentHash } });
+    persist.mockRestore();
+    const committed = await store.commitRelinkFile(original.assetId, candidate.assetId);
+    expect(committed.assetId).toBe(savedServiceReference.id);
+    await expect(store.resolvePath(savedServiceReference.id)).resolves.toMatchObject({ path: replacement });
+    await store.delete(candidate.assetId);
+    // Resume after cloud cleanup failure or a lost renderer acknowledgement.
+    await expect(store.commitRelinkFile(original.assetId, candidate.assetId)).resolves.toEqual(committed);
+    expect(readFileSync(source, "utf8")).toBe("original-playable-content");
+    expect(readFileSync(replacement, "utf8")).toBe("replacement-playable-content");
+  });
+
+  it("rejects a stale identical-content candidate even when native timestamps are equal", async () => {
+    const clock = jest.spyOn(Date.prototype, "toISOString").mockReturnValue("2026-11-11T12:00:00.000Z");
+    try {
+      const paths = ["original", "replacement-a", "replacement-b"].map((name) => join(root, `${name}.mp4`));
+      paths.forEach((path) => writeFileSync(path, "identical-content"));
+      const store = new LocalAssetStore(join(root, "managed"));
+      await store.linkFile({ assetId: "stable", kind: "video", sourcePath: paths[0], fileName: "original.mp4", contentType: "video/mp4" });
+      const stage = (path: string) => store.relinkFile("stable", { kind: "video", sourcePath: path, fileName: "replacement.mp4", contentType: "video/mp4" });
+      const a = await stage(paths[1]); const b = await stage(paths[2]);
+      await store.commitRelinkFile("stable", a.assetId);
+      await expect(store.commitRelinkFile("stable", b.assetId)).rejects.toThrow("newer reference was kept");
+      await expect(store.resolvePath("stable")).resolves.toMatchObject({ path: paths[1] });
+    } finally { clock.mockRestore(); }
+  });
+
+  it("reconciles a pending replacement without requiring the original source drive", async () => {
+    const source = join(root, "old.mp4"); const replacement = join(root, "new.mp4");
+    writeFileSync(source, "old-video"); writeFileSync(replacement, "new-video");
+    const registry = join(root, "managed");
+    const store = new LocalAssetStore(registry);
+    const original = await store.linkFile({ assetId: "stable", kind: "video", sourcePath: source, fileName: "old.mp4", contentType: "video/mp4" });
+    const candidate = await store.relinkFile("stable", { kind: "video", sourcePath: replacement, fileName: "new.mp4", contentType: "video/mp4" });
+    await rm(source);
+    await expect(store.get("stable")).resolves.toBeUndefined();
+    const pending = await new LocalAssetStore(registry).getRelinkStatus("stable", candidate.assetId);
+    expect(pending).toMatchObject({ status: "pending", asset: { contentHash: original.contentHash } });
+    expect(pending.asset).not.toHaveProperty("sourcePath");
+    await store.commitRelinkFile("stable", candidate.assetId);
+    await expect(new LocalAssetStore(registry).getRelinkStatus("stable", candidate.assetId)).resolves.toMatchObject({ status: "committed" });
   });
 
   it("migrates the existing version 1 managed asset index", async () => {

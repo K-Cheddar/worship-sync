@@ -8,7 +8,9 @@ import { loadMediaLibrary, readMediaItemForDeletion } from "../../utils/mediaDoc
 import type { DesktopVideoDownloadOwner } from "./desktopVideoDownloadController";
 
 const isSameDownloadedMedia = (existing: MediaType, incoming: MediaType) =>
-  Boolean(incoming.localVideoFile?.id && existing.localVideoFile?.id === incoming.localVideoFile.id);
+  Boolean(incoming.localVideoFile?.id && existing.localVideoFile?.id === incoming.localVideoFile.id &&
+    (!incoming.localVideoFile.contentHash || !existing.localVideoFile.contentHash ||
+      incoming.localVideoFile.contentHash === existing.localVideoFile.contentHash));
 
 const sameValue = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
@@ -79,6 +81,12 @@ export const persistDownloadedVideoMedia = async ({
   const persistedBefore = await loadMediaLibrary(db);
   if (!isOwnerCurrent(owner)) throw new Error("The active church changed before the video could be saved.");
   const persistedExisting = persistedBefore.list.find((item) => item.id === incoming.id);
+  // Cloud registration follows a completed local import. Retrying that later
+  // step must never recreate a row the operator has since deleted. An existing
+  // change base also makes the item writer refuse recreation during the flush.
+  if (patch && !persistedExisting) {
+    throw new Error("The downloaded video was removed from the Media Library. Its cloud registration cannot be saved.");
+  }
   if (persistedExisting && !isSameDownloadedMedia(persistedExisting, incoming)) {
     throw new Error("A different Media Library item already uses this downloaded video ID.");
   }
@@ -183,7 +191,7 @@ export const removeDownloadedVideoAssetIfUnreferenced = async ({
     throw new Error("The active church changed; the local video was kept until its Media Library reference can be checked.");
   }
 
-  const { list } = await loadMediaLibrary(db);
+  const { list } = await loadMediaLibrary(db, { forCleanup: true });
   if (!isOwnerCurrent(owner)) {
     throw new Error("The active church changed; the local video was kept until its Media Library reference can be checked.");
   }
@@ -210,7 +218,7 @@ export const removeDownloadedVideoMuxAssetIfUnreferenced = async ({
   getInMemoryMediaItems,
   isOwnerCurrent,
 }: {
-  result: MuxUploadResult;
+  result: Pick<MuxUploadResult, "assetId">;
   owner: DesktopVideoDownloadOwner;
   deleteAsset?: (assetId: string, churchId: string) => Promise<unknown>;
   getInMemoryMediaItems?: () => MediaType[];
@@ -221,18 +229,26 @@ export const removeDownloadedVideoMuxAssetIfUnreferenced = async ({
   if (!isOwnerCurrent(owner)) {
     throw new Error("The active church changed; the Mux video was kept until its Media Library reference can be checked.");
   }
-  const { list } = await loadMediaLibrary(db);
+  const { list } = await loadMediaLibrary(db, { forCleanup: true });
   if (!isOwnerCurrent(owner)) {
     throw new Error("The active church changed; the Mux video was kept until its Media Library reference can be checked.");
   }
+  if (list.some((item) =>
+    (item.muxPlaybackId || item.localVideoFile?.cloudUrl || item.providerStorage?.provider === "mux" ||
+      item.source === "mux" || /^https?:\/\/stream\.mux\.com(?:[/:?#]|$)/i.test(item.background)) &&
+    !(item.muxAssetId || item.localVideoFile?.cloudMediaId ||
+      (item.providerStorage?.provider === "mux" && item.providerStorage.assetId)),
+  )) {
+    throw new Error("A cloud video has an uncertain asset reference; the Mux video was kept.");
+  }
   const registered = list.find((item) =>
     (item.providerStorage?.provider === "mux" && item.providerStorage.assetId === result.assetId) ||
-    item.muxAssetId === result.assetId,
+    item.muxAssetId === result.assetId || item.localVideoFile?.cloudMediaId === result.assetId,
   );
   if (registered) return registered;
   if (getInMemoryMediaItems?.().some((item) =>
     (item.providerStorage?.provider === "mux" && item.providerStorage.assetId === result.assetId) ||
-    item.muxAssetId === result.assetId,
+    item.muxAssetId === result.assetId || item.localVideoFile?.cloudMediaId === result.assetId,
   )) {
     throw new Error("The Media Library has an unsaved reference to this Mux video; retry registration before cleanup.");
   }

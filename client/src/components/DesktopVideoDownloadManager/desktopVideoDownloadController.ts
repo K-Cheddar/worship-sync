@@ -4,6 +4,7 @@ import type { Transfer } from "../../context/transferModel";
 import type { MuxUploadResult } from "../../containers/Media/MediaUploadInput.types";
 import type { MuxUploadCallbacks } from "../../containers/Media/utils/muxUpload";
 import { videoDownloadErrorMessage } from "../../utils/videoDownloadError";
+import { claimMediaUpload } from "../../utils/mediaOperationClaims";
 
 export type DesktopVideoDownloadOwner = {
   churchId: string;
@@ -20,13 +21,14 @@ export type DesktopVideoDownloadInput = {
   displayName: string;
   quality: number | "best";
   saveOutsideWorshipSync: boolean;
+  destinationDirectoryId?: string;
   uploadToCloud: boolean;
   owner: Omit<DesktopVideoDownloadOwner, "dbAtStart">;
 };
 
 export type DesktopVideoDownloadNative = {
   inspectVideoUrl: (url: string) => Promise<DesktopVideoInspection>;
-  startVideoDownload: (input: { jobId: string; inspectionId: string; quality: number | "best" }) => Promise<{ jobId: string }>;
+  startVideoDownload: (input: { jobId: string; inspectionId: string; quality: number | "best"; destinationDirectoryId?: string }) => Promise<{ jobId: string }>;
   cancelVideoDownload: (jobId: string) => Promise<boolean>;
   cleanupVideoDownload: (jobId: string) => Promise<unknown>;
   importDownloadedVideo: (input: { jobId: string; workspaceId: string; width: number; height: number }) => Promise<ElectronLocalAsset>;
@@ -88,6 +90,7 @@ type Runtime = {
   displayName: string;
   quality: number | "best";
   saveOutsideWorshipSync: boolean;
+  destinationDirectoryId?: string;
   uploadToCloud: boolean;
   owner: DesktopVideoDownloadOwner;
   downloadFinished: boolean;
@@ -161,6 +164,7 @@ export class DesktopVideoDownloadManager {
       displayName: input.displayName,
       quality: input.quality,
       saveOutsideWorshipSync: input.saveOutsideWorshipSync,
+      destinationDirectoryId: input.destinationDirectoryId,
       uploadToCloud: input.uploadToCloud,
       owner,
       downloadFinished: false,
@@ -373,6 +377,7 @@ export class DesktopVideoDownloadManager {
         jobId: runtime.jobId,
         inspectionId: runtime.inspectionId,
         quality: runtime.quality,
+        destinationDirectoryId: runtime.saveOutsideWorshipSync ? runtime.destinationDirectoryId : undefined,
       });
       if (started.jobId !== runtime.jobId) throw new Error("The video download could not be started.");
       if (runtime.cancelRequested) await this.deps.native.cancelVideoDownload(runtime.jobId);
@@ -384,6 +389,12 @@ export class DesktopVideoDownloadManager {
 
   private async runPipeline(runtime: Runtime) {
     if (runtime.busy || !runtime.downloadFinished) return;
+    const claim = claimMediaUpload(runtime.asset?.assetId ?? `local_video_download_${runtime.jobId}`);
+    if (!claim) {
+      this.publish(runtime, "failed", "Failed", null, undefined, "Wait for the current video operation to finish, then retry this download.");
+      return;
+    }
+    claim.setCancel(() => this.cancelJob(runtime, false));
     runtime.busy = true;
     const operation = this.performPipeline(runtime);
     runtime.operation = operation;
@@ -392,6 +403,7 @@ export class DesktopVideoDownloadManager {
     } finally {
       if (runtime.operation === operation) runtime.operation = undefined;
       runtime.busy = false;
+      claim.release();
     }
   }
 

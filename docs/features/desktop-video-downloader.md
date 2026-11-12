@@ -4,7 +4,7 @@
 
 **Approval source:** Desktop Video Downloader request, October 29, 2026; linked local videos, external download storage and progress request, November 5, 2026.
 
-**Last reviewed:** November 5, 2026.
+**Last reviewed:** November 11, 2026.
 
 ## Purpose and operator workflow
 
@@ -41,8 +41,8 @@ computer.
   before it appears as a completed item. Retry must not duplicate a completed
   file or record. Incomplete or cancelled downloads must not appear as finished
   media items.
-- Existing local-video imports offer “Copy into WorshipSync (Recommended)” and
-  “Link to file”. A linked item keeps its Media Library identity, metadata and
+- Existing local-video imports offer “Add files” and
+  “Link local video”. A linked item keeps its Media Library identity, metadata and
   thumbnail when its file is unavailable, offers “Relink file”, and may use a
   valid cloud copy for playback. Relinking updates the existing item; a changed
   file invalidates stale cloud playback metadata and thumbnails.
@@ -112,7 +112,15 @@ Managed deletion keeps its existing reference-aware cleanup; linked deletion
 removes only the device-local registration. Linked file hashes and filesystem
 identity checks detect changed, replaced, missing and disconnected files.
 Relinking uses the native file picker and retains the stable Media Library
-asset ID. Both local modes use the existing thumbnail and playback surfaces.
+item ID. A separate native linked reference stages replacement validation; the
+original remains registered during validation. A durable library checkpoint
+precedes native adoption under the original asset ID, preserving saved service
+and slide playback references. Retry completes that checkpoint before cleanup.
+Both local modes use the existing thumbnail and playback surfaces.
+Linked cloud uploads require the captured library document and native content
+hash to agree before uploading. Relink and download cloud registration share
+the existing media-operation claim. A cloud-registration retry cannot recreate
+a local item that was deleted after its initial import.
 
 Download progress includes bytes, speed and ETA where yt-dlp provides reliable
 values. Separate audio/video streams are shown separately with an indeterminate
@@ -217,3 +225,20 @@ continues to delete its same-ID thumbnail record.
   YouTube diagnostics stopped at the initial source request with
   `RemoteDisconnected`; that external-network failure does not establish a
   downloader code failure.
+
+## Linked-video reliability guarantees (November 11, 2026)
+
+- Failed replacement validation preserves the original registry entry, library
+  item, cloud copy and thumbnail. Conditional item writes preserve unrelated
+  edits and reconcile uncertain acknowledgments before cleanup.
+- Replaced references are retired only after authoritative persisted reference
+  checks. Cleanup checkpoints are saved with the replacement and expose Retry
+  cleanup in Activity, including after reopening Media Library.
+- Each external job binds an opaque native directory selection when it starts;
+  retry retains that folder. A disconnected destination requires restoring the
+  original folder and retrying; it never falls back to a newer default.
+- The dialog displays the device-local folder, with a compact expandable full
+  path and an unavailable state. Only authorized controller IPC can read it;
+  paths never enter shared church data.
+- Final MP4 publication must be atomic and must not overwrite existing files,
+  including on filesystems without hard-link support.

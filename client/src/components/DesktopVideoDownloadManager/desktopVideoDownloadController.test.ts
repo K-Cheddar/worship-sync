@@ -3,6 +3,7 @@ import type { ElectronLocalAsset, DesktopVideoDownloadEvent, DesktopVideoInspect
 import type { Transfer } from "../../context/transferModel";
 import type { MuxUploadResult } from "../../containers/Media/MediaUploadInput.types";
 import { DesktopVideoDownloadManager, type DesktopVideoDownloadDependencies, type DesktopVideoDownloadOwner } from "./desktopVideoDownloadController";
+import { claimMediaUpload } from "../../utils/mediaOperationClaims";
 
 const inspection: DesktopVideoInspection = {
   inspectionId: "inspection-one",
@@ -122,6 +123,7 @@ const makeHarness = (overrides: Partial<DesktopVideoDownloadDependencies> = {}) 
     displayName: "Sunday Service",
     quality: 1080,
     saveOutsideWorshipSync: destination === "external" || destination === "external-cloud",
+    destinationDirectoryId: "opaque-original-folder",
     uploadToCloud: destination === "cloud" || destination === "external-cloud",
     owner: {
       churchId: "church-a",
@@ -140,6 +142,41 @@ const makeHarness = (overrides: Partial<DesktopVideoDownloadDependencies> = {}) 
 };
 
 describe("desktop video download lifecycle manager", () => {
+  it("holds the media operation claim until cloud registration settles", async () => {
+    let release!: () => void;
+    let began!: () => void;
+    const pending = new Promise<void>((resolve) => { began = resolve; });
+    const h = makeHarness({ registerCloudMedia: jest.fn(() => new Promise<void>((resolve) => { began(); release = resolve; })) });
+    const jobId = h.start("external-cloud");
+    const pipeline = h.manager.handleProgress(completion(jobId));
+    await pending;
+    expect(claimMediaUpload(asset.assetId)).toBeNull();
+    release(); await pipeline;
+    const claim = claimMediaUpload(asset.assetId);
+    expect(claim).not.toBeNull(); claim!.release();
+  });
+  it("retains the original folder token when a failed external download is retried", async () => {
+    const h = makeHarness(); const jobId = h.start("external");
+    await h.manager.handleProgress({ jobId, stage: "failed", progress: null, error: "Network stopped" });
+    await h.action(jobId, "retry");
+    expect(h.native.startVideoDownload).toHaveBeenLastCalledWith(expect.objectContaining({ jobId, destinationDirectoryId: "opaque-original-folder" }));
+  });
+
+  it("waits for external saving before cancellation cleanup and does not register a cancelled result", async () => {
+    const h = makeHarness();
+    let saved!: (value: ElectronLocalAsset & { storageMode: "linked" }) => void;
+    h.native.saveDownloadedVideoExternally.mockImplementationOnce(() => new Promise((resolve) => { saved = resolve; }));
+    const jobId = h.start("external");
+    const pipeline = h.manager.handleProgress(completion(jobId));
+    await Promise.resolve();
+    const cancellation = h.action(jobId, "cancel");
+    saved({ ...asset, storageMode: "linked" });
+    await Promise.all([pipeline, cancellation]);
+    expect(h.deps.registerLocalMedia).not.toHaveBeenCalled();
+    expect(h.deps.removeUnregisteredLocalMedia).toHaveBeenCalledWith(undefined, asset.assetId, expect.objectContaining({ churchId: "church-a" }));
+    expect(h.transfers.get(`video-download-${jobId}`)?.status).toBe("cancelled");
+  });
+
   it("keeps the job after its dialog closes and registers one media item on completion", async () => {
     const harness = makeHarness();
     const jobId = harness.start();

@@ -5,11 +5,14 @@ import {
 } from "../../utils/localImageAssets";
 import {
   readVideoMetadata,
+  readVideoMetadataFromLocalAsset,
+  deleteLocalVideoThumbnail,
   saveLocalVideoFile,
 } from "../../utils/localVideoFileAssets";
 import {
   createLocalMediaFromFile,
   createLocalMediaFromDownloadedVideo,
+  createLocalMediaFromLinkedVideo,
   LocalImagePlaybackError,
 } from "./localMediaImport";
 
@@ -22,6 +25,8 @@ jest.mock("../../utils/localImageAssets", () => ({
 jest.mock("../../utils/localVideoFileAssets", () => ({
   ...jest.requireActual("../../utils/localVideoFileAssets"),
   readVideoMetadata: jest.fn(),
+  readVideoMetadataFromLocalAsset: jest.fn(),
+  deleteLocalVideoThumbnail: jest.fn(),
   saveLocalVideoFile: jest.fn(),
 }));
 
@@ -43,6 +48,21 @@ describe("createLocalMediaFromFile", () => {
       duration: 12,
     });
     mockedSaveLocalVideoFile.mockResolvedValue();
+  });
+
+  it("validates a staged linked replacement without changing local records or thumbnails", async () => {
+    const asset = { assetId: "candidate", kind: "video", storageMode: "linked", size: 100,
+      fileName: "replacement.mp4", contentType: "video/mp4", contentHash: "b".repeat(64),
+      url: "worshipsync-media://asset/candidate" } as const;
+    jest.mocked(readVideoMetadataFromLocalAsset).mockResolvedValueOnce({ width: 1280, height: 720, duration: 90 });
+    const media = await createLocalMediaFromLinkedVideo({ asset: asset as never, workspaceId: "church-1", validateOnly: true });
+    expect(media).toMatchObject({ width: 1280, height: 720, duration: 90 });
+    expect(mockedSaveLocalVideoFile).not.toHaveBeenCalled();
+    expect(deleteLocalVideoThumbnail).not.toHaveBeenCalled();
+    jest.mocked(readVideoMetadataFromLocalAsset).mockRejectedValueOnce(new Error("unsupported codec"));
+    await expect(createLocalMediaFromLinkedVideo({ asset: asset as never, workspaceId: "church-1", validateOnly: true })).rejects.toThrow("cannot be played");
+    expect(mockedSaveLocalVideoFile).not.toHaveBeenCalled();
+    expect(deleteLocalVideoThumbnail).not.toHaveBeenCalled();
   });
 
   it("saves an image on this device", async () => {

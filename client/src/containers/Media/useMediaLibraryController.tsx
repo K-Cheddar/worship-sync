@@ -28,6 +28,7 @@ import type { MediaUploadInputRef } from "./MediaUploadInput";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
 import { deleteLocalImage, getLocalImageUploadJob } from "../../utils/localImageAssets";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
+import { removeDownloadedVideoAssetIfUnreferenced, removeDownloadedVideoMuxAssetIfUnreferenced } from "../../components/DesktopVideoDownloadManager/persistDownloadedVideoMedia";
 import {
   isDesktopCaptureKind,
   isDesktopCaptureSourceMissingError,
@@ -1304,6 +1305,30 @@ export function useMediaLibraryController({
             providerUsageChanged = true;
           }
           if (!canContinue()) break;
+          // A relink may have committed just before this item was deleted.
+          // Its durable retirement checkpoint travels with the deletion retry;
+          // never discard old cloud cleanup merely because the row is gone.
+          if (row.pendingLinkedVideoCleanup?.length) {
+            const owner = { churchId, workspaceId: churchId, dbAtStart: db,
+              controllerProfileId: "", folderId: null, routePath: "/controller" };
+            const isOwnerCurrent = () => canContinue() && activeScopeRef.current.active &&
+              activeScopeRef.current.db === db && activeScopeRef.current.churchId === churchId;
+            for (const pending of row.pendingLinkedVideoCleanup) {
+              await removeDownloadedVideoAssetIfUnreferenced({
+                assetId: pending.localAssetId, media: undefined, owner, isOwnerCurrent,
+                deleteAsset: deleteLocalVideoFile,
+                getInMemoryMediaItem: (id) => store.getState().media.list.find((item) => item.localVideoFile?.id === id),
+              });
+              for (const assetId of pending.muxAssetIds) {
+                await removeDownloadedVideoMuxAssetIfUnreferenced({
+                  result: { assetId }, owner, isOwnerCurrent,
+                  getInMemoryMediaItems: () => store.getState().media.list,
+                });
+                providerUsageChanged = true;
+              }
+            }
+          }
+          if (!canContinue()) break;
           if (row.localImage) {
             if (thumbnailCloudPublicId) {
               providerUsageChanged = await deleteCloudinaryAssetOnce(
@@ -1347,7 +1372,7 @@ export function useMediaLibraryController({
       ) onStorageUsageChanged?.();
       return failed;
     },
-    [activeScopeRef, churchId, db, onStorageUsageChanged],
+    [activeScopeRef, churchId, db, onStorageUsageChanged, store],
   );
 
   const deleteCanvaProvider = useCallback(

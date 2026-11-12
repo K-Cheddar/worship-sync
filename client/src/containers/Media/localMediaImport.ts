@@ -171,11 +171,13 @@ export const createLocalMediaFromLinkedVideo = async ({
   workspaceId,
   displayName,
   folderId,
+  validateOnly = false,
 }: {
   asset: ElectronLocalAsset;
   workspaceId: string;
   displayName?: string;
   folderId?: string | null;
+  validateOnly?: boolean;
 }): Promise<MediaType> => {
   if (
     asset.kind !== "video" || asset.storageMode !== "linked" ||
@@ -194,21 +196,23 @@ export const createLocalMediaFromLinkedVideo = async ({
     displayName || asset.fileName.replace(/\.[^.]+$/, ""),
   ) || "Linked video";
   const contentRevision = asset.contentHash || asset.updatedAt || now;
-  await deleteLocalVideoThumbnail(asset.assetId);
-  await saveLocalVideoFile(
-    {
-      id: asset.assetId,
-      workspaceId,
-      fileName: asset.fileName,
-      contentType: asset.contentType,
-      size: asset.size,
-      width: metadata.width,
-      height: metadata.height,
-      duration: metadata.duration,
-      createdAt: now,
-    },
-    { deferThumbnail: true },
-  );
+  if (!validateOnly) {
+    await deleteLocalVideoThumbnail(asset.assetId);
+    await saveLocalVideoFile(
+      {
+        id: asset.assetId,
+        workspaceId,
+        fileName: asset.fileName,
+        contentType: asset.contentType,
+        size: asset.size,
+        width: metadata.width,
+        height: metadata.height,
+        duration: metadata.duration,
+        createdAt: now,
+      },
+      { deferThumbnail: true },
+    );
+  }
   return {
     path: "",
     createdAt: now,

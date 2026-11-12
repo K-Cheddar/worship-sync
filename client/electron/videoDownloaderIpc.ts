@@ -16,6 +16,7 @@ type Dependencies = {
   selectVideoFile: (sender: WebContents) => Promise<string | undefined>;
   selectVideoDirectory: (sender: WebContents, defaultPath?: string) => Promise<string | undefined>;
   isDirectoryAvailable: (path: string) => Promise<boolean>;
+  notifyLocalVideoChanged?: (assetId: string) => void;
 };
 
 const requireDownloader = (getDownloader: Dependencies["getDownloader"]) => {
@@ -38,7 +39,21 @@ export const registerVideoDownloaderIpc = ({
   selectVideoFile,
   selectVideoDirectory,
   isDirectoryAvailable,
+  notifyLocalVideoChanged,
 }: Dependencies) => {
+  // Opaque selections and job bindings are native-only and scoped to the
+  // authorized WebContents. Renderer paths are never accepted as authority.
+  const selections = new Map<string, { senderId: number; directory: string }>();
+  const destinations = new Map<string, { senderId: number; directory?: string }>();
+  const selectionFor = (sender: WebContents, directory?: string) => {
+    if (!directory) return {};
+    const existing = [...selections].find(([, value]) =>
+      value.senderId === sender.id && value.directory === directory);
+    const destinationDirectoryId = existing?.[0] ?? randomUUID();
+    selections.set(destinationDirectoryId, { senderId: sender.id, directory });
+    return { destinationDirectoryId, destinationDirectoryDisplay: directory };
+  };
+
   ipcMain.handle("is-video-downloader-available", (event) => {
     assertSender(event, assertControllerSender);
     return getDownloader() !== null;
@@ -52,11 +67,22 @@ export const registerVideoDownloaderIpc = ({
   ipcMain.handle("start-video-download", async (event, input: unknown) => {
     assertSender(event, assertControllerSender);
     if (!input || typeof input !== "object") throw new Error("The download request is invalid.");
-    const value = input as { inspectionId?: unknown; quality?: unknown; jobId?: unknown };
+    const value = input as { inspectionId?: unknown; quality?: unknown; jobId?: unknown; destinationDirectoryId?: unknown };
+    if (typeof value.jobId !== "string" || !/^[0-9a-f-]{36}$/i.test(value.jobId)) {
+      throw new Error("The download job is invalid.");
+    }
+    const bound = destinations.get(value.jobId);
+    if (bound && bound.senderId !== event.sender.id) throw new Error("The download job belongs to another window.");
+    if (!bound) {
+      const selection = typeof value.destinationDirectoryId === "string"
+        ? selections.get(value.destinationDirectoryId) : undefined;
+      if (value.destinationDirectoryId !== undefined && (!selection || selection.senderId !== event.sender.id)) {
+        throw new Error("Choose the destination folder again before downloading.");
+      }
+      destinations.set(value.jobId, { senderId: event.sender.id, directory: selection?.directory });
+    }
     return requireDownloader(getDownloader).startDownload(value as {
-      inspectionId: unknown;
-      quality: unknown;
-      jobId?: unknown;
+      inspectionId: unknown; quality: unknown; jobId: unknown;
     });
   });
 
@@ -153,6 +179,7 @@ export const registerVideoDownloaderIpc = ({
       saveOutsideWorshipSync: preferences.saveOutsideWorshipSync,
       uploadToCloud: preferences.uploadToCloud,
       hasDestinationDirectory: Boolean(preferences.lastDirectory),
+      ...selectionFor(event.sender, preferences.lastDirectory),
       destinationDirectoryAvailable: directoryAvailable,
     };
   });
@@ -179,6 +206,7 @@ export const registerVideoDownloaderIpc = ({
       saveOutsideWorshipSync: preferences.saveOutsideWorshipSync,
       uploadToCloud: preferences.uploadToCloud,
       hasDestinationDirectory: Boolean(preferences.lastDirectory),
+      ...selectionFor(event.sender, preferences.lastDirectory),
       destinationDirectoryAvailable: preferences.lastDirectory
         ? await isDirectoryAvailable(preferences.lastDirectory)
         : false,
@@ -195,6 +223,7 @@ export const registerVideoDownloaderIpc = ({
     const preferences = await preferencesStore.update({ lastDirectory: selected });
     return {
       hasDestinationDirectory: true,
+      ...selectionFor(event.sender, preferences.lastDirectory),
       destinationDirectoryAvailable: Boolean(preferences.lastDirectory && await isDirectoryAvailable(preferences.lastDirectory)),
     };
   });
@@ -241,6 +270,46 @@ export const registerVideoDownloaderIpc = ({
     return { ...descriptor, url: buildLocalAssetProtocolUrl(descriptor) };
   });
 
+  ipcMain.handle("commit-relink-local-video-file", async (event, input: unknown) => {
+    assertSender(event, assertControllerSender);
+    const value = input as { assetId?: unknown; candidateId?: unknown } | null;
+    if (!value || typeof value.assetId !== "string" || typeof value.candidateId !== "string" ||
+        !/^[A-Za-z0-9_-]{1,160}$/.test(value.assetId) || !/^[A-Za-z0-9_-]{1,160}$/.test(value.candidateId)) {
+      throw new Error("The local video reference is invalid.");
+    }
+    const store = getLocalAssetStore();
+    if (!store) throw new Error("Local media storage is not ready.");
+    const descriptor = await store.commitRelinkFile(value.assetId, value.candidateId);
+    notifyLocalVideoChanged?.(descriptor.assetId);
+    return { ...descriptor, url: buildLocalAssetProtocolUrl(descriptor) };
+  });
+
+  ipcMain.handle("get-local-video-relink-status", async (event, input: unknown) => {
+    assertSender(event, assertControllerSender);
+    const value = input as { assetId?: unknown; candidateId?: unknown } | null;
+    if (!value || typeof value.assetId !== "string" || typeof value.candidateId !== "string" ||
+        !/^[A-Za-z0-9_-]{1,160}$/.test(value.assetId) || !/^[A-Za-z0-9_-]{1,160}$/.test(value.candidateId)) {
+      throw new Error("The local video reference is invalid.");
+    }
+    const store = getLocalAssetStore();
+    if (!store) throw new Error("Local media storage is not ready.");
+    const result = await store.getRelinkStatus(value.assetId, value.candidateId);
+    return { ...result, asset: result.asset ? { ...result.asset, url: buildLocalAssetProtocolUrl(result.asset) } : undefined };
+  });
+
+  ipcMain.handle("notify-local-video-asset-changed", async (event, input: unknown) => {
+    assertSender(event, assertControllerSender);
+    const value = input as { assetId?: unknown; contentHash?: unknown } | null;
+    if (!value || typeof value.assetId !== "string" || !/^[A-Za-z0-9_-]{1,160}$/.test(value.assetId) ||
+        typeof value.contentHash !== "string" || !/^[a-f0-9]{64}$/.test(value.contentHash)) {
+      throw new Error("The local video reference is invalid.");
+    }
+    const descriptor = await getLocalAssetStore()?.getRegisteredDescriptor(value.assetId);
+    if (!descriptor || descriptor.contentHash !== value.contentHash) return false;
+    notifyLocalVideoChanged?.(value.assetId);
+    return true;
+  });
+
   ipcMain.handle("save-downloaded-video-externally", async (event, input: unknown) => {
     assertSender(event, assertControllerSender);
     if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("The external save request is invalid.");
@@ -254,12 +323,14 @@ export const registerVideoDownloaderIpc = ({
     ) throw new Error("The external save request is invalid.");
     const downloader = requireDownloader(getDownloader);
     const store = getLocalAssetStore();
-    const preferencesStore = getPreferencesStore();
-    if (!store || !preferencesStore) throw new Error("Local media storage is not ready.");
-    const preferences = await preferencesStore.get();
-    const directory = preferences.lastDirectory;
-    if (!directory || !(await isDirectoryAvailable(directory))) {
-      throw new Error("Choose an available folder before saving this video outside WorshipSync.");
+    if (!store) throw new Error("Local media storage is not ready.");
+    const destination = destinations.get(value.jobId);
+    if (!destination || destination.senderId !== event.sender.id || !destination.directory) {
+      throw new Error("This job has no selected destination folder. Start a new download with a folder selected.");
+    }
+    const directory = destination.directory;
+    if (!(await isDirectoryAvailable(directory))) {
+      throw new Error("The original download folder is unavailable. Reconnect the drive or restore the folder, then retry this download.");
     }
     const completed = downloader.getCompletedFile(value.jobId);
     const result = await finalizeExternalVideo({

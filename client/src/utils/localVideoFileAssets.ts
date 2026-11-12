@@ -24,6 +24,7 @@ const MAX_SOURCE_THUMBNAIL_BYTES = 2 * 1024 * 1024;
 const MAX_SOURCE_THUMBNAIL_PIXELS = 40_000_000;
 
 export type StoredLocalVideoFile = {
+  contentHash?: string;
   id: string;
   workspaceId?: string;
   blob?: Blob;
@@ -307,10 +308,16 @@ const notifyLocalVideoFileChange = (assetId: string) => {
     new CustomEvent(LOCAL_VIDEO_FILE_CHANGE_EVENT, { detail: { assetId } }),
   );
 };
+let nativeChangeSubscription: (() => void) | undefined;
 
 export const subscribeLocalVideoFileChanges = (
   listener: (assetId: string) => void,
 ) => {
+  // One app-lifetime native bridge fans out through the existing renderer event.
+  // Output windows must invalidate the same committed source as the controller.
+  if (!nativeChangeSubscription && window.electronAPI?.onLocalVideoAssetChanged) {
+    nativeChangeSubscription = window.electronAPI.onLocalVideoAssetChanged(notifyLocalVideoFileChange);
+  }
   const onChange = (event: Event) => {
     const assetId = (event as CustomEvent<{ assetId?: unknown }>).detail
       ?.assetId;
@@ -323,7 +330,7 @@ export const subscribeLocalVideoFileChanges = (
 
 export const saveLocalVideoFile = async (
   video: StoredLocalVideoFile,
-  options: { importBytes?: boolean; thumbnailBlob?: Blob; deferThumbnail?: boolean } = {},
+  options: { importBytes?: boolean; thumbnailBlob?: Blob; deferThumbnail?: boolean; invalidateThumbnail?: boolean } = {},
 ) => {
   const thumbnail = options.deferThumbnail
     ? undefined
@@ -361,8 +368,9 @@ export const saveLocalVideoFile = async (
   const db = await openLocalAssetDb();
   try {
     await new Promise<void>((resolve, reject) => {
-      const transaction = db.transaction(LOCAL_VIDEO_STORE_NAME, "readwrite");
+      const transaction = db.transaction([LOCAL_VIDEO_STORE_NAME, THUMBNAIL_STORE_NAME], "readwrite");
       transaction.objectStore(LOCAL_VIDEO_STORE_NAME).put(storedVideo);
+      if (options.invalidateThumbnail) transaction.objectStore(THUMBNAIL_STORE_NAME).delete(video.id);
       transaction.oncomplete = () => resolve();
       transaction.onerror = () =>
         reject(
@@ -382,6 +390,7 @@ export const saveLocalVideoFile = async (
   if (options.deferThumbnail) {
     void queueLocalVideoThumbnail(video.id, () =>
       createLocalVideoFileThumbnail(video, options.thumbnailBlob),
+      video.contentHash,
     );
   } else if (thumbnail) {
     await saveLocalImageThumbnail(thumbnail).catch(() => undefined);
@@ -495,8 +504,10 @@ let videoThumbnailBackfillQueue: Promise<void> = Promise.resolve();
 const queueLocalVideoThumbnail = (
   assetId: string,
   createThumbnail: () => Promise<StoredLocalImageThumbnail | undefined>,
+  expectedContentHash?: string,
 ) => {
-  const pending = pendingVideoThumbnailBackfills.get(assetId);
+  const queueKey = `${assetId}:${expectedContentHash ?? "legacy"}`;
+  const pending = pendingVideoThumbnailBackfills.get(queueKey);
   if (pending) return pending;
 
   let resolveBackfill:
@@ -507,11 +518,13 @@ const queueLocalVideoThumbnail = (
       resolveBackfill = resolve;
     },
   );
-  pendingVideoThumbnailBackfills.set(assetId, backfill);
+  pendingVideoThumbnailBackfills.set(queueKey, backfill);
   videoThumbnailBackfillQueue = videoThumbnailBackfillQueue
     .catch(() => undefined)
     .then(async () => {
       try {
+        const video = await getLocalVideoFile(assetId);
+        if (!video || video.contentHash !== expectedContentHash) { resolveBackfill?.(undefined); return; }
         const current = await getLocalImageThumbnail(assetId);
         if (current) {
           resolveBackfill?.(current);
@@ -519,15 +532,22 @@ const queueLocalVideoThumbnail = (
         }
         const thumbnail = await createThumbnail().catch(() => undefined);
         const saved = thumbnail
-          ? await saveLocalVideoThumbnail(thumbnail)
+          ? await saveLocalVideoThumbnail(thumbnail, expectedContentHash)
           : false;
         resolveBackfill?.(saved ? thumbnail : undefined);
-        if (saved) notifyLocalVideoFileChange(assetId);
+        if (saved) {
+          notifyLocalVideoFileChange(assetId);
+          if (expectedContentHash) {
+            // Only the controller is authorized to fan this out natively.
+            // Output-side thumbnail generation remains a local cache write.
+            void window.electronAPI?.notifyLocalVideoAssetChanged?.(assetId, expectedContentHash).catch(() => undefined);
+          }
+        }
       } catch {
         resolveBackfill?.(undefined);
       } finally {
-        if (pendingVideoThumbnailBackfills.get(assetId) === backfill) {
-          pendingVideoThumbnailBackfills.delete(assetId);
+        if (pendingVideoThumbnailBackfills.get(queueKey) === backfill) {
+          pendingVideoThumbnailBackfills.delete(queueKey);
         }
       }
     });
@@ -541,10 +561,9 @@ const queueLocalVideoThumbnail = (
 export const getOrCreateLocalVideoFileThumbnail = async (assetId: string) => {
   const existing = await getLocalImageThumbnail(assetId);
   if (existing) return existing;
-  return queueLocalVideoThumbnail(assetId, async () => {
-    const video = await getLocalVideoFile(assetId);
-    return video ? createLocalVideoFileThumbnail(video) : undefined;
-  });
+  const video = await getLocalVideoFile(assetId);
+  if (!video) return undefined;
+  return queueLocalVideoThumbnail(assetId, () => createLocalVideoFileThumbnail(video), video.contentHash);
 };
 
 export const normalizeLocalVideoFileReference = (

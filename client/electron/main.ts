@@ -13,6 +13,7 @@ import {
   shell,
   type WebContents,
   type NativeImage,
+  type OpenDialogOptions,
 } from "electron";
 import { join, dirname } from "node:path";
 import {
@@ -363,26 +364,33 @@ const isDirectoryAvailable = async (path: string) => {
 registerVideoDownloaderIpc({
   ipcMain,
   assertControllerSender: assertControllerIpcSender,
+  notifyLocalVideoChanged: (assetId) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send("local-video-asset-changed", assetId);
+    }
+  },
   getDownloader: () => videoDownloader,
   getLocalAssetStore: () => localAssetStore ?? null,
   getPreferencesStore: () => videoDownloadPreferencesStore,
   selectVideoFile: async (sender) => {
     const parent = BrowserWindow.fromWebContents(sender);
-    const result = await dialog.showOpenDialog(parent ?? undefined, {
+    const options: OpenDialogOptions = {
       title: "Link a video file",
       properties: ["openFile"],
       filters: [{ name: "Video files", extensions: [...SUPPORTED_VIDEO_EXTENSIONS] }],
-    });
+    };
+    const result = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options));
     return result.canceled ? undefined : result.filePaths[0];
   },
   selectVideoDirectory: async (sender, defaultPath) => {
     const parent = BrowserWindow.fromWebContents(sender);
     const defaultIsAvailable = defaultPath ? await isDirectoryAvailable(defaultPath) : false;
-    const result = await dialog.showOpenDialog(parent ?? undefined, {
+    const options: OpenDialogOptions = {
       title: "Choose video download folder",
       ...(defaultIsAvailable && defaultPath ? { defaultPath } : {}),
       properties: ["openDirectory", "createDirectory"],
-    });
+    };
+    const result = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options));
     return result.canceled ? undefined : result.filePaths[0];
   },
   isDirectoryAvailable,
@@ -1597,7 +1605,7 @@ ipcMain.handle(
         file: string | null;
       } | null;
       const helper = (
-        autoUpdater as { downloadedUpdateHelper?: DownloadHelper }
+        autoUpdater as unknown as { downloadedUpdateHelper?: DownloadHelper }
       ).downloadedUpdateHelper;
       const ready =
         helper != null &&

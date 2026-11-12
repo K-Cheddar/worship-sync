@@ -1159,7 +1159,25 @@ export type CanvaMediaSource = {
   pageNumbers: number[];
 };
 
+export type LinkedVideoReplacementSnapshot = Pick<MediaType,
+  "width" | "height" | "duration" | "format" | "background" | "thumbnail" | "placeholderImage" |
+  "muxAssetId" | "muxPlaybackId" | "providerStorage" | "localVideoFile" | "updatedAt">;
+
 export type MediaType = {
+  /** Durable retirement checkpoint, written with a linked-source replacement. */
+  pendingLinkedVideoCleanup?: Array<{
+    localAssetId: string;
+    muxAssetIds: string[];
+    linkedAssetId: string;
+    contentHash: string;
+    previousContentHash?: string;
+    nativePreviousContentHash?: string;
+    contentChanged: boolean;
+    previousFields: LinkedVideoReplacementSnapshot;
+    proposedFields?: LinkedVideoReplacementSnapshot;
+    rolledBack?: boolean;
+  }>;
+
   path: string;
   createdAt: string;
   updatedAt: string;

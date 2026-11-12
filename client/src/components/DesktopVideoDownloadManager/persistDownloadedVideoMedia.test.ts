@@ -69,6 +69,30 @@ describe("persistDownloadedVideoMedia", () => {
     flushMediaLibraryDocToPouch.mockResolvedValue({ ok: true });
   });
 
+  it("does not attach an older download's cloud result after the stable native ID was relinked", async () => {
+    const incoming = { ...media, localVideoFile: { ...media.localVideoFile!, contentHash: "a".repeat(64) } };
+    const replacement = { ...incoming, localVideoFile: { ...incoming.localVideoFile, contentHash: "b".repeat(64) } };
+    loadMediaLibrary.mockResolvedValueOnce({ list: [replacement], folders: [] });
+    const dispatch = jest.fn();
+    await expect(persistDownloadedVideoMedia({ incoming, owner, patch: { muxAssetId: "old-cloud-result" },
+      dispatch: dispatch as unknown as AppDispatch, getState: () => ({ media: { list: [replacement], folders: [] } } as unknown as RootState),
+      isOwnerCurrent: () => true })).rejects.toThrow("different Media Library item");
+    expect(flushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("does not recreate a deleted local import when its cloud registration is retried", async () => {
+    const dispatch = jest.fn();
+    // The completed local import was deleted before the failed cloud step's Retry.
+    loadMediaLibrary.mockResolvedValueOnce({ list: [], folders: [] });
+    await expect(persistDownloadedVideoMedia({ incoming: media, owner,
+      patch: { muxAssetId: muxResult.assetId }, dispatch: dispatch as unknown as AppDispatch,
+      getState: () => ({ media: { list: [], folders: [] } } as unknown as RootState),
+      isOwnerCurrent: () => true })).rejects.toThrow("removed from the Media Library");
+    expect(flushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
   it("publishes a deferred write after a lost acknowledgement only when a fresh Pouch read confirms it", async () => {
     const db = owner.dbAtStart as PouchDB.Database;
     let mediaState = { list: [] as MediaType[], folders: [], isInitialized: true, loadStatus: "ready" as const } as unknown as RootState["media"];
@@ -191,7 +215,7 @@ describe("persistDownloadedVideoMedia", () => {
       isOwnerCurrent: () => true,
     });
 
-    expect(loadMediaLibrary).toHaveBeenCalledWith(db);
+    expect(loadMediaLibrary).toHaveBeenCalledWith(db, { forCleanup: true });
     expect(persisted).toEqual(media);
     expect(deleteAsset).not.toHaveBeenCalled();
   });

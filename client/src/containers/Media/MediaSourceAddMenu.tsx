@@ -45,12 +45,12 @@ export const MediaSourceAddMenu = ({
         ) : null}
         {onAddMedia ? (
           <DropdownMenuItem disabled={mediaUploadDisabled} onSelect={onAddMedia}>
-            <HardDrive className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon} /> Copy into WorshipSync (Recommended)
+            <HardDrive className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon} /> Add files
           </DropdownMenuItem>
         ) : null}
         {onLinkVideo ? (
           <DropdownMenuItem disabled={mediaUploadDisabled} onSelect={onLinkVideo}>
-            <Link2 className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon} /> Link to file
+            <Link2 className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon} /> Link local video
           </DropdownMenuItem>
         ) : null}
         {onAddVideoInput ? (

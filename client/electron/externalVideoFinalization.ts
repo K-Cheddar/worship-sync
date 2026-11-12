@@ -1,7 +1,9 @@
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, createWriteStream } from "node:fs";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { Transform } from "node:stream";
 import {
-  copyFile,
   link,
   lstat,
   open,
@@ -123,8 +125,13 @@ const copyToTemporaryFile = async (
       openedStat.ino !== pathStat.ino || openedStat.size !== expectedSize ||
       openedStat.mtimeMs !== pathStat.mtimeMs
     ) throw new Error("The completed video changed before it could be saved.");
+    const copiedHash = createHash("sha256");
     await pipeline(
       sourceHandle.createReadStream({ autoClose: false }),
+      new Transform({ transform(chunk, _encoding, callback) {
+        copiedHash.update(chunk);
+        callback(null, chunk);
+      } }),
       createWriteStream(temporaryPath, { flags: "wx", mode: 0o600 }),
     );
     const handle = await open(temporaryPath, "r+");
@@ -141,7 +148,8 @@ const copyToTemporaryFile = async (
       !sourceStat.isFile() || !temporaryStat.isFile() ||
       temporaryStat.isSymbolicLink() || sourceStat.size <= 0 ||
       temporaryStat.size !== sourceStat.size || temporaryStat.size !== expectedSize ||
-      (await hashFile(temporaryPath)) !== expectedHash
+      sourceStat.mtimeMs !== openedStat.mtimeMs ||
+      copiedHash.digest("hex") !== expectedHash
     ) {
       throw new Error("The downloaded video could not be saved completely.");
     }
@@ -154,19 +162,35 @@ const copyToTemporaryFile = async (
   }
 };
 
-const moveWithoutReplacing = async (temporaryPath: string, destination: string) => {
+export const moveWithoutReplacing = async (temporaryPath: string, destination: string) => {
   try {
     // Same-directory hard-link creation is atomic and fails if the name exists.
     await link(temporaryPath, destination);
-    await rm(temporaryPath, { force: true });
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "EEXIST") throw error;
-    // Some removable filesystems do not support hard links. COPYFILE_EXCL keeps
-    // the no-overwrite guarantee; the temporary file is never a .mp4 item.
-    await copyFile(temporaryPath, destination, fsConstants.COPYFILE_EXCL);
-    await rm(temporaryPath, { force: true });
+    if (!["EPERM", "ENOTSUP", "EOPNOTSUPP", "EXDEV", "EACCES"].includes(code ?? "")) throw error;
+    if (process.platform !== "win32") {
+      throw new Error("This filesystem cannot safely publish the video. Choose a folder that supports hard links.");
+    }
+    // File.Move uses an exclusive same-volume rename, including on exFAT/FAT.
+    // Paths are passed as environment values, never interpolated into code.
+    // Node's rename may overwrite, and COPYFILE_EXCL exposes a partial MP4.
+    try {
+      await promisify(execFile)(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command",
+        "[IO.File]::Move($env:WORSHIPSYNC_PUBLISH_SOURCE, $env:WORSHIPSYNC_PUBLISH_DESTINATION)"], {
+        windowsHide: true,
+        env: { ...process.env, WORSHIPSYNC_PUBLISH_SOURCE: temporaryPath, WORSHIPSYNC_PUBLISH_DESTINATION: destination },
+      });
+    } catch (moveError) {
+      const exists = await lstat(destination).then(() => true, () => false);
+      if (exists) throw Object.assign(new Error("The destination already exists."), { code: "EEXIST" });
+      throw moveError;
+    }
   }
+  // Publication already succeeded; a temporary-alias cleanup failure must not
+  // trigger a second publication or cause a completed file to be overwritten.
+  await rm(temporaryPath, { force: true }).catch(() => undefined);
 };
 
 export const finalizeExternalVideo = async (args: {

@@ -23,6 +23,7 @@ const mockActions = {
 };
 
 jest.mock("../../hooks", () => ({ useDispatch: () => mockDispatch }));
+jest.mock("react-redux", () => ({ ...jest.requireActual("react-redux"), useStore: () => ({ getState: () => ({ media: { list: [] } }) }) }));
 jest.mock("../../context/toastContext", () => ({ useToast: () => ({ showToast: jest.fn() }) }));
 jest.mock("../../context/transferContext", () => ({ useOptionalTransferActions: () => mockActions }));
 jest.mock("../../utils/authStorage", () => ({ getOrCreateDeviceId: () => "device-a" }));
@@ -79,6 +80,33 @@ describe("useLocalMediaCloudShare church scope", () => {
     jest.clearAllMocks();
     mockTransfers.clear();
     mockTransferActions.clear();
+  });
+
+  it.each(["stale A", "current B"])("does not upload selected %s when Pouch holds B and native still holds A", async (selection) => {
+    const stale = { ...media, localVideoFile: { ...media.localVideoFile!, storageMode: "linked" as const, contentHash: "a".repeat(64) } };
+    const current = { ...stale, localVideoFile: { ...stale.localVideoFile, contentHash: "b".repeat(64) },
+      pendingLinkedVideoCleanup: [{ localAssetId: "candidate", linkedAssetId: media.localVideoFile!.id,
+        contentHash: "b".repeat(64), previousContentHash: "a".repeat(64), contentChanged: true, muxAssetIds: [], previousFields: stale }] };
+    const db = { get: jest.fn(async (id: string) => id === "media-library-meta" ? { schemaVersion: 2 }
+      : { ...current, _id: `media-item:${media.id}`, docType: "mediaItem" }) } as unknown as PouchDB.Database;
+    const getLocalAsset = jest.fn(async () => ({ contentHash: "a".repeat(64), workspaceId: "church-a" }));
+    Object.defineProperty(window, "electronAPI", { configurable: true, value: { getLocalAsset } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as never}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-a" } as never}>{children}</GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    );
+    const { result } = renderHook(() => useLocalMediaCloudShare(), { wrapper });
+    try {
+      await act(async () => { await result.current.uploadOwnedLocalMedia(selection === "stale A" ? stale : current); });
+      expect(mockUploadVideo).not.toHaveBeenCalled();
+      expect(mockDispatch).not.toHaveBeenCalled();
+      expect(getLocalAsset).toHaveBeenCalledTimes(selection === "stale A" ? 0 : 1);
+      expect(mockTransferActions.has(`media-relink-cleanup-church-a:${media.id}:retry-cleanup`)).toBe(true);
+      expect([...mockTransfers.values()]).toEqual(expect.arrayContaining([expect.objectContaining({
+        files: expect.arrayContaining([expect.objectContaining({ error: expect.stringContaining("relink") })]),
+      })]));
+    } finally { delete (window as { electronAPI?: unknown }).electronAPI; }
   });
 
   it("cleans up a Church A Mux result after Media unmounts without patching Church B", async () => {

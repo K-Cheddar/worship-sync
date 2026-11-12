@@ -476,6 +476,7 @@ export const saveLocalImageThumbnail = async (
 /** Save a video still atomically with a check that its owning video still exists. */
 export const saveLocalVideoThumbnail = async (
   thumbnail: StoredLocalImageThumbnail,
+  expectedContentHash?: string,
 ) => {
   const db = await openLocalAssetDb();
   let saved = false;
@@ -489,7 +490,7 @@ export const saveLocalVideoThumbnail = async (
         .objectStore(LOCAL_VIDEO_STORE_NAME)
         .get(thumbnail.id);
       videoRequest.onsuccess = () => {
-        if (!videoRequest.result) return;
+        if (!videoRequest.result || videoRequest.result.contentHash !== expectedContentHash) return;
         transaction.objectStore(THUMBNAIL_STORE_NAME).put(thumbnail);
         saved = true;
       };

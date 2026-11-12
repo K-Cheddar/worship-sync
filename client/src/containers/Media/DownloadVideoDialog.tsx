@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import Modal from "../../components/Modal/Modal";
@@ -47,10 +47,16 @@ const DownloadVideoDialog = ({
   const [saveOutsideWorshipSync, setSaveOutsideWorshipSync] = useState(false);
   const [uploadToCloud, setUploadToCloud] = useState(false);
   const [destinationDirectoryAvailable, setDestinationDirectoryAvailable] = useState(false);
+  const [destinationDirectoryId, setDestinationDirectoryId] = useState<string>();
+  const [destinationDirectoryDisplay, setDestinationDirectoryDisplay] = useState("");
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
   const [isSelectingFolder, setIsSelectingFolder] = useState(false);
   const [isInspecting, setIsInspecting] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [isSavingPreferences, setIsSavingPreferences] = useState(false);
+  const preferencePending = useRef(false);
+  const scope = useRef({ open, churchId });
+  if (scope.current.open !== open || scope.current.churchId !== churchId) scope.current = { open, churchId };
   const [error, setError] = useState("");
   const [inspectionAttempt, setInspectionAttempt] = useState(0);
 
@@ -78,13 +84,18 @@ const DownloadVideoDialog = ({
         setSaveOutsideWorshipSync(preferences.saveOutsideWorshipSync);
         setUploadToCloud(isGuestSession ? false : preferences.uploadToCloud);
         setDestinationDirectoryAvailable(preferences.destinationDirectoryAvailable);
+        setDestinationDirectoryId(preferences.destinationDirectoryId);
+        setDestinationDirectoryDisplay(preferences.destinationDirectoryDisplay ?? "");
         setPreferencesLoaded(true);
         if (preferences.saveOutsideWorshipSync && !preferences.destinationDirectoryAvailable) {
           setIsSelectingFolder(true);
           const selected = await api.chooseVideoDownloadDirectory();
           if (!active) return;
           setIsSelectingFolder(false);
-          setDestinationDirectoryAvailable(Boolean(selected?.destinationDirectoryAvailable));
+          if (!selected) return;
+          setDestinationDirectoryId(selected.destinationDirectoryId);
+          setDestinationDirectoryDisplay(selected.destinationDirectoryDisplay ?? "");
+          setDestinationDirectoryAvailable(selected.destinationDirectoryAvailable);
           if (!selected?.destinationDirectoryAvailable) {
             setError("Choose an available folder to save outside WorshipSync.");
           }
@@ -101,6 +112,7 @@ const DownloadVideoDialog = ({
   }, [open, isGuestSession]);
 
   const chooseDestinationDirectory = async () => {
+    const scopeAtStart = scope.current;
     const api = window.electronAPI;
     if (!api?.chooseVideoDownloadDirectory) {
       setError("Choose a destination folder in the Windows desktop app.");
@@ -110,14 +122,18 @@ const DownloadVideoDialog = ({
     setError("");
     try {
       const selected = await api.chooseVideoDownloadDirectory();
-      setDestinationDirectoryAvailable(Boolean(selected?.destinationDirectoryAvailable));
+      if (scope.current !== scopeAtStart) return;
+      if (!selected) return;
+      setDestinationDirectoryId(selected.destinationDirectoryId);
+      setDestinationDirectoryDisplay(selected.destinationDirectoryDisplay ?? "");
+      setDestinationDirectoryAvailable(selected.destinationDirectoryAvailable);
       if (!selected?.destinationDirectoryAvailable) {
         setError("Choose an available folder to save outside WorshipSync.");
       }
     } catch (selectionError) {
-      setError(videoDownloadErrorMessage(selectionError, "The destination folder could not be selected."));
+      if (scope.current === scopeAtStart) setError(videoDownloadErrorMessage(selectionError, "The destination folder could not be selected."));
     } finally {
-      setIsSelectingFolder(false);
+      if (scope.current === scopeAtStart) setIsSelectingFolder(false);
     }
   };
 
@@ -125,6 +141,8 @@ const DownloadVideoDialog = ({
     key: "saveOutsideWorshipSync" | "uploadToCloud",
     enabled: boolean,
   ) => {
+    if (preferencePending.current) return;
+    const scopeAtStart = scope.current;
     const api = window.electronAPI;
     if (!api?.updateVideoDownloadPreferences) {
       setError("Download preferences are unavailable in this app.");
@@ -138,13 +156,21 @@ const DownloadVideoDialog = ({
       : uploadToCloud;
     setValue(enabled);
     setError("");
+    preferencePending.current = true;
+    setIsSavingPreferences(true);
     try {
       await api.updateVideoDownloadPreferences({ [key]: enabled });
     } catch (preferenceError) {
-      setValue(previous);
-      setError(videoDownloadErrorMessage(preferenceError, "The download preference could not be saved."));
+      if (scope.current === scopeAtStart) {
+        setValue(previous);
+        setError(videoDownloadErrorMessage(preferenceError, "The download preference could not be saved."));
+      }
       return;
+    } finally {
+      preferencePending.current = false;
+      setIsSavingPreferences(false);
     }
+    if (scope.current !== scopeAtStart) return;
     if (key === "saveOutsideWorshipSync" && enabled && !destinationDirectoryAvailable) {
       await chooseDestinationDirectory();
     }
@@ -228,6 +254,7 @@ const DownloadVideoDialog = ({
         displayName,
         quality,
         saveOutsideWorshipSync,
+        destinationDirectoryId,
         uploadToCloud,
         owner: {
           churchId,
@@ -247,7 +274,7 @@ const DownloadVideoDialog = ({
 
   const selectedQualityExists = inspection?.heights.includes(Number(quality)) ?? false;
   const canDownload = Boolean(
-    inspection && inspectedInputUrl === url.trim() && !isInspecting && !isStarting && preferencesLoaded &&
+    inspection && inspectedInputUrl === url.trim() && !isInspecting && !isStarting && !isSavingPreferences && !isSelectingFolder && preferencesLoaded &&
     mediaName.trim() && (quality === "best" || selectedQualityExists) &&
     (!saveOutsideWorshipSync || destinationDirectoryAvailable) && !disabled,
   );
@@ -323,19 +350,27 @@ const DownloadVideoDialog = ({
                 type="checkbox"
                 checked={saveOutsideWorshipSync}
                 onChange={(event) => void updateDownloadPreference("saveOutsideWorshipSync", event.currentTarget.checked)}
-                disabled={isStarting || isSelectingFolder || !preferencesLoaded}
+                disabled={isStarting || isSelectingFolder || isSavingPreferences || !preferencesLoaded}
               />
               <span>Save outside WorshipSync</span>
             </label>
             {saveOutsideWorshipSync ? (
               <div className="ml-6 mt-1 space-y-1">
-                <p className="text-xs text-gray-400">
-                  {destinationDirectoryAvailable ? "The folder you selected is ready." : "Choose a folder on this computer."}
-                </p>
+                {destinationDirectoryDisplay ? (
+                  <details className="min-w-0 text-xs text-gray-300">
+                    <summary className="cursor-pointer truncate" title={destinationDirectoryDisplay} aria-label={`Save folder: ${destinationDirectoryDisplay}`}>
+                      {destinationDirectoryDisplay}
+                    </summary>
+                    <p className="break-all">{destinationDirectoryDisplay}</p>
+                  </details>
+                ) : null}
+                {!destinationDirectoryAvailable ? (
+                  <p className="text-xs text-gray-400">{destinationDirectoryDisplay ? "This folder is unavailable. Reconnect the drive or choose another folder." : "Choose a folder on this computer."}</p>
+                ) : null}
                 <Button
                   variant="secondary"
                   onClick={() => void chooseDestinationDirectory()}
-                  disabled={isSelectingFolder || isStarting}
+                  disabled={isSelectingFolder || isStarting || isSavingPreferences}
                 >
                   {isSelectingFolder ? "Choosing folder…" : destinationDirectoryAvailable ? "Change folder" : "Choose folder"}
                 </Button>
@@ -348,7 +383,7 @@ const DownloadVideoDialog = ({
                 type="checkbox"
                 checked={uploadToCloud}
                 onChange={(event) => void updateDownloadPreference("uploadToCloud", event.currentTarget.checked)}
-                disabled={isStarting || !preferencesLoaded}
+                disabled={isStarting || isSavingPreferences || !preferencesLoaded}
               />
               <span>Upload to WorshipSync cloud</span>
             </label>

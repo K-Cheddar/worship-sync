@@ -168,6 +168,8 @@ describe("DownloadVideoDialog inspection lifecycle", () => {
     let preferences = {
       saveOutsideWorshipSync: false,
       uploadToCloud: false,
+      destinationDirectoryId: "",
+      destinationDirectoryDisplay: "",
       hasDestinationDirectory: false,
       destinationDirectoryAvailable: false,
     };
@@ -179,6 +181,8 @@ describe("DownloadVideoDialog inspection lifecycle", () => {
     const chooseVideoDownloadDirectory = jest.fn(async () => {
       preferences = {
         ...preferences,
+        destinationDirectoryId: "native-folder-selection",
+        destinationDirectoryDisplay: "D:\\Church Media\\Videos",
         hasDestinationDirectory: true,
         destinationDirectoryAvailable: true,
       };
@@ -215,11 +219,13 @@ describe("DownloadVideoDialog inspection lifecycle", () => {
     expect(externalSave).toBeChecked();
     expect(cloudUpload).toBeChecked();
     expect(chooseVideoDownloadDirectory).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Save folder: D:\\Church Media\\Videos")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Download" }));
     await settlePromises();
     expect(mockStart).toHaveBeenCalledWith(expect.objectContaining({
       saveOutsideWorshipSync: true,
+      destinationDirectoryId: "native-folder-selection",
       uploadToCloud: true,
     }));
 
@@ -227,5 +233,22 @@ describe("DownloadVideoDialog inspection lifecycle", () => {
     await settlePromises();
     expect(screen.getByRole("checkbox", { name: "Save outside WorshipSync" })).toBeChecked();
     expect(screen.getByRole("checkbox", { name: "Upload to WorshipSync cloud" })).toBeChecked();
+    expect(screen.getByLabelText("Save folder: D:\\Church Media\\Videos")).toBeInTheDocument();
+  });
+
+  it("identifies an unavailable remembered folder and preserves it when the picker is cancelled", async () => {
+    const path = "D:\\Disconnected drive\\Very long church media folder\\Videos";
+    window.electronAPI = {
+      inspectVideoUrl,
+      getVideoDownloadPreferences: async () => ({ saveOutsideWorshipSync: true, uploadToCloud: false,
+        hasDestinationDirectory: true, destinationDirectoryAvailable: false,
+        destinationDirectoryId: "original-folder", destinationDirectoryDisplay: path }),
+      chooseVideoDownloadDirectory: async () => undefined,
+    } as unknown as typeof window.electronAPI;
+    render(<Harness />); await settlePromises();
+    expect(screen.getByLabelText(`Save folder: ${path}`)).toHaveAttribute("title", path);
+    expect(screen.getByText("This folder is unavailable. Reconnect the drive or choose another folder.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Choose folder" })).toBeEnabled();
   });
 });

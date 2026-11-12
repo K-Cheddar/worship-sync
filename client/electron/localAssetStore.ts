@@ -59,6 +59,8 @@ type LocalAssetRecord = LocalAssetDescriptor & {
   /** Present only in the device-local index; never returned to renderer or synced. */
   sourcePath?: string;
   sourceIdentity?: LocalAssetFileIdentity;
+  replacementFor?: { assetId: string; contentHash: string; updatedAt: string; committedReplacementId?: string };
+  committedReplacementId?: string;
 };
 
 type LocalAssetIndex = {
@@ -146,7 +148,7 @@ const sameFileIdentity = (
 );
 
 const publicDescriptor = (record: LocalAssetRecord): LocalAssetDescriptor => {
-  const { sourcePath: _sourcePath, sourceIdentity: _sourceIdentity, ...descriptor } = record;
+  const { sourcePath: _sourcePath, sourceIdentity: _sourceIdentity, replacementFor: _replacementFor, committedReplacementId: _committedReplacementId, ...descriptor } = record;
   return descriptor;
 };
 
@@ -267,7 +269,7 @@ export class LocalAssetStore {
   private async readIndex(path: string): Promise<LocalAssetIndex> {
     const parsed = JSON.parse(
       await readFile(path, "utf8"),
-    ) as Partial<LocalAssetIndex>;
+    ) as Partial<Omit<LocalAssetIndex, "version">> & { version?: number };
     if (
       (parsed.version !== 1 && parsed.version !== 2) ||
       !parsed.assets ||
@@ -489,7 +491,7 @@ export class LocalAssetStore {
     }
   }
 
-  async linkFile(input: LocalAssetImport): Promise<LocalAssetDescriptor> {
+  async linkFile(input: LocalAssetImport, replacementFor?: LocalAssetRecord["replacementFor"]): Promise<LocalAssetDescriptor> {
     return this.enqueue(async () => {
       await this.ready;
       if (!ASSET_ID_PATTERN.test(input.assetId)) {
@@ -506,6 +508,7 @@ export class LocalAssetStore {
       const linked = await this.readLinkedFile(input);
       const now = new Date().toISOString();
       const record: LocalAssetRecord = {
+        ...(replacementFor ? { replacementFor } : {}),
         assetId: input.assetId,
         workspaceId: input.workspaceId,
         kind: input.kind,
@@ -536,44 +539,66 @@ export class LocalAssetStore {
   async relinkFile(
     assetId: string,
     input: Omit<LocalAssetImport, "assetId">,
-  ): Promise<LocalAssetDescriptor> {
+  ): Promise<LocalAssetDescriptor & { previousContentHash: string }> {
+    await this.ready;
+    const previous = this.index.assets[assetId];
+    if (!previous || previous.storageMode !== "linked") {
+      throw new Error("Only a linked local video can be relinked.");
+    }
+    // A candidate has its own reference. The original remains usable until the
+    // Media Library adopts this candidate; validation never replaces live bytes.
+    const candidate = await this.linkFile({
+      ...input,
+      assetId: `local_video_link_${randomUUID()}`,
+      workspaceId: previous.workspaceId,
+    }, { assetId, contentHash: previous.contentHash, updatedAt: previous.updatedAt, committedReplacementId: previous.committedReplacementId });
+    return { ...candidate, previousContentHash: previous.contentHash };
+  }
+
+  /** Adopt a validated staged reference while retaining all saved playback IDs. */
+  async commitRelinkFile(assetId: string, candidateId: string): Promise<LocalAssetDescriptor> {
     return this.enqueue(async () => {
       await this.ready;
-      if (!ASSET_ID_PATTERN.test(assetId)) {
-        throw new Error("The local asset identifier is invalid.");
-      }
       const previous = this.index.assets[assetId];
-      if (!previous || previous.storageMode !== "linked") {
-        throw new Error("Only a linked local video can be relinked.");
+      const candidate = this.index.assets[candidateId];
+      if (previous?.committedReplacementId === candidateId) {
+        const available = await this.get(assetId);
+        if (!available) throw new Error("The relinked file is unavailable. Reconnect its drive and retry.");
+        return available;
       }
-      const linked = await this.readLinkedFile({ ...input, assetId });
-      const now = new Date().toISOString();
-      const record: LocalAssetRecord = {
-        ...previous,
-        workspaceId: input.workspaceId ?? previous.workspaceId,
-        kind: input.kind,
-        fileName: input.fileName,
-        contentType: input.contentType.toLowerCase(),
-        size: linked.size,
-        width: input.width,
-        height: input.height,
-        contentHash: linked.contentHash,
-        storageMode: "linked",
-        storedFileName: undefined,
-        sourcePath: linked.sourcePath,
-        sourceIdentity: linked.sourceIdentity,
-        updatedAt: now,
-      };
+      if (!previous || previous.storageMode !== "linked" || !candidate ||
+          candidate.storageMode !== "linked" || candidate.replacementFor?.assetId !== assetId ||
+          candidate.workspaceId !== previous.workspaceId) {
+        throw new Error("The staged replacement is no longer available. Relink the video again.");
+      }
+      if (!(await this.get(candidateId))) throw new Error("The replacement file is unavailable. Reconnect its drive and retry.");
+      if (previous.contentHash !== candidate.replacementFor.contentHash || previous.updatedAt !== candidate.replacementFor.updatedAt ||
+          previous.committedReplacementId !== candidate.replacementFor.committedReplacementId) {
+        throw new Error("This video was already relinked by another operation. Its newer reference was kept.");
+      }
+      const record: LocalAssetRecord = { ...candidate, assetId, replacementFor: undefined, committedReplacementId: candidateId,
+        createdAt: previous.createdAt, updatedAt: new Date().toISOString() };
       const previousIndex = this.index;
       this.index = { version: 2, assets: { ...this.index.assets, [assetId]: record } };
-      try {
-        await this.persistIndex();
-      } catch (error) {
-        this.index = previousIndex;
-        throw error;
-      }
+      try { await this.persistIndex(); }
+      catch (error) { this.index = previousIndex; throw error; }
       return publicDescriptor(record);
     });
+  }
+
+  /** Registry-only reconciliation remains possible with a disconnected drive. */
+  async getRelinkStatus(assetId: string, candidateId: string) {
+    await this.ready;
+    const original = this.index.assets[assetId];
+    const candidate = this.index.assets[candidateId];
+    const status: "pending" | "committed" | "superseded" | "missing" = !original ? "missing"
+      : original.committedReplacementId === candidateId ? "committed"
+      : candidate?.replacementFor?.assetId === assetId &&
+        original.contentHash === candidate.replacementFor.contentHash &&
+        original.updatedAt === candidate.replacementFor.updatedAt &&
+        original.committedReplacementId === candidate.replacementFor.committedReplacementId ? "pending"
+      : "superseded";
+    return { status, asset: original ? publicDescriptor(original) : undefined };
   }
 
   /** Import bytes that do not have a native renderer file path, such as a downloaded conversion. */

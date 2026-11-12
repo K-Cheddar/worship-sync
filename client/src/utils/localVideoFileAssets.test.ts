@@ -6,10 +6,12 @@ import {
   getLocalVideoFile,
   getOrCreateLocalVideoFileThumbnail,
   saveLocalVideoFile,
+  subscribeLocalVideoFileChanges,
 } from "./localVideoFileAssets";
 import {
   getLocalImageThumbnail,
   saveLocalImageThumbnail,
+  saveLocalVideoThumbnail,
 } from "./localImageAssets";
 
 jest.mock("./localImageAssets", () => ({
@@ -288,5 +290,28 @@ describe("localVideoFileAssets thumbnails", () => {
     await expect(
       getLocalImageThumbnail("local_video_deleted"),
     ).resolves.toBeUndefined();
+  });
+
+  it("rejects an older thumbnail after the same playback ID adopts replacement content", async () => {
+    const video = { ...storedVideo("stable-video"), contentHash: "a".repeat(64) };
+    await saveLocalVideoFile(video);
+    await saveLocalImageThumbnail(storedThumbnail(video.id));
+    await saveLocalVideoFile({ ...video, contentHash: "b".repeat(64) }, { invalidateThumbnail: true, deferThumbnail: true });
+    await expect(saveLocalVideoThumbnail(storedThumbnail(video.id), video.contentHash)).resolves.toBe(false);
+    await expect(getLocalImageThumbnail(video.id)).resolves.toBeUndefined();
+    await expect(saveLocalVideoThumbnail(storedThumbnail(video.id), "b".repeat(64))).resolves.toBe(true);
+  });
+
+  it("fans native committed changes out through the existing renderer event", () => {
+    let notify!: (id: string) => void;
+    const subscribe = jest.fn((listener: (id: string) => void) => { notify = listener; return jest.fn(); });
+    window.electronAPI = { onLocalVideoAssetChanged: subscribe } as unknown as typeof window.electronAPI;
+    const first = jest.fn(); const second = jest.fn();
+    const stopFirst = subscribeLocalVideoFileChanges(first);
+    const stopSecond = subscribeLocalVideoFileChanges(second);
+    notify("stable");
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(first).toHaveBeenCalledWith("stable"); expect(second).toHaveBeenCalledWith("stable");
+    stopFirst(); stopSecond();
   });
 });

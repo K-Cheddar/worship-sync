@@ -57,6 +57,8 @@ interface ElectronDesktopCaptureSource {
 }
 
 interface ElectronLocalAsset {
+  /** Native base hash returned only for a staged relink. */
+  previousContentHash?: string;
   assetId: string;
   workspaceId?: string;
   kind: "image" | "video" | "audio" | "pdf";
@@ -290,6 +292,10 @@ interface ElectronAPI {
   getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
   linkLocalVideoFile: (workspaceId: string) => Promise<ElectronLocalAsset | undefined>;
+  notifyLocalVideoAssetChanged: (assetId: string, contentHash: string) => Promise<boolean>;
+  onLocalVideoAssetChanged: (callback: (assetId: string) => void) => () => void;
+  getLocalVideoRelinkStatus: (assetId: string, candidateId: string) => Promise<{ status: "pending" | "committed" | "superseded" | "missing"; asset?: ElectronLocalAsset }>;
+  commitRelinkLocalVideoFile: (assetId: string, candidateId: string) => Promise<ElectronLocalAsset>;
   relinkLocalVideoFile: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
 
   // Native desktop video download. Job output paths remain in the main process.
@@ -299,6 +305,7 @@ interface ElectronAPI {
     jobId: string;
     inspectionId: string;
     quality: number | "best";
+    destinationDirectoryId?: string;
   }) => Promise<{ jobId: string }>;
   cancelVideoDownload: (jobId: string) => Promise<boolean>;
   importDownloadedVideo: (input: {
@@ -326,6 +333,8 @@ interface ElectronAPI {
     uploadToCloud: boolean;
     hasDestinationDirectory: boolean;
     destinationDirectoryAvailable: boolean;
+    destinationDirectoryId?: string;
+    destinationDirectoryDisplay?: string;
   }>;
   updateVideoDownloadPreferences: (preferences: {
     saveOutsideWorshipSync?: boolean;
@@ -335,10 +344,14 @@ interface ElectronAPI {
     uploadToCloud: boolean;
     hasDestinationDirectory: boolean;
     destinationDirectoryAvailable: boolean;
+    destinationDirectoryId?: string;
+    destinationDirectoryDisplay?: string;
   }>;
   chooseVideoDownloadDirectory: () => Promise<{
     hasDestinationDirectory: boolean;
     destinationDirectoryAvailable: boolean;
+    destinationDirectoryId?: string;
+    destinationDirectoryDisplay?: string;
   } | undefined>;
   onVideoDownloadProgress: (
     callback: (event: import("./src/types/electron").DesktopVideoDownloadEvent) => void,

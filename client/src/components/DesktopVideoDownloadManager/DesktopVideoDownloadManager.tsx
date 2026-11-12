@@ -4,9 +4,11 @@ import { useNavigate } from "react-router-dom";
 import { GlobalInfoContext, globalFireDbInfo } from "../../context/globalInfo";
 import { globalDb } from "../../context/controllerInfo";
 import { useTransferActions } from "../../context/transferContext";
-import { useDispatch } from "../../hooks";
+import { useDispatch, useSelector } from "../../hooks";
 import { setFocusMediaId, setIsMediaExpanded, setRequestOpenMediaPanel } from "../../store/preferencesSlice";
 import type { RootState } from "../../store/store";
+import { registerLinkedVideoReplacementRecovery } from "../../containers/Media/relinkLocalVideo";
+import { isMediaUploadClaimed } from "../../utils/mediaOperationClaims";
 import type { MediaType } from "../../types";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import { buildLocalVideoCloudSharePatch } from "../../containers/Media/localMediaCloudShare";
@@ -43,6 +45,8 @@ const DesktopVideoDownloadManager = ({ children }: { children: ReactNode }) => {
   navigateRef.current = navigate;
   churchIdRef.current = churchId;
   const transfer = useTransferActions();
+  const mediaItems = useSelector((state) => state.media.list);
+  const recoveredCleanup = useRef(new Map<string, { db: unknown; checkpoint: string }>());
   const managerRef = useRef<DesktopVideoDownloadController | null>(null);
 
   if (!managerRef.current && window.electronAPI) {
@@ -104,6 +108,27 @@ const DesktopVideoDownloadManager = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     manager?.handleChurchChange(churchId);
   }, [churchId, manager]);
+
+  // Recovery belongs above routes, alongside download Activity. Checkpoints
+  // arrive asynchronously when the captured church's library finishes loading.
+  useEffect(() => {
+    if (!window.electronAPI || !globalDb || globalFireDbInfo.churchId !== churchId) return;
+    const dbAtStart = globalDb;
+    const owner: DesktopVideoDownloadOwner = { churchId, workspaceId: churchId,
+      controllerProfileId: "", folderId: null, routePath: "/controller", dbAtStart };
+    const isOwnerCurrent = () => globalDb === dbAtStart && globalFireDbInfo.churchId === churchId;
+    for (const media of mediaItems) {
+      if (!media.pendingLinkedVideoCleanup?.length || isMediaUploadClaimed(media.id)) continue;
+      const key = `${churchId}:${media.id}`;
+      const checkpoint = JSON.stringify(media.pendingLinkedVideoCleanup);
+      const recovered = recoveredCleanup.current.get(key);
+      if (recovered?.db === dbAtStart && recovered.checkpoint === checkpoint) continue;
+      recoveredCleanup.current.set(key, { db: dbAtStart, checkpoint });
+      const getItems = () => reduxStore.getState().media.list;
+      registerLinkedVideoReplacementRecovery({ item: media, owner, isOwnerCurrent, getItems, dispatch, transfer,
+        error: new Error("Replaced video cleanup is pending.") });
+    }
+  }, [churchId, dispatch, mediaItems, reduxStore, transfer]);
 
   const start = useCallback((input: DesktopVideoDownloadInput) => {
     if (!manager) throw new Error("Video downloads are available in the desktop app.");

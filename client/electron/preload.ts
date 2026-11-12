@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type { WindowType } from "./windowState";
 import type { LocalAssetMetadata } from "./localAssetStore";
 import type { PreparedVideoMetrics } from "../src/types/electron";
@@ -194,6 +194,19 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("get-local-asset", assetId),
   linkLocalVideoFile: (workspaceId: string) =>
     ipcRenderer.invoke("link-local-video-file", { workspaceId }),
+  commitRelinkLocalVideoFile: (assetId: string, candidateId: string) =>
+    ipcRenderer.invoke("commit-relink-local-video-file", { assetId, candidateId }),
+  getLocalVideoRelinkStatus: (assetId: string, candidateId: string) =>
+    ipcRenderer.invoke("get-local-video-relink-status", { assetId, candidateId }),
+  onLocalVideoAssetChanged: (callback: (assetId: string) => void) => {
+    const handler = (_event: IpcRendererEvent, assetId: unknown) => {
+      if (typeof assetId === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(assetId)) callback(assetId);
+    };
+    ipcRenderer.on("local-video-asset-changed", handler);
+    return () => ipcRenderer.removeListener("local-video-asset-changed", handler);
+  },
+  notifyLocalVideoAssetChanged: (assetId: string, contentHash: string) =>
+    ipcRenderer.invoke("notify-local-video-asset-changed", { assetId, contentHash }),
   relinkLocalVideoFile: (assetId: string) =>
     ipcRenderer.invoke("relink-local-video-file", assetId),
 
@@ -207,7 +220,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   // only inspection data, progress and managed local-asset metadata.
   isVideoDownloaderAvailable: () => ipcRenderer.invoke("is-video-downloader-available"),
   inspectVideoUrl: (url: string) => ipcRenderer.invoke("inspect-video-url", url),
-  startVideoDownload: (input: { jobId: string; inspectionId: string; quality: number | "best" }) =>
+  startVideoDownload: (input: { jobId: string; inspectionId: string; quality: number | "best"; destinationDirectoryId?: string }) =>
     ipcRenderer.invoke("start-video-download", input),
   cancelVideoDownload: (jobId: string) => ipcRenderer.invoke("cancel-video-download", jobId),
   importDownloadedVideo: (input: { jobId: string; workspaceId: string; width: number; height: number }) =>
