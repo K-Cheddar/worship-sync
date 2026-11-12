@@ -1,10 +1,10 @@
 # Feature Contract: Desktop video downloader
 
-**Contract status:** Confirmed expanded workflow implemented and packaged for Windows x64; live YouTube and first-run app verification remain unverified in this environment.
+**Contract status:** The expanded desktop workflow has prior Windows x64 package evidence. Restart recovery and native cleanup follow-up are implemented and locally built; live YouTube and packaged UI verification for this follow-up remain unverified.
 
 **Approval source:** Desktop Video Downloader request, October 29, 2026; linked local videos, external download storage and progress request, November 5, 2026.
 
-**Last reviewed:** November 11, 2026.
+**Last reviewed:** November 12, 2026.
 
 ## Purpose and operator workflow
 
@@ -46,6 +46,11 @@ computer.
   thumbnail when its file is unavailable, offers “Relink file”, and may use a
   valid cloud copy for playback. Relinking updates the existing item; a changed
   file invalidates stale cloud playback metadata and thumbnails.
+- After the Media Library initializes, persisted interrupted relinks are
+  reconciled with native relink status and restored in Transfer Activity,
+  including after an app restart. Startup discovery does not delete files or
+  cloud assets. **Retry relink** resumes the existing recovery path; uncertain
+  native or persisted state keeps the checkpoint and its files.
 - Deleting a linked item removes only WorshipSync's local reference and
   application-owned metadata. It never deletes or changes the external file.
 
@@ -75,6 +80,12 @@ computer.
 - `client/src/context/transferContext.tsx` and `transferModel.ts` provide
   shared activity and actions. The upload input currently publishes the media
   aggregate to the existing Electron taskbar progress API.
+- `client/src/components/DesktopVideoDownloadManager/DesktopVideoDownloadManager.tsx`
+  owns restart recovery beside Transfer Activity, above route content. It waits
+  for successful Media Library initialization, reads the captured PouchDB
+  library, checks native relink status, and restores the existing recovery
+  action. Retry uses the existing media-operation claim and captured church and
+  database; discovery never starts destructive cleanup.
 - `client/electron/mediaCache.ts` is a separate, temporary playback cache.
   Its HTTP client cannot automatically constrain requests made by a yt-dlp or
   FFmpeg subprocess.
