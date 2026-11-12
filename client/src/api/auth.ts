@@ -3465,3 +3465,14 @@ export const downloadPortableData = async (
     `${type}${type === "all" ? ".zip" : ".csv"}`;
   return { blob: await response.blob(), filename };
 };
+
+export const getIntakeFormDefaults = (churchId: string) =>
+  apiFetch<import("./authTypes").IntakeFormDefaultsResponse>(`api/churches/${churchId}/team-intake/defaults`);
+
+export const saveIntakeFormDefaults = (
+  churchId: string,
+  body: { purpose: "general_intake"; settings: NonNullable<import("./authTypes").IntakeFormDefaults["general_intake"]>; revision: string }
+    | { purpose: "team_availability"; settings: NonNullable<import("./authTypes").IntakeFormDefaults["team_availability"]>; revision: string },
+) => apiFetch<import("./authTypes").IntakeFormDefaultsResponse>(`api/churches/${churchId}/team-intake/defaults`, {
+  method: "POST", body: JSON.stringify(body),
+});

@@ -1,5 +1,6 @@
 import type {
   TeamIntakeForm,
+  IntakeFormDefaults,
   TeamPosition,
   TeamSchedule,
   TeamScheduleOccurrence,
@@ -10,10 +11,12 @@ import type { TeamIntakeFormPayload } from "../../api/auth";
 import { serverDate } from "../../utils/serverTime";
 import { calendarDateInTimeZone, generateScheduleOccurrences, getOccurrenceDate } from "../../utils/teamScheduleOccurrences";
 import { parsePlainDate } from "../../utils/plainDate";
-import { ALL_INTAKE_FORM_FIELDS, resolveIntakeFormFields } from "./intakeFormFields";
+import { resolveIntakeFormFields } from "./intakeFormFields";
 import { getUpcomingServiceRange } from "./servicePeriodRange";
 import { shiftRange } from "./rangeSelection";
 import { buildTeamSchedulePeriod, findInitialTeamSchedulePeriod } from "./schedule/teamSchedulePeriod";
+
+import { intakeCreationSettings } from "./intakeFormDefaults";
 
 type SuggestedAvailabilityOccurrence = Pick<TeamScheduleOccurrence, "occurrenceId" | "serviceId" | "name" | "startsAt" | "serviceDate">;
 
@@ -151,6 +154,7 @@ export const getUpcomingAvailabilitySuggestions = ({
   issuedFormIds = [],
   now = serverDate(),
   timeZone,
+  defaults = {},
 }: {
   services: TeamService[];
   forms: TeamIntakeForm[];
@@ -161,6 +165,7 @@ export const getUpcomingAvailabilitySuggestions = ({
   issuedFormIds?: string[];
   now?: Date;
   timeZone?: string;
+  defaults?: IntakeFormDefaults;
 }): UpcomingAvailabilitySuggestion[] => {
   const today = calendarDateInTimeZone(now, timeZone || "UTC");
   const activeServices = services.filter((service) => !service.archivedAt);
@@ -206,15 +211,13 @@ export const getUpcomingAvailabilitySuggestions = ({
       const purpose = (template?.purpose || "general_intake") as "team_availability" | "general_intake";
       const canUpdate = Boolean(existing && !hasIssuedRequests(existing, issuedIds));
       const draft = canUpdate && existing
-        ? getDraftForForm(existing, missing, servicesById, purpose)
+        ? getDraftForForm(existing, missing, servicesById, existing.purpose || "general_intake")
         : {
             name: `${monthLabel(range.start)} Availability`, startDate: range.start, endDate: range.end, responseDeadline: range.end,
             availabilityServices: serviceIds.map((serviceId) => ({ serviceId, name: servicesById.get(serviceId)?.name || serviceId })),
             availabilityOccurrences: missing.map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate })),
             teamIds: [...generalTeamScope], purpose, active: true,
-            enabledFields: template ? resolveIntakeFormFields(template) : [...ALL_INTAKE_FORM_FIELDS],
-            requireEmail: Boolean(template?.requireEmail), welcomeMessage: template?.welcomeMessage || "",
-            positionsMessage: template?.positionsMessage || "", availabilityMessage: template?.availabilityMessage || "", notesMessage: template?.notesMessage || "",
+            ...intakeCreationSettings(defaults, purpose),
           } satisfies TeamIntakeFormPayload;
       if (canUpdate && existing) {
         allSuggestions.push({ kind: "update", formId: existing.formId, name: existing.name, startDate: range.start, endDate: range.end,
@@ -331,8 +334,8 @@ export const getUpcomingAvailabilitySuggestions = ({
         name: `${monthLabel(range.start)} Availability`, startDate: range.start, endDate: range.end, responseDeadline: range.end,
         availabilityServices: serviceIds.map((serviceId) => ({ serviceId, name: servicesById.get(serviceId)?.name || serviceId })),
         availabilityOccurrences: missing.map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate })),
-        teamIds: targetTeamIds, purpose: "team_availability", active: true, enabledFields: ["availability"], requireEmail: false,
-        welcomeMessage: "", positionsMessage: "", availabilityMessage: "", notesMessage: "",
+        teamIds: targetTeamIds, purpose: "team_availability", active: true,
+        ...intakeCreationSettings(defaults, "team_availability"),
       };
       allSuggestions.push({ kind: "create", name: draft.name, startDate: range.start, endDate: range.end,
         serviceCount: serviceIds.length, occurrenceCount: missingDateCount, teamIds: targetTeamIds,

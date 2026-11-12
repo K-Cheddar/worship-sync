@@ -165,6 +165,7 @@ const TeamsFormsPage = () => {
     const availabilityResponses: TeamAvailabilityResponse[] = scopedData.availabilityResponses;
     return (
       <IntakeManager
+        key={churchId}
         availabilityOnly
         managedTeamIds={managedTeamIds}
         suggestionTeamIds={suggestionTeamIds}
@@ -216,6 +217,7 @@ const TeamsFormsPage = () => {
 
   return (
     <IntakeManager
+      key={churchId}
       onAvailabilityRefresh={refresh}
       forms={pageData.intakeForms}
       suggestionTeamIds={suggestionTeamIds}

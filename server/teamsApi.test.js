@@ -24343,3 +24343,61 @@ test("service plan import contract retains source types, ownership and review de
     }
   }
 });
+
+const availabilityDefaults = { welcomeMessage: " Welcome ", availabilityMessage: "Choose dates" };
+const generalDefaults = { enabledFields: ["email", "availability"], welcomeMessage: "", positionsMessage: "", availabilityMessage: "General dates", notesMessage: "" };
+
+test("intake defaults persist per church and purpose with conflict protection and no form changes", async () => {
+  const context = await createAdminContext("intake_defaults");
+  const other = await createAdminContext("intake_defaults_other");
+  const initial = await callHandler(authHandlers.getIntakeFormDefaults, { context });
+  assert.deepEqual(initial.payload.defaults, {});
+  assert.equal(initial.payload.canEdit, true);
+  await setDoc(COLLECTIONS.teamIntakeForms, "defaults_existing", { churchId: context.churchId, welcomeMessage: "Keep this", publicLinkToken: "keep-token" });
+  const save = (purpose, settings, revision = "legacy") => callHandler(authHandlers.saveIntakeFormDefaults, { context, body: { purpose, settings, revision } });
+  const results = await Promise.all([
+    save("team_availability", availabilityDefaults),
+    save("team_availability", { ...availabilityDefaults, welcomeMessage: "Competing edit" }),
+  ]);
+  assert.deepEqual(results.map((r) => r.statusCode).sort(), [200, 409]);
+  const general = await save("general_intake", generalDefaults);
+  assert.equal(general.statusCode, 200);
+  assert.equal(general.payload.defaults.team_availability.welcomeMessage, "Welcome");
+  const reloaded = await callHandler(authHandlers.getIntakeFormDefaults, { context });
+  assert.deepEqual(reloaded.payload.defaults, general.payload.defaults);
+  assert.notEqual(reloaded.payload.revisions.team_availability, "legacy");
+  assert.equal((await getDoc(COLLECTIONS.churches, context.churchId)).serviceTimeZone, "UTC");
+  assert.deepEqual(await getDoc(COLLECTIONS.teamIntakeForms, "defaults_existing"), { id: "defaults_existing", churchId: context.churchId, welcomeMessage: "Keep this", publicLinkToken: "keep-token" });
+  assert.deepEqual((await callHandler(authHandlers.getIntakeFormDefaults, { context: other })).payload.defaults, {});
+  assert.equal((await callHandler(authHandlers.saveIntakeFormDefaults, { context, params: { churchId: other.churchId }, body: { purpose: "team_availability", settings: availabilityDefaults, revision: "legacy" } })).statusCode, 403);
+  assert.equal((await callHandler(authHandlers.getIntakeFormDefaults, { context, params: { churchId: other.churchId } })).statusCode, 403);
+});
+
+test("intake defaults admit scoped readers but only church-wide Teams editors can save", async () => {
+  const context = await createAdminContext("intake_defaults_permissions");
+  const team = await callHandler(authHandlers.createTeam, { context, body: { name: "Team" } });
+  const scoped = await createHumanContext("intake_defaults_scoped", { churchId: context.churchId, role: "member", appAccess: "view", permissions: { teams: "none", teamScopes: { [team.payload.team.teamId]: "edit" } } });
+  const broad = await createHumanContext("intake_defaults_broad", { churchId: context.churchId, role: "member", appAccess: "view", permissions: { teams: "edit" } });
+  const body = { purpose: "team_availability", settings: availabilityDefaults, revision: "legacy" };
+  assert.equal((await callHandler(authHandlers.saveIntakeFormDefaults, { context: broad, body })).statusCode, 200);
+  const read = await callHandler(authHandlers.getIntakeFormDefaults, { context: scoped });
+  assert.equal(read.statusCode, 200);
+  assert.equal(read.payload.canEdit, false);
+  assert.equal(read.payload.defaults.team_availability.welcomeMessage, "Welcome");
+  assert.equal(read.payload.church, undefined);
+  assert.equal((await callHandler(authHandlers.saveIntakeFormDefaults, { context: scoped, body })).statusCode, 403);
+});
+
+test("intake defaults reject unknown fields, invalid types, oversized messages and missing revisions", async () => {
+  const context = await createAdminContext("intake_defaults_validation");
+  for (const body of [
+    { purpose: "general_intake", settings: { ...generalDefaults, enabledFields: ["unknown"] }, revision: "legacy" },
+    { purpose: "general_intake", settings: { ...generalDefaults, enabledFields: "email" }, revision: "legacy" },
+    { purpose: "team_availability", settings: { ...availabilityDefaults, enabledFields: ["email"] }, revision: "legacy" },
+    { purpose: "team_availability", settings: { ...availabilityDefaults, recipientId: "private" }, revision: "legacy" },
+    { purpose: "team_availability", settings: { ...availabilityDefaults, welcomeMessage: "x".repeat(501) }, revision: "legacy" },
+    { purpose: "team_availability", settings: { ...availabilityDefaults, welcomeMessage: {} }, revision: "legacy" },
+    { purpose: "team_availability", settings: availabilityDefaults },
+  ]) assert.equal((await callHandler(authHandlers.saveIntakeFormDefaults, { context, body })).statusCode, 400);
+  assert.deepEqual((await callHandler(authHandlers.getIntakeFormDefaults, { context })).payload.defaults, {});
+});

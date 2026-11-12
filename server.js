@@ -1481,6 +1481,8 @@ app.get(
   "/api/churches/:churchId/team-intake/forms/:formId/sms-attempts",
   authHandlers.getTeamIntakeSmsAttempts,
 );
+app.get("/api/churches/:churchId/team-intake/defaults", authHandlers.getIntakeFormDefaults);
+app.post("/api/churches/:churchId/team-intake/defaults", authHandlers.saveIntakeFormDefaults);
 app.post(
   "/api/churches/:churchId/team-intake/forms",
   authHandlers.createTeamIntakeForm,

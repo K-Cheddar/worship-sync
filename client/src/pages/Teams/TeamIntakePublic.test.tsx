@@ -416,3 +416,20 @@ test("keeps a partial birthday while editing and validates it on submit", async 
     "Birthday needs a valid month and day.",
   );
 });
+
+test.each([false, true])("availability-only public wording resolves saved or blank messages (custom=%s)", async (custom) => {
+  mockGetPreview.mockResolvedValue({
+    ...preview, form: { ...preview.form, purpose: "team_availability", enabledFields: ["availability"],
+      welcomeMessage: custom ? "Saved church welcome" : "  ",
+      availabilityMessage: custom ? "Saved church instructions" : "",
+      availabilityServices: [{ serviceId: "service", name: "Sunday" }],
+      availabilityOccurrences: [{ occurrenceId: "sunday", serviceId: "service", name: "Sunday", serviceDate: "2026-09-06", startsAt: "2026-09-06T10:00:00Z" }],
+    },
+  } as never);
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+  expect(screen.getByText(custom ? "Saved church welcome" : "Share the positions you can serve in, your availability, and any dates you're away.")).toBeInTheDocument();
+  expect(screen.getByText(custom ? "Saved church instructions" : "Mark each date you're available to serve.")).toBeInTheDocument();
+  expect(screen.queryByText("Vocalist")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/First name|Email/)).not.toBeInTheDocument();
+});

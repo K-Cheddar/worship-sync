@@ -669,7 +669,7 @@ describe("getUpcomingAvailabilitySuggestion", () => {
     expect(archivedResult?.occurrenceCount).toBeGreaterThan(0);
   });
 
-  it("reuses safe prior wording and field settings without copying form state", () => {
+  it("uses built-in creation settings without defaults instead of copying prior form settings", () => {
     const prior = makeForm({
       name: "Old form",
       startDate: "2026-08-01",
@@ -692,13 +692,13 @@ describe("getUpcomingAvailabilitySuggestion", () => {
     });
 
     expect(result?.draft).toMatchObject({
-      enabledFields: ["firstName", "availability"],
+      enabledFields: expect.arrayContaining(["email", "availability", "notes"]),
       teamIds: ["worship"],
-      requireEmail: true,
-      welcomeMessage: "Welcome back",
-      positionsMessage: "Choose positions",
-      availabilityMessage: "Mark dates",
-      notesMessage: "Add a note",
+      requireEmail: false,
+      welcomeMessage: "",
+      positionsMessage: "",
+      availabilityMessage: "",
+      notesMessage: "",
     });
     expect(result?.draft).not.toHaveProperty("formId");
     expect(result?.draft).not.toHaveProperty("publicUrl");
@@ -994,4 +994,39 @@ describe("team availability coverage", () => {
     });
     expect(suggestion).toMatchObject({ kind: "update", formId: existing.formId, draft: { purpose: "team_availability", teamIds: ["media"] } });
   });
+});
+
+const savedDefaults = {
+  general_intake: { enabledFields: ["availability" as const, "notes" as const], welcomeMessage: "Church welcome", positionsMessage: "Positions", availabilityMessage: "Church dates", notesMessage: "Notes" },
+  team_availability: { welcomeMessage: "Team welcome", availabilityMessage: "Team dates" },
+};
+
+test("new general suggestions use church defaults instead of copying a previous form", () => {
+  const previous = makeForm({ welcomeMessage: "Old form", enabledFields: ["email", "availability"] });
+  const result = getUpcomingAvailabilitySuggestion({ services: [service], forms: [previous], defaults: savedDefaults, now: new Date("2026-10-01T12:00:00Z"), timeZone: "UTC" });
+  expect(result?.kind).toBe("create");
+  expect(result?.draft).toMatchObject({ welcomeMessage: "Church welcome", enabledFields: ["availability", "notes"], availabilityMessage: "Church dates" });
+  expect(previous.welcomeMessage).toBe("Old form");
+});
+
+test("new Team suggestions use defaults while generated scheduling stays authoritative", () => {
+  const result = getUpcomingAvailabilitySuggestion({ services: [{ ...service, positionRequirements: [{ positionId: "vocal", count: 1 }] }], positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team", name: "Vocal" }], forms: [], defaults: savedDefaults, teamIds: ["team"], teamScheduleScope: true, now: new Date("2026-10-01T12:00:00Z"), timeZone: "America/New_York" });
+  expect(result?.kind).toBe("create");
+  expect(result?.draft).toMatchObject({ welcomeMessage: "Team welcome", availabilityMessage: "Team dates", positionsMessage: "", notesMessage: "", enabledFields: ["availability"], teamIds: ["team"] });
+  expect(result?.draft.availabilityOccurrences.length).toBeGreaterThan(0);
+});
+
+test("suggested updates preserve existing general settings and purpose", () => {
+  const existing = makeForm({ availabilityServices: [], startDate: "2026-10-01", endDate: "2026-10-31", welcomeMessage: "Keep me", availabilityMessage: "Keep dates", enabledFields: ["email", "availability"] });
+  const result = getUpcomingAvailabilitySuggestion({ services: [service], forms: [existing], defaults: savedDefaults, now: new Date("2026-10-01T12:00:00Z"), timeZone: "UTC" });
+  expect(result?.kind).toBe("update");
+  expect(result?.draft).toMatchObject({ welcomeMessage: "Keep me", availabilityMessage: "Keep dates", enabledFields: ["email", "availability"], purpose: "general_intake" });
+});
+
+test("Team suggestion updates preserve the form wording instead of applying new defaults", () => {
+  const existing = makeForm({ purpose: "team_availability", teamIds: ["team"], availabilityServices: [], startDate: "2026-10-01", endDate: "2026-10-31", welcomeMessage: "Existing Team welcome", availabilityMessage: "Existing Team dates" });
+  const result = getUpcomingAvailabilitySuggestion({ services: [{ ...service, positionRequirements: [{ positionId: "vocal", count: 1 }] }], positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team", name: "Vocal" }], forms: [existing], defaults: savedDefaults, teamIds: ["team"], teamScheduleScope: true, now: new Date("2026-10-01T12:00:00Z"), timeZone: "America/New_York" });
+  expect(result?.kind).toBe("update");
+  expect(result?.draft).toMatchObject({ welcomeMessage: "Existing Team welcome", availabilityMessage: "Existing Team dates", enabledFields: ["availability"] });
+  expect(existing.availabilityOccurrences).toEqual([]);
 });

@@ -984,3 +984,31 @@ test("non-Firestore fallback preserves sequential single-process behavior only",
   assert.equal(changed.statusCode, 409, JSON.stringify(changed.payload));
   t.after(() => setServerFirestoreForTests(null));
 });
+
+for (const samePurpose of [false, true]) {
+  test(`Firestore intake defaults retry preserves competing ${samePurpose ? "same-purpose conflict" : "purpose and unrelated settings"}`, async (t) => {
+    const db = createFirestoreMock();
+    const fixture = await createFixture(db, `defaults_${samePurpose}`);
+    t.after(() => setServerFirestoreForTests(null));
+    const { context } = fixture;
+    const { churchId } = context;
+    const settings = { welcomeMessage: "First", availabilityMessage: "Dates" };
+    let competing;
+    db.setBeforeCommit(async (writes) => {
+      if (!writes.some(({ ref, data }) => ref.collectionName === COLLECTIONS.churches && data?.intakeFormDefaults)) return;
+      db.setBeforeCommit(null);
+      await db.collection(COLLECTIONS.churches).doc(churchId).update({ serviceTimeZone: "America/New_York" });
+      competing = await callHandler(authHandlers.saveIntakeFormDefaults, { context, body: {
+        purpose: samePurpose ? "team_availability" : "general_intake", revision: "legacy",
+        settings: samePurpose ? { ...settings, welcomeMessage: "Second" } : { ...settings, enabledFields: ["availability"], positionsMessage: "", notesMessage: "" },
+      } });
+    });
+    const first = await callHandler(authHandlers.saveIntakeFormDefaults, { context, body: { purpose: "team_availability", settings, revision: "legacy" } });
+    assert.equal(competing.statusCode, 200);
+    assert.equal(first.statusCode, samePurpose ? 409 : 200);
+    const church = (await db.collection(COLLECTIONS.churches).doc(churchId).get()).data();
+    assert.equal(church.serviceTimeZone, "America/New_York");
+    assert.equal(church.intakeFormDefaults.team_availability.welcomeMessage, samePurpose ? "Second" : "First");
+    if (!samePurpose) assert.equal(church.intakeFormDefaults.general_intake.welcomeMessage, "First");
+  });
+}

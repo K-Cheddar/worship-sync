@@ -121,22 +121,22 @@ const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
   "https://www.worshipsync.net";
 
-const churchServiceTimeZoneWriteQueues = new Map();
-const withChurchServiceTimeZoneWriteLock = async (churchId, operation) => {
+const churchSettingsWriteQueues = new Map();
+const withChurchSettingsWriteLock = async (churchId, operation) => {
   const previous =
-    churchServiceTimeZoneWriteQueues.get(churchId) || Promise.resolve();
+    churchSettingsWriteQueues.get(churchId) || Promise.resolve();
   let release;
   const current = new Promise((resolve) => {
     release = resolve;
   });
-  churchServiceTimeZoneWriteQueues.set(churchId, current);
+  churchSettingsWriteQueues.set(churchId, current);
   await previous;
   try {
     return await operation();
   } finally {
     release();
-    if (churchServiceTimeZoneWriteQueues.get(churchId) === current) {
-      churchServiceTimeZoneWriteQueues.delete(churchId);
+    if (churchSettingsWriteQueues.get(churchId) === current) {
+      churchSettingsWriteQueues.delete(churchId);
     }
   }
 };
@@ -7854,6 +7854,39 @@ export const createTeamsAuthHandlers = ({
         ]
       : normalizedFields;
   };
+
+  const validateIntakeFormDefaults = (settings, purpose) => {
+    const keys = purpose === "team_availability"
+      ? ["welcomeMessage", "availabilityMessage"]
+      : ["enabledFields", "welcomeMessage", "positionsMessage", "availabilityMessage", "notesMessage"];
+    if (!settings || typeof settings !== "object" || Array.isArray(settings) ||
+        Object.keys(settings).some((key) => !keys.includes(key))) {
+      throw httpError(400, "Choose supported form defaults only.");
+    }
+    const normalized = {};
+    for (const key of keys) {
+      if (key === "enabledFields") {
+        if (!Array.isArray(settings[key]) || settings[key].some((field) => !TEAM_INTAKE_FIELD_IDS.has(field))) {
+          throw httpError(400, "Choose supported form fields only.");
+        }
+        normalized[key] = normalizeTeamIntakeFields(settings[key]);
+      } else {
+        if (typeof settings[key] !== "string" || settings[key].length > 500) {
+          throw httpError(400, "Form messages must be text with 500 characters or fewer.");
+        }
+        normalized[key] = normalizeLongText(settings[key], { max: 500 });
+      }
+    }
+    return normalized;
+  };
+
+  const readIntakeFormDefaults = (church) => ({
+    defaults: church.intakeFormDefaults || {},
+    revisions: {
+      general_intake: church.intakeFormDefaultsRevisions?.general_intake || "legacy",
+      team_availability: church.intakeFormDefaultsRevisions?.team_availability || "legacy",
+    },
+  });
 
   const validateTeamIntakeFormPayload = (body, existing = null) => {
     const name = normalizeShortText(body?.name ?? existing?.name);
@@ -18366,6 +18399,58 @@ export const createTeamsAuthHandlers = ({
       }
     },
 
+    async getIntakeFormDefaults(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        // Same broad/scoped edit access as the availability workspace. Never
+        // return the church document itself to a scoped editor.
+        const { scoped } = await requireMessagingHistoryAccess(req, churchId);
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        if (!church) throw httpError(404, "Church settings were not found.");
+        return res.json({ success: true, ...readIntakeFormDefaults(church), canEdit: !scoped });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not load form defaults.");
+      }
+    },
+
+    async saveIntakeFormDefaults(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        await requireTeamsEdit(req, churchId);
+        const { purpose, revision, settings } = req.body || {};
+        if (!["general_intake", "team_availability"].includes(purpose) || typeof revision !== "string") {
+          throw httpError(400, "Choose a form purpose and load its current defaults.");
+        }
+        const normalized = validateIntakeFormDefaults(settings, purpose);
+        const db = requireFirestore();
+        const commit = async (church, transaction = null) => {
+          await requireTeamsEdit(req, churchId);
+          if (!church) throw httpError(404, "Church settings were not found.");
+          const current = readIntakeFormDefaults(church);
+          if (current.revisions[purpose] !== revision) {
+            throw httpError(409, "Form defaults changed in another session. Reload defaults before saving again. Your form draft has been kept.");
+          }
+          const update = {
+            intakeFormDefaults: { ...current.defaults, [purpose]: normalized },
+            intakeFormDefaultsRevisions: { ...current.revisions, [purpose]: crypto.randomUUID() },
+          };
+          if (transaction) transaction.update(db.collection(COLLECTIONS.churches).doc(churchId), update);
+          else await updateDocFields(COLLECTIONS.churches, churchId, update);
+          return readIntakeFormDefaults(update);
+        };
+        const saved = db
+          ? await db.runTransaction(async (transaction) => {
+              const snap = await transaction.get(db.collection(COLLECTIONS.churches).doc(churchId));
+              return commit(snap.exists ? snap.data() : null, transaction);
+            })
+          : await withChurchSettingsWriteLock(churchId, async () => commit(await getDoc(COLLECTIONS.churches, churchId)));
+        return res.json({ success: true, ...saved, canEdit: true });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save form defaults.");
+      }
+    },
+
     async createTeamIntakeForm(req, res) {
       try {
         await assertCsrf(req);
@@ -21079,7 +21164,7 @@ export const createTeamsAuthHandlers = ({
         if (!isValidPortableTimeZone(serviceTimeZone)) {
           throw httpError(400, "Choose a valid IANA timezone.");
         }
-        const serviceTimeZoneRevision = await withChurchServiceTimeZoneWriteLock(
+        const serviceTimeZoneRevision = await withChurchSettingsWriteLock(
           churchId,
           async () => {
             // A second check keeps a permission or device revocation that

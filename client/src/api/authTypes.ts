@@ -1176,3 +1176,21 @@ export type DevicePairingRequestStatusResponse = {
   status: DevicePairingRequestStatus;
   expiresAt: string;
 };
+
+/** Reusable creation settings only; scheduling and response data never belong here. */
+export type IntakeFormDefaults = {
+  general_intake?: {
+    enabledFields: TeamIntakeFieldId[];
+    welcomeMessage: string;
+    positionsMessage: string;
+    availabilityMessage: string;
+    notesMessage: string;
+  };
+  team_availability?: { welcomeMessage: string; availabilityMessage: string };
+};
+export type IntakeFormDefaultsResponse = {
+  success: boolean;
+  defaults: IntakeFormDefaults;
+  revisions: Record<"general_intake" | "team_availability", string>;
+  canEdit: boolean;
+};

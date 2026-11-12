@@ -66,3 +66,36 @@ A volunteer opens their recipient-bound link and sees the existing form. Enabled
 - Entry point: `client/src/public/PublicApp.tsx`, `client/src/App.tsx`; `server.js`
 - Implementation: `client/src/pages/Teams/TeamIntakePublic.tsx`, `client/src/api/authTypes.ts`, `server/teamsAuthHandlers.js`
 - Tests: `client/src/pages/Teams/TeamIntakePublic.test.tsx`, `server/teamsApi.test.js`, `server/teamIntakeTransactionDigest.test.js`
+
+## Reusable form defaults (Phase 2A)
+
+Approved by the November 11, 2026 Phase 2A request. Church administrators and
+church-wide Teams editors can choose **Save as default** inside the existing
+form editor. General intake defaults include enabled fields and welcome,
+positions, availability and notes wording. Team availability defaults include
+welcome and availability wording only. Empty messages use built-in wording.
+
+Manual creation and new suggestions copy the matching church defaults. Dates,
+Teams, services and occurrences come from the existing creation workflow.
+Suggestion updates retain the existing form's purpose and settings. Saving
+preferences never creates or edits a form, member, response or recipient link.
+Availability-only forms remain restricted to service-date availability.
+
+Defaults use the existing church document (`intakeFormDefaults`) with independent
+purpose revisions (`intakeFormDefaultsRevisions`). Authenticated GET/POST
+`/api/churches/:churchId/team-intake/defaults` applies existing Teams authorization;
+team-scoped editors can read and use preferences but cannot save them. Writes
+validate an allowlist and 500-character message limit, then compare the submitted
+revision in a Firestore transaction. Conflicts return 409. Other purposes and
+unrelated church settings survive. The development memory store serializes church
+settings writes; it is process-local and volatile, as before.
+
+Creation waits for preferences to load successfully. A failed load offers retry;
+existing forms remain editable. Preferences are copied once on creation, so
+reloads and save acknowledgments never replace a draft. Reload defaults refreshes
+the cached preferences and revisions while keeping the draft. A church switch
+retires the editor and ignores its late reads and save results. Existing unsaved
+form edits retain the navigation guard.
+
+No default templates, local storage, production migration, prefilling, editable
+responses, reminder automation or new dispatch behavior is introduced.

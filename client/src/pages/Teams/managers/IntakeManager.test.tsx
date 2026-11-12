@@ -22,6 +22,8 @@ import type {
   TeamService,
 } from "../../../api/authTypes";
 import {
+  getIntakeFormDefaults,
+  saveIntakeFormDefaults,
   createTeamIntakeForm,
   createTeamIntakeRecipients,
   dispatchAvailabilityNotificationBatch,
@@ -42,6 +44,8 @@ const mockPrepareSms = jest.fn();
 const mockSendIntent = jest.fn();
 
 jest.mock("../../../api/auth", () => ({
+  getIntakeFormDefaults: jest.fn().mockResolvedValue({ success: true, defaults: {}, revisions: { general_intake: "legacy", team_availability: "legacy" }, canEdit: true }),
+  saveIntakeFormDefaults: jest.fn(),
   applyTeamIntakeSubmission: jest.fn(),
   createTeamIntakeForm: jest.fn(),
   createTeamIntakeRecipients: jest.fn(),
@@ -459,7 +463,7 @@ test("availability-only manager hides member intake and consent details", async 
   expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
   expect(screen.getByRole("group", { name: "Teams to collect for" })).toBeInTheDocument();
   expect(screen.getByText("Availability services: None")).toBeInTheDocument();
-  expect(screen.queryByText("Form wording")).not.toBeInTheDocument();
+  expect(screen.getByText("Form wording")).toBeInTheDocument();
   expect(screen.queryByText("Fields to collect")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /public form link/i })).not.toBeInTheDocument();
 });
@@ -499,7 +503,7 @@ test("a church-wide editor gets the restricted editor and immutable payload for 
   await user.click(screen.getByRole("button", { name: "Edit" }));
 
   expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Welcome message")).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/^Welcome message/)).toBeInTheDocument();
   expect(screen.queryByText("Birthday (year optional)")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Notes message")).not.toBeInTheDocument();
   expect(screen.getByRole("group", { name: "Service dates" })).toBeInTheDocument();
@@ -891,7 +895,7 @@ test("a newly created form offers Send form without sending anything during save
     positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" }],
   });
 
-  await user.click(screen.getByRole("button", { name: "Review form" }));
+  await user.click(await screen.findByRole("button", { name: "Review form" }));
   await user.click(screen.getByRole("button", { name: "Create form" }));
   await screen.findByRole("button", { name: "Send form" });
 
@@ -982,9 +986,9 @@ test.each([
     submissions,
   });
 
-  expect(screen.getByText("Availability needed for Worship")).toBeInTheDocument();
+  expect(await screen.findByText("Availability needed for Worship")).toBeInTheDocument();
   expect(screen.getByText(/1 upcoming date missing/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Review form" }));
+  await user.click(await screen.findByRole("button", { name: "Review form" }));
   expect(screen.getByRole("button", { name: "Create form" })).toBeInTheDocument();
   expect(screen.getByLabelText(/^Name/i)).toHaveValue("October Availability");
   expect(screen.getByText("Power Up")).toBeInTheDocument();
@@ -1027,8 +1031,8 @@ test("closed future availability coverage opens for review without creating anot
     positions: [{ positionId: "vocal", churchId: "church-1", teamId: "team-1", name: "Vocal" }],
   });
 
-  expect(screen.getByText(/This form is closed/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Review form" }));
+  expect(await screen.findByText(/This form is closed/)).toBeInTheDocument();
+  await user.click(await screen.findByRole("button", { name: "Review form" }));
   expect(screen.getByRole("button", { name: "Save form" })).toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Create form" })).not.toBeInTheDocument();
   expect(createTeamIntakeForm).not.toHaveBeenCalled();
@@ -1234,4 +1238,118 @@ test("saving an availability form with issued requests preserves its Team scope 
     availabilityServices: [{ serviceId: "old-service", name: "Saved service" }],
     availabilityOccurrences: [savedOccurrence],
   })));
+});
+
+const defaultsResponse = {
+  success: true, canEdit: true,
+  revisions: { general_intake: "g1", team_availability: "a1" },
+  defaults: {
+    general_intake: { enabledFields: ["availability" as const], welcomeMessage: "Saved welcome", positionsMessage: "", availabilityMessage: "Saved dates", notesMessage: "" },
+    team_availability: { welcomeMessage: "Saved Team welcome", availabilityMessage: "Saved Team dates" },
+  },
+};
+
+test("manual drafts copy defaults once and saving defaults never saves the form or overwrites later edits", async () => {
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce(defaultsResponse);
+  let finish!: (value: typeof defaultsResponse) => void;
+  jest.mocked(saveIntakeFormDefaults).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const user = userEvent.setup();
+  renderManager({ forms: [], intakeRecipients: [] });
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  expect(screen.getByLabelText(/^Welcome message/)).toHaveValue("Saved welcome");
+  await user.clear(screen.getByLabelText(/^Welcome message/));
+  await user.type(screen.getByLabelText(/^Welcome message/), "One form");
+  expect(defaultsResponse.defaults.general_intake.welcomeMessage).toBe("Saved welcome");
+  await user.click(screen.getByRole("button", { name: "Save as default" }));
+  expect(screen.getByRole("button", { name: "Saving defaults..." })).toBeDisabled();
+  expect(saveIntakeFormDefaults).toHaveBeenCalledWith("church-1", { purpose: "general_intake", revision: "g1", settings: { enabledFields: ["availability"], welcomeMessage: "One form", positionsMessage: "", availabilityMessage: "Saved dates", notesMessage: "" } });
+  await user.type(screen.getByLabelText(/^Welcome message/), " later");
+  await act(async () => finish({ ...defaultsResponse, revisions: { general_intake: "g2", team_availability: "a1" } }));
+  expect(screen.getByLabelText(/^Welcome message/)).toHaveValue("One form later");
+  expect(createTeamIntakeForm).not.toHaveBeenCalled();
+  expect(updateTeamIntakeForm).not.toHaveBeenCalled();
+  expect(screen.getByText("Form defaults saved.")).toBeInTheDocument();
+});
+
+test("scoped availability creators use church defaults without a save-defaults action or personal fields", async () => {
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce({ ...defaultsResponse, canEdit: false });
+  const user = userEvent.setup();
+  renderManager({ forms: [], intakeRecipients: [], availabilityOnly: true });
+  await user.click(screen.getByRole("button", { name: "Create availability form" }));
+  expect(screen.getByLabelText(/^Welcome message/)).toHaveValue("Saved Team welcome");
+  expect(screen.getByLabelText(/^Availability instructions/)).toHaveValue("Saved Team dates");
+  expect(screen.queryByLabelText("Positions message")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText("Notes message")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save as default" })).not.toBeInTheDocument();
+});
+
+test("creation waits for defaults and retries a failed load without silently opening a blank draft", async () => {
+  let reject!: (error: Error) => void;
+  jest.mocked(getIntakeFormDefaults).mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+  const user = userEvent.setup();
+  renderManager({ forms: [], intakeRecipients: [] });
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  expect(screen.queryByRole("button", { name: "Create form" })).not.toBeInTheDocument();
+  await act(async () => reject(new Error("offline")));
+  expect(screen.getByRole("alert")).toHaveTextContent("Could not load form defaults");
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce(defaultsResponse);
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  await waitFor(() => expect(screen.queryByText("Loading form defaults...")).not.toBeInTheDocument());
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  expect(screen.getByLabelText(/^Welcome message/)).toHaveValue("Saved welcome");
+});
+
+test("reloading defaults during a draft preserves edits and the unsaved-changes guard", async () => {
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce(defaultsResponse);
+  const user = userEvent.setup();
+  renderManager({ forms: [], intakeRecipients: [] });
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  await user.type(screen.getByLabelText(/^Welcome message/), " edited");
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce({ ...defaultsResponse, defaults: {} });
+  await user.click(screen.getByRole("button", { name: "Reload defaults" }));
+  await screen.findByRole("button", { name: "Save as default" });
+  expect(screen.getByLabelText(/^Welcome message/)).toHaveValue("Saved welcome edited");
+  const event = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(event);
+  expect(event.defaultPrevented).toBe(true);
+});
+
+test("copied defaults alone do not mark a manual draft dirty and closing clears its guard", async () => {
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce(defaultsResponse);
+  const user = userEvent.setup();
+  renderManager({ forms: [], intakeRecipients: [] });
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  const pristine = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(pristine);
+  expect(pristine.defaultPrevented).toBe(false);
+  await user.click(screen.getByRole("button", { name: "Back" }));
+  const closed = new Event("beforeunload", { cancelable: true });
+  window.dispatchEvent(closed);
+  expect(closed.defaultPrevented).toBe(false);
+});
+
+test("a failed defaults save keeps the draft and a deliberate retry saves the current settings", async () => {
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce(defaultsResponse);
+  jest.mocked(saveIntakeFormDefaults).mockRejectedValueOnce(new Error("Conflict"));
+  const user = userEvent.setup();
+  renderManager({ forms: [], intakeRecipients: [] });
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  await user.click(screen.getByRole("button", { name: "Save as default" }));
+  await waitFor(() => expect(showApiErrorToast).toHaveBeenCalled());
+  expect(screen.getByLabelText(/^Welcome message/)).toHaveValue("Saved welcome");
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce({ ...defaultsResponse, revisions: { general_intake: "g2", team_availability: "a1" } });
+  await user.click(screen.getByRole("button", { name: "Reload defaults" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Save as default" })).toBeEnabled());
+  await user.type(screen.getByLabelText(/^Welcome message/), " revised");
+  jest.mocked(saveIntakeFormDefaults).mockResolvedValueOnce(defaultsResponse);
+  await user.click(screen.getByRole("button", { name: "Save as default" }));
+  expect(saveIntakeFormDefaults).toHaveBeenLastCalledWith("church-1", expect.objectContaining({ revision: "g2", settings: expect.objectContaining({ welcomeMessage: "Saved welcome revised" }) }));
+  expect(createTeamIntakeForm).not.toHaveBeenCalled();
+});
+
+test("read-only form viewers do not request defaults or see creation loading errors", () => {
+  renderManager({ canEdit: false });
+  expect(getIntakeFormDefaults).not.toHaveBeenCalled();
+  expect(screen.queryByText("Loading form defaults...")).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Save as default" })).not.toBeInTheDocument();
 });
