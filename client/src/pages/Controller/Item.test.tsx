@@ -16,6 +16,7 @@ import { ControllerInfoContext } from "../../context/controllerInfo";
 import { createMockControllerContext, createMockPouchDB } from "../../test/mocks";
 import { SERVICE_TIME_COUNTDOWN_ID } from "../../constants/nextServiceTimer";
 import { buildServiceTimeItem } from "../../utils/itemUtil";
+import { getSongV2SlideDocId } from "../../utils/songV2Codec";
 
 jest.mock("../../containers/ItemEditor/SlideEditor", () => () => <div data-testid="slide-editor" />);
 jest.mock("../../containers/ItemSlides/ItemSlides", () => () => <div data-testid="item-slides" />);
@@ -246,6 +247,35 @@ describe("Redux presentation workspace", () => {
     } finally {
       setActiveContentDatabase(null);
     }
+  });
+
+  it("names the affected slide while leaving other song areas available", () => {
+    const { store, mount } = setup();
+    const song = doc("song-A", {
+      type: "song",
+      arrangements: [{
+        id: "main",
+        name: "Master",
+        slides: [{ id: "verse-1a", type: "Verse", name: "Verse 1A", boxes: [] }],
+        formattedLyrics: [],
+        songOrder: [],
+      }],
+    });
+    store.dispatch(itemSlice.actions.setActiveItem(song));
+    store.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+      item: song,
+      conflicts: [{
+        documentId: getSongV2SlideDocId("song-A", "main", "verse-1a"),
+        winningRevision: "2-win",
+        revisions: ["2-branch"],
+      }],
+    }));
+
+    mount();
+
+    expect(screen.getByRole("status")).toHaveTextContent("Master · Verse 1A slide");
+    expect(screen.getByRole("status")).toHaveTextContent("Editing in other areas can continue.");
+    expect(screen.queryByText(/Editing is paused/)).not.toBeInTheDocument();
   });
 
   it("rejects an old database response even when cache session and occurrence IDs have not reset yet", async () => {

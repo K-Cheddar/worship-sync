@@ -9,7 +9,9 @@ import {
 import { applyPouchAudit } from "./pouchAudit";
 import { formatSong } from "./overflow";
 import { mergeLyricText } from "./mergeLyricText";
-import { canonicalSongV2Value, sameSongV2DocumentAuthoredContent } from "./songV2AuthoredContent";
+import {
+  canonicalSongV2Value, mergeSongV2AuthoredValue, sameSongV2DocumentAuthoredContent,
+} from "./songV2AuthoredContent";
 export { sameSongV2AuthoredContent } from "./songV2AuthoredContent";
 
 type Document = SongV2RootDocument | SongV2ArrangementDocument | SongV2SlideDocument;
@@ -259,6 +261,10 @@ export function classifyIntendedDocument<T extends Document>({
 }
 
 const equalValue = (a: unknown, b: unknown) => JSON.stringify(canonicalSongV2Value(a)) === JSON.stringify(canonicalSongV2Value(b));
+const authoredRevisionBody = <T extends Document>(document: T): T =>
+  Object.fromEntries(Object.entries(document).filter(([key]) => ![
+    "_rev", "_revisions", "_conflicts", "createdAt", "createdBy", "updatedAt", "updatedBy",
+  ].includes(key))) as T;
 const lyricStructure = (arr: Arrangment) => ({
   ...arr, slides: undefined, monitorLayout: undefined,
   formattedLyrics: arr.formattedLyrics.map(lyric => ({ ...lyric, words: undefined, slideSpan: undefined })),
@@ -326,6 +332,8 @@ export async function saveSongV2FromBaseline(
   db: PouchDB.Database, baselineSong: DBItem, desiredSong: DBItem,
   snapshot?: SongV2Snapshot,
   mutationGuard?: SongV2MutationGuard,
+  /** Conflicts already verified by the reconciliation or explicit-review path. */
+  reviewedConflictDocumentIds: readonly string[] = [],
 ): Promise<SongV2WriteResult> {
   if (baselineSong.docType !== "song-v2-root") {
     throw new SongV2DocumentError("Song v2 interactive saves require a v2 authored baseline");
@@ -334,7 +342,9 @@ export async function saveSongV2FromBaseline(
   const desired = JSON.parse(JSON.stringify(desiredSong)) as DBItem;
   let current: SongV2Snapshot;
   try {
-    current = snapshot ?? await loadSongV2Snapshot(db, baseline._id);
+    current = snapshot?.conflictsVerified
+      ? snapshot
+      : await loadSongV2Snapshot(db, baseline._id, true);
     if (current.root.songId !== baseline._id) throw new SongV2DocumentError("Snapshot owner mismatch");
   } catch (error) {
     if (typeof error === "object" && error !== null && "status" in error && error.status === 404) {
@@ -346,6 +356,46 @@ export async function saveSongV2FromBaseline(
   const intent = planSongV2Intent(baseline, desired);
   const currentArrangements = new Map(current.arrangements.map(doc => [doc._id, doc]));
   const currentSlides = new Map(current.slides.map(doc => [doc._id, doc]));
+  const currentDocuments = new Map<string, Document>([
+    [current.root._id, current.root],
+    ...current.arrangements.map(document => [document._id, document] as [string, Document]),
+    ...current.slides.map(document => [document._id, document] as [string, Document]),
+  ]);
+  const intendedDocuments = new Map<string, Document>();
+  if (intent.root) intendedDocuments.set(intent.root.next._id, intent.root.next);
+  for (const document of [...intent.arrangements.create, ...intent.arrangements.update.map(change => change.next),
+    ...intent.slides.create, ...intent.slides.update.map(change => change.next)]) {
+    intendedDocuments.set(document._id, document);
+  }
+  const deletedDocumentIds = new Set([
+    ...intent.arrangements.delete.map(document => document._id),
+    ...intent.slides.delete.map(document => document._id),
+  ]);
+  const reviewedConflictIds = new Set(reviewedConflictDocumentIds);
+  for (const conflict of current.conflicts ?? []) {
+    if (reviewedConflictIds.has(conflict.documentId)) continue;
+    const local = intendedDocuments.get(conflict.documentId);
+    if (!local && !deletedDocumentIds.has(conflict.documentId)) continue;
+    const winner = currentDocuments.get(conflict.documentId);
+    const kind = winner?.docType === "song-v2-root" ? "root"
+      : winner?.docType === "song-v2-arrangement" ? "arrangement" : "slide";
+    if (!winner || !local || deletedDocumentIds.has(conflict.documentId)) {
+      throw new SongV2ConcurrentEditError(baseline._id, conflict.documentId, kind, "changed");
+    }
+    for (const revision of conflict.revisions) {
+      let branch: Document;
+      try {
+        branch = await db.get<Document>(conflict.documentId, { rev: revision });
+      } catch {
+        throw new SongV2ConcurrentEditError(baseline._id, conflict.documentId, kind, "changed");
+      }
+      if (!mergeSongV2AuthoredValue(
+        authoredRevisionBody(winner), authoredRevisionBody(local), authoredRevisionBody(branch),
+      ).ok) {
+        throw new SongV2ConcurrentEditError(baseline._id, conflict.documentId, kind, "changed");
+      }
+    }
+  }
   const baselineDocs = serializeSongToV2Documents(baseline);
   const baselineArrangements = new Map(baselineDocs.arrangements.map(doc => [doc._id, doc]));
   const baselineSlides = new Map(baselineDocs.slides.map(doc => [doc._id, doc]));

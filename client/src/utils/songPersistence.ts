@@ -143,6 +143,8 @@ export type SongV2Snapshot = SongV2Documents & {
   conflicts?: SongV2RevisionConflict[];
   /** Physical revision leaves, including bodies equivalent to the winner. */
   physicalConflicts?: SongV2RevisionConflict[];
+  /** True when the physical conflict leaves were inspected for this snapshot. */
+  conflictsVerified?: true;
 };
 
 const committedMergedLeaves = new WeakMap<PouchDB.Database, Map<string, {
@@ -165,6 +167,7 @@ const snapshotFromDocuments = (documents: SongV2Documents, meaningfulConflicts?:
   const activeConflicts = meaningfulConflicts ?? conflicts;
   return { ...documents, ...(activeConflicts.length ? { conflicts: activeConflicts } : {}),
     ...(physicalConflicts.length ? { physicalConflicts } : {}),
+    ...(meaningfulConflicts !== undefined ? { conflictsVerified: true as const } : {}),
     hydrated: hydrateSongFromV2Documents(documents.root, documents.arrangements, documents.slides, true) };
 };
 
@@ -206,6 +209,7 @@ export const rememberCommittedSongV2Merge = (
   committed: SongV2Snapshot,
   current: SongV2Snapshot,
   approvedConflicts: SongV2RevisionConflict[] = committed.conflicts ?? [],
+  preservedConflicts: SongV2RevisionConflict[] = [],
 ): boolean => {
   const committedDocs = new Map([committed.root, ...committed.arrangements, ...committed.slides]
     .map(document => [document._id, document._rev ?? ""]));
@@ -215,8 +219,19 @@ export const rememberCommittedSongV2Merge = (
 
   const allowedLeaves = new Map(approvedConflicts.map(conflict =>
     [conflict.documentId, new Set(conflict.revisions)]));
+  const preservedLeaves = new Map(preservedConflicts.map(conflict =>
+    [conflict.documentId, new Set(conflict.revisions)]));
   if ((current.conflicts ?? []).some(conflict =>
-    conflict.revisions.some(revision => !allowedLeaves.get(conflict.documentId)?.has(revision)))) return false;
+    conflict.revisions.some(revision =>
+      !allowedLeaves.get(conflict.documentId)?.has(revision) &&
+      !preservedLeaves.get(conflict.documentId)?.has(revision)))) return false;
+  if ((current.physicalConflicts ?? []).some(conflict => {
+    const approved = allowedLeaves.get(conflict.documentId);
+    const preserved = preservedLeaves.get(conflict.documentId);
+    return (!approved && !preserved) ||
+      conflict.revisions.some(revision => !approved?.has(revision) && !preserved?.has(revision)) ||
+      (preserved && JSON.stringify([...conflict.revisions].sort()) !== JSON.stringify([...preserved].sort()));
+  })) return false;
 
   let bySong = committedMergedLeaves.get(db);
   if (!bySong) {

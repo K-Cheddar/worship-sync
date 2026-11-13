@@ -1278,7 +1278,6 @@ listenerMiddleware.startListening({
       (currentItem !== previousItem || isExplicitPendingRetry) &&
       !excluded(action) &&
       !!currentItem.hasPendingUpdate &&
-      !currentItem.pendingSongV2Conflicts?.length &&
       !isStoreResetAction(action)
     );
   },

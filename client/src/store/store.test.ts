@@ -485,6 +485,8 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       envA.store.dispatch(envA.itemSlice.actions.setIsLyricsEditorOpen(true));
       envB.store.dispatch(envB.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: ownerB }));
       envB.store.dispatch(envB.itemSlice.actions.setIsLyricsEditorOpen(true));
+      const localPuts = jest.spyOn(localDb, "put");
+      const remotePuts = jest.spyOn(remoteDb, "put");
 
       const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
       const editSection = (song: DBItem, section: number, words: string) => {
@@ -509,12 +511,20 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       await waitForSectionText(localDb, 0, "Verse edited on Controller A");
       await flushListenerEffects();
       expect(envA.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+      expect(localPuts.mock.calls.map(([document]) => document._id)).toEqual([
+        baselineSnapshot.slides.find(slide => slide.name === "Verse 1")!._id,
+        baselineSnapshot.arrangements[0]._id,
+      ]);
 
       const remoteEdit = editSection(baseline, 1, "Chorus edited on Controller B");
       envB.store.dispatch(envB.itemSlice.actions._updateArrangements(remoteEdit.arrangements));
       await waitForSectionText(remoteDb, 1, "Chorus edited on Controller B");
       await flushListenerEffects();
       expect(envB.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+      expect(remotePuts.mock.calls.map(([document]) => document._id)).toEqual([
+        baselineSnapshot.slides.find(slide => slide.name === "Chorus")!._id,
+        baselineSnapshot.arrangements[0]._id,
+      ]);
       const equivalentSlide = baselineSnapshot.slides.find(slide => slide.name === "Title")!;
       const localEquivalentBranch = await localDb.get<typeof equivalentSlide>(equivalentSlide._id);
       await localDb.put({ ...localEquivalentBranch, updatedAt: "2026-11-11T00:00:00.000Z" });
@@ -1392,7 +1402,7 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("typed B");
   });
 
-  it("does not autosave ordinary item changes while v2 revision leaves await review", async () => {
+  it("saves unrelated root changes while v2 revision leaves await review", async () => {
     const env = setup();
     const conflict = {
       documentId: env.physical.arrangements[0]._id,
@@ -1407,7 +1417,11 @@ describe("v2 remote refresh and pending-input boundaries", () => {
     await jest.advanceTimersByTimeAsync(1700);
     expect(env.store.getState().undoable.present.item.name).toBe("Unreviewed edit");
     expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toEqual([conflict]);
-    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    expect(env.db.put.mock.calls[0][0]).toMatchObject({
+      _id: env.physical.root._id,
+      name: "Unreviewed edit",
+    });
   });
 
   it("flushes other owned pending mutations before a broad refresh decides the editor is clean", async () => {

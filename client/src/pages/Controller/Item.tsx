@@ -22,6 +22,9 @@ import type { ItemContentOwner, ItemState } from "../../types";
 import type { RootState } from "../../store/store";
 import type { SongV2ConflictReviewOwner } from "../../containers/ItemEditor/SongV2ConflictReviewDialog";
 import { canEditSongContent } from "../../utils/accessTiers";
+import {
+  getSongV2ArrangementDocId, getSongV2RootDocId, getSongV2SlideDocId,
+} from "../../utils/songV2Codec";
 
 type ConflictReviewOwner = SongV2ConflictReviewOwner & {
   database: PouchDB.Database;
@@ -100,13 +103,26 @@ const Item = () => {
   }
 
   const conflictCount = pendingSongV2Conflicts?.length ?? 0;
+  const conflictTargets = [...new Set((pendingSongV2Conflicts ?? []).map(conflict => {
+    for (const arrangement of item.arrangements ?? []) {
+      if (conflict.documentId === getSongV2ArrangementDocId(item._id, arrangement.id)) {
+        return `${arrangement.name} arrangement (lyrics, order, or layout)`;
+      }
+      const slide = arrangement.slides.find(candidate =>
+        conflict.documentId === getSongV2SlideDocId(item._id, arrangement.id, candidate.id),
+      );
+      if (slide) return `${arrangement.name} · ${slide.name} slide`;
+    }
+    if (conflict.documentId === getSongV2RootDocId(item._id)) return "song details or output settings";
+    return conflict.documentId;
+  }))];
 
   return (
     <ErrorBoundary>
       <div className="flex-1 min-h-0 flex flex-col">
         {conflictCount > 0 ? (
           <div role="status" className="mx-2 mb-2 flex flex-wrap items-center justify-between gap-3 rounded border border-amber-500/50 bg-amber-950/40 px-3 py-2 text-sm text-amber-100">
-            <p>This song has {conflictCount} conflicting saved version{conflictCount === 1 ? "" : "s"}. Editing is paused until you review and save a resolution.</p>
+            <p>This song has {conflictCount} unresolved saved document conflict{conflictCount === 1 ? "" : "s"}, affecting: {conflictTargets.join(", ")}. Review saved versions to compare the exact changes before editing those areas. Editing in other areas can continue.</p>
             <Button variant="cta" onClick={() => {
               if (!resolutionOwner) return;
               setConflictReviewOwner(resolutionOwner);

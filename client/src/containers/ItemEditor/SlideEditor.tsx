@@ -207,7 +207,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     [outputSlots, slides, selectedSlide],
   );
 
-  const canEdit = !pendingSongV2Conflicts?.length && (
+  const canEdit = (
     access === "full" ||
     (type === "song" && canEditSongContent(access)) ||
     (access === "music" && type === "free")

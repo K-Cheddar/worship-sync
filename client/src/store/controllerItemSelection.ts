@@ -93,7 +93,7 @@ export const selectControllerItem = (
             mutationGuard,
           );
           loaded = reconciled.hydrated;
-          conflicts = [];
+          conflicts = reconciled.conflicts ?? [];
         } catch (error) {
           if (error instanceof SongV2ReplicationConflictError) {
             loaded = error.snapshot.hydrated;

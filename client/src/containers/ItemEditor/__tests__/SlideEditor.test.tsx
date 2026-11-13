@@ -1876,7 +1876,7 @@ describe("SlideEditor", () => {
     expect(mockShowToast).not.toHaveBeenCalled();
   });
 
-  it("keeps the winning song view read-only while revision conflicts await review", () => {
+  it("keeps the winning song editable while revision conflicts await review", () => {
     const slide = {
       id: "song-slide",
       type: "Verse",
@@ -1900,8 +1900,8 @@ describe("SlideEditor", () => {
 
     renderWithToastContext();
 
-    expect(screen.getByRole("button", { name: "Edit Lyrics" })).toBeDisabled();
-    expect(screen.getByTestId("section-text-editor")).toHaveAttribute("data-disabled", "true");
+    expect(screen.getByRole("button", { name: "Edit Lyrics" })).toBeEnabled();
+    expect(screen.getByTestId("section-text-editor")).toHaveAttribute("data-disabled", "false");
     expect(mockShowToast).not.toHaveBeenCalled();
   });
 
