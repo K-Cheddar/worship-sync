@@ -110,6 +110,12 @@ const revisionHistory = (doc: RevisionHistory) => doc._revisions?.ids.map(
   (id, index) => `${doc._revisions!.start - index}-${id}`,
 ) ?? [];
 
+const hasImmediateParentRevision = (doc: RevisionHistory, parentRevision: string) => {
+  const history = revisionHistory(doc);
+  return Boolean(doc._rev && history.length >= 2 &&
+    history[0] === doc._rev && history[1] === parentRevision);
+};
+
 const readRevisionBranchSet = async (
   db: ServiceListFieldDb,
   listId: string,
@@ -610,9 +616,8 @@ export const reconcileConcurrentOutlineMoves = async (
     losingMarker.baseRevision !== head.outlineMoveIntent.baseRevision ||
     !isEqual(losingMarker.baselineOrder, head.outlineMoveIntent.baselineOrder) ||
     !overlappingMoveDestinationsAgree(head.outlineMoveIntent, losingMarker)) return;
-  const histories = branches.versions.map(revisionHistory);
   const commonParent = head.outlineMoveIntent.baseRevision;
-  if (!commonParent || histories.some(history => history.length !== 2 || history[1] !== commonParent)) return;
+  if (!commonParent || branches.versions.some(version => !hasImmediateParentRevision(version, commonParent))) return;
 
   const winningItems = branches.winner.items ?? [];
   const losingItems = branches.versions[1].items ?? [];

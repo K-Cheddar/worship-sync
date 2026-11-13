@@ -518,6 +518,11 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     let unmount: (() => void) | undefined;
     try {
       await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      for (let revision = 0; revision < 10; revision += 1) {
+        const current = await shared.get<{ items: typeof baseline; updatedAt?: string }>(outlineId);
+        await shared.put({ ...current, updatedAt: `saved-revision-${revision}` });
+      }
+      const established = await shared.get<{ _rev: string }>(outlineId);
       await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
       const intentA = createOutlineMoveIntent({
         outlineId, ownerKey: "controller-a", movedIds: ["b"],
@@ -530,6 +535,8 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       const moveA = [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]];
       const moveB = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
       const persistedA = await persistServiceListItems(clientA as never, outlineId, moveA, baseline, undefined, [intentA]);
+      expect((await clientA.get<{ outlineMoveIntent?: { baseRevision: string } }>(outlineId))
+        .outlineMoveIntent?.baseRevision).toBe(established._rev);
 
       store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: outlineId, name: "Sunday" }]));
       const view = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
@@ -551,6 +558,8 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       const persistedB = await persistServiceListItems(
         clientB as never, outlineId, submittedB, baseline, undefined, [intentBForController],
       );
+      expect((await clientB.get<{ outlineMoveIntent?: { baseRevision: string } }>(outlineId))
+        .outlineMoveIntent?.baseRevision).toBe(established._rev);
       act(() => {
         store.dispatch(acknowledgeOutlineSave({ ownerKey, list: submittedB }));
         store.dispatch(markItemListPersisted({
@@ -658,6 +667,11 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     let originalsClosed = false;
     try {
       await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      for (let revision = 0; revision < 10; revision += 1) {
+        const current = await shared.get<{ items: typeof baseline; updatedAt?: string }>(outlineId);
+        await shared.put({ ...current, updatedAt: `saved-revision-${revision}` });
+      }
+      const established = await shared.get<{ _rev: string }>(outlineId);
       await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
       const moveA = [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]];
       const moveB = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
@@ -671,6 +685,10 @@ describe("useControllerPageLifecycle selected outline loading", () => {
         persistServiceListItems(clientA as never, outlineId, moveA, baseline, undefined, [intentA]),
         persistServiceListItems(clientB as never, outlineId, moveB, baseline, undefined, [intentB]),
       ]);
+      expect((await clientA.get<{ outlineMoveIntent?: { baseRevision: string } }>(outlineId))
+        .outlineMoveIntent?.baseRevision).toBe(established._rev);
+      expect((await clientB.get<{ outlineMoveIntent?: { baseRevision: string } }>(outlineId))
+        .outlineMoveIntent?.baseRevision).toBe(established._rev);
       await clientA.replicate.to(shared);
       await clientB.replicate.to(shared);
       expect((await shared.get<{ _conflicts?: string[] }>(outlineId, { conflicts: true }))._conflicts)

@@ -20,6 +20,18 @@ const row = (listId: string, name: string): ServiceItem => ({
   type: "song",
 });
 
+const savedMoveMarker = (
+  outlineId: string,
+  baseRevision: string,
+  baseline: ServiceItem[],
+  movedIds: string[],
+  beforeId: string,
+) => ({
+  baseRevision,
+  baselineOrder: baseline.map(item => item.listId),
+  moves: [{ outlineId, movedIds, beforeId }],
+});
+
 describe("two-client outline synchronization with replicated PouchDB state", () => {
   it("merges different row moves saved on independent replicas before either side replicates", async () => {
     const suffix = Date.now();
@@ -70,6 +82,249 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
       expect(continued.items.map(item => item.listId)).toEqual(["b", "a", "c", "e", "d", "f"]);
       expect((await clientA.get<{ items: ServiceItem[] }>(outlineId)).items.map(item => item.listId))
         .toEqual(["b", "a", "c", "e", "d", "f"]);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("reconciles directly concurrent moves after an established PouchDB history", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-established-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-established-a-${suffix}`);
+    const clientB = new PouchDB(`outline-established-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d", "e"].map(id => row(id, id.toUpperCase()));
+    const outlineId = "outline-established";
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      for (let revision = 0; revision < 10; revision += 1) {
+        const current = await shared.get<DBItemListDetails>(outlineId);
+        await shared.put({ ...current, updatedAt: `saved-revision-${revision}` });
+      }
+
+      const established = await shared.get<DBItemListDetails & {
+        _revisions?: { start: number; ids: string[] };
+      }>(outlineId, { revs: true });
+      const baseRevision = established._rev!;
+      expect(established._revisions?.ids.length).toBeGreaterThanOrEqual(11);
+      const establishedHistory = established._revisions!.ids.map((id, index) =>
+        `${established._revisions!.start - index}-${id}`,
+      );
+      expect(establishedHistory[0]).toBe(baseRevision);
+
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      const moveA = [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]];
+      const moveB = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
+      const intentA = createOutlineMoveIntent({ outlineId, ownerKey: "established-a",
+        resultingItems: moveA, movedIds: ["b"] })!;
+      const intentB = createOutlineMoveIntent({ outlineId, ownerKey: "established-b",
+        resultingItems: moveB, movedIds: ["e"] })!;
+      await Promise.all([
+        persistServiceListItems(clientA as never, outlineId, moveA, baseline, undefined, [intentA]),
+        persistServiceListItems(clientB as never, outlineId, moveB, baseline, undefined, [intentB]),
+      ]);
+
+      await clientA.replicate.to(shared);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+      await clientA.compact();
+      const competing = await clientA.get<DBItemListDetails & {
+        _rev: string;
+        _conflicts?: string[];
+        _revisions?: { start: number; ids: string[] };
+        outlineMoveIntent?: { baseRevision: string };
+      }>(outlineId, { conflicts: true, revs: true });
+      expect(competing._conflicts).toHaveLength(1);
+      expect(competing.outlineMoveIntent?.baseRevision).toBe(baseRevision);
+      const losing = await clientA.get<DBItemListDetails & {
+        _rev: string;
+        _revisions?: { start: number; ids: string[] };
+      }>(outlineId, { rev: competing._conflicts![0], revs: true });
+      for (const branch of [competing, losing]) {
+        const history = branch._revisions!.ids.map((id, index) =>
+          `${branch._revisions!.start - index}-${id}`,
+        );
+        expect(history[0]).toBe(branch._rev);
+        expect(history[1]).toBe(baseRevision);
+        expect(history.length).toBeGreaterThan(2);
+      }
+
+      const merged = await reconcileConcurrentOutlineMoves(
+        clientA as never, outlineId, () => true, () => true, competing as never,
+      );
+      expect(merged?.items?.map(item => item.listId)).toEqual(["b", "a", "c", "e", "d"]);
+      expect((await clientA.get(outlineId, { conflicts: true }))._conflicts).toBeUndefined();
+
+      await clientA.replicate.to(shared);
+      await clientB.replicate.from(shared);
+      expect((await clientB.get<DBItemListDetails>(outlineId)).items?.map(item => item.listId))
+        .toEqual(["b", "a", "c", "e", "d"]);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("preserves a historical fork when the saved marker is not its shared immediate parent", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-historical-move-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-historical-move-a-${suffix}`);
+    const clientB = new PouchDB(`outline-historical-move-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d", "e"].map(id => row(id, id.toUpperCase()));
+    const outlineId = "outline-historical-move";
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      await clientB.replicate.from(shared);
+      const oldBaseRevision = (await clientB.get<{ _rev: string }>(outlineId))._rev;
+      for (let revision = 0; revision < 6; revision += 1) {
+        const current = await shared.get<DBItemListDetails>(outlineId);
+        await shared.put({ ...current, updatedAt: `intervening-save-${revision}` });
+      }
+      await clientA.replicate.from(shared);
+
+      const moveA = [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]];
+      const moveB = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
+      const currentA = await clientA.get<DBItemListDetails>(outlineId);
+      const currentB = await clientB.get<DBItemListDetails>(outlineId);
+      await clientA.put({ ...currentA, items: moveA,
+        outlineMoveIntent: savedMoveMarker(outlineId, oldBaseRevision, baseline, ["b"], "a") });
+      await clientB.put({ ...currentB, items: moveB,
+        outlineMoveIntent: savedMoveMarker(outlineId, oldBaseRevision, baseline, ["e"], "d") });
+      await clientA.replicate.to(shared);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+
+      const head = await clientA.get<DBItemListDetails & {
+        _rev: string;
+        _conflicts?: string[];
+        _revisions?: { start: number; ids: string[] };
+        outlineMoveIntent?: { baseRevision: string };
+      }>(outlineId, { conflicts: true, revs: true });
+      expect(head._conflicts).toHaveLength(1);
+      expect(head.outlineMoveIntent?.baseRevision).toBe(oldBaseRevision);
+      const headHistory = head._revisions!.ids.map((id, index) =>
+        `${head._revisions!.start - index}-${id}`,
+      );
+      expect(headHistory[1]).not.toBe(oldBaseRevision);
+      const losing = await clientA.get<DBItemListDetails & {
+        _revisions?: { start: number; ids: string[] };
+        outlineMoveIntent?: { baseRevision: string };
+      }>(outlineId, { rev: head._conflicts![0], revs: true });
+      const losingHistory = losing._revisions!.ids.map((id, index) =>
+        `${losing._revisions!.start - index}-${id}`,
+      );
+      expect(losingHistory[1]).toBe(oldBaseRevision);
+      expect(losing.outlineMoveIntent?.baseRevision).toBe(oldBaseRevision);
+
+      const writes = jest.spyOn(clientA, "put");
+      await expect(reconcileConcurrentOutlineMoves(clientA as never, outlineId, () => true, () => true, head as never))
+        .resolves.toBeUndefined();
+      expect(writes).not.toHaveBeenCalled();
+      expect((await clientA.get(outlineId, { conflicts: true }))._conflicts).toHaveLength(1);
+      expect((await clientA.get<DBItemListDetails>(outlineId, { rev: head._conflicts![0] })).items)
+        .toEqual(moveB);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("keeps concurrent non-order row edits out of automatic reconciliation", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-content-edit-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-content-edit-a-${suffix}`);
+    const clientB = new PouchDB(`outline-content-edit-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d", "e"].map(id => row(id, id.toUpperCase()));
+    const outlineId = "outline-content-edit";
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      const baseRevision = (await shared.get<{ _rev: string }>(outlineId))._rev;
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      const moveA = [
+        { ...baseline[1], name: "B edited" }, baseline[0], baseline[2], baseline[3], baseline[4],
+      ];
+      const moveB = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
+      const currentA = await clientA.get<DBItemListDetails>(outlineId);
+      const currentB = await clientB.get<DBItemListDetails>(outlineId);
+      await Promise.all([
+        clientA.put({ ...currentA, items: moveA,
+          outlineMoveIntent: savedMoveMarker(outlineId, baseRevision, baseline, ["b"], "a") }),
+        clientB.put({ ...currentB, items: moveB,
+          outlineMoveIntent: savedMoveMarker(outlineId, baseRevision, baseline, ["e"], "d") }),
+      ]);
+      await clientA.replicate.to(shared);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+      const head = await clientA.get<DBItemListDetails & { _conflicts?: string[] }>(outlineId, { conflicts: true });
+      expect(head._conflicts).toHaveLength(1);
+      const writes = jest.spyOn(clientA, "put");
+      await expect(reconcileConcurrentOutlineMoves(clientA as never, outlineId, () => true, () => true, head))
+        .resolves.toBeUndefined();
+      expect(writes).not.toHaveBeenCalled();
+      const remaining = await clientA.get(outlineId, { conflicts: true });
+      expect(remaining._conflicts).toHaveLength(1);
+      expect((await clientA.get<DBItemListDetails>(outlineId, { rev: remaining._conflicts![0] })).items)
+        .toEqual(moveB);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("abandons reconciliation when a new revision arrives during the final graph check", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-reconcile-race-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-reconcile-race-a-${suffix}`);
+    const clientB = new PouchDB(`outline-reconcile-race-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d", "e"].map(id => row(id, id.toUpperCase()));
+    const outlineId = "outline-reconcile-race";
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      const baseRevision = (await clientA.get<{ _rev: string }>(outlineId))._rev;
+      const moveA = [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]];
+      const moveB = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
+      const intentA = createOutlineMoveIntent({ outlineId, ownerKey: "race-a",
+        resultingItems: moveA, movedIds: ["b"] })!;
+      const intentB = createOutlineMoveIntent({ outlineId, ownerKey: "race-b",
+        resultingItems: moveB, movedIds: ["e"] })!;
+      await Promise.all([
+        persistServiceListItems(clientA as never, outlineId, moveA, baseline, undefined, [intentA]),
+        persistServiceListItems(clientB as never, outlineId, moveB, baseline, undefined, [intentB]),
+      ]);
+      expect((await clientA.get<{ outlineMoveIntent?: { baseRevision: string } }>(outlineId))
+        .outlineMoveIntent?.baseRevision).toBe(baseRevision);
+      await clientA.replicate.to(shared);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+      const head = await clientA.get<DBItemListDetails & { _conflicts?: string[] }>(outlineId, { conflicts: true });
+      expect(head._conflicts).toHaveLength(1);
+
+      let concurrentWrite: Promise<unknown> | undefined;
+      const raceDb = {
+        get: async (id: string, options?: { conflicts?: boolean; rev?: string; revs?: boolean }) => {
+          if (concurrentWrite && options?.conflicts) await concurrentWrite;
+          return clientA.get(id, options);
+        },
+        put: (document: DBItemListDetails) => clientA.put(document),
+        remove: (id: string, revision: string) => clientA.remove(id, revision),
+      };
+      const writes = jest.spyOn(clientA, "put");
+      await expect(reconcileConcurrentOutlineMoves(
+        raceDb as never,
+        outlineId,
+        () => true,
+        () => {
+          if (!concurrentWrite) {
+            concurrentWrite = (async () => {
+              const current = await clientA.get<DBItemListDetails>(outlineId);
+              await clientA.put({ ...current, updatedAt: "revision-arrived-during-reconciliation" });
+            })();
+          }
+          return true;
+        },
+        head,
+      )).resolves.toBeUndefined();
+      expect(writes).toHaveBeenCalledTimes(1);
+      expect((await clientA.get<{ updatedAt?: string }>(outlineId)).updatedAt)
+        .toBe("revision-arrived-during-reconciliation");
+      expect((await clientA.get(outlineId, { conflicts: true }))._conflicts).toHaveLength(1);
     } finally {
       await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
     }
