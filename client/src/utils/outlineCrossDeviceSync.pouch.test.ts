@@ -7,6 +7,7 @@ import {
   inspectServiceListRevisions,
   persistServiceListItems,
   persistServiceListOverlays,
+  reconcileConcurrentOutlineMoves,
   resolveServiceListRevisionConflict,
   ServiceListConflictError,
 } from "./persistServiceListField";
@@ -85,17 +86,26 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
     const remote = [baseline[0], baseline[2], baseline[3], baseline[1]];
     const intent = createOutlineMoveIntent({ outlineId, ownerKey: "controller-a",
       resultingItems: local, movedIds: ["b"] })!;
+    const remoteIntent = createOutlineMoveIntent({ outlineId, ownerKey: "controller-b",
+      resultingItems: remote, movedIds: ["b"] })!;
     try {
       await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Moves", items: baseline, overlays: [] });
       await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
       await Promise.all([
-        persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, local, baseline),
-        persistServiceListItems(clientB as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, remote, baseline),
+        persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, local, baseline, undefined, [intent]),
+        persistServiceListItems(clientB as unknown as Parameters<typeof persistServiceListItems>[0], outlineId, remote, baseline, undefined, [remoteIntent]),
       ]);
-      await Promise.all([clientA.replicate.to(shared), clientB.replicate.to(shared)]);
+      await clientA.replicate.to(shared);
+      await clientB.replicate.to(shared);
       await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
 
       const current = await clientA.get<{ items: ServiceItem[] }>(outlineId);
+      const competing = await clientA.get<DBItemListDetails & { _conflicts?: string[] }>(outlineId, { conflicts: true });
+      expect(competing._conflicts).toHaveLength(1);
+      const writes = jest.spyOn(clientA, "put");
+      await expect(reconcileConcurrentOutlineMoves(clientA as never, outlineId, () => true, () => true, competing))
+        .resolves.toBeUndefined();
+      expect(writes).not.toHaveBeenCalled();
       await expect(persistServiceListItems(clientA as unknown as Parameters<typeof persistServiceListItems>[0],
         outlineId, local, baseline, undefined, [intent])).rejects.toMatchObject({
         name: "ServiceListConflictError",

@@ -1,11 +1,110 @@
 import {
   persistServiceListItems,
   persistServiceListOverlays,
+  reconcileConcurrentOutlineMoves,
   ServiceListConflictError,
 } from "./persistServiceListField";
 import type { DBItemListDetails } from "../types";
+import { beginContentDatabaseSession, getContentDatabaseSessionToken } from "./contentReplicationActivity";
 
 describe("persistServiceListField", () => {
+  it("fails closed when a persisted outline move marker contains a malformed move", async () => {
+    const outlineId = "outline";
+    const head = {
+      _id: outlineId,
+      _rev: "2-winner",
+      _conflicts: ["2-loser"],
+      items: [],
+      outlineMoveIntent: {
+        baseRevision: "1-base",
+        baselineOrder: ["row-a"],
+        moves: [null],
+      },
+    } as unknown as DBItemListDetails & { _conflicts: string[] };
+    const db = {
+      get: jest.fn(),
+      put: jest.fn(),
+    };
+
+    await expect(reconcileConcurrentOutlineMoves(db as never, outlineId, () => true, () => true, head))
+      .resolves.toBeUndefined();
+    expect(db.get).not.toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
+  it("abandons a pending reconciliation when its content database session changes", async () => {
+    const outlineId = "outline";
+    const databaseName = `outline-session-${Math.random()}`;
+    const session = beginContentDatabaseSession(databaseName);
+    let replacement: ReturnType<typeof beginContentDatabaseSession> | undefined;
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const baselineOrder = ["a", "b", "c"];
+    const winner = {
+      _id: outlineId,
+      _rev: "2-winner",
+      _revisions: { start: 2, ids: ["winner", "base"] },
+      _conflicts: ["2-loser"],
+      items: [
+        { _id: "song-b", listId: "b", name: "B", type: "song" },
+        { _id: "song-a", listId: "a", name: "A", type: "song" },
+        { _id: "song-c", listId: "c", name: "C", type: "song" },
+      ],
+      outlineMoveIntent: {
+        baseRevision: "1-base", baselineOrder,
+        moves: [{ outlineId, movedIds: ["b"], beforeId: "a" }],
+      },
+    };
+    const loser = {
+      ...winner,
+      _rev: "2-loser",
+      _revisions: { start: 2, ids: ["loser", "base"] },
+      _conflicts: undefined,
+      items: [
+        { _id: "song-a", listId: "a", name: "A", type: "song" },
+        { _id: "song-b", listId: "b", name: "B", type: "song" },
+        { _id: "song-c", listId: "c", name: "C", type: "song" },
+      ],
+      outlineMoveIntent: {
+        baseRevision: "1-base", baselineOrder,
+        moves: [{ outlineId, movedIds: ["c"], beforeId: "b" }],
+      },
+    };
+    const db = {
+      get: jest.fn(async (_id: string, options?: { rev?: string }) => {
+        if (options?.rev === "2-loser") {
+          entered();
+          await gate;
+          return loser;
+        }
+        return winner;
+      }),
+      put: jest.fn(),
+    };
+    try {
+      const sessionToken = getContentDatabaseSessionToken(databaseName);
+      const pending = reconcileConcurrentOutlineMoves(
+        db as never,
+        outlineId,
+        () => getContentDatabaseSessionToken(databaseName) === sessionToken,
+        () => true,
+        winner as unknown as DBItemListDetails & { _conflicts: string[] },
+      );
+      await started;
+      replacement = beginContentDatabaseSession(databaseName);
+      release();
+
+      await expect(pending).resolves.toBeUndefined();
+      expect(db.put).not.toHaveBeenCalled();
+    } finally {
+      release();
+      replacement?.release();
+      session.release();
+    }
+  });
+
   it.each(["read", "put", "conflict"])("keeps the latest same-field intent when the older %s is delayed", async (boundary) => {
     let release!: () => void;
     let entered!: () => void;

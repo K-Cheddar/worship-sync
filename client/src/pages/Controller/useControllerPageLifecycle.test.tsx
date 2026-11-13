@@ -10,7 +10,14 @@ import store, { type RootState } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { itemListsSlice } from "../../store/itemListsSlice";
-import { setItemListIsLoading, retryItemListLoad, initiateItemList } from "../../store/itemListSlice";
+import {
+  acknowledgeOutlineSave,
+  initiateItemList,
+  markItemListPersisted,
+  moveItemListRows,
+  retryItemListLoad,
+  setItemListIsLoading,
+} from "../../store/itemListSlice";
 import { overlaySlice } from "../../store/overlaySlice";
 import { overlaysSlice } from "../../store/overlaysSlice";
 import { markServicePlanningPlanPreviewStale } from "../../store/servicePlanningImportSlice";
@@ -24,7 +31,10 @@ import { getOverlaysByIds } from "../../utils/dbUtils";
 import { getOutlineDatabaseKey, setOutlineContentDatabase } from "../../store/outlineContent";
 import { setActiveContentDatabase } from "../../store/deferredItemMutations";
 import Overlays from "../../containers/Overlays/Overlays";
-import type { OverlayInfo } from "../../types";
+import type { ItemContentOwner, OverlayInfo } from "../../types";
+import { createOutlineMoveIntent } from "../../utils/outlineSync";
+import { persistServiceListItems } from "../../utils/persistServiceListField";
+import { beginContentDatabaseSession } from "../../utils/contentReplicationActivity";
 
 jest.mock("../../containers/Overlays/OverlayEditor", () => () => null);
 jest.mock("../../containers/Overlays/ExistingOverlaysDrawer", () => () => null);
@@ -356,6 +366,52 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     expect(store.getState().undoable.present.itemList.loadError).toMatch(/kept changing while it loaded/);
   });
 
+  it("retries the local outline read when the content database session changes", async () => {
+    const oldRead = deferred<ReturnType<typeof details>>();
+    const databaseName = `outline-session-refresh-${Date.now()}-${Math.random()}`;
+    let outlineReads = 0;
+    const db = {
+      name: databaseName,
+      get: jest.fn((id: string) => id === "outline"
+        ? ++outlineReads === 1 ? oldRead.promise : Promise.resolve({ _id: "outline", ...details("New session") })
+        : Promise.resolve(undefined)),
+      put: jest.fn().mockResolvedValue({ ok: true, rev: "1-saved" }),
+    } as any;
+    const firstSession = beginContentDatabaseSession(databaseName);
+    let nextSession: ReturnType<typeof beginContentDatabaseSession> | undefined;
+    let unmount: (() => void) | undefined;
+    try {
+      store.dispatch(itemListsSlice.actions.initiateItemLists([
+        { _id: "outline", name: "Sunday" },
+      ]));
+      const view = renderHook(() => useControllerPageLifecycle(), {
+        wrapper: ({ children }) => (
+          <Provider store={store}>
+            <ControllerInfoContext.Provider value={{ db, cloud: {} } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </Provider>
+        ),
+      });
+      unmount = view.unmount;
+      await waitFor(() => expect(outlineReads).toBe(1));
+
+      act(() => { nextSession = beginContentDatabaseSession(databaseName); });
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list)
+        .toEqual([expect.objectContaining({ name: "New session" })]));
+      expect(outlineReads).toBe(2);
+      expect(store.getState().undoable.present.itemList.isLoading).toBe(false);
+
+      await act(async () => { oldRead.resolve(details("Stale session")); });
+      expect(store.getState().undoable.present.itemList.list)
+        .toEqual([expect.objectContaining({ name: "New session" })]);
+    } finally {
+      unmount?.();
+      nextSession?.release();
+      firstSession.release();
+    }
+  });
+
   it("initializes a genuinely empty outline from a stable database read", async () => {
     const db = {
       get: jest.fn().mockResolvedValue({ _id: "outline", items: [], overlays: [] }),
@@ -449,6 +505,255 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     }
   });
 
+  it("merges acknowledged independent Controller moves from the replication refresh and stays editable", async () => {
+    const suffix = `lifecycle-move-convergence-${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`${suffix}-shared`);
+    const clientA = new PouchDB(`${suffix}-a`);
+    const clientB = new PouchDB(`${suffix}-b`);
+    const updater = new EventTarget();
+    const baseline = ["a", "b", "c", "d", "e"].map(id => ({
+      _id: `song-${id}`, listId: id, name: id.toUpperCase(), type: "song",
+    }));
+    const outlineId = "outline";
+    let unmount: (() => void) | undefined;
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      const intentA = createOutlineMoveIntent({
+        outlineId, ownerKey: "controller-a", movedIds: ["b"],
+        resultingItems: [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]],
+      })!;
+      const intentB = createOutlineMoveIntent({
+        outlineId, ownerKey: "controller-b", movedIds: ["e"],
+        resultingItems: [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]],
+      })!;
+      const moveA = [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]];
+      const moveB = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
+      const persistedA = await persistServiceListItems(clientA as never, outlineId, moveA, baseline, undefined, [intentA]);
+
+      store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: outlineId, name: "Sunday" }]));
+      const view = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
+        <Provider store={store}>
+          <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+            <ControllerInfoContext.Provider value={{ db: clientB, cloud: {}, updater } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </Provider>
+      ) });
+      unmount = view.unmount;
+      await waitFor(() => expect(store.getState().undoable.present.itemList.isLoading).toBe(false));
+
+      const ownerKey = store.getState().undoable.present.itemList.outlineOwnerKey!;
+      const intentBForController = { ...intentB, ownerKey };
+      act(() => store.dispatch(moveItemListRows({ items: moveB, intent: intentBForController })));
+      const submittedB = store.getState().undoable.present.itemList.list;
+      const persistedB = await persistServiceListItems(
+        clientB as never, outlineId, submittedB, baseline, undefined, [intentBForController],
+      );
+      act(() => {
+        store.dispatch(acknowledgeOutlineSave({ ownerKey, list: submittedB }));
+        store.dispatch(markItemListPersisted({
+          outlineId, ownerKey, items: persistedB.items, submittedItems: submittedB,
+          submittedMoveIntents: [intentBForController],
+        }));
+      });
+      const acknowledged = store.getState().undoable.present.itemList;
+      expect(acknowledged.hasPendingUpdate).toBe(false);
+      expect(acknowledged.pendingMoveIntents).toEqual([]);
+      expect((await clientA.get<{ outlineMoveIntent?: { baseRevision: string } }>(outlineId)).outlineMoveIntent?.baseRevision)
+        .toBe((await shared.get<{ _rev: string }>(outlineId))._rev);
+
+      await clientA.replicate.to(shared);
+      await clientB.replicate.to(shared);
+      await clientB.replicate.from(shared);
+      const competing = await clientB.get<{ _rev: string; _conflicts?: string[] }>(outlineId, { conflicts: true });
+      expect(competing._conflicts).toHaveLength(1);
+      const writes = jest.spyOn(clientB, "put");
+      await act(async () => {
+        updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: outlineId, _rev: competing._conflicts![0] }] }));
+      });
+
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list.map((item: { listId: string }) => item.listId))
+        .toEqual(["b", "a", "c", "e", "d"]));
+      const converged = store.getState().undoable.present.itemList;
+      expect(converged.syncBaseline?.map((item: { listId: string }) => item.listId)).toEqual(["b", "a", "c", "e", "d"]);
+      expect(converged.hasPendingUpdate).toBe(false);
+      expect(converged.remoteConflicts).toEqual({});
+      expect(writes).toHaveBeenCalledTimes(1);
+      expect((await clientB.get<{ _conflicts?: string[] }>(outlineId, { conflicts: true }))._conflicts).toBeUndefined();
+
+      // A second event for the merge revision and a duplicate event for the
+      // original branch cannot repeat the write.
+      const mergedHead = await clientB.get<{ _rev: string }>(outlineId);
+      await act(async () => {
+        updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: outlineId, _rev: mergedHead._rev }] }));
+        updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: outlineId, _rev: competing._conflicts![0] }] }));
+      });
+      expect(writes).toHaveBeenCalledTimes(1);
+
+      const continuedItems = [converged.list[2], ...converged.list.slice(0, 2), ...converged.list.slice(3)];
+      const continuedIntent = createOutlineMoveIntent({
+        outlineId, ownerKey, movedIds: ["c"], resultingItems: continuedItems,
+      })!;
+      act(() => store.dispatch(moveItemListRows({ items: continuedItems, intent: continuedIntent })));
+      const continuedDraft = store.getState().undoable.present.itemList.list;
+      const continuedSave = await persistServiceListItems(
+        clientB as never, outlineId, continuedDraft, converged.syncBaseline, undefined, [continuedIntent],
+      );
+      act(() => {
+        store.dispatch(acknowledgeOutlineSave({ ownerKey, list: continuedDraft }));
+        store.dispatch(markItemListPersisted({
+          outlineId, ownerKey, items: continuedSave.items, submittedItems: continuedDraft,
+          submittedMoveIntents: [continuedIntent],
+        }));
+      });
+      expect((await clientB.get<{ items: typeof baseline }>(outlineId)).items.map(item => item.listId))
+        .toEqual(["c", "b", "a", "e", "d"]);
+      expect(persistedA.items.map(item => item.listId)).toEqual(["b", "a", "c", "d", "e"]);
+
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+      unmount?.();
+      unmount = undefined;
+      store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+      store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: outlineId, name: "Sunday" }]));
+      const updaterA = new EventTarget();
+      const { unmount: unmountControllerA } = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
+        <Provider store={store}>
+          <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+            <ControllerInfoContext.Provider value={{ db: clientA, cloud: {}, updater: updaterA } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </Provider>
+      ) });
+      unmount = unmountControllerA;
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list.map((item: { listId: string }) => item.listId))
+        .toEqual(["c", "b", "a", "e", "d"]));
+      const receivedByA = await clientA.get<{ _rev: string }>(outlineId);
+      await act(async () => {
+        updaterA.dispatchEvent(new CustomEvent("update", { detail: [{ _id: outlineId, _rev: receivedByA._rev }] }));
+      });
+      expect(store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+    } finally {
+      unmount?.();
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("reconciles after the original Controllers close and lets a read-only Controller load the result", async () => {
+    const suffix = `third-controller-outline-${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`${suffix}-shared`);
+    const clientA = new PouchDB(`${suffix}-a`);
+    const clientB = new PouchDB(`${suffix}-b`);
+    const thirdController = new PouchDB(`${suffix}-third`);
+    const readOnlyController = new PouchDB(`${suffix}-view`);
+    const baseline = ["a", "b", "c", "d", "e"].map(id => ({
+      _id: `song-${id}`, listId: id, name: id.toUpperCase(), type: "song",
+    }));
+    const outlineId = "outline";
+    let unmount: (() => void) | undefined;
+    let originalsClosed = false;
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      const moveA = [baseline[1], baseline[0], baseline[2], baseline[3], baseline[4]];
+      const moveB = [baseline[0], baseline[1], baseline[2], baseline[4], baseline[3]];
+      const intentA = createOutlineMoveIntent({
+        outlineId, ownerKey: "closed-controller-a", movedIds: ["b"], resultingItems: moveA,
+      })!;
+      const intentB = createOutlineMoveIntent({
+        outlineId, ownerKey: "closed-controller-b", movedIds: ["e"], resultingItems: moveB,
+      })!;
+      await Promise.all([
+        persistServiceListItems(clientA as never, outlineId, moveA, baseline, undefined, [intentA]),
+        persistServiceListItems(clientB as never, outlineId, moveB, baseline, undefined, [intentB]),
+      ]);
+      await clientA.replicate.to(shared);
+      await clientB.replicate.to(shared);
+      expect((await shared.get<{ _conflicts?: string[] }>(outlineId, { conflicts: true }))._conflicts)
+        .toHaveLength(1);
+      await Promise.all([clientA.destroy(), clientB.destroy()]);
+      originalsClosed = true;
+
+      await readOnlyController.replicate.from(shared);
+      const readOnlyWrites = jest.spyOn(readOnlyController, "put");
+      const initialReadOnlyUpdater = new EventTarget();
+      store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: outlineId, name: "Sunday" }]));
+      const { unmount: unmountInitialReadOnly } = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
+        <Provider store={store}>
+          <GlobalInfoContext.Provider value={{ access: "view" } as any}>
+            <ControllerInfoContext.Provider value={{ db: readOnlyController, cloud: {}, updater: initialReadOnlyUpdater } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </Provider>
+      ) });
+      unmount = unmountInitialReadOnly;
+      await waitFor(() => expect([
+        JSON.stringify(moveA.map(item => item.listId)),
+        JSON.stringify(moveB.map(item => item.listId)),
+      ]).toContain(JSON.stringify(store.getState().undoable.present.itemList.list.map((item: { listId: string }) => item.listId))));
+      expect(readOnlyWrites.mock.calls.some(([document]) => document._id === outlineId)).toBe(false);
+      expect((await readOnlyController.get<{ _conflicts?: string[] }>(outlineId, { conflicts: true }))._conflicts)
+        .toHaveLength(1);
+      unmount();
+      unmount = undefined;
+      store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+
+      await thirdController.replicate.from(shared);
+      const authorizedUpdater = new EventTarget();
+      store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: outlineId, name: "Sunday" }]));
+      const { unmount: unmountThirdController } = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
+        <Provider store={store}>
+          <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+            <ControllerInfoContext.Provider value={{ db: thirdController, cloud: {}, updater: authorizedUpdater } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </Provider>
+      ) });
+      unmount = unmountThirdController;
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list.map((item: { listId: string }) => item.listId))
+        .toEqual(["b", "a", "c", "e", "d"]));
+      expect(store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+      expect((await thirdController.get<{ _conflicts?: string[] }>(outlineId, { conflicts: true }))._conflicts)
+        .toBeUndefined();
+
+      await thirdController.replicate.to(shared);
+      unmount();
+      unmount = undefined;
+      store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+
+      await readOnlyController.replicate.from(shared);
+      const readOnlyUpdater = new EventTarget();
+      store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: outlineId, name: "Sunday" }]));
+      const { unmount: unmountReadOnly } = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
+        <Provider store={store}>
+          <GlobalInfoContext.Provider value={{ access: "view" } as any}>
+            <ControllerInfoContext.Provider value={{ db: readOnlyController, cloud: {}, updater: readOnlyUpdater } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </Provider>
+      ) });
+      unmount = unmountReadOnly;
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list.map((item: { listId: string }) => item.listId))
+        .toEqual(["b", "a", "c", "e", "d"]));
+      expect(readOnlyWrites.mock.calls.some(([document]) => document._id === outlineId)).toBe(false);
+      expect(store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect((await readOnlyController.get<{ _conflicts?: string[] }>(outlineId, { conflicts: true }))._conflicts)
+        .toBeUndefined();
+    } finally {
+      unmount?.();
+      if (!originalsClosed) await Promise.all([clientA.destroy(), clientB.destroy()]);
+      await Promise.all([shared.destroy(), thirdController.destroy(), readOnlyController.destroy()]);
+    }
+  });
+
   it("shows a load error instead of initializing empty content after a failed read", async () => {
     const db = {
       get: jest.fn((id: string) => id === "outline"
@@ -510,6 +815,115 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     expect(store.getState().undoable.present.itemList.list).toEqual([
       expect.objectContaining({ name: "Outline B" }),
     ]);
+  });
+
+  it("retries a replication notification after its outline read is invalidated by a session change", async () => {
+    const staleEventRead = deferred<ReturnType<typeof details>>();
+    const databaseName = `outline-event-session-${Date.now()}-${Math.random()}`;
+    let outlineReads = 0;
+    const db = {
+      name: databaseName,
+      get: jest.fn((id: string) => {
+        if (id !== "outline") return Promise.resolve(undefined);
+        outlineReads += 1;
+        return outlineReads === 2
+          ? staleEventRead.promise
+          : Promise.resolve({ _id: "outline", ...details(`Outline ${outlineReads}`) });
+      }),
+      put: jest.fn().mockResolvedValue({ ok: true, rev: "1-saved" }),
+    } as any;
+    const firstSession = beginContentDatabaseSession(databaseName);
+    const updater = new EventTarget();
+    let nextSession: ReturnType<typeof beginContentDatabaseSession> | undefined;
+    let unmount: (() => void) | undefined;
+    try {
+      store.dispatch(itemListsSlice.actions.initiateItemLists([
+        { _id: "outline", name: "Sunday" },
+      ]));
+      const view = renderHook(() => useControllerPageLifecycle(), {
+        wrapper: ({ children }) => (
+          <Provider store={store}>
+            <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </Provider>
+        ),
+      });
+      unmount = view.unmount;
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list)
+        .toEqual([expect.objectContaining({ name: "Outline 1" })]));
+
+      const notification = new CustomEvent("update", {
+        detail: [{ _id: "outline", _rev: "2-replicated" }],
+      });
+      act(() => updater.dispatchEvent(notification));
+      await waitFor(() => expect(outlineReads).toBe(2));
+
+      act(() => { nextSession = beginContentDatabaseSession(databaseName); });
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list)
+        .toEqual([expect.objectContaining({ name: "Outline 3" })]));
+      await act(async () => { staleEventRead.resolve(Object.assign(details("Stale event"), { _id: "outline" })); });
+
+      act(() => updater.dispatchEvent(notification));
+      await waitFor(() => expect(outlineReads).toBe(4));
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list)
+        .toEqual([expect.objectContaining({ name: "Outline 4" })]));
+    } finally {
+      unmount?.();
+      nextSession?.release();
+      firstSession.release();
+    }
+  });
+
+  it("captures the active content owner and session for replicated Song V2 changes", async () => {
+    const db = new PouchDB(`song-v2-refresh-session-${Date.now()}-${Math.random()}`);
+    const owner: ItemContentOwner = {
+      scopeId: `user-a:church-a:${db.name}`,
+      databaseKey: getOutlineDatabaseKey(db),
+      churchId: "church-a",
+      accountId: "user-a",
+    };
+    const session = beginContentDatabaseSession(db.name);
+    const updater = new EventTarget();
+    const dispatch = jest.spyOn(store, "dispatch");
+    let unmount: (() => void) | undefined;
+    try {
+      setActiveContentDatabase(owner, db as never);
+      const view = renderHook(() => useControllerPageLifecycle(), {
+        wrapper: ({ children }) => (
+          <Provider store={store}>
+            <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </Provider>
+        ),
+      });
+      unmount = view.unmount;
+
+      act(() => updater.dispatchEvent(new CustomEvent("update", {
+        detail: [{ _id: "song-v2:arrangement:song-a:master" }],
+      })));
+      await waitFor(() => expect(dispatch.mock.calls.some(([action]) =>
+        (action as { type?: string }).type === "songV2/documentsChanged",
+      )).toBe(true));
+      const refresh = dispatch.mock.calls.map(([action]) => action as {
+        type?: string;
+        payload?: Array<Record<string, unknown>>;
+      }).find(action => action.type === "songV2/documentsChanged");
+      expect(refresh?.payload).toEqual([{
+        songId: "song-a",
+        libraryChanged: true,
+        database: db,
+        owner,
+        sessionToken: session.token,
+      }]);
+    } finally {
+      unmount?.();
+      session.release();
+      setActiveContentDatabase(null);
+      dispatch.mockRestore();
+      await db.destroy();
+    }
   });
 
   it("retries the same selected outline without initializing libraries or overlays again", async () => {

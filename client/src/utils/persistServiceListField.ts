@@ -1,7 +1,12 @@
 import isEqual from "lodash/isEqual";
 import type { DBItemListDetails, ServiceItem } from "../types";
 import { isPouchConflict } from "./persistOverlayDoc";
-import { getOutlineItemConflicts, reconcileOutlineItems, type OutlineItemChoices, type OutlineMoveIntent } from "./outlineSync";
+import {
+  getOutlineItemConflicts,
+  reconcileOutlineItems,
+  type OutlineItemChoices,
+  type OutlineMoveIntent,
+} from "./outlineSync";
 
 const SERVICE_LIST_PUT_MAX_ATTEMPTS = 4;
 type QueuedFieldSave = { document: DBItemListDetails; didWrite: boolean; intent: ServiceItem[] | string[] };
@@ -10,7 +15,12 @@ const savesByDatabase = new WeakMap<ServiceListFieldDb, Map<string, FieldSaveQue
 const saveVersionsByDatabase = new WeakMap<ServiceListFieldDb, Map<string, number>>();
 
 type RevisionHistory = { _rev?: string; _revisions?: { start: number; ids: string[] } };
-type RevisionDoc = DBItemListDetails & RevisionHistory & { _conflicts?: string[] };
+type PersistedOutlineMove = Omit<OutlineMoveIntent, "ownerKey">;
+type PersistedOutlineMoveMarker = { baseRevision: string; baselineOrder: string[]; moves: PersistedOutlineMove[] };
+type RevisionDoc = DBItemListDetails & RevisionHistory & {
+  _conflicts?: string[];
+  outlineMoveIntent?: PersistedOutlineMoveMarker;
+};
 
 export type OutlineRevisionGraph = {
   winningRevision: string;
@@ -180,7 +190,7 @@ const mergeRevisionDocuments = (
     ...Object.keys(right),
   ]);
   keys.forEach((key) => {
-    if (["_rev", "_revisions", "_conflicts"].includes(key)) return;
+    if (["_rev", "_revisions", "_conflicts", "outlineMoveIntent"].includes(key)) return;
     const base = baseline as unknown as Record<string, unknown>;
     const local = left as unknown as Record<string, unknown>;
     const remote = right as unknown as Record<string, unknown>;
@@ -281,6 +291,7 @@ const updatedDocument = <K extends "items" | "overlays">(
   const document = { ...current } as RevisionDoc;
   delete document._conflicts;
   delete document._revisions;
+  delete document.outlineMoveIntent;
   return {
     ...document,
     [field]: value,
@@ -471,6 +482,18 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
     }
 
     const next = updatedDocument(current, field, nextValue);
+    if (field === "items" && baseline && moveIntents.length && current._rev &&
+      isEqual(current.items ?? [], baseline) && sameOutlineRowsIgnoringOrder(baseline, nextValue as ServiceItem[]) &&
+      !isEqual(baseline.map(item => item.listId), (nextValue as ServiceItem[]).map(item => item.listId))) {
+      const marker: PersistedOutlineMoveMarker = {
+        baseRevision: current._rev,
+        baselineOrder: baseline.map(item => item.listId),
+        moves: moveIntents.map(({ ownerKey: _ownerKey, ...move }) => move),
+      };
+      if (rowsMatchPersistedMove(baseline, nextValue as ServiceItem[], marker)) {
+        (next as RevisionDoc).outlineMoveIntent = marker;
+      }
+    }
 
     try {
       if (!isCurrent()) throw new Error("The outline save session ended");
@@ -503,6 +526,166 @@ export const persistServiceListItems = (
   isCurrent?: () => boolean,
   moveIntents?: OutlineMoveIntent[],
 ) => persistServiceListField(db, listId, "items", items, baseline, isCurrent, moveIntents);
+
+const sameOutlineRowsIgnoringOrder = (left: ServiceItem[], right: ServiceItem[]) => {
+  if (!hasStableRowIds(left) || !hasStableRowIds(right) || left.length !== right.length) return false;
+  const rightById = new Map(right.map(item => [item.listId, item]));
+  return left.every(item => isEqual(item, rightById.get(item.listId)));
+};
+
+const withoutOutlineRevisionMetadata = (document: DBItemListDetails) =>
+  Object.fromEntries(Object.entries(document).filter(([key]) =>
+    !["_rev", "_revisions", "_conflicts", "outlineMoveIntent"].includes(key),
+  ));
+
+const validPersistedMoveMarker = (
+  marker: PersistedOutlineMoveMarker | undefined,
+  listId: string,
+): marker is PersistedOutlineMoveMarker => Boolean(
+  marker && typeof marker === "object" && !Array.isArray(marker) &&
+  typeof marker.baseRevision === "string" && marker.baseRevision &&
+  Array.isArray(marker.baselineOrder) && marker.baselineOrder.length > 0 &&
+  marker.baselineOrder.every(id => typeof id === "string" && id.length > 0) &&
+  new Set(marker.baselineOrder).size === marker.baselineOrder.length &&
+  Array.isArray(marker.moves) && marker.moves.length > 0 && marker.moves.every(move =>
+    !!move && typeof move === "object" && !Array.isArray(move) &&
+    move.outlineId === listId && Array.isArray(move.movedIds) && move.movedIds.length > 0 &&
+    move.movedIds.every(id => typeof id === "string" && id.length > 0) &&
+    (move.beforeId === undefined || typeof move.beforeId === "string") &&
+    (move.afterId === undefined || typeof move.afterId === "string") &&
+    (move.edge === undefined || move.edge === "start" || move.edge === "end"),
+  ),
+);
+
+const overlappingMoveDestinationsAgree = (
+  left: PersistedOutlineMoveMarker,
+  right: PersistedOutlineMoveMarker,
+) => {
+  const leftIds = new Set(left.moves.flatMap(move => move.movedIds));
+  const rightIds = new Set(right.moves.flatMap(move => move.movedIds));
+  return [...leftIds].filter(id => rightIds.has(id)).every(id => {
+    const leftMove = [...left.moves].reverse().find(move => move.movedIds.includes(id));
+    const rightMove = [...right.moves].reverse().find(move => move.movedIds.includes(id));
+    return isEqual(leftMove, rightMove);
+  });
+};
+
+const rowsMatchPersistedMove = (
+  baseline: ServiceItem[],
+  branch: ServiceItem[],
+  marker: PersistedOutlineMoveMarker,
+) => {
+  const moves = marker.moves.map(move => ({ ...move, ownerKey: "saved-outline-reconciliation" }));
+  const result = reconcileOutlineItems(baseline, branch, baseline, undefined, moves);
+  return result.kind === "merged" && isEqual(
+    result.items.map(item => item.listId),
+    branch.map(item => item.listId),
+  );
+};
+
+/** Incorporates only a pair of directly concurrent, order-only edits. This is
+ * called from Controller refresh paths after runtime drag intentions have
+ * already been acknowledged and cleared. Historical graphs remain untouched. */
+export const reconcileConcurrentOutlineMoves = async (
+  db: ServiceListFieldDb,
+  listId: string,
+  isCurrent = () => true,
+  isAuthorized = (_movedRows: ServiceItem[]) => true,
+  initialHead?: DBItemListDetails & { _conflicts?: string[]; outlineMoveIntent?: PersistedOutlineMoveMarker },
+): Promise<DBItemListDetails | undefined> => {
+  if (!isCurrent()) return;
+  const head = initialHead
+    ? initialHead as RevisionDoc
+    : await db.get(listId, { conflicts: true }) as RevisionDoc;
+  if (!isCurrent() || !head._conflicts?.length ||
+    !validPersistedMoveMarker(head.outlineMoveIntent, listId)) return;
+
+  const branches = await readRevisionBranchSet(db, listId);
+  if (!isCurrent() || branches.graph.winningRevision !== head._rev ||
+    !isEqual([...head._conflicts].sort(), branches.graph.conflictRevisions) ||
+    !isEqual(head.outlineMoveIntent, branches.winner.outlineMoveIntent) ||
+    branches.versions.length !== 2 || branches.graph.conflictRevisions.length !== 1) return;
+  const losingMarker = branches.versions[1].outlineMoveIntent;
+  if (!validPersistedMoveMarker(losingMarker, listId) ||
+    losingMarker.baseRevision !== head.outlineMoveIntent.baseRevision ||
+    !isEqual(losingMarker.baselineOrder, head.outlineMoveIntent.baselineOrder) ||
+    !overlappingMoveDestinationsAgree(head.outlineMoveIntent, losingMarker)) return;
+  const histories = branches.versions.map(revisionHistory);
+  const commonParent = head.outlineMoveIntent.baseRevision;
+  if (!commonParent || histories.some(history => history.length !== 2 || history[1] !== commonParent)) return;
+
+  const winningItems = branches.winner.items ?? [];
+  const losingItems = branches.versions[1].items ?? [];
+  if (!hasStableRowIds(winningItems) || !sameOutlineRowsIgnoringOrder(winningItems, losingItems) ||
+    !isEqual([...winningItems.map(item => item.listId)].sort(), [...head.outlineMoveIntent.baselineOrder].sort()) ||
+    isEqual(head.outlineMoveIntent.baselineOrder, winningItems.map(item => item.listId)) ||
+    isEqual(head.outlineMoveIntent.baselineOrder, losingItems.map(item => item.listId))) return;
+  const rowsById = new Map(winningItems.map(item => [item.listId, item]));
+  const baselineItems = head.outlineMoveIntent.baselineOrder
+    .flatMap(id => rowsById.has(id) ? [rowsById.get(id)!] : []);
+  if (baselineItems.length !== head.outlineMoveIntent.baselineOrder.length ||
+    !rowsMatchPersistedMove(baselineItems, winningItems, head.outlineMoveIntent) ||
+    !rowsMatchPersistedMove(baselineItems, losingItems, losingMarker)) return;
+  const mergedItems = reconcileOutlineItems(
+    baselineItems,
+    winningItems,
+    losingItems,
+    undefined,
+    [...head.outlineMoveIntent.moves, ...losingMarker.moves]
+      .map(move => ({ ...move, ownerKey: "saved-outline-reconciliation" })),
+  );
+  if (mergedItems.kind !== "merged") return;
+  // The reconciliation path is intentionally limited to order changes. A
+  // different edit to outline details or row content remains for normal save
+  // or the existing review flow.
+  const withoutItemsOrRevision = (document: DBItemListDetails) =>
+    Object.fromEntries(Object.entries(document).filter(([key]) =>
+      !["items", "_rev", "_revisions", "_conflicts", "outlineMoveIntent", "updatedAt"].includes(key),
+    ));
+  if (!isEqual(withoutItemsOrRevision(branches.winner), withoutItemsOrRevision(branches.versions[1]))) return;
+
+  const baselineRowsById = new Map(baselineItems.map(item => [item.listId, item]));
+  const movedIds = [...new Set([
+    ...head.outlineMoveIntent.moves.flatMap(move => move.movedIds),
+    ...losingMarker.moves.flatMap(move => move.movedIds),
+  ])];
+  const movedRows = movedIds
+    .flatMap(id => baselineRowsById.has(id) ? [baselineRowsById.get(id)!] : []);
+  if (movedRows.length !== movedIds.length || !isAuthorized(movedRows)) return;
+
+  const expectedGraph = branches.graph;
+  const latest = await readRevisionBranchSet(db, listId);
+  if (!isCurrent() || !sameRevisionGraph(expectedGraph, latest.graph)) return;
+  const allowedToMutate = () => isCurrent() && isAuthorized(movedRows);
+  if (!allowedToMutate()) return;
+
+  const next = { ...branches.winner, items: mergedItems.items, _rev: expectedGraph.winningRevision } as RevisionDoc;
+  delete next._conflicts;
+  delete next._revisions;
+  delete next.outlineMoveIntent;
+  let writtenRevision: string | undefined;
+  try {
+    writtenRevision = resultRevision(await db.put(next));
+  } catch (error) {
+    if (isPouchConflict(error)) return;
+    throw error;
+  }
+  if (!writtenRevision) return;
+
+  const verified = await readRevisionBranchSet(db, listId);
+  if (verified.graph.winningRevision !== writtenRevision ||
+    !isEqual(verified.graph.conflictRevisions, expectedGraph.conflictRevisions) ||
+    expectedGraph.conflictRevisions.some(revision =>
+      !isEqual(verified.graph.histories[revision], expectedGraph.histories[revision]),
+    ) ||
+    !isEqual(withoutOutlineRevisionMetadata(verified.winner), withoutOutlineRevisionMetadata(next))) return;
+
+  // A failed cleanup leaves the original leaves available; the merged winner
+  // is already verified and can still be presented and edited.
+  await retireReviewedBranches(db, listId, expectedGraph, writtenRevision, next, allowedToMutate)
+    .catch(() => false);
+  return verified.winner;
+};
 
 export const persistServiceListOverlays = (
   db: ServiceListFieldDb,

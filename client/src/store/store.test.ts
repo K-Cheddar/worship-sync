@@ -1,9 +1,11 @@
-import type { ItemContentOwner, SongV2Documents } from "../types";
+import type { DBItem, ItemContentOwner, ItemState, SongV2Documents } from "../types";
 import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
 import { loadSongV2Snapshot } from "../utils/songPersistence";
 import { createSongV2 } from "../utils/songV2Writer";
+import { createNewSlide } from "../utils/slideCreation";
+import { formatSong } from "../utils/overflow";
 
 const mockedCrossWindowLocks = new Map<string, Promise<void>>();
 if (typeof navigator !== "undefined") {
@@ -238,7 +240,6 @@ const loadStoreWithOverlayTemplatePersistence = () => {
   };
 };
 
-let mockActiveItemDb: any;
 const loadStoreWithItemPersistence = (
   recoveryStore = new Map<string, any>(),
   useRealRecoveryStorage = false,
@@ -260,7 +261,7 @@ const loadStoreWithItemPersistence = (
     remove: jest.fn(),
     allDocs: jest.fn(),
   };
-  mockActiveItemDb = databaseOverride ?? db;
+  let activeDatabase: any = databaseOverride ?? db;
   const globalFireDbInfo = {
     db: undefined,
     database: undefined,
@@ -304,7 +305,7 @@ const loadStoreWithItemPersistence = (
       };
     });
     jest.doMock("../context/controllerInfo", () => ({
-      get globalDb() { return mockActiveItemDb; },
+      get globalDb() { return activeDatabase; },
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
@@ -346,7 +347,7 @@ const loadStoreWithItemPersistence = (
     recoveryStorage,
     globalFireDbInfo,
     postMessage,
-    setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
+    setGlobalDb: (next: unknown) => { activeDatabase = next; },
     songPersistence: songPersistenceModule,
     deferredMutations,
     contentReplicationActivity,
@@ -413,6 +414,200 @@ describe("v2 remote refresh and pending-input boundaries", () => {
   });
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it("reconciles independent verse and chorus saves through the active Controller refresh", async () => {
+    jest.useRealTimers();
+    const songId = `store-v2-independent-sections-${Date.now()}-${Math.random()}`;
+    const localDb = new PouchDB(`${songId}-local`, { adapter: "idb" });
+    const remoteDb = new PouchDB(`${songId}-remote`, { adapter: "idb" });
+    const source = formatSong({
+      _id: songId,
+      type: "song",
+      name: "Better (w/ Standing on the Promises)",
+      selectedArrangement: 0,
+      selectedSlide: 1,
+      selectedBox: 1,
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+      arrangements: [{
+        id: "master",
+        name: "Master",
+        songOrder: [{ id: "verse-order", name: "Verse 1" }, { id: "chorus-order", name: "Chorus" }],
+        formattedLyrics: [
+          { id: "verse", name: "Verse 1", type: "Verse", words: "verse base", slideSpan: 1 },
+          { id: "chorus", name: "Chorus", type: "Chorus", words: "chorus baseline", slideSpan: 1 },
+        ],
+        slides: [
+          createNewSlide({ type: "Title", words: ["", "Better"] }),
+          createNewSlide({ type: "Verse", words: ["", "verse base"] }),
+          createNewSlide({ type: "Chorus", words: ["", "chorus baseline"] }),
+        ],
+      }],
+    } as ItemState) as DBItem;
+    let envA: ReturnType<typeof setup> | undefined;
+    let envB: ReturnType<typeof setup> | undefined;
+    let sessionA: { token: symbol; markInitialReplicationComplete: () => void; release: () => void } | undefined;
+    let sessionB: { token: symbol; markInitialReplicationComplete: () => void; release: () => void } | undefined;
+    try {
+      await createSongV2(localDb, source);
+      await localDb.replicate.to(remoteDb);
+      const baselineSnapshot = await loadSongV2Snapshot(localDb, songId);
+      const baseline = baselineSnapshot.hydrated;
+      envA = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: localDb,
+        baseline,
+      });
+      envB = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: remoteDb,
+        baseline,
+      });
+      await envA.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await envB.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      const ownerA: ItemContentOwner = {
+        scopeId: `user-a:church-a:${songId}`, databaseKey: songId, churchId: "church-a", accountId: "user-a",
+      };
+      const ownerB: ItemContentOwner = {
+        scopeId: `user-b:church-a:${songId}`, databaseKey: songId, churchId: "church-a", accountId: "user-b",
+      };
+      envA.globalFireDbInfo.churchId = ownerA.churchId;
+      envB.globalFireDbInfo.churchId = ownerB.churchId;
+      sessionA = envA.contentReplicationActivity.beginContentDatabaseSession(localDb.name);
+      sessionA.markInitialReplicationComplete();
+      sessionB = envB.contentReplicationActivity.beginContentDatabaseSession(remoteDb.name);
+      sessionB.markInitialReplicationComplete();
+      envA.deferredMutations.setActiveContentDatabase(ownerA, localDb as never);
+      envB.deferredMutations.setActiveContentDatabase(ownerB, remoteDb as never);
+      envA.store.dispatch(envA.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: ownerA }));
+      envA.store.dispatch(envA.itemSlice.actions.setIsLyricsEditorOpen(true));
+      envB.store.dispatch(envB.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: ownerB }));
+      envB.store.dispatch(envB.itemSlice.actions.setIsLyricsEditorOpen(true));
+
+      const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+      const editSection = (song: DBItem, section: number, words: string) => {
+        const draft = clone(song);
+        const lyric = draft.arrangements[0].formattedLyrics[section];
+        lyric.words = words;
+        const slide = draft.arrangements[0].slides.find(candidate => candidate.name === lyric.name)!;
+        slide.boxes[1].words = words;
+        return draft;
+      };
+      const waitForSectionText = async (database: PouchDB.Database, section: number, words: string) => {
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          const snapshot = await loadSongV2Snapshot(database, songId, true);
+          if (snapshot.hydrated.arrangements[0].formattedLyrics[section]?.words === words) return snapshot;
+          await new Promise(resolve => setTimeout(resolve, 100));
+          await flushListenerEffects();
+        }
+        throw new Error(`Song section ${section} did not persist: ${words}`);
+      };
+      const localEdit = editSection(baseline, 0, "Verse edited on Controller A");
+      envA.store.dispatch(envA.itemSlice.actions._updateArrangements(localEdit.arrangements));
+      await waitForSectionText(localDb, 0, "Verse edited on Controller A");
+      await flushListenerEffects();
+      expect(envA.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+
+      const remoteEdit = editSection(baseline, 1, "Chorus edited on Controller B");
+      envB.store.dispatch(envB.itemSlice.actions._updateArrangements(remoteEdit.arrangements));
+      await waitForSectionText(remoteDb, 1, "Chorus edited on Controller B");
+      await flushListenerEffects();
+      expect(envB.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+      const equivalentSlide = baselineSnapshot.slides.find(slide => slide.name === "Title")!;
+      const localEquivalentBranch = await localDb.get<typeof equivalentSlide>(equivalentSlide._id);
+      await localDb.put({ ...localEquivalentBranch, updatedAt: "2026-11-11T00:00:00.000Z" });
+      const equivalentBranch = await remoteDb.get<typeof equivalentSlide>(equivalentSlide._id);
+      await remoteDb.put({ ...equivalentBranch, updatedAt: "2026-11-12T00:00:00.000Z" });
+
+      await localDb.replicate.to(remoteDb);
+      await remoteDb.replicate.to(localDb);
+      const beforeRefresh = await loadSongV2Snapshot(localDb, songId, true);
+      expect(beforeRefresh.conflicts).toContainEqual(expect.objectContaining({
+        documentId: baselineSnapshot.arrangements[0]._id,
+      }));
+      expect(beforeRefresh.physicalConflicts).toContainEqual(expect.objectContaining({
+        documentId: equivalentSlide._id,
+      }));
+
+      envA.store.dispatch(envA.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: localDb as never,
+        owner: ownerA,
+        sessionToken: sessionA.token,
+      }]));
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await flushListenerEffects();
+
+      const offered = envA.store.getState().undoable.present.item;
+      expect(offered.pendingSongV2Conflicts).toBeUndefined();
+      expect(offered.pendingRemoteItem?.arrangements[0].formattedLyrics[0].words)
+        .toBe("Verse edited on Controller A");
+      expect(offered.pendingRemoteItem?.arrangements[0].formattedLyrics[1].words)
+        .toBe("Chorus edited on Controller B");
+      envA.store.dispatch(envA.itemSlice.actions.applyPendingRemoteItem(true, true));
+      await flushListenerEffects();
+
+      const adopted = envA.store.getState().undoable.present.item;
+      expect(adopted.hasRemoteUpdate).toBe(false);
+      expect(adopted.hasPendingUpdate).toBe(false);
+      expect(adopted.pendingRemoteItem).toBeNull();
+      expect(adopted.pendingSongV2Conflicts).toBeUndefined();
+      expect(adopted.arrangements[0].formattedLyrics.map((section: { words: string }) => section.words))
+        .toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      const reconciled = await loadSongV2Snapshot(localDb, songId, true);
+      expect(reconciled.conflicts).toBeUndefined();
+      expect(reconciled.physicalConflicts).toBeUndefined();
+
+      await localDb.replicate.to(remoteDb);
+      envB.store.dispatch(envB.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: remoteDb as never,
+        owner: ownerB,
+        sessionToken: sessionB.token,
+      }]));
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await flushListenerEffects();
+      const offeredToB = envB.store.getState().undoable.present.item;
+      expect(offeredToB.pendingSongV2Conflicts).toBeUndefined();
+      expect(offeredToB.pendingRemoteItem?.arrangements[0].formattedLyrics.map((section: { words: string }) => section.words))
+        .toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      envB.store.dispatch(envB.itemSlice.actions.applyPendingRemoteItem(true, true));
+      await flushListenerEffects();
+      const adoptedByB = envB.store.getState().undoable.present.item;
+      expect(adoptedByB.hasRemoteUpdate).toBe(false);
+      expect(adoptedByB.hasPendingUpdate).toBe(false);
+      expect(adoptedByB.pendingSongV2Conflicts).toBeUndefined();
+      expect(adoptedByB.arrangements[0].formattedLyrics.map((section: { words: string }) => section.words))
+        .toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      const otherController = await loadSongV2Snapshot(remoteDb, songId, true);
+      expect(otherController.conflicts).toBeUndefined();
+      expect(otherController.hydrated.arrangements[0].formattedLyrics.map(section => section.words))
+        .toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+
+      const continued = editSection(adopted, 1, "Third edit after reconciliation");
+      envA.store.dispatch(envA.itemSlice.actions._updateArrangements(continued.arrangements));
+      const finalSnapshot = await waitForSectionText(localDb, 1, "Third edit after reconciliation");
+      await flushListenerEffects();
+      const finalState = envA.store.getState().undoable.present.item;
+      expect(finalState.hasPendingUpdate).toBe(false);
+      expect(finalState.hasRemoteUpdate).toBe(false);
+      expect(finalState.pendingSongV2Conflicts).toBeUndefined();
+      expect(finalSnapshot.conflicts).toBeUndefined();
+      expect(finalSnapshot.hydrated.arrangements[0].formattedLyrics[1].words)
+        .toBe("Third edit after reconciliation");
+    } finally {
+      sessionA?.release();
+      sessionB?.release();
+      envA?.deferredMutations.setActiveContentDatabase(null);
+      envB?.deferredMutations.setActiveContentDatabase(null);
+      await envA?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await envB?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await Promise.all([localDb.destroy(), remoteDb.destroy()]);
+    }
   });
 
   it("autosaves resumed edits through the restored account owner after conflict resolution", async () => {

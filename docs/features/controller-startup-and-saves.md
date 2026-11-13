@@ -19,11 +19,14 @@ An existing church opens its saved content safely, including offline, and overla
 - Acknowledgments and publication describe the exact persisted intent; an older save cannot clear a newer pending draft.
 
 ## Historical outline revisions
-Authorized by the November 11, 2026 outline revision conflict strategy request:
-- Read and display the winning outline without automatically merging, deleting or reviewing losing leaves. Historical leaves are not necessarily older edits and remain available for separately authorized maintenance.
+Authorized by the November 11, 2026 outline revision conflict strategy request and the November 12, 2026 concurrent-editing follow-up:
+- Read and display the winning outline without blocking on historical losing leaves. Historical leaves are not necessarily older edits and remain available for separately authorized maintenance.
 - Save genuine current edits against their loaded baseline and the latest winner. A successful CAS extends that leaf; replication carries the new descendant and preserves other leaves. A disconnected writer extending another leaf may create another historical conflict; it is preserved rather than automatically discarded.
 - Active edits that overlap the latest winner require focused decisions, with compatible edits retained. The draft remains visible until the choice is durably acknowledged.
 - Independent row moves are rebased from their recorded drag destinations onto the latest winner, then merged by stable outline occurrence IDs. A move to the same row's incompatible destination or an ambiguous legacy reorder retains the draft and opens a focused order choice. Move metadata is runtime-only and follows the outline owner across refreshes and navigation.
+- A successful order-only save may carry an optional `outlineMoveIntent` field on that revision. It records the exact parent revision, baseline row order and persisted move destinations only when stable row bodies match the loaded baseline and those destinations reproduce the saved order. The field is revision-local provenance, not a separate registry, and a later ordinary save or merge clears it.
+- An authorized Controller may automatically incorporate exactly two direct sibling leaves only when both contain valid move provenance for the same parent and baseline order, their stable row bodies match, all non-order document fields match, and the moves are compatible. The merge uses both persisted destinations, writes with the current winning revision, verifies the revision graph, and retires the incorporated sibling only after the merged winner is confirmed. The baseline order in the markers allows this narrow merge when a newly opened replica has the leaf revisions but not the ancestor body.
+- Missing or malformed markers, historical or multi-leaf graphs, changed row content or document fields, ambiguous ordering, incompatible destinations, read-only access, failed compare-and-swap, and changed owner/session boundaries never trigger an automatic merge. Those branches remain available through the existing focused review path; ordinary loading still presents the winner.
 - Retire loaded outline identity and baseline atomically with content on owner changes. Initialization and replication alone never create a draft. Intentional removal of all initialized rows remains a valid edit.
 
 ## Switching outlines
@@ -32,7 +35,7 @@ Authorized by the November 11, 2026 outline revision conflict strategy request:
 - Preserve outgoing pending drafts for rapid return while saves finish on the original database/document. Only the exact saved array may be acknowledged; retired completions cannot publish an update for the newly selected owner.
 - Empty overlay initialization resets membership, initial IDs, initialization, and pending state while retaining overlay history. Retired overlay-editor selections stay hidden and disabled; already accepted editor drafts retain their original database.
 
-Authorization: current outline-switch request, 2026-10-29. Runtime ownership/draft metadata is not part of stored PouchDB documents.
+Authorization: current outline-switch request, 2026-10-29. Runtime ownership and pending draft metadata are not stored in PouchDB; the narrowly scoped persisted move marker above is written only on a verified order-only saved revision.
 
 ## Evidence
 `controllerBootstrap.integration.test.tsx` mounts the real ControllerInfoProvider, Outlines, controller lifecycle, and Redux together (overriding Jest's usual mocked context). It covers delayed remote content, verified-empty creation, offline reads, aux scopes, and retained edits. Provider tests cover failure/cancellation, progress, guest mode, and church switches. Bootstrap/media-folder helper tests cover eligibility and missing-document ownership boundaries. `persistServiceListField.test.ts` controls reads/puts/conflicts; `store.test.ts` covers acknowledgments, broadcasts, independent fields, outgoing outlines, and same-ID database switching.

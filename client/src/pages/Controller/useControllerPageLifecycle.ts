@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef } from "react";
+import { useCallback, useContext, useEffect, useRef, useSyncExternalStore } from "react";
 import { songV2DocumentsChanged } from "../../store/store";
 import { useLayoutEffect } from "react";
 import { useStore } from "react-redux";
@@ -102,7 +102,11 @@ import { loadOrCreateControllerMediaRouteFolders } from "../../utils/controllerM
 import { beginOutlineContentLifecycle, getOutlineDatabaseKey, getOutlineOwnerKey, setOutlineContentDatabase } from "../../store/outlineContent";
 import type { ItemContentOwner } from "../../types";
 import { getActiveContentDatabaseOwner, getContentDatabaseForOwner } from "../../store/deferredItemMutations";
-import { getContentDatabaseSessionToken } from "../../utils/contentReplicationActivity";
+import {
+  getContentDatabaseSessionToken,
+  subscribeToContentActivity,
+} from "../../utils/contentReplicationActivity";
+import { reconcileConcurrentOutlineMoves } from "../../utils/persistServiceListField";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -116,6 +120,11 @@ export const useControllerPageLifecycle = () => {
   const { showToast } = useToast();
   const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote, bootstrapReady, canCreateBootstrapDocuments } =
     useContext(ControllerInfoContext) || {};
+  const contentDatabaseSessionToken = useSyncExternalStore(
+    subscribeToContentActivity,
+    () => db ? getContentDatabaseSessionToken(db.name) : null,
+    () => null,
+  );
   const cloudRef = useRef(cloud);
   cloudRef.current = cloud;
   const hasCloud = Boolean(cloud);
@@ -126,6 +135,14 @@ export const useControllerPageLifecycle = () => {
     firebaseDb,
     loginState,
   } = useContext(GlobalInfoContext) || {};
+  const accessRef = useRef(access);
+  accessRef.current = access;
+  const canReconcileOutlineMoves = useCallback((movedRows: DBItemListDetails["items"]) => {
+    const currentAccess = accessRef.current;
+    return currentAccess === "full" || (currentAccess === "music" && movedRows.every(row =>
+      row.type === "song" || row.type === "free",
+    ));
+  }, []);
 
   const selectedListId = useSelector(
     (state) => state.undoable.present.itemLists.selectedList?._id,
@@ -252,17 +269,22 @@ export const useControllerPageLifecycle = () => {
           if (currentSelectedList?._id && _update._id === currentSelectedList._id) {
             const dbAtRead = databaseRef.current;
             if (!dbAtRead) continue;
+            const databaseSessionToken = getContentDatabaseSessionToken(dbAtRead.name);
             const selectionIdentity = selectedOutlineIdentityRef.current;
             const eventKey = _update._rev ? `${selectionIdentity.generation}:${_update._id}:${_update._rev}` : undefined;
             const events = outlineEventsRef.current;
             if (eventKey && events.has(eventKey)) continue;
             if (eventKey) events.add(eventKey);
+            const clearPendingEvent = () => {
+              if (eventKey) events.delete(eventKey);
+            };
             if (events.size > 200) events.delete(events.values().next().value!);
             const outlineGeneration = currentState.undoable.present.itemList.outlineLoadGeneration;
             const syncGeneration = ++serviceListSyncGenerationRef.current;
             const isCurrentUpdate = () => {
               const current = (store.getState() as RootState).undoable.present;
               return databaseRef.current === dbAtRead &&
+                getContentDatabaseSessionToken(dbAtRead.name) === databaseSessionToken &&
                 selectedOutlineIdentityRef.current.generation === selectionIdentity.generation &&
                 serviceListSyncGenerationRef.current === syncGeneration &&
                 current.itemLists.selectedList?._id === _update._id &&
@@ -271,9 +293,26 @@ export const useControllerPageLifecycle = () => {
             let update: DBItemListDetails;
             try {
               const head = await dbAtRead.get(_update._id, { conflicts: true }) as DBItemListDetails;
-              if (!isCurrentUpdate()) continue;
+              if (!isCurrentUpdate()) {
+                clearPendingEvent();
+                continue;
+              }
               if (!head) throw new Error("The selected outline document was not returned by the database");
               update = head;
+              if (accessRef.current === "full" || accessRef.current === "music") {
+                const reconciled = await reconcileConcurrentOutlineMoves(
+                  dbAtRead,
+                  _update._id,
+                  isCurrentUpdate,
+                  canReconcileOutlineMoves,
+                  update,
+                );
+                if (!isCurrentUpdate()) {
+                  clearPendingEvent();
+                  continue;
+                }
+                if (reconciled) update = reconciled;
+              }
             } catch (error) {
               if (eventKey) events.delete(eventKey);
               if (isCurrentUpdate()) {
@@ -281,7 +320,10 @@ export const useControllerPageLifecycle = () => {
               }
               throw error;
             }
-            if (!isCurrentUpdate()) continue;
+            if (!isCurrentUpdate()) {
+              clearPendingEvent();
+              continue;
+            }
             dispatch(
               setServicePlanningOutlinePlanBinding(
                 update.servicePlanBinding ?? null,
@@ -316,7 +358,10 @@ export const useControllerPageLifecycle = () => {
                 refetchOverlayHistory = true;
               }
               const dbAtRead = databaseRef.current;
-              if (!dbAtRead) continue;
+              if (!dbAtRead) {
+                clearPendingEvent();
+                continue;
+              }
               const overlaysAtRead = currentOverlayState.list;
               const formattedOverlays = await getOverlaysByIds(
                 dbAtRead,
@@ -326,6 +371,7 @@ export const useControllerPageLifecycle = () => {
               const latestOverlays = latestState.undoable.present.overlays;
               const latestSelectionIdentity = selectedOutlineIdentityRef.current;
               if (
+                !isCurrentUpdate() ||
                 databaseRef.current !== dbAtRead ||
                 latestSelectionIdentity.generation !== selectionIdentity.generation ||
                 latestState.undoable.present.itemLists.selectedList?._id !== update._id ||
@@ -337,6 +383,7 @@ export const useControllerPageLifecycle = () => {
                   overlayIdsAtRead,
                 )
               ) {
+                clearPendingEvent();
                 continue;
               }
 
@@ -411,7 +458,7 @@ export const useControllerPageLifecycle = () => {
         console.error(e);
       }
     },
-    [dispatch, cloud, db, store],
+    [dispatch, cloud, db, store, canReconcileOutlineMoves],
   );
 
   const updateMediaFromExternal = useCallback(
@@ -789,10 +836,12 @@ export const useControllerPageLifecycle = () => {
     let cancelled = false;
     const ownerState = (store.getState() as RootState).undoable.present;
     const ownerKey = getOutlineOwnerKey(db ? getOutlineDatabaseKey(db) : "", selectedListId);
+    const databaseSessionTokenAtStart = contentDatabaseSessionToken;
     const generation = ownerState.itemList.outlineLoadGeneration;
     const isCurrent = () => {
       const current = (store.getState() as RootState).undoable.present;
       return !cancelled && databaseRef.current === db &&
+        (!db || getContentDatabaseSessionToken(db.name) === databaseSessionTokenAtStart) &&
         current.itemList.outlineOwnerKey === ownerKey && current.itemList.outlineLoadGeneration === generation;
     };
 
@@ -863,6 +912,23 @@ export const useControllerPageLifecycle = () => {
           dispatch(setItemListIsLoading(false));
           dispatch(setItemListIsRetrying(false));
           return;
+        }
+        if ((accessRef.current === "full" || accessRef.current === "music") && isCurrentLoad()) {
+          try {
+            const reconciled = await reconcileConcurrentOutlineMoves(
+              db,
+              selectedListId,
+              () => isCurrentLoad() && serviceListSyncGenerationRef.current === contentSyncGeneration,
+              canReconcileOutlineMoves,
+              response,
+            );
+            if (reconciled) response = reconciled;
+          } catch (error) {
+            // Reconciliation is opportunistic. A failed read or write leaves
+            // the winning saved outline available through the normal load.
+            console.error("Could not reconcile concurrent outline moves", error);
+          }
+          if (!isCurrentLoad()) return;
         }
         if (!response || typeof response !== "object") {
           throw new Error("The selected outline document was not returned by the database");
@@ -941,7 +1007,7 @@ export const useControllerPageLifecycle = () => {
     return () => {
       cancelled = true;
     };
-  }, [dispatch, db, selectedListId, hasCloud, cloud, bootstrapReady, activeControllerId, outlineScope, outlineLoadAttempt, outlineLoadGeneration, store]);
+  }, [dispatch, db, selectedListId, hasCloud, cloud, bootstrapReady, activeControllerId, outlineScope, outlineLoadAttempt, outlineLoadGeneration, store, canReconcileOutlineMoves, contentDatabaseSessionToken]);
 
   useEffect(() => {
     if (!updater) return;

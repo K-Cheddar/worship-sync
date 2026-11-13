@@ -592,12 +592,42 @@ describe("Better Verse 1A / Verse 1B through real formatting, state and PouchDB"
       expect(first.hydrated.arrangements[0].formattedLyrics[0].words)
         .toBe("alpha\nbeta1\ngamma\ndelta1");
       expect(first.conflicts).toBeUndefined();
-      const recovered = await loadSongV2Snapshot(db, baseline._id, true);
       expect(put).toHaveBeenCalledTimes(1);
-      expect(recovered.hydrated.arrangements[0].formattedLyrics[0].words).toBe("alpha\nbeta1\ngamma\ndelta1");
+
+      // A fresh handle discards the WeakMap record and observes the actual
+      // physical leaves that survived the failed retirement.
+      const databaseName = db.name;
+      await db.close();
+      db = new PouchDB(databaseName, { adapter: "idb" });
+      const restartedSnapshot = await loadSongV2Snapshot(db, baseline._id, true);
+      expect(restartedSnapshot.physicalConflicts?.length).toBeGreaterThan(0);
+      expect(restartedSnapshot.conflicts?.length).toBeGreaterThan(0);
+
+      const restartPut = jest.spyOn(db, "put");
+      const restartRemove = jest.spyOn(db, "remove").mockRejectedValueOnce(new Error("cleanup still offline"));
+      const recovered = await loadReconciledSongV2Snapshot(db, baseline._id, restartedSnapshot, () => true);
+      expect(restartPut).not.toHaveBeenCalled();
+      expect(restartRemove).toHaveBeenCalled();
+      expect(recovered.hydrated.arrangements[0].formattedLyrics[0].words)
+        .toBe("alpha\nbeta1\ngamma\ndelta1");
+      expect(recovered.conflicts).toBeUndefined();
       expect((await loadSongV2Snapshot(db, baseline._id, true)).conflicts).toBeUndefined();
-      const continued = await saveSong(db, editSection(recovered.hydrated, 1, "continued after cleanup failure"), recovered.hydrated);
-      expect(continued.arrangements[0].formattedLyrics[1].words).toBe("continued after cleanup failure");
+
+      await db.close();
+      db = new PouchDB(databaseName, { adapter: "idb" });
+      const cleanupRetrySnapshot = await loadSongV2Snapshot(db, baseline._id, true);
+      expect(cleanupRetrySnapshot.conflicts?.length).toBeGreaterThan(0);
+      const retryPut = jest.spyOn(db, "put");
+      const retryRemove = jest.spyOn(db, "remove");
+      const cleanupRetried = await loadReconciledSongV2Snapshot(db, baseline._id, cleanupRetrySnapshot, () => true);
+      expect(retryPut).not.toHaveBeenCalled();
+      expect(retryRemove).toHaveBeenCalled();
+      expect(cleanupRetried.conflicts).toBeUndefined();
+      expect((await loadSongV2Snapshot(db, baseline._id, true)).physicalConflicts).toBeUndefined();
+
+      const continued = await saveSong(db, editSection(cleanupRetried.hydrated, 1, "continued after restart cleanup failure"), cleanupRetried.hydrated);
+      expect(continued.arrangements[0].formattedLyrics[1].words)
+        .toBe("continued after restart cleanup failure");
     } finally { await peer.destroy(); }
   });
 

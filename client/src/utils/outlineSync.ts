@@ -337,6 +337,9 @@ const movedRowCandidates = (baseline: string[], order: string[]) => {
   return candidates;
 };
 
+/** Returns the one row whose position changed, when an order can be explained
+ * by a single unambiguous row move. This is also used when a saved revision no
+ * longer has its runtime drag intent attached. */
 const hasSingleUnambiguousMovedRow = (baseline: string[], order: string[]) =>
   movedRowCandidates(baseline, order)?.size === 1;
 
