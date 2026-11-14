@@ -3,6 +3,8 @@
 # Electron build outputs
 release/
 dist-electron/
+buildResources/video-tools/
+.cache/video-tools/
 *.dmg
 *.exe
 *.AppImage

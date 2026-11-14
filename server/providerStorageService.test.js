@@ -540,3 +540,23 @@ test("Mux usage is released only after provider deletion succeeds", async () => 
   await service.deleteMuxAsset({ churchId: "church-a", assetId: "mux-asset" });
   assert.equal(removed, 1);
 });
+
+test("Mux cleanup retry acknowledges an already deleted asset without changing another church's ownership", async () => {
+  let owner;
+  let removed = 0;
+  const service = createProviderStorageService({
+    getMuxClient: () => ({ video: { assets: {
+      retrieve: async () => { throw Object.assign(new Error("missing"), { status: 404 }); },
+      delete: async () => { throw new Error("must not delete an absent asset"); },
+    } } }),
+    storageQuota: {
+      ...createQuota({}),
+      getProviderAssetOwner: async () => owner,
+      removeProviderAsset: async () => { removed += 1; },
+    },
+  });
+  assert.deepEqual(await service.deleteMuxAsset({ churchId: "church-a", assetId: "already-deleted" }), { success: true });
+  owner = { churchId: "church-b" };
+  await assert.rejects(service.deleteMuxAsset({ churchId: "church-a", assetId: "owned-by-b" }), (error) => error.statusCode === 403);
+  assert.equal(removed, 0);
+});

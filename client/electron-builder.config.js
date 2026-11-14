@@ -1,3 +1,5 @@
+import { prepareVideoTools } from "./scripts/prepare-video-tools.mjs";
+
 const config = {
   appId: "com.worshipsync.app",
   productName: "WorshipSync",
@@ -31,8 +33,20 @@ const config = {
   // Ensure buildResources (including icons) are available at runtime
   // This is separate from icon embedding - that's handled by win.icon
   extraResources: [
-    "buildResources/**/*"
+    {
+      from: "buildResources",
+      to: "buildResources",
+      filter: ["**/*", "!video-tools/**/*"],
+    },
   ],
+
+  // Keep native tools outside ASAR. Only Windows x64 bundles the Phase 1 tools.
+  beforePack: async (context) => {
+    const isX64 = Number(context.arch) === 1 || context.arch?.toString?.() === "x64";
+    if (context.electronPlatformName === "win32" && isX64) {
+      await prepareVideoTools("win32", "x64");
+    }
+  },
 
   asar: true,
   npmRebuild: false,
@@ -40,6 +54,13 @@ const config = {
 
   win: {
     target: ["nsis"],
+    extraResources: [
+      {
+        from: "buildResources/video-tools/win32-x64",
+        to: "buildResources/video-tools/win32-x64",
+        filter: ["**/*"],
+      },
+    ],
     // Icon path relative to buildResources directory
     icon: "icon.ico",
     // Critical: This ensures the icon is embedded in the executable

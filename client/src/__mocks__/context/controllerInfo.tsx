@@ -11,9 +11,17 @@ export let globalDb: unknown = undefined;
 export let globalBibleDb: unknown = undefined;
 export let globalBroadcastRef: unknown = undefined;
 
+export const setGlobalContentDatabase = (database: unknown) => {
+  globalDb = database;
+};
+
 export const updateGlobalBroadcast = jest.fn();
 
-const ControllerInfoProvider = ({ children }: { children: React.ReactNode }) => (
+const ControllerInfoProvider = ({
+  children,
+}: {
+  children: React.ReactNode;
+}) => (
   <ControllerInfoContext.Provider value={null}>
     {children}
   </ControllerInfoContext.Provider>

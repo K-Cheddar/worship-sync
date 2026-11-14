@@ -57,17 +57,22 @@ interface ElectronDesktopCaptureSource {
 }
 
 interface ElectronLocalAsset {
+  /** Native base hash returned only for a staged relink. */
+  previousContentHash?: string;
   assetId: string;
   workspaceId?: string;
   kind: "image" | "video" | "audio" | "pdf";
   fileName: string;
   contentType: string;
+  contentHash?: string;
+  storageMode?: "managed" | "linked";
   size: number;
   width?: number;
   height?: number;
   createdAt: string;
   updatedAt: string;
   url: string;
+  savedFileName?: string;
 }
 
 interface PreparedVideoSourceInfo {
@@ -286,6 +291,72 @@ interface ElectronAPI {
   ) => Promise<ElectronLocalAsset>;
   getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
+  linkLocalVideoFile: (workspaceId: string) => Promise<ElectronLocalAsset | undefined>;
+  notifyLocalVideoAssetChanged: (assetId: string, contentHash: string) => Promise<boolean>;
+  onLocalVideoAssetChanged: (callback: (assetId: string) => void) => () => void;
+  getLocalVideoRelinkStatus: (assetId: string, candidateId: string) => Promise<{ status: "pending" | "committed" | "superseded" | "missing"; asset?: ElectronLocalAsset }>;
+  commitRelinkLocalVideoFile: (assetId: string, candidateId: string) => Promise<ElectronLocalAsset>;
+  relinkLocalVideoFile: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
+
+  // Native desktop video download. Job output paths remain in the main process.
+  isVideoDownloaderAvailable: () => Promise<boolean>;
+  inspectVideoUrl: (url: string) => Promise<import("./src/types/electron").DesktopVideoInspection>;
+  startVideoDownload: (input: {
+    jobId: string;
+    inspectionId: string;
+    quality: number | "best";
+    destinationDirectoryId?: string;
+  }) => Promise<{ jobId: string }>;
+  cancelVideoDownload: (jobId: string) => Promise<boolean>;
+  importDownloadedVideo: (input: {
+    jobId: string;
+    workspaceId: string;
+    width: number;
+    height: number;
+  }) => Promise<ElectronLocalAsset>;
+  saveDownloadedVideoExternally: (input: {
+    jobId: string;
+    workspaceId: string;
+    displayName: string;
+    width: number;
+    height: number;
+  }) => Promise<ElectronLocalAsset>;
+  uploadDownloadedVideoToMux: (jobId: string, url: string) => Promise<void>;
+  uploadLocalVideoAssetToMux: (input: {
+    jobId: string;
+    assetId: string;
+    url: string;
+  }) => Promise<void>;
+  cleanupVideoDownload: (jobId: string) => Promise<boolean>;
+  getVideoDownloadPreferences: () => Promise<{
+    saveOutsideWorshipSync: boolean;
+    uploadToCloud: boolean;
+    hasDestinationDirectory: boolean;
+    destinationDirectoryAvailable: boolean;
+    destinationDirectoryId?: string;
+    destinationDirectoryDisplay?: string;
+  }>;
+  updateVideoDownloadPreferences: (preferences: {
+    saveOutsideWorshipSync?: boolean;
+    uploadToCloud?: boolean;
+  }) => Promise<{
+    saveOutsideWorshipSync: boolean;
+    uploadToCloud: boolean;
+    hasDestinationDirectory: boolean;
+    destinationDirectoryAvailable: boolean;
+    destinationDirectoryId?: string;
+    destinationDirectoryDisplay?: string;
+  }>;
+  chooseVideoDownloadDirectory: () => Promise<{
+    hasDestinationDirectory: boolean;
+    destinationDirectoryAvailable: boolean;
+    destinationDirectoryId?: string;
+    destinationDirectoryDisplay?: string;
+  } | undefined>;
+  onVideoDownloadProgress: (
+    callback: (event: import("./src/types/electron").DesktopVideoDownloadEvent) => void,
+  ) => () => void;
+
   getDesktopCaptureSources: (options?: {
     withThumbnails?: boolean;
   }) => Promise<ElectronDesktopCaptureSource[]>;

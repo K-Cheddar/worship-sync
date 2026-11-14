@@ -176,6 +176,47 @@ describe("useServiceVideoCandidates", () => {
     delete (window as { electronAPI?: unknown }).electronAPI;
   });
 
+  it("refreshes a saved item's prepared native source after its stable asset is relinked", async () => {
+    const assetId = "prepared-relink-stable";
+    const media = video("library-video", `local-video-file://${assetId}`, { localVideoFile: {
+      id: assetId, ownerDeviceId: "device", ownerLabel: "PC", fileName: "video.mp4", contentType: "video/mp4",
+      contentRevision: "saved-old-revision", storagePolicy: "local-only",
+    } });
+    let source = `worshipsync-media://asset/${assetId}?v=old`;
+    Object.defineProperty(window, "electronAPI", { configurable: true, value: { getLocalAsset: jest.fn(async () => ({ url: source })) } });
+    const { result } = renderCandidates([item("saved-item", "Saved item", [slide("slide", [{ id: "video", mediaInfo: media }])])]);
+    await waitFor(() => expect(result.current.candidates).toEqual([expect.objectContaining({ source })]));
+    source = `worshipsync-media://asset/${assetId}?v=new`;
+    act(() => window.dispatchEvent(new CustomEvent("worshipsync-local-video-file-change", { detail: { assetId } })));
+    await waitFor(() => expect(result.current.candidates).toEqual([expect.objectContaining({
+      mediaKey: `local-video:${assetId}:saved-old-revision`, source,
+    })]));
+  });
+
+  it("invalidates a partially resolved inventory when a linked source changes during loading", async () => {
+    const ids = ["loading-relink", "loading-held"];
+    const media = ids.map((id) => video(id, `local-video-file://${id}`, { localVideoFile: {
+      id, ownerDeviceId: "device", ownerLabel: "PC", fileName: "video.mp4", contentType: "video/mp4", storagePolicy: "local-only",
+    } }));
+    let firstSource = "worshipsync-media://asset/loading-relink?v=old";
+    let release!: (value: { url: string }) => void;
+    let held = false;
+    const getLocalAsset = jest.fn(async (id: string) => {
+      if (id === ids[0]) return { url: firstSource };
+      held = true;
+      return new Promise<{ url: string }>((resolve) => { release = resolve; });
+    });
+    Object.defineProperty(window, "electronAPI", { configurable: true, value: { getLocalAsset } });
+    const { result } = renderCandidates([item("loading-item", "Loading", [slide("slide", media.map((entry) => ({ id: entry.id, mediaInfo: entry })))])]);
+    await waitFor(() => expect(held).toBe(true));
+    firstSource = "worshipsync-media://asset/loading-relink?v=new";
+    act(() => window.dispatchEvent(new CustomEvent("worshipsync-local-video-file-change", { detail: { assetId: ids[0] } })));
+    await waitFor(() => expect(getLocalAsset.mock.calls.filter(([id]) => id === ids[0])).toHaveLength(2));
+    await act(async () => { release({ url: "worshipsync-media://asset/loading-held?v=unchanged" }); });
+    await waitFor(() => expect(result.current.candidates).toEqual(expect.arrayContaining([expect.objectContaining({ source: firstSource })])));
+    expect(result.current.candidates.some((candidate) => candidate.source.endsWith("v=old"))).toBe(false);
+  });
+
   it("returns a bounded, deduplicated set of posters near the current item", async () => {
     const docs = [
       item("item-1", "One", [

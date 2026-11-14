@@ -22,7 +22,7 @@ import {
   isHLSVideoSource,
 } from "../utils/isInstantVideoSource";
 import { isPlayableMediaSource } from "../utils/mediaSource";
-import { parseLocalVideoFileAssetId } from "../utils/localVideoFileAssets";
+import { parseLocalVideoFileAssetId, subscribeLocalVideoFileChanges } from "../utils/localVideoFileAssets";
 import {
   acquireLocalVideoFileUrl,
   peekLocalVideoFileUrl,
@@ -1234,6 +1234,17 @@ export const useServiceVideoCandidates = ({
   }, [enabled, handleUpdate, updater]);
 
   useGlobalBroadcast(handleUpdate);
+
+  useEffect(() => {
+    if (!enabled) return;
+    return subscribeLocalVideoFileChanges((assetId) => {
+      const prefix = `local-video:${assetId}:`;
+      if (outlineLoad.state !== "loaded" || serviceMediaRef.current.length === 0 ||
+          serviceMediaRef.current.some((item) => [...item.candidates, ...item.diagnostics].some((candidate) => candidate.mediaKey.startsWith(prefix)))) {
+        void loadServiceMedia();
+      }
+    });
+  }, [enabled, loadServiceMedia, outlineLoad.state]);
 
   useEffect(() => subscribeToElectronMediaSurfaceDiagnostics(
     () => undefined,

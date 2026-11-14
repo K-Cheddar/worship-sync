@@ -1165,6 +1165,18 @@ describe("ElectronMediaSurfacePool", () => {
     await waitFor(() => expect(surface).toHaveAttribute("data-prepared-state", "playing"));
   });
 
+  it("reprepares a paused saved identity after its native content revision changes", async () => {
+    const mediaKey = "local-video:stable:saved-old-revision";
+    const original = { mediaKey, source: "worshipsync-media://asset/stable?v=old" };
+    const replacement = { mediaKey, source: "worshipsync-media://asset/stable?v=new" };
+    const { rerender } = render(<ElectronMediaSurfacePool enabled candidates={[original]} views={[]} />);
+    await waitFor(() => expect(screen.getByTestId(`electron-media-surface-${mediaKey}`)).toHaveAttribute("data-prepared-state", "ready"));
+    expect(screen.getByTestId(`electron-media-surface-video-${mediaKey}`)).toHaveAttribute("src", original.source);
+    rerender(<ElectronMediaSurfacePool enabled candidates={[replacement]} views={[]} />);
+    await waitFor(() => expect(screen.getByTestId(`electron-media-surface-video-${mediaKey}`)).toHaveAttribute("src", replacement.source));
+    await waitFor(() => expect(screen.getByTestId(`electron-media-surface-${mediaKey}`)).toHaveAttribute("data-prepared-state", "ready"));
+  });
+
   it("omits React opacity ownership when the view delegates to GSAP", async () => {
     const delegatedView: ElectronMediaSurfaceView = {
       ...view(false),

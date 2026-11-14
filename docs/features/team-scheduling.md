@@ -89,6 +89,15 @@ A schedule follows **Virtual → Draft ↔ Published**.
 
 **Approval source:** Current product-owner request, 2026-10-15. This Forms behavior adds Team-level availability coverage and filtering without changing scheduling, form-link, response, SMS, or authorization contracts.
 
+### Church-wide member service availability editing
+
+- Administrators and users with church-wide Teams edit permission can review a member's upcoming service occurrences in the full Members editor. The view uses the configured church timezone and the shared service occurrence generator, including combined services and occurrences without saved schedules.
+- Each occurrence can be set to Available, Unavailable, or Not set. Not set removes an explicit response and remains distinct from Unavailable.
+- Save changes update only the selected member's `serviceAvailability` keys. Other occurrence responses and profile fields remain intact. A stale member revision returns a conflict and keeps the local edits available for review.
+- Team-scoped member editors do not receive this capability. Availability edits do not modify assignments, responses, intake history, or notification state.
+
+**Approval source:** Current product-owner request, “WorshipSync — Phase 1: Admin Service Availability Editing,” 2026-11-02.
+
 ### Volunteer account identity and church membership
 
 - Signed-in My Schedule resolves identity only from the authenticated account's roster link in the requested church. Names and email addresses are never used to find a roster record.
@@ -134,6 +143,8 @@ Shared identity parity and preservation clarified by the October 21, 2026 Shared
 | Send an assignment update | Send only after an explicit send action, with deduplication/relevant-update behavior. |
 
 ## Product decisions
+
+Administrator service availability editing (current product-owner request, 2026-11-02): add a collapsible availability section to the full member editor with current and next month shown by default and later months available by navigation. Save only changed occurrence keys through a church-wide authorized, revision-checked operation; keep Not set as absence of a preference and retain unsaved edits for conflict review. Do not extend the capability to team-scoped managers or change intake, scheduling eligibility, assignments, or notifications.
 
 Service additions and historical differences (product-owner request, 2026-11-03): preserve populated schedules while reconciling only unambiguous, exclusively owned rows. Historical Sabbath grouping differences in the regression fixture come from saved `group:sabbath` occurrences containing Worship + Study while the current test definitions omit `serviceGroupId` and generate two standalone rows. The read model correctly marks those mappings ambiguous; it cannot determine when a service grouping changed because no definition history is stored. The repository does not include a production schedule snapshot, so the live church data must not be inferred from this fixture. Unrelated additions are reconciled through the existing ensure transaction, while mismatched rows and all operational maps remain unchanged. See [root cause and historical verification](../team-scheduling-service-changes.md).
 

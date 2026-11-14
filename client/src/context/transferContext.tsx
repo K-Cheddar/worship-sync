@@ -9,13 +9,13 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Activity, X } from "lucide-react";
+import { Activity, Minus } from "lucide-react";
 import Button from "../components/Button/Button";
 import Modal from "../components/Modal/Modal";
 import { TransferProgress } from "../components/TransferProgress/TransferProgress";
 import type { CanvaImportProgressEvent, CanvaImportResult } from "../api/canva";
 import { formatCanvaImportError } from "../utils/canvaImportError";
-import { getActivitySummary, getTransferOverview, type Transfer } from "./transferModel";
+import { getActivitySummary, getMediaTransferOverview, getTransferOverview, type Transfer } from "./transferModel";
 import { uploadChurchResource } from "../api/auth";
 import type { ChurchResource } from "../types/churchResource";
 
@@ -238,11 +238,11 @@ const TransferPanel = ({ transfers, isMinimized, hasLocalActivityHost, onMinimiz
       <aside aria-label="Activity" aria-hidden={isMinimized || undefined} data-testid="activity-panel" className={`fixed bottom-4 right-4 z-[80] origin-bottom-right transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl ${isMinimized ? "pointer-events-none scale-95 opacity-0" : "scale-100 opacity-100"}`}>
         <div className="flex items-center justify-between border-b border-gray-700 px-3 py-2">
           <h2 className="flex items-center gap-2 text-sm font-semibold"><Activity size={16} aria-hidden data-testid="activity-icon" className={activityAccentClass(summary.accent)} />{summary.label}</h2>
-          <Button variant="tertiary" svg={X} title="Close activity" aria-label="Close activity" onClick={onMinimize} />
+          <Button variant="tertiary" svg={Minus} title="Minimize activity" aria-label="Minimize activity" onClick={onMinimize} />
         </div>
         <ul className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto p-2">
           {transfers.map((transfer) => <li key={transfer.id} className="rounded-md bg-gray-800 p-3">
-            <TransferProgress transfer={transfer} variant="card" />
+            <TransferProgress transfer={transfer} variant="card" onResultAction={(key) => void runTransferAction(transfer.id, key)} />
             {transfer.actions?.length ? <div className="mt-2 flex flex-wrap gap-2">
               {transfer.actions.map((action) => <Button key={action.key} variant="tertiary" disabled={action.pending} onClick={() => {
                 if (action.confirmation) setConfirmation({ transfer, action });
@@ -263,6 +263,25 @@ const TransferPanel = ({ transfers, isMinimized, hasLocalActivityHost, onMinimiz
       </Modal>
     </>
   );
+};
+
+const TransferTaskbarProgress = ({ transfers }: { transfers: Transfer[] }) => {
+  const overview = getMediaTransferOverview(transfers);
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api) return;
+    const active = overview.activeCount > 0;
+    api.setUploadInProgress(active);
+    if (api.setTaskbarUploadProgress) {
+      void api.setTaskbarUploadProgress(active && overview.progress !== null ? overview.progress / 100 : null);
+    }
+  }, [overview.activeCount, overview.progress]);
+  useEffect(() => () => {
+    const api = window.electronAPI;
+    api?.setUploadInProgress(false);
+    if (api?.setTaskbarUploadProgress) void api.setTaskbarUploadProgress(null);
+  }, []);
+  return null;
 };
 
 export const TransferProvider = ({ children }: { children: ReactNode }) => {
@@ -738,7 +757,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     enqueueMediaFolderDeletion,
     getTransfer: (id: string) => transfersRef.current.find((transfer) => transfer.id === id),
   }), [startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction, enqueueMediaFolderDeletion]);
-  return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferPanel transfers={transfers} isMinimized={isMinimized} hasLocalActivityHost={activityHostCount > 0} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
+  return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferTaskbarProgress transfers={transfers} /><TransferPanel transfers={transfers} isMinimized={isMinimized} hasLocalActivityHost={activityHostCount > 0} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
 };
 
 export { getTransferOverview };

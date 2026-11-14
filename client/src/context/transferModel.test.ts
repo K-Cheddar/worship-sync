@@ -1,4 +1,4 @@
-import { getActivitySummary, getTransferOverview, type Transfer } from "./transferModel";
+import { getActivitySummary, getMediaTransferOverview, getTransferOverview, type Transfer } from "./transferModel";
 
 const transfer = (id: string, progress: number | null): Transfer => ({
   id,
@@ -31,6 +31,19 @@ describe("getTransferOverview", () => {
   it("excludes terminal transfers from the aggregate", () => {
     expect(getTransferOverview([{ ...transfer("done", 100), status: "complete" }]).progress).toBeNull();
     expect(getTransferOverview([{ ...transfer("partial", 70), status: "partial" }]).progress).toBeNull();
+  });
+});
+
+describe("getMediaTransferOverview", () => {
+  it("aggregates downloads with existing media uploads in shared transfer activity", () => {
+    const overview = getMediaTransferOverview([
+      { ...transfer("upload", 60), type: "Media upload" },
+      { ...transfer("download", 20), type: "Media upload" },
+      { ...transfer("other", 90), type: "Canva" },
+    ]);
+    expect(overview.activeCount).toBe(2);
+    expect(overview.progress).toBe(40);
+    expect(overview.transfers.map((item) => item.id)).toEqual(["upload", "download"]);
   });
 });
 

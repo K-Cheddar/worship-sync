@@ -13,8 +13,14 @@ import {
   shell,
   type WebContents,
   type NativeImage,
+  type OpenDialogOptions,
 } from "electron";
 import { join, dirname } from "node:path";
+import {
+  access as accessFile,
+  stat as statFile,
+  type FileHandle,
+} from "node:fs/promises";
 import { cpus, freemem, totalmem } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -61,6 +67,10 @@ import {
   type LocalAssetImport,
   type LocalAssetMetadata,
 } from "./localAssetStore";
+import { VideoDownloader } from "./videoDownloader";
+import { VideoDownloadPreferencesStore } from "./videoDownloadPreferences";
+import { resolveVideoToolPaths } from "./videoDownloaderBinaries";
+import { registerVideoDownloaderIpc } from "./videoDownloaderIpc";
 import {
   DESKTOP_AUTH_CALLBACK_CHANNEL,
   WORSHIPSYNC_PROTOCOL_SCHEME,
@@ -101,6 +111,7 @@ import {
   registerResourceGovernorSubscriber,
   subscribeResourceGovernorToPreparedMetrics,
 } from "./resourceGovernor";
+import { SUPPORTED_VIDEO_EXTENSIONS } from "../src/utils/mediaFileTypes";
 
 const { autoUpdater } = updaterPkg;
 
@@ -319,6 +330,9 @@ const chatTaskbarController = createChatTaskbarController({
 let windowStateManager: WindowStateManager;
 let mediaCacheManager: MediaCacheManager;
 let localAssetStore: LocalAssetStore;
+let videoDownloadPreferencesStore: VideoDownloadPreferencesStore | null = null;
+let videoDownloader: VideoDownloader | null = null;
+let isVideoDownloaderShutdownPending = false;
 let localVideoCaptureHost: BrowserWindow | null = null;
 let isUploadInProgress = false;
 let isAppClosing = false;
@@ -337,6 +351,57 @@ const assertControllerIpcSender = (sender: WebContents): void => {
     );
   }
 };
+
+const isDirectoryAvailable = async (path: string) => {
+  try {
+    await accessFile(path);
+    return (await statFile(path)).isDirectory();
+  } catch {
+    return false;
+  }
+};
+
+registerVideoDownloaderIpc({
+  ipcMain,
+  assertControllerSender: assertControllerIpcSender,
+  notifyLocalVideoChanged: (assetId) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send("local-video-asset-changed", assetId);
+    }
+  },
+  getDownloader: () => videoDownloader,
+  getLocalAssetStore: () => localAssetStore ?? null,
+  getPreferencesStore: () => videoDownloadPreferencesStore,
+  selectVideoFile: async (sender) => {
+    const parent = BrowserWindow.fromWebContents(sender);
+    const options: OpenDialogOptions = {
+      title: "Link a video file",
+      properties: ["openFile"],
+      filters: [{ name: "Video files", extensions: [...SUPPORTED_VIDEO_EXTENSIONS] }],
+    };
+    const result = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options));
+    return result.canceled ? undefined : result.filePaths[0];
+  },
+  selectVideoDirectory: async (sender, defaultPath) => {
+    const parent = BrowserWindow.fromWebContents(sender);
+    const defaultIsAvailable = defaultPath ? await isDirectoryAvailable(defaultPath) : false;
+    const options: OpenDialogOptions = {
+      title: "Choose video download folder",
+      ...(defaultIsAvailable && defaultPath ? { defaultPath } : {}),
+      properties: ["openDirectory", "createDirectory"],
+    };
+    const result = await (parent ? dialog.showOpenDialog(parent, options) : dialog.showOpenDialog(options));
+    return result.canceled ? undefined : result.filePaths[0];
+  },
+  isDirectoryAvailable,
+});
+
+app.on("before-quit", (event) => {
+  if (!videoDownloader || isVideoDownloaderShutdownPending) return;
+  event.preventDefault();
+  isVideoDownloaderShutdownPending = true;
+  void videoDownloader.shutdown().finally(() => app.quit());
+});
 
 const assertMediaCacheIpcSender = (sender: WebContents): void => {
   const knownWindows = [
@@ -817,10 +882,10 @@ const createWindow = () => {
 
       const result = await dialog.showMessageBox(mainWindow!, {
         type: "warning",
-        title: "Upload in Progress",
-        message: "A video upload is currently in progress.",
+        title: "Media Transfer in Progress",
+        message: "A video download or upload is currently in progress.",
         detail:
-          "If you close the app now, your upload will be cancelled and you may lose progress. Do you want to close anyway?",
+          "If you close the app now, the transfer will be cancelled and you may lose progress. Do you want to close anyway?",
         buttons: ["Cancel", "Close Anyway"],
         defaultId: 0,
         cancelId: 0,
@@ -913,6 +978,27 @@ app.whenReady().then(() => {
   localAssetStore = new LocalAssetStore(
     join(app.getPath("userData"), "local-assets"),
   );
+  videoDownloadPreferencesStore = new VideoDownloadPreferencesStore(
+    join(app.getPath("userData"), "video-download-preferences.json"),
+  );
+  const videoToolPaths = resolveVideoToolPaths({
+    platform: process.platform,
+    arch: process.arch,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+  });
+  if (videoToolPaths) {
+    videoDownloader = new VideoDownloader({
+      rootDirectory: join(app.getPath("userData"), "video-downloads"),
+      ...videoToolPaths,
+    });
+    videoDownloader.on("progress", (event) => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+        mainWindow.webContents.send("video-download-progress", event);
+      }
+    });
+  }
   const attachCspHeaders = (targetSession: Electron.Session) => {
     targetSession.webRequest.onHeadersReceived((details, callback) => {
       if (!shouldAttachAppCsp(details, app.isPackaged)) {
@@ -1122,14 +1208,21 @@ app.whenReady().then(() => {
   void registerMediaCacheProtocol(appBrowserSession);
 
   const handleLocalAssetRequest = async (request: GlobalRequest) => {
+    let fileHandle: FileHandle | undefined;
     try {
       const requestUrl = new URL(request.url);
       if (requestUrl.hostname !== "asset") return notFound();
       const encodedAssetId = requestUrl.pathname.replace(/^\//, "");
       if (!encodedAssetId || encodedAssetId.includes("/")) return notFound();
       const assetId = decodeURIComponent(encodedAssetId);
-      const resolved = await localAssetStore.resolvePath(assetId);
+      const resolved = await localAssetStore.openForRead(assetId);
       if (!resolved) return notFound();
+      fileHandle = resolved.handle;
+      if (requestUrl.searchParams.get("v") !== resolved.descriptor.contentHash) {
+        await fileHandle.close();
+        fileHandle = undefined;
+        return notFound();
+      }
 
       const fileSize = resolved.descriptor.size;
       const rangeHeader = getRangeHeader(
@@ -1144,6 +1237,8 @@ app.whenReady().then(() => {
 
       if (rangeHeader && !range) {
         responseHeaders.set("Content-Range", `bytes */${fileSize}`);
+        await fileHandle.close();
+        fileHandle = undefined;
         return new Response(null, { status: 416, headers: responseHeaders });
       }
 
@@ -1156,7 +1251,8 @@ app.whenReady().then(() => {
           `bytes ${start}-${end}/${fileSize}`,
         );
       }
-      const nodeStream = createReadStream(resolved.path, { start, end });
+      const nodeStream = fileHandle.createReadStream({ start, end, autoClose: true });
+      fileHandle = undefined;
       const webStream = Readable.toWeb(nodeStream) as ReadableStream;
       return new Response(webStream, {
         status: range ? 206 : 200,
@@ -1164,6 +1260,7 @@ app.whenReady().then(() => {
         headers: responseHeaders,
       });
     } catch (error) {
+      await fileHandle?.close().catch(() => undefined);
       console.error("Local asset protocol error:", error);
       return new Response("Internal Server Error", { status: 500 });
     }
@@ -1508,7 +1605,7 @@ ipcMain.handle(
         file: string | null;
       } | null;
       const helper = (
-        autoUpdater as { downloadedUpdateHelper?: DownloadHelper }
+        autoUpdater as unknown as { downloadedUpdateHelper?: DownloadHelper }
       ).downloadedUpdateHelper;
       const ready =
         helper != null &&

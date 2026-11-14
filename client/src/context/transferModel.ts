@@ -24,7 +24,7 @@ export type Transfer = {
     total?: number;
   };
   detail?: string;
-  result?: { label: string; to?: string; onClick?: (event: React.MouseEvent) => void };
+  result?: { label: string; to?: string; onClick?: (event: React.MouseEvent) => void; actionKey?: string };
   error?: { message: string };
   files?: TransferFileActivity[];
   canCancel?: boolean;

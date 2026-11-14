@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { Provider } from "react-redux";
 import { StrictMode } from "react";
 import { configureStore } from "@reduxjs/toolkit";
@@ -24,6 +24,7 @@ import { allDocsSlice } from "./store/allDocsSlice";
 import { creditsSlice } from "./store/creditsSlice";
 
 let mockBoardPending: Promise<void> | null = null;
+const mockControllerWrapperLifecycle = { mount: jest.fn(), unmount: jest.fn() };
 let mockBoardControllerPending: Promise<void> | null = null;
 
 // controllerInfo/env use import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
@@ -194,15 +195,38 @@ jest.mock("./context/globalInfo", () => {
   };
 });
 
-jest.mock("./ControllerContextWrapper", () => ({
-  __esModule: true,
-  default: () => {
-    const { Outlet } = require("react-router-dom");
-    return <Outlet />;
-  },
-}));
+jest.mock("./ControllerContextWrapper", () => {
+  const React = require("react");
+  const { Outlet, useNavigate } = require("react-router-dom");
+  const MockControllerContextWrapper = () => {
+    const navigate = useNavigate();
+    React.useEffect(() => {
+      mockControllerWrapperLifecycle.mount();
+      return () => mockControllerWrapperLifecycle.unmount();
+    }, []);
+    return <><button type="button" data-testid="go-to-board-controller" onClick={() => navigate("/boards/controller")}>Open board controller</button><Outlet /></>;
+  };
+  return { __esModule: true, default: MockControllerContextWrapper };
+});
 
 describe("App Component", () => {
+  it("keeps the shared controller lifetime mounted when navigating into Board controller", async () => {
+    mockControllerWrapperLifecycle.mount.mockClear();
+    mockControllerWrapperLifecycle.unmount.mockClear();
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "ready" })}>
+        <MemoryRouter initialEntries={["/controller"]}><AppRoutes /></MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(await screen.findByTestId("controller-page")).toBeInTheDocument();
+    expect(mockControllerWrapperLifecycle.mount).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("go-to-board-controller"));
+    expect(await screen.findByTestId("board-controller-page")).toBeInTheDocument();
+    expect(mockControllerWrapperLifecycle.mount).toHaveBeenCalledTimes(1);
+    expect(mockControllerWrapperLifecycle.unmount).not.toHaveBeenCalled();
+  });
+
   afterEach(() => {
     mockBoardPending = null;
     mockBoardControllerPending = null;

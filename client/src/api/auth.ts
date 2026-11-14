@@ -1305,6 +1305,46 @@ export type TeamRosterMemberPayload = {
   profileImagePublicId?: string;
 };
 
+export type TeamRosterMemberServiceAvailabilityChange = {
+  occurrenceId: string;
+  logicalOccurrenceId: string;
+  serviceId: string;
+  serviceIds: string[];
+  groupId?: string;
+  serviceDate: string;
+  startsAt: string;
+  status: "available" | "unavailable" | null;
+  /** Older keys that resolve to this same logical occurrence and should be removed. */
+  removeOccurrenceIds?: string[];
+};
+
+export type TeamRosterMemberServiceAvailabilityResponse = {
+  success: boolean;
+  serviceAvailability: TeamRosterMember["serviceAvailability"];
+  updatedAt?: string;
+};
+
+export const getTeamRosterMemberServiceAvailability = async (
+  churchId: string,
+  memberId: string,
+) =>
+  apiFetch<TeamRosterMemberServiceAvailabilityResponse>(
+    `api/churches/${churchId}/team-roster-members/${memberId}/service-availability`,
+  );
+
+export const updateTeamRosterMemberServiceAvailability = async (
+  churchId: string,
+  memberId: string,
+  body: {
+    expectedUpdatedAt: string;
+    changes: TeamRosterMemberServiceAvailabilityChange[];
+  },
+) =>
+  apiFetch<TeamRosterMemberServiceAvailabilityResponse>(
+    `api/churches/${churchId}/team-roster-members/${memberId}/service-availability`,
+    { method: "PATCH", body: JSON.stringify(body) },
+  );
+
 export type TeamPositionPayload = {
   name: string;
   description?: string;

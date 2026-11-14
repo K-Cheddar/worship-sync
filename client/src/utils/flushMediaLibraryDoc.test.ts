@@ -441,6 +441,27 @@ describe("flushMediaLibraryDocToPouch", () => {
     expect(staleDb.put).not.toHaveBeenCalled();
   });
 
+  it("fences a captured-owner Media write when its scope guard changes", async () => {
+    const db = {
+      get: jest.fn(),
+      put: jest.fn(),
+    } as unknown as PouchDB.Database;
+    mockGlobalDb = db;
+
+    const result = await flushMediaLibraryDocToPouch(
+      db,
+      [],
+      [],
+      undefined,
+      undefined,
+      { canPersist: () => false },
+    );
+
+    expect(result).toEqual({ ok: false, error: expect.objectContaining({ message: FLUSH_MEDIA_STALE_DB_MESSAGE }) });
+    expect(db.get).not.toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
   it("fails closed without schema v2 and never creates the legacy aggregate", async () => {
     const postMessage = jest.fn();
     const syncMediaCache = jest.fn().mockResolvedValue({ downloaded: 0, cleaned: 0 });

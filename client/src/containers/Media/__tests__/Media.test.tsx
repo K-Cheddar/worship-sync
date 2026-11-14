@@ -18,8 +18,9 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Media, { getMediaPanelClassName } from "../Media";
+import * as localMediaImport from "../localMediaImport";
 import { ControllerInfoContext } from "../../../context/controllerInfo";
-import { GlobalInfoContext } from "../../../context/globalInfo";
+import { GlobalInfoContext, globalFireDbInfo } from "../../../context/globalInfo";
 import { createNewFreeForm } from "../../../utils/itemUtil";
 import { claimMediaUpload } from "../../../utils/mediaOperationClaims";
 import * as localImageAssets from "../../../utils/localImageAssets";
@@ -409,7 +410,17 @@ jest.mock("../../../components/Modal/DeleteModal", () => ({
 
 jest.mock("../MediaModal", () => ({
   __esModule: true,
-  default: () => null,
+  default: ({ selectedMedia, onRelinkLocalVideoFile }: any) =>
+    selectedMedia?.localVideoFile?.storageMode === "linked" && onRelinkLocalVideoFile
+      ? (
+          <button
+            type="button"
+            onClick={() => onRelinkLocalVideoFile(selectedMedia)}
+          >
+            test-relink-file
+          </button>
+        )
+      : null,
 }));
 
 jest.mock("../../../utils/mediaReferenceSweep", () => ({
@@ -465,6 +476,7 @@ jest.mock("../../../api/canva", () => ({
 jest.mock("../../../context/globalInfo", () => {
   const ReactLib = require("react") as typeof React;
   return {
+    globalFireDbInfo: { churchId: "church-1" },
     GlobalInfoContext: ReactLib.createContext({
       churchId: "church-1",
     }),
@@ -934,12 +946,12 @@ describe("Media", () => {
       ).toBeInTheDocument();
     });
     expect(
-      screen.getByRole("menuitem", { name: /add files/i }),
+      screen.getByRole("menuitem", { name: /Add files/i }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("menuitem", { name: /add video input/i }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("menuitem", { name: /add files/i }));
+    await user.click(screen.getByRole("menuitem", { name: /Add files/i }));
     expect(mockOpenModal).toHaveBeenCalledTimes(1);
   });
 
@@ -993,7 +1005,7 @@ describe("Media", () => {
 
     await user.click(screen.getByTitle("Add Media"));
     expect(
-      screen.getByRole("menuitem", { name: /add files/i }),
+      screen.getByRole("menuitem", { name: /Add files/i }),
     ).toBeInTheDocument();
     await waitFor(() => {
       expect(mockGetCanvaStatus).toHaveBeenCalled();
@@ -1822,6 +1834,38 @@ describe("Media", () => {
     expect(dbA.allDocs).not.toHaveBeenCalled();
     expect(dbB.allDocs).not.toHaveBeenCalled();
     expect(dbB.put).not.toHaveBeenCalled();
+  });
+
+  it("retries Keep Contents from Activity after saved route repair partially fails", async () => {
+    const media = { ...makeBaseState().media.list[0], id: "kept-media", folderId: "folder-1" };
+    const folders = [{ id: "folder-1", name: "Sermon slides", parentId: null }];
+    mockState = makeBaseState({ media: { list: [media], folders } });
+    mockState.undoable.present.preferences.mediaRouteFolders = { "controller-item-song": "folder-1" };
+    mockState.undoable.present.preferences.mediaRouteFoldersControllerProfileId = "presentation";
+    mockRepairPersistedMediaRouteFolders.mockRejectedValueOnce(new Error("route write failed"));
+    const { view } = await renderMedia();
+    const deleteFolder = async () => {
+      await userEvent.click(screen.getByRole("button", { name: "Delete folder" }));
+      await userEvent.click(screen.getByRole("radio", { name: "Delete folder but keep contents" }));
+      await userEvent.click(screen.getByRole("button", { name: /^Delete$/ }));
+    };
+    await deleteFolder();
+    await waitFor(() => expect(mockUpdateTransfer).toHaveBeenCalledWith(expect.objectContaining({
+      status: "failed",
+      phase: expect.objectContaining({ label: "Folder changes need attention" }),
+      actions: expect.arrayContaining([{ key: "retry-delete", label: "Retry deletion" }]),
+    })));
+    const activityId = mockUpdateTransfer.mock.calls.at(-1)![0].id;
+    expect(mockFlushMediaLibraryDocToPouch).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "media/setMediaListAndFolders" }));
+    await waitFor(() => expect(mockActiveFolderDeletion).toBeNull());
+    view.unmount();
+    const retry = mockTransferActionHandlers.get(`${activityId}:retry-delete`);
+    expect(retry).toBeDefined();
+    await act(async () => { await retry?.(); });
+    await waitFor(() => expect(mockGetTransfer(activityId)).toEqual(expect.objectContaining({ status: "complete", phase: expect.objectContaining({ label: "Folder deletion complete" }) })));
+    expect(mockRepairPersistedMediaRouteFolders).toHaveBeenCalledTimes(2);
+    expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledTimes(1);
   });
 
   it("retries saved route repair from Activity after the folder deletion is already persisted", async () => {
@@ -3080,6 +3124,89 @@ describe("Media", () => {
       type: "presentation/updateProjector",
       payload: expect.objectContaining({ type: "free", videoPlayback: expect.objectContaining({ loop: false, positionSeconds: 0 }) }),
     }));
+  });
+
+  it("preserves the original video and metadata when replacement validation fails", async () => {
+    const media = {
+      ...makeBaseState().media.list[0],
+      type: "video",
+      localVideoFile: {
+        id: "linked-video-1",
+        ownerDeviceId: "device-1",
+        storageMode: "linked",
+        contentHash: "a".repeat(64),
+        contentRevision: "a".repeat(64),
+        fileName: "sermon.mp4",
+        contentType: "video/mp4",
+        storagePolicy: "local-only",
+      },
+    } as any;
+    mockState.media.list = [media];
+    mockSelectedMedia = media;
+    mockSelectedMediaIds = new Set([media.id]);
+    const deleteLocalAsset = jest.fn().mockResolvedValue(true);
+    const relinkLocalVideoFile = jest.fn().mockResolvedValue({
+      assetId: "linked-video-candidate",
+      workspaceId: "church-1",
+      kind: "video",
+      storageMode: "linked",
+      size: 100,
+      contentHash: "b".repeat(64),
+      fileName: "replacement.mp4",
+      contentType: "video/mp4",
+      url: "worshipsync-media://asset/linked-video-1?v=hash",
+    });
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { relinkLocalVideoFile, deleteLocalAsset },
+    });
+    globalFireDbInfo.churchId = "church-1";
+    const mediaImportSpy = jest
+      .spyOn(localMediaImport, "createLocalMediaFromLinkedVideo")
+      .mockRejectedValue(new Error("The selected video cannot be played."));
+
+    try {
+      await renderMedia();
+      await userEvent.setup().click(
+        screen.getByRole("button", { name: "test-relink-file" }),
+      );
+
+      await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith("The selected video cannot be played.", "error"));
+      expect(deleteLocalAsset).not.toHaveBeenCalledWith("linked-video-1");
+      expect(mockState.media.list).toEqual([media]);
+      expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "media/updateMediaItemFields" }));
+      expect(relinkLocalVideoFile).toHaveBeenCalledWith("linked-video-1");
+      expect(mockShowToast).toHaveBeenCalledWith(
+        "The selected video cannot be played.",
+        "error",
+      );
+    } finally {
+      mediaImportSpy.mockRestore();
+      delete (window as any).electronAPI;
+    }
+  });
+
+  it("does not add a native linked selection to the church activated while its picker was open", async () => {
+    let selected!: (value: { assetId: string }) => void;
+    const linkLocalVideoFile = jest.fn(() => new Promise((resolve) => { selected = resolve; }));
+    const deleteLocalAsset = jest.fn(async () => true);
+    Object.defineProperty(window, "electronAPI", { configurable: true, value: { linkLocalVideoFile, deleteLocalAsset } });
+    const create = jest.spyOn(localMediaImport, "createLocalMediaFromLinkedVideo");
+    globalFireDbInfo.churchId = "church-1";
+    try {
+      await renderMedia();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Add media" }));
+      await user.click(screen.getByRole("menuitem", { name: "Link local video" }));
+      globalFireDbInfo.churchId = "church-2";
+      await act(async () => { selected({ assetId: "unadopted-native-selection" }); });
+      await waitFor(() => expect(deleteLocalAsset).toHaveBeenCalledWith("unadopted-native-selection"));
+      expect(create).not.toHaveBeenCalled();
+      expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ id: "unadopted-native-selection" }) }));
+    } finally {
+      create.mockRestore(); globalFireDbInfo.churchId = "church-1";
+      delete (window as { electronAPI?: unknown }).electronAPI;
+    }
   });
 
 });

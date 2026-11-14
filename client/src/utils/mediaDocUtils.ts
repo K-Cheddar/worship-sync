@@ -68,6 +68,7 @@ export async function requireMediaLibraryV2(db: PouchDB.Database): Promise<void>
 
 export async function loadAllMediaItems(
   db: PouchDB.Database,
+  forCleanup = false,
 ): Promise<MediaType[]> {
   const result = await db.allDocs<MediaItemDoc>({
     include_docs: true,
@@ -76,6 +77,9 @@ export async function loadAllMediaItems(
   });
   return result.rows.flatMap((row) => {
     const doc = row.doc;
+    if (forCleanup && (!doc || doc.docType !== "mediaItem" || !doc.id || doc._id !== mediaItemDocId(doc.id))) {
+      throw new Error("Media Library references are uncertain; provider assets were kept.");
+    }
     if (!doc || doc.docType !== "mediaItem" || !doc.id) return [];
     const item = { ...doc } as Partial<MediaItemDoc>;
     delete item._id;
@@ -95,10 +99,16 @@ export async function loadMediaFolders(db: PouchDB.Database): Promise<MediaFolde
   }
 }
 
-export async function loadMediaLibrary(db: PouchDB.Database) {
+export async function loadMediaLibrary(db: PouchDB.Database, options: { forCleanup?: boolean } = {}) {
   await requireMediaLibraryV2(db);
+  if (options.forCleanup) {
+    const meta = await db.get<MediaLibraryMeta>(MEDIA_LIBRARY_META_ID);
+    if (meta.schemaVersion !== MEDIA_LIBRARY_SCHEMA_VERSION) {
+      throw new Error("Media Library schema is uncertain; provider assets were kept.");
+    }
+  }
   const [list, folders] = await Promise.all([
-    loadAllMediaItems(db),
+    loadAllMediaItems(db, options.forCleanup),
     loadMediaFolders(db),
   ]);
   return normalizeMediaDoc({ list, folders });
@@ -111,7 +121,7 @@ export async function addMediaItem(db: PouchDB.Database, item: MediaType) {
 export async function updateMediaItem(
   db: PouchDB.Database,
   id: string,
-  patch: Partial<MediaType>,
+  patch: Partial<MediaType> | ((current: MediaItemDoc | undefined) => Partial<MediaType>),
   canCommit: () => boolean = () => true,
   allowCreate = false,
 ): Promise<PouchDB.Core.Response | undefined> {

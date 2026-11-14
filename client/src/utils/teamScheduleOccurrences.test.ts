@@ -13,6 +13,7 @@ import {
   isOccurrenceToday,
   occurrenceIdsMatch,
   preserveStoredOccurrenceIds,
+  resolveOccurrenceIdentity,
   serviceDateTimeInTimeZone,
 } from "./teamScheduleOccurrences";
 
@@ -562,6 +563,17 @@ describe("generateScheduleOccurrences", () => {
 });
 
 describe("legacy schedule occurrence compatibility", () => {
+  it("requires serviceDate and startsAt to share the church-local date", () => {
+    expect(resolveOccurrenceIdentity({
+      occurrenceId: "sabbath@2026-10-03",
+      logicalOccurrenceId: "sabbath@2026-10-03",
+      serviceId: "sabbath",
+      name: "Sabbath",
+      startsAt: "2026-10-10T14:00:00.000Z",
+      serviceDate: "2026-10-03",
+    }, "America/New_York")).toBeNull();
+  });
+
   it("preserves a persisted timestamp ID for the same service and local recurrence date", () => {
     const saved = {
       occurrenceId: "sabbath@2026-10-03T14:00:00.000Z",

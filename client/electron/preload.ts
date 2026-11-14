@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, webUtils } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type { WindowType } from "./windowState";
 import type { LocalAssetMetadata } from "./localAssetStore";
 import type { PreparedVideoMetrics } from "../src/types/electron";
@@ -192,12 +192,55 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("import-local-asset-bytes", { ...metadata, data }),
   getLocalAsset: (assetId: string) =>
     ipcRenderer.invoke("get-local-asset", assetId),
+  linkLocalVideoFile: (workspaceId: string) =>
+    ipcRenderer.invoke("link-local-video-file", { workspaceId }),
+  commitRelinkLocalVideoFile: (assetId: string, candidateId: string) =>
+    ipcRenderer.invoke("commit-relink-local-video-file", { assetId, candidateId }),
+  getLocalVideoRelinkStatus: (assetId: string, candidateId: string) =>
+    ipcRenderer.invoke("get-local-video-relink-status", { assetId, candidateId }),
+  onLocalVideoAssetChanged: (callback: (assetId: string) => void) => {
+    const handler = (_event: IpcRendererEvent, assetId: unknown) => {
+      if (typeof assetId === "string" && /^[A-Za-z0-9_-]{1,160}$/.test(assetId)) callback(assetId);
+    };
+    ipcRenderer.on("local-video-asset-changed", handler);
+    return () => ipcRenderer.removeListener("local-video-asset-changed", handler);
+  },
+  notifyLocalVideoAssetChanged: (assetId: string, contentHash: string) =>
+    ipcRenderer.invoke("notify-local-video-asset-changed", { assetId, contentHash }),
+  relinkLocalVideoFile: (assetId: string) =>
+    ipcRenderer.invoke("relink-local-video-file", assetId),
 
   // Screens and windows available to capture as live media on this computer.
   getDesktopCaptureSources: (options?: { withThumbnails?: boolean }) =>
     ipcRenderer.invoke("get-desktop-capture-sources", options),
   deleteLocalAsset: (assetId: string) =>
     ipcRenderer.invoke("delete-local-asset", assetId),
+
+  // Video jobs and temporary paths stay in the main process. The renderer gets
+  // only inspection data, progress and managed local-asset metadata.
+  isVideoDownloaderAvailable: () => ipcRenderer.invoke("is-video-downloader-available"),
+  inspectVideoUrl: (url: string) => ipcRenderer.invoke("inspect-video-url", url),
+  startVideoDownload: (input: { jobId: string; inspectionId: string; quality: number | "best"; destinationDirectoryId?: string }) =>
+    ipcRenderer.invoke("start-video-download", input),
+  cancelVideoDownload: (jobId: string) => ipcRenderer.invoke("cancel-video-download", jobId),
+  importDownloadedVideo: (input: { jobId: string; workspaceId: string; width: number; height: number }) =>
+    ipcRenderer.invoke("import-downloaded-video", input),
+  uploadDownloadedVideoToMux: (jobId: string, url: string) =>
+    ipcRenderer.invoke("upload-downloaded-video-to-mux", { jobId, url }),
+  uploadLocalVideoAssetToMux: (input: { jobId: string; assetId: string; url: string }) =>
+    ipcRenderer.invoke("upload-local-video-asset-to-mux", input),
+  cleanupVideoDownload: (jobId: string) => ipcRenderer.invoke("cleanup-video-download", jobId),
+  getVideoDownloadPreferences: () => ipcRenderer.invoke("get-video-download-preferences"),
+  updateVideoDownloadPreferences: (preferences: { saveOutsideWorshipSync?: boolean; uploadToCloud?: boolean }) =>
+    ipcRenderer.invoke("update-video-download-preferences", preferences),
+  chooseVideoDownloadDirectory: () => ipcRenderer.invoke("choose-video-download-directory"),
+  saveDownloadedVideoExternally: (input: { jobId: string; workspaceId: string; displayName: string; width: number; height: number }) =>
+    ipcRenderer.invoke("save-downloaded-video-externally", input),
+  onVideoDownloadProgress: (callback: (event: unknown) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, value: unknown) => callback(value);
+    ipcRenderer.on("video-download-progress", listener);
+    return () => ipcRenderer.removeListener("video-download-progress", listener);
+  },
 
   // Route persistence
   saveLastRoute: (route: string) =>
