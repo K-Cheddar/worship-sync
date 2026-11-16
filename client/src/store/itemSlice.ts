@@ -1292,7 +1292,6 @@ export const applyOwnedContentMutation = createAsyncThunk(
     if (!sameItemMutationOwner(getItemMutationOwner(item), args.owner)) {
       return false;
     }
-    if (item.pendingSongV2Conflicts?.length) return false;
     const update = applyOwnedItemContentMutation(item, args.mutation);
     if (!update) return false;
     dispatch(itemSlice.actions.applyOwnedContentUpdate({

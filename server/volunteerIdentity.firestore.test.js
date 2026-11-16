@@ -53,7 +53,7 @@ test("Firestore transaction aborts during roster linking are retryable conflicts
   assert.equal(attempts, 3);
 });
 
-test("Firestore roster linking rechecks state after an aborted transaction", async () => {
+test("Firestore roster linking rechecks state after a closed transaction", async () => {
   let attempts = 0;
   const operations = createVolunteerIdentityOperations({
     COLLECTIONS: {},
@@ -61,8 +61,8 @@ test("Firestore roster linking rechecks state after an aborted transaction", asy
       runTransaction: async () => {
         attempts += 1;
         if (attempts === 1) {
-          throw Object.assign(new Error("Transaction contention."), {
-            code: "aborted",
+          throw Object.assign(new Error("3 INVALID_ARGUMENT: Transaction is invalid or closed."), {
+            code: 3,
           });
         }
         throw Object.assign(new Error("That account is not active."), {

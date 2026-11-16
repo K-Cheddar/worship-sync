@@ -842,6 +842,38 @@ describe("LyricsEditor", () => {
     expect(mockShowToast).not.toHaveBeenCalled();
   });
 
+  it("keeps a clean failed recovery choice visible for explicit retry", async () => {
+    mockState = makeBaseState({
+      undoable: {
+        present: {
+          item: {
+            _id: "song-remote",
+            hasRemoteUpdate: true,
+            hasPendingUpdate: false,
+            remoteUpdateReason: "song-recovery-discard-failed",
+            pendingRemoteItem: {
+              _id: "song-remote",
+              type: "song",
+              arrangements: [],
+            },
+          },
+        },
+      },
+    });
+
+    renderWithToastContext();
+    await waitForLyricsEditorPanelReady();
+
+    expect(mockApplyPendingRemoteItem).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({
+        message: "We couldn't save that choice. Your song draft is still safe; try again.",
+        variant: "error",
+        persist: true,
+      }));
+    });
+  });
+
   it("adds an empty section and appends it to song order by default", async () => {
     mockState = makeBaseState({
       undoable: {

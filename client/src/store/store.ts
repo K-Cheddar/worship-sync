@@ -48,6 +48,7 @@ import {
   loadSongV2LibraryProjection,
   getSongV2RootDocId,
   saveSong,
+  serializeSongToV2Documents,
   songToLibraryProjection,
 } from "../utils/songPersistence";
 import { overlaysSlice } from "./overlaysSlice";
@@ -172,7 +173,10 @@ import { applyPouchAudit } from "@/utils/pouchAudit";
 import {
   loadReconciledSongV2Snapshot, pruneResolvedSongV2Conflicts, SongV2ReplicationConflictError,
 } from "../utils/songV2ReplicationConflicts";
-import { SongV2MutationNotAuthorizedError } from "../utils/songV2Writer";
+import {
+  sameSongV2AuthoredContent,
+  SongV2MutationNotAuthorizedError,
+} from "../utils/songV2Writer";
 import {
   isFirebasePermissionDenied,
   logFirebaseOperationFailure,
@@ -1274,7 +1278,6 @@ listenerMiddleware.startListening({
       (currentItem !== previousItem || isExplicitPendingRetry) &&
       !excluded(action) &&
       !!currentItem.hasPendingUpdate &&
-      !currentItem.pendingSongV2Conflicts?.length &&
       !isStoreResetAction(action)
     );
   },
@@ -2621,10 +2624,11 @@ listenerMiddleware.startListening({
 
     const revisionResolution = present.itemList.pendingRevisionResolutions?.[selectedList._id];
     const submittedItems = revisionResolution?.items ?? list;
+    const submittedMoveIntents = present.itemList.pendingMoveIntents ?? [];
     const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
     let persistenceSucceeded = false;
     try {
-      const persisted = revisionResolution
+      const persisted = revisionResolution?.conflict
         ? await resolveServiceListRevisionConflict(
             dbAtStart,
             selectedList._id,
@@ -2636,9 +2640,10 @@ listenerMiddleware.startListening({
         : await persistServiceListItems(
             dbAtStart,
             selectedList._id,
-            [...list],
+            [...submittedItems],
             [...baseline],
             sessionIsCurrent,
+            [...submittedMoveIntents],
           );
 
       persistenceSucceeded = true;
@@ -2652,6 +2657,7 @@ listenerMiddleware.startListening({
           ownerKey,
           items: [...persisted.items],
           submittedItems: [...(revisionResolution?.draftItems ?? submittedItems)],
+          submittedMoveIntents: [...submittedMoveIntents],
         }));
         const latest = (listenerApi.getState() as RootState).undoable.present;
         if (revisionResolution && latest.itemList.loadedOutlineId === selectedList._id &&
@@ -2692,6 +2698,7 @@ listenerMiddleware.startListening({
             ...(error.revisionConflict
               ? { revisionConflict: error.revisionConflict }
               : {}),
+            ...(submittedMoveIntents.length ? { moveIntents: [...submittedMoveIntents] } : {}),
           }));
         }
       } else if (db === dbAtStart) {
@@ -5292,7 +5299,7 @@ const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) =
     if (historyOutline && outlineId && retained.remoteConflicts[outlineId]) {
       const conflict = retained.remoteConflicts[outlineId];
       itemList.remoteConflicts = { ...retained.remoteConflicts, [outlineId]: { ...conflict, localItems: itemList.list } };
-      itemList.syncBaseline = conflict.baselineItems;
+      itemList.syncBaseline = conflict.remoteItems;
       itemList.hasPendingUpdate = true;
     }
     next = {
@@ -5396,16 +5403,20 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
     const requestedRecoveryMutationVersion = recovery?.mutationVersion;
     const requestedRemoteItem = latestItem.pendingRemoteItem;
     const requestedRemoteRevision = requestedRemoteItem?._rev;
-    const requestedConflicts = JSON.stringify(
-      latestItem.pendingSongV2Conflicts
-        ?.map(conflict => ({
+    const songV2ConflictFingerprint = (
+      conflicts: ItemState["pendingSongV2Conflicts"],
+    ) => JSON.stringify(
+      (conflicts ?? [])
+        .map(conflict => ({
           documentId: conflict.documentId,
           winningRevision: conflict.winningRevision,
           revisions: [...conflict.revisions].sort(),
         }))
         .sort((left, right) => left.documentId.localeCompare(right.documentId)),
     );
-    const requestedMutationVersion = pendingItemAutosaves.get(saveKey)?.mutationVersion;
+    const requestedConflicts = songV2ConflictFingerprint(latestItem.pendingSongV2Conflicts);
+    const requestedMutationVersion = pendingItemAutosaves.get(saveKey)?.mutationVersion ??
+      recovery?.mutationVersion;
     const beginExplicitRemoteDecision = (discarding: boolean) => {
       const previous = explicitRemoteDecisionByItem.get(saveKey);
       const nextDecision = { version: (previous?.version ?? 0) + 1, discarding };
@@ -5432,25 +5443,26 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
         explicitRemoteDecisionByItem.set(saveKey, { ...decision, discarding: false });
       }
     };
+    const decisionSessionToken = getContentDatabaseSessionToken(recovery.database.name);
+    const decisionOwnerIsCurrent = () => {
+      const active = (api.getState() as RootState).undoable.present.item;
+      return db === recovery.database &&
+        getContentDatabaseSessionToken(recovery.database.name) === decisionSessionToken &&
+        active._id === latestItem._id &&
+        sameItemMutationOwner(getItemMutationOwner(active), currentOwner) &&
+        sameItemMutationOwner(getItemMutationOwner(active), recoveryOwner) &&
+        getContentDatabaseForOwner(recoveryOwner) === recovery.database &&
+        globalFireDbInfo.churchId === recoveryOwner.churchId &&
+        explicitRemoteDecisionByItem.get(saveKey)?.version === decisionVersion;
+    };
     const sameRequestedRemoteDecision = () => {
       const active = (api.getState() as RootState).undoable.present.item;
       const currentPending = pendingItemAutosaves.get(saveKey);
-      const decision = explicitRemoteDecisionByItem.get(saveKey);
-      return sameItemMutationOwner(getItemMutationOwner(active), currentOwner) &&
-        decision?.version === decisionVersion &&
+      return decisionOwnerIsCurrent() &&
         active.pendingRemoteItem?._id === requestedRemoteItem?._id &&
         active.pendingRemoteItem?._rev === requestedRemoteRevision &&
-        JSON.stringify(
-          active.pendingSongV2Conflicts
-            ?.map(conflict => ({
-              documentId: conflict.documentId,
-              winningRevision: conflict.winningRevision,
-              revisions: [...conflict.revisions].sort(),
-            }))
-            .sort((left, right) => left.documentId.localeCompare(right.documentId)),
-        ) === requestedConflicts &&
-        (requestedMutationVersion === undefined || !currentPending ||
-          currentPending.mutationVersion === requestedMutationVersion);
+        songV2ConflictFingerprint(active.pendingSongV2Conflicts) === requestedConflicts &&
+        (!currentPending || currentPending.mutationVersion === requestedMutationVersion);
     };
     let acquiredLock = false;
     return withSongV2AutosaveLock(
@@ -5458,6 +5470,53 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
       recovery.database.name,
       async () => {
         acquiredLock = true;
+        if (!decisionOwnerIsCurrent()) {
+          finishExplicitRemoteDecision();
+          return action;
+        }
+        if (latestItem.docType === "song-v2-root" && requestedRemoteItem) {
+          let currentSnapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>>;
+          try {
+            currentSnapshot = await loadSongV2Snapshot(
+              recovery.database,
+              latestItem._id,
+              true,
+            );
+          } catch (error) {
+            console.error("Could not verify the current song before applying the remote snapshot", error);
+            finishExplicitRemoteDecision();
+            if (!decisionOwnerIsCurrent()) return action;
+            api.dispatch(itemSlice.actions.setRemoteUpdateReason("song-recovery-discard-failed"));
+            return action;
+          }
+          if (!decisionOwnerIsCurrent()) {
+            finishExplicitRemoteDecision();
+            return action;
+          }
+          const remoteSnapshotIsCurrent =
+            requestedRemoteItem._rev === currentSnapshot.root._rev &&
+            sameSongV2AuthoredContent(
+              serializeSongToV2Documents(requestedRemoteItem),
+              currentSnapshot,
+            ) &&
+            requestedConflicts === songV2ConflictFingerprint(currentSnapshot.conflicts);
+          if (!remoteSnapshotIsCurrent) {
+            // A successful save may have advanced this song after the UI
+            // offered its choice. Refresh the offer and let the editor apply
+            // the current snapshot after the usual clean-state checks.
+            if (currentSnapshot.conflicts?.length) {
+              api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+                item: currentSnapshot.hydrated,
+                conflicts: currentSnapshot.conflicts,
+              }));
+            } else {
+              api.dispatch(itemSlice.actions.bufferRemoteItemUpdate(currentSnapshot.hydrated));
+              api.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+            }
+            finishExplicitRemoteDecision();
+            return action;
+          }
+        }
         if (!sameRequestedRemoteDecision()) {
           finishExplicitRemoteDecision();
           return action;
@@ -5493,8 +5552,8 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
         const currentPending = pendingItemAutosaves.get(saveKey);
         const recoveryVersionMatches = requestedRecoveryMutationVersion === undefined ||
           !currentRecovery || currentRecovery.mutationVersion === requestedRecoveryMutationVersion;
-        const pendingVersionMatches = requestedMutationVersion === undefined ||
-          !currentPending || currentPending.mutationVersion === requestedMutationVersion;
+        const pendingVersionMatches = !currentPending ||
+          currentPending.mutationVersion === requestedMutationVersion;
         const recoveryStillCurrent =
           (!currentRecovery || currentRecovery.recoveryRecordId === recoveryRecordId) &&
           (!currentPending || currentPending.recoveryRecordId === recoveryRecordId) &&

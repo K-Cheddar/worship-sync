@@ -1,6 +1,7 @@
 import { useDispatch, useSelector } from "../../hooks";
 import {
   updateItemList,
+  moveItemListRows,
   addItemToItemList,
   removeItemsFromList,
   resolveOutlineConflict,
@@ -50,8 +51,8 @@ import NextServiceCountdownText from "../../components/NextServiceCountdownText/
 import type { ServiceTime } from "../../types";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
-import isEqual from "lodash/isEqual";
 import OutlineRevisionReview from "./OutlineRevisionReview";
+import { createOutlineMoveIntent } from "../../utils/outlineSync";
 
 const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
@@ -62,6 +63,7 @@ const ServiceItems = () => {
   const controllerBasePath = useControllerBasePath();
   const {
     list: serviceItems,
+    outlineOwnerKey,
     isLoading,
     loadError,
     isRetrying,
@@ -69,7 +71,6 @@ const ServiceItems = () => {
     initialItems,
     selectedItemListId,
     insertPointIndex,
-    pendingRevisionResolutions,
   } = useSelector((state) => state.undoable.present.itemList);
   const loadedOutlineId = useSelector(
     (state) => state.undoable.present.itemList.loadedOutlineId,
@@ -80,18 +81,12 @@ const ServiceItems = () => {
       ? itemList.remoteConflicts?.[itemList.loadedOutlineId]
       : undefined;
   });
-  const hasDraftChangesSinceConflict = Boolean(
-    remoteOutlineConflict &&
-    !isEqual(
-      serviceItems,
-      remoteOutlineConflict.originalLocalItems ?? remoteOutlineConflict.localItems,
-    ),
-  );
-  let conflictMessage = "This outline has conflicting changes. Your draft is still open; choose which version to keep.";
+  const [outlineReviewOwner, setOutlineReviewOwner] = useState<string>();
+  let conflictMessage = "Some outline changes need a decision before they can be saved.";
   if (remoteOutlineConflict?.resolutionChoice) {
-    conflictMessage = "Saving your choice. Your draft stays available until the save finishes.";
+    conflictMessage = "Saving your choice. Your draft stays open until it finishes.";
   } else if (remoteOutlineConflict?.saveError) {
-    conflictMessage = "Could not save your choice. Your draft is still open. Try your choice again.";
+    conflictMessage = "Could not save your choice. Review the changes and try again.";
   }
   const mediaList = useSelector((state) => state.media.list);
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
@@ -108,6 +103,14 @@ const ServiceItems = () => {
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
+  const outlineReviewIdentity = JSON.stringify([outlineOwnerKey, loadedOutlineId, selectedList?._id]);
+  const outlineReviewOpen = Boolean(remoteOutlineConflict) && outlineReviewOwner === outlineReviewIdentity;
+  useEffect(() => {
+    setOutlineReviewOwner(undefined);
+  }, [outlineReviewIdentity]);
+  useEffect(() => {
+    if (!remoteOutlineConflict) setOutlineReviewOwner(undefined);
+  }, [remoteOutlineConflict]);
   const { db } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const { mode } = usePresentationControllerMode();
@@ -320,7 +323,16 @@ const ServiceItems = () => {
       Math.min(insertIndex, updatedServiceItems.length)
     );
     updatedServiceItems.splice(clampedInsert, 0, ...elementsToMove);
-    dispatch(updateItemList(updatedServiceItems));
+    const moveIntent = selectedList?._id && outlineOwnerKey
+      ? createOutlineMoveIntent({
+        outlineId: selectedList._id,
+        ownerKey: outlineOwnerKey,
+        resultingItems: updatedServiceItems,
+        movedIds: elementsToMove.map(item => item.listId),
+      })
+      : undefined;
+    if (moveIntent) dispatch(moveItemListRows({ items: updatedServiceItems, intent: moveIntent }));
+    else dispatch(updateItemList(updatedServiceItems));
   };
 
   const openHeadingCreateWindow = useCallback(() => {
@@ -829,47 +841,20 @@ const ServiceItems = () => {
             role="alert"
           >
             <p className="min-w-0 flex-1">
-              {isViewOnlyAccess(access) ? "This outline has conflicting saved versions. Ask a controller operator to review them." : conflictMessage}
+              {isViewOnlyAccess(access) ? "Some outline changes need review by an editing Controller." : conflictMessage}
             </p>
-            <p className="w-full text-xs text-amber-100/90">
-              Unsaved drafts stay available during controller navigation. Signing out, closing or reloading the app clears them.
-            </p>
-            {remoteOutlineConflict.revisionConflict && !isViewOnlyAccess(access) && (
-              <OutlineRevisionReview conflict={remoteOutlineConflict} draft={serviceItems}
-                pendingItems={pendingRevisionResolutions?.[loadedOutlineId]?.items}
-                onSave={(items, selection) => dispatch(resolveOutlineConflict({
-                  outlineId: loadedOutlineId, choice: "keep-local", reviewedItems: items,
-                  draftItems: serviceItems, revisionSelection: selection,
-                  reviewedRevisionConflict: remoteOutlineConflict.revisionConflict,
-                }))} />
-            )}
-            {hasDraftChangesSinceConflict && !remoteOutlineConflict.revisionConflict && (
-              <p className="w-full text-xs text-amber-100/90">
-                Using the remote version will discard your edits made since this notice appeared.
-              </p>
-            )}
-            {!isViewOnlyAccess(access) && !remoteOutlineConflict.revisionConflict && <div className="flex shrink-0 gap-2">
-              <Button
-                variant="secondary"
-                disabled={Boolean(remoteOutlineConflict.resolutionChoice)}
-                onClick={() => dispatch(resolveOutlineConflict({
-                  outlineId: loadedOutlineId,
-                  choice: "keep-local",
-                }))}
-              >
-                Keep my draft
-              </Button>
-              <Button
-                variant="tertiary"
-                disabled={Boolean(remoteOutlineConflict.resolutionChoice)}
-                onClick={() => dispatch(resolveOutlineConflict({
-                  outlineId: loadedOutlineId,
-                  choice: "use-remote",
-                }))}
-              >
-                Use remote version
-              </Button>
-            </div>}
+            {!isViewOnlyAccess(access) && !remoteOutlineConflict.resolutionChoice && <Button
+              variant="secondary"
+              onClick={() => setOutlineReviewOwner(outlineReviewIdentity)}
+            >Review changes</Button>}
+            {!isViewOnlyAccess(access) && <OutlineRevisionReview
+              isOpen={outlineReviewOpen}
+              onClose={() => setOutlineReviewOwner(undefined)}
+              conflict={remoteOutlineConflict} draft={serviceItems}
+              onSave={(items) => dispatch(resolveOutlineConflict({
+                outlineId: loadedOutlineId, choice: "keep-local", reviewedItems: items,
+                draftItems: serviceItems, reviewedRemoteItems: remoteOutlineConflict.remoteItems,
+              }))} />}
           </div>
         )}
         {visibleActionBarItemDefs.length > 0 && (

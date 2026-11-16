@@ -207,7 +207,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     [outputSlots, slides, selectedSlide],
   );
 
-  const canEdit = !pendingSongV2Conflicts?.length && (
+  const canEdit = (
     access === "full" ||
     (type === "song" && canEditSongContent(access)) ||
     (access === "music" && type === "free")
@@ -342,7 +342,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       }
       return;
     }
-    if (hasRemoteUpdate && !isLyricsEditorOpen && !hasPendingUpdate) {
+    if (hasRemoteUpdate && !isLyricsEditorOpen && !hasPendingUpdate &&
+      remoteUpdateReason !== "song-recovery-discard-failed") {
       dispatch(applyPendingRemoteItem(true));
       return;
     }

@@ -58,6 +58,14 @@ Authorization: the current high-priority code-review remediation request, Novemb
 - Song hydration and conflict inspection are read-only. A view-only Controller session or paired display reads the current winning song content and retains competing revisions; reads never persist a merge or retire a revision leaf.
 - Automatic merge of provably disjoint canonical lyric edits uses the existing Controller song-edit access (`music` or `full`). The permission and original database/session/item owner are checked at each content write and revision retirement. Genuine conflicts remain for explicit review.
 
+### Concurrent editing simplification (November 12, 2026)
+
+Authorization: the current request to simplify concurrent Song V2 and outline editing.
+
+- Song V2 revision leaves with identical canonical authored content do not block the editor; revision history and audit metadata do not make an authored change. Safe disjoint lyric edits continue through the authorized, revision-checked merge path.
+- A successfully committed merge remains usable if cleanup of its already-incorporated leaves fails. The session recognizes only the exact committed winner and reviewed leaves; a changed winner or new meaningful leaf returns to conflict review. Permission revocation still prevents further writes and leaf retirement.
+- Competing slide bodies, structural edits, overlapping lyrics, rich text, or changes that cannot be proven disjoint remain available for explicit review. Durable autosave recovery, owner checks and the stored Song V2 schema remain in effect.
+
 Targeted nonactive slide-cache invalidation and stale conflict-review completion guards are confirmed by the November 5, 2026 code-review remediation request.
 
 ### Song v2 semantic conflict review (October 27, 2026)

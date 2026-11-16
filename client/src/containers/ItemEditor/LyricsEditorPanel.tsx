@@ -850,7 +850,8 @@ const LyricsEditorPanel = ({
 
   useEffect(() => {
     if (isLibraryEditor) return;
-    if (isLyricsEditorOpen && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges) {
+    if (isLyricsEditorOpen && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges &&
+      controllerItem.remoteUpdateReason !== "song-recovery-discard-failed") {
       handleReloadRemote(true);
       return;
     }

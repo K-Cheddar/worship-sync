@@ -3,5 +3,5 @@
   "date": "2026-10-06",
   "type": "improved",
   "title": "Keep editing songs after migration",
-  "description": "After migration, edit song details, lyrics, slides, and audio. When saved versions conflict, compare their lyrics and slides, review the selected song, and then resolve the conflict."
+  "description": "After migration, edit song details, lyrics, slides, and audio. Changes to different lyric sections sync automatically; conflicting edits stay available for review."
 }

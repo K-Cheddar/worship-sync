@@ -28,7 +28,13 @@ jest.mock("../../../context/controllerInfo", () => ({
 }));
 jest.mock("../../../context/globalInfo", () => ({
   GlobalInfoContext: jest.requireActual("react").createContext(null),
-  globalFireDbInfo: { db: undefined, database: undefined }, globalHostId: "test-host",
+  globalFireDbInfo: {
+    db: undefined,
+    database: "integrity-church",
+    churchId: "integrity-church",
+    canWriteSongContent: true,
+  },
+  globalHostId: "test-host",
 }));
 jest.mock("firebase/database", () => ({
   ref: jest.fn(), set: jest.fn(), get: jest.fn(),
