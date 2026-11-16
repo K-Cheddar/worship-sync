@@ -1,6 +1,6 @@
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from "electron";
 import { randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { basename, win32 } from "node:path";
 import {
   buildLocalAssetProtocolUrl,
   type LocalAssetStore,
@@ -24,6 +24,11 @@ type Dependencies = {
   isDirectoryAvailable: (path: string) => Promise<boolean>;
   notifyLocalVideoChanged?: (assetId: string) => void;
 };
+
+const getSelectedFileName = (selectedPath: string) =>
+  /^[a-z]:[\\/]/i.test(selectedPath) || selectedPath.startsWith("\\\\")
+    ? win32.basename(selectedPath)
+    : basename(selectedPath);
 
 const requireDownloader = (getDownloader: Dependencies["getDownloader"]) => {
   const downloader = getDownloader();
@@ -355,7 +360,7 @@ export const registerVideoDownloaderIpc = ({
     if (!selected) return undefined;
     const store = getLocalAssetStore();
     if (!store) throw new Error("Local media storage is not ready.");
-    const fileName = basename(selected);
+    const fileName = getSelectedFileName(selected);
     const descriptor = await store.linkFile({
       assetId: `local_video_link_${randomUUID()}`,
       workspaceId,
@@ -379,7 +384,7 @@ export const registerVideoDownloaderIpc = ({
     if (!selected) return undefined;
     const store = getLocalAssetStore();
     if (!store) throw new Error("Local media storage is not ready.");
-    const fileName = basename(selected);
+    const fileName = getSelectedFileName(selected);
     const descriptor = await store.relinkFile(assetId, {
       kind: "video",
       sourcePath: selected,

@@ -476,7 +476,6 @@ jest.mock("../../../api/canva", () => ({
 jest.mock("../../../context/globalInfo", () => {
   const ReactLib = require("react") as typeof React;
   return {
-    globalFireDbInfo: { churchId: "church-1" },
     GlobalInfoContext: ReactLib.createContext({
       churchId: "church-1",
     }),
