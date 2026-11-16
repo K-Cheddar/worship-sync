@@ -5,7 +5,8 @@ const conflictMessage =
 
 const isFirestoreTransactionAborted = (error) => {
   const code = String(error?.code || "").toLowerCase();
-  return code === "10" || code === "aborted";
+  if (code === "10" || code === "aborted") return true;
+  return code === "3" && /transaction is invalid or closed/i.test(error?.message || "");
 };
 
 const MAX_VOLUNTEER_LINK_TRANSACTION_ATTEMPTS = 3;

@@ -79,7 +79,7 @@ it.each(["full", "view"])("loads the 87-row winner cleanly across switching, rem
     expect(state().hasPendingUpdate).toBe(false);
     expect(state().pendingByOutline ?? {}).toEqual({});
     expect(state().remoteConflicts).toEqual({});
-    expect(screen.queryByRole("region", { name: "Review outline changes" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "Review outline changes" })).not.toBeInTheDocument();
     select("other");
     expect(state().loadedOutlineId).toBeUndefined();
     expect(state().syncBaseline).toEqual([]);
@@ -142,7 +142,8 @@ it("keeps genuine unsaved work visible through failed focused decisions, retry a
     const remote = [{ ...baseline[0], name: "Saved edit" }, { ...baseline[1], name: "Compatible edit" }];
     const result = await a.put({ ...current, items: remote });
     await act(async () => { context.updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "outline", _rev: result.rev }] })); });
-    await screen.findByRole("region", { name: "Review outline changes" });
+    await user.click(await screen.findByRole("button", { name: "Review changes" }));
+    await screen.findByRole("region", { name: "Outline conflict decisions" });
     expect(screen.getByText("My edit")).toBeVisible();
     expect(screen.getByText("Compatible edit")).toBeVisible();
     const originalPut = a.put.bind(a);
@@ -151,7 +152,7 @@ it("keeps genuine unsaved work visible through failed focused decisions, retry a
     await user.click(screen.getByRole("button", { name: "Save choices" }));
     expect(screen.getByRole("button", { name: "Saving choices" })).toBeDisabled();
     expect(state().list[0].name).toBe("My edit");
-    await screen.findByText("Could not save your choice. Your draft is still open. Try your choice again.", {}, { timeout: 5000 });
+    await screen.findByText("Could not save your choice. Review the changes and try again.", {}, { timeout: 5000 });
     expect(state().list[0].name).toBe("My edit");
     put.mockImplementation(originalPut);
     await user.click(screen.getByRole("button", { name: "Save choices" }));
