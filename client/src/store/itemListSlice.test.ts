@@ -15,6 +15,7 @@ import itemListReducer, {
   markItemListPersisted,
   resolveOutlineConflict,
   failOutlineResolution,
+  restoreUndoRedoState,
 } from "./itemListSlice";
 import { activateOutlineContent } from "./outlineContent";
 import { createServiceItem } from "../test/fixtures";
@@ -107,6 +108,34 @@ describe("itemListSlice", () => {
       expect(store.getState().itemList.remoteConflicts.a.resolutionChoice).toBeUndefined();
       expect(store.getState().itemList.pendingRevisionResolutions.a).toBeUndefined();
       expect(store.getState().itemList.list).toEqual(draft);
+    });
+
+    it("keeps a selected revision resolution pending when history restores the baseline rows", () => {
+      const store = createStore();
+      const base = [createServiceItem({ _id: "a", listId: "row", name: "Base" })];
+      const draft = [{ ...base[0], name: "My edit" }];
+      const remote = [{ ...base[0], name: "Saved edit" }];
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-a", hasSelection: true }));
+      store.dispatch(initiateItemList({ outlineId: "a", items: base }));
+      store.dispatch(updateItemList(draft));
+      store.dispatch(updateItemListFromRemote({ outlineId: "a", items: remote }));
+      store.dispatch(resolveOutlineConflict({
+        outlineId: "a",
+        choice: "keep-local",
+        reviewedItems: remote,
+        draftItems: draft,
+        reviewedRemoteItems: remote,
+      }));
+
+      const current = store.getState().itemList;
+      store.dispatch(restoreUndoRedoState({
+        current,
+        historical: { ...current, list: remote },
+      }));
+
+      expect(store.getState().itemList.list).toEqual(remote);
+      expect(store.getState().itemList.pendingRevisionResolutions.a).toBeDefined();
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
     });
 
     it("initiateItemList sets list and isInitialized", () => {

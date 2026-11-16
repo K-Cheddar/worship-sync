@@ -91,6 +91,7 @@ import {
   getControllerMediaRouteFoldersDocId,
   OverlayInfo,
   Presentation,
+  ServiceItem,
   ServiceTime,
   TimerInfo,
 } from "../types";
@@ -206,6 +207,9 @@ import { patchControllerMediaRouteFolder } from "../utils/controllerMediaRouteFo
  */
 export const isStoreResetAction = (action: { type: string }) =>
   action.type === "RESET" || action.type === "RESET_CONTROLLER_SESSION";
+
+const isUndoRedoAction = (action: { type: string }) =>
+  action.type === "@@redux-undo/UNDO" || action.type === "@@redux-undo/REDO";
 
 // Helper function to safely post messages to the broadcast channel
 const safePostMessage = (message: any) => {
@@ -323,39 +327,47 @@ const isListenerCancelledTaskError = (error: unknown): boolean =>
   "code" in error &&
   (error as { code?: string }).code === "listener-cancelled";
 
-const sanitizeTransientItemState = (
-  item: RootState["undoable"]["present"]["item"],
-) => {
-  const {
-    selectedSlide: _selectedSlide,
-    selectedBox: _selectedBox,
-    backgroundTargetSlideIds: _backgroundTargetSlideIds,
-    backgroundTargetRangeAnchorId: _backgroundTargetRangeAnchorId,
-    mobileBackgroundTargetSelectMode: _mobileBackgroundTargetSelectMode,
-    ...rest
-  } = item;
-
-  return {
-    ...rest,
-    isLoading: false,
-    isSectionLoading: false,
-    isItemFormatting: false,
-    hasPendingUpdate: false,
-    restoreFocusToBox: null,
-  };
-};
-
 const sameItemMutationScope = (
   expected: Pick<ItemState, "_id" | "type" | "contentOwner">,
   current: Pick<ItemState, "_id" | "type" | "contentOwner">,
 ) => {
   if (!expected._id || expected._id !== current._id || expected.type !== current.type) return false;
+  if (expected.contentOwner?.accountId !== current.contentOwner?.accountId) return false;
   const expectedOwner = getItemMutationOwner(expected);
   const currentOwner = getItemMutationOwner(current);
   return expectedOwner
     ? sameItemMutationOwner(expectedOwner, currentOwner)
     : !currentOwner;
 };
+
+const sameItemContentOwner = (
+  left: Pick<ItemState, "contentOwner">,
+  right: Pick<ItemState, "contentOwner">,
+) => {
+  const leftOwner = left.contentOwner;
+  const rightOwner = right.contentOwner;
+  if (leftOwner?.accountId !== rightOwner?.accountId) return false;
+  if (!leftOwner || leftOwner.scopeId === "unscoped") {
+    return !rightOwner || rightOwner.scopeId === "unscoped";
+  }
+  return !!rightOwner && rightOwner.scopeId !== "unscoped" &&
+    leftOwner.scopeId === rightOwner.scopeId &&
+    leftOwner.databaseKey === rightOwner.databaseKey &&
+    leftOwner.churchId === rightOwner.churchId &&
+    leftOwner.accountId === rightOwner.accountId;
+};
+
+const itemActionsThatRefreshHistoryMetadata = isAnyOf(
+  itemSlice.actions.setActiveItem,
+  itemSlice.actions.markItemPersisted,
+  itemSlice.actions.rebaseItemPersistence,
+  itemSlice.actions.bufferRemoteItemUpdate,
+  itemSlice.actions.bufferSongV2RevisionConflict,
+  itemSlice.actions.applyPendingRemoteItem,
+  itemSlice.actions.discardPendingRemoteItem,
+  itemSlice.actions.keepLocalItemChanges,
+  itemSlice.actions.setRemoteUpdateReason,
+);
 
 const normalizeOverlayForPersistenceCompare = (overlay: OverlayInfo) => {
   const normalized = normalizeOverlayForSync(overlay);
@@ -918,6 +930,7 @@ const excludedActions: string[] = [
   itemSlice.actions.setActiveItem.toString(),
   itemSlice.actions.setActiveItemOccurrence.toString(),
   itemSlice.actions.clearTransientState.toString(),
+  itemSlice.actions.clearUndoRedoTransientState.toString(),
   itemSlice.actions.toggleBackgroundTargetSlideId.toString(),
   itemSlice.actions.setBackgroundTargetSlideIds.toString(),
   itemSlice.actions.setBackgroundTargetRangeAnchorId.toString(),
@@ -1240,6 +1253,12 @@ const flushItemAutosavesForContentDatabase = async (scopeId: string) => {
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (retryPendingItemAutosave.match(action)) return true;
+    if (itemSlice.actions.markItemPersisted.match(action)) {
+      const currentItem = (currentState as RootState).undoable.present.item;
+      return !!currentItem.baseItem &&
+        getItemPersistenceChanges(currentItem, currentItem.baseItem).length > 0 &&
+        !isStoreResetAction(action);
+    }
     // Audio is already persisted. Reconcile pending content intent without
     // scheduling another audio write or accepting a stale owner's result.
     if (itemSlice.actions.applyPersistedSongAudio.match(action)) {
@@ -1271,6 +1290,11 @@ listenerMiddleware.startListening({
     );
     const currentItem = (currentState as RootState).undoable.present.item;
     const previousItem = (previousState as RootState).undoable.present.item;
+    if (isUndoRedoAction(action)) {
+      return getItemPersistenceChanges(currentItem, previousItem as DBItem).length > 0 &&
+        !!currentItem.hasPendingUpdate &&
+        !isStoreResetAction(action);
+    }
     const isExplicitPendingRetry =
       itemSlice.actions._updateSlides.match(action) &&
       !!currentItem.hasPendingUpdate;
@@ -2238,6 +2262,11 @@ listenerMiddleware.startListening({
 
 const pendingBibleCleanupByDatabase = new WeakMap<object, Set<string>>();
 const inFlightOutlinePersistenceByDatabase = new WeakMap<object, number>();
+const activeOutlineSaveIntents = new Map<string, {
+  token: symbol;
+  outlineId?: string;
+  items: ServiceItem[];
+}>();
 const bibleCleanupOpportunity = createAction<{ immediate?: boolean }>(
   "bibleCleanup/opportunity",
 );
@@ -2522,9 +2551,10 @@ listenerMiddleware.startListening({
       itemListSlice.actions.setItemListLoadError,
       itemListSlice.actions.setItemListIsRetrying,
     );
-    const itemListChanged =
-      (currentState as RootState).undoable.present.itemList !==
-      (previousState as RootState).undoable.present.itemList;
+    const itemListChanged = !_.isEqual(
+      (currentState as RootState).undoable.present.itemList.list,
+      (previousState as RootState).undoable.present.itemList.list,
+    );
     const selectedId = (currentState as RootState).undoable.present.itemLists.selectedList?._id;
     const hasOutlineConflict = Boolean(
       selectedId && state.remoteConflicts?.[selectedId] &&
@@ -2533,6 +2563,20 @@ listenerMiddleware.startListening({
     const restoringResolution = itemListSlice.actions.initiateItemList.match(action) &&
       Boolean(selectedId && state.remoteConflicts?.[selectedId]?.resolutionChoice);
     const restoringDraft = itemListSlice.actions.initiateItemList.match(action) && state.hasPendingUpdate;
+    const resolvingConflict = itemListSlice.actions.resolveOutlineConflict.match(action) &&
+      action.payload.outlineId === selectedId &&
+      state.hasPendingUpdate &&
+      Boolean(state.remoteConflicts?.[action.payload.outlineId]?.resolutionChoice);
+    const activeSaveIntent = state.outlineOwnerKey
+      ? activeOutlineSaveIntents.get(state.outlineOwnerKey)
+      : undefined;
+    const hasCurrentSaveIntent = Boolean(
+      activeSaveIntent &&
+      activeSaveIntent.outlineId === selectedId &&
+      _.isEqual(activeSaveIntent.items, state.list),
+    );
+    const restoringSavedIntent = itemListSlice.actions.markItemListPersisted.match(action) &&
+      state.hasPendingUpdate && !hasCurrentSaveIntent;
     const outgoingHasConflict = Boolean(
       (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
       (previousState as RootState).undoable.present.itemList.remoteConflicts?.[
@@ -2558,8 +2602,8 @@ listenerMiddleware.startListening({
       );
     }
     return (
-      ((itemListChanged || itemListSlice.actions.forceUpdate.match(action)) &&
-      (!excluded(action) || restoringResolution || restoringDraft) &&
+      ((itemListChanged || itemListSlice.actions.forceUpdate.match(action) || restoringSavedIntent || resolvingConflict) &&
+      (!excluded(action) || restoringResolution || restoringDraft || restoringSavedIntent) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       !hasOutlineConflict &&
@@ -2573,6 +2617,16 @@ listenerMiddleware.startListening({
     const isSavingOutgoingOutline = originalPresent.itemList.outlineOwnerKey !==
       (listenerApi.getState() as RootState).undoable.present.itemList.outlineOwnerKey &&
       originalPresent.itemList.hasPendingUpdate && originalPresent.itemList.isInitialized;
+    const intentPresent = isSavingOutgoingOutline
+      ? originalPresent
+      : (listenerApi.getState() as RootState).undoable.present;
+    const intentOwnerKey = intentPresent.itemList.outlineOwnerKey;
+    const intentToken = Symbol("outline-save-intent");
+    const releaseSaveIntent = () => {
+      if (intentOwnerKey && activeOutlineSaveIntents.get(intentOwnerKey)?.token === intentToken) {
+        activeOutlineSaveIntents.delete(intentOwnerKey);
+      }
+    };
     const dbAtStart = isSavingOutgoingOutline
       ? (action as OutlineDatabaseAction).meta?.outgoingOutlineDatabase ?? db
       : db;
@@ -2581,6 +2635,14 @@ listenerMiddleware.startListening({
     const sessionIsCurrent = () => sessionAtStart === outlineAccountSession;
 
     listenerApi.cancelActiveListeners();
+    if (intentOwnerKey) {
+      activeOutlineSaveIntents.set(intentOwnerKey, {
+        token: intentToken,
+        outlineId: intentPresent.itemLists.selectedList?._id,
+        items: [...intentPresent.itemList.list],
+      });
+    }
+    listenerApi.signal.addEventListener("abort", releaseSaveIntent, { once: true });
     if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
     }
@@ -2619,12 +2681,20 @@ listenerMiddleware.startListening({
       (loadedOutlineId && loadedOutlineId !== selectedList._id) ||
       outgoingConflict
     ) {
+      releaseSaveIntent();
       return;
     }
 
     const revisionResolution = present.itemList.pendingRevisionResolutions?.[selectedList._id];
     const submittedItems = revisionResolution?.items ?? list;
     const submittedMoveIntents = present.itemList.pendingMoveIntents ?? [];
+    if (intentOwnerKey) {
+      activeOutlineSaveIntents.set(intentOwnerKey, {
+        token: intentToken,
+        outlineId: selectedList._id,
+        items: [...list],
+      });
+    }
     const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
     let persistenceSucceeded = false;
     try {
@@ -2706,6 +2776,7 @@ listenerMiddleware.startListening({
       }
       console.error("Failed to persist item list outline:", error);
     } finally {
+      releaseSaveIntent();
       releaseOutlinePersistence();
       const pendingBibleCleanup = hasPendingBibleCleanup(
         dbAtStart,
@@ -2912,9 +2983,18 @@ listenerMiddleware.startListening({
       overlaySlice.actions.markOverlayDraftPending,
       overlaySlice.actions.clearOverlayDraftPending,
     );
+    const currentOverlay = (currentState as RootState).undoable.present.overlay;
+    const previousOverlay = (previousState as RootState).undoable.present.overlay;
+    const overlayChanged = isUndoRedoAction(action)
+      ? !!currentOverlay.selectedOverlay?.id &&
+        currentOverlay.selectedOverlay.id === previousOverlay.selectedOverlay?.id &&
+        !_.isEqual(
+          normalizeOverlayForPersistenceCompare(currentOverlay.selectedOverlay),
+          normalizeOverlayForPersistenceCompare(previousOverlay.selectedOverlay!),
+        )
+      : currentOverlay !== previousOverlay;
     return (
-      (currentState as RootState).undoable.present.overlay !==
-        (previousState as RootState).undoable.present.overlay &&
+      overlayChanged &&
       !excluded(action) &&
       !isStoreResetAction(action) &&
       !!(currentState as RootState).undoable.present.overlay.hasPendingUpdate
@@ -3009,9 +3089,10 @@ listenerMiddleware.startListening({
       overlaysSlice.actions.updateOverlayHistoryEntry,
       overlaysSlice.actions.mergeOverlayIntoHistory,
     );
-    const overlaysChanged =
-      (currentState as RootState).undoable.present.overlays !==
-      (previousState as RootState).undoable.present.overlays;
+    const overlaysChanged = !_.isEqual(
+      (currentState as RootState).undoable.present.overlays.list.map(({ id }) => id),
+      (previousState as RootState).undoable.present.overlays.list.map(({ id }) => id),
+    );
     const savingOutgoingOutline =
       !isStoreResetAction(action) &&
       (currentState as RootState).undoable.present.overlays.outlineOwnerKey !==
@@ -3236,9 +3317,28 @@ listenerMiddleware.startListening({
       creditsSlice.actions.removeCreditsHistoryLineEverywhere,
       creditsSlice.actions.syncVisibleCreditsMirrorAndHistory,
     );
+    const current = (currentState as RootState).undoable.present.credits;
+    const previous = (previousState as RootState).undoable.present.credits;
+    const authoredCreditsChanged = isUndoRedoAction(action)
+      ? !_.isEqual(
+        {
+          list: current.list,
+          creditsHistory: current.creditsHistory,
+          transitionScene: current.transitionScene,
+          creditsScene: current.creditsScene,
+          scheduleName: current.scheduleName,
+        },
+        {
+          list: previous.list,
+          creditsHistory: previous.creditsHistory,
+          transitionScene: previous.transitionScene,
+          creditsScene: previous.creditsScene,
+          scheduleName: previous.scheduleName,
+        },
+      )
+      : current !== previous;
     return (
-      (currentState as RootState).undoable.present.credits !==
-        (previousState as RootState).undoable.present.credits &&
+      authoredCreditsChanged &&
       !excluded(action) &&
       !isStoreResetAction(action)
     );
@@ -3833,9 +3933,16 @@ listenerMiddleware.startListening({
       preferencesSlice.actions.replaceMediaReferencesInPreferences,
       preferencesSlice.actions.setIsInitialized,
     );
+    const current = (currentState as RootState).undoable.present.preferences;
+    const previous = (previousState as RootState).undoable.present.preferences;
+    const persistedPreferencesChanged = isUndoRedoAction(action)
+      ? !_.isEqual(
+        { preferences: current.preferences, monitorSettings: current.monitorSettings, quickLinks: current.quickLinks },
+        { preferences: previous.preferences, monitorSettings: previous.monitorSettings, quickLinks: previous.quickLinks },
+      )
+      : current !== previous;
     return (
-      (currentState as RootState).undoable.present.preferences !==
-        (previousState as RootState).undoable.present.preferences &&
+      persistedPreferencesChanged &&
       !excluded(action) &&
       !isStoreResetAction(action)
     );
@@ -4031,9 +4138,16 @@ listenerMiddleware.startListening({
       overlayTemplatesSlice.actions.forceUpdate,
       overlayTemplatesSlice.actions.setIsInitialized,
     );
+    const currentTemplates = (currentState as RootState).undoable.present.overlayTemplates;
+    const previousTemplates = (previousState as RootState).undoable.present.overlayTemplates;
+    const authoredTemplatesChanged = isUndoRedoAction(action)
+      ? !_.isEqual(
+        { templatesByType: currentTemplates.templatesByType, defaultTemplateIdsByType: currentTemplates.defaultTemplateIdsByType },
+        { templatesByType: previousTemplates.templatesByType, defaultTemplateIdsByType: previousTemplates.defaultTemplateIdsByType },
+      )
+      : currentTemplates !== previousTemplates;
     return (
-      (currentState as RootState).undoable.present.overlayTemplates !==
-        (previousState as RootState).undoable.present.overlayTemplates &&
+      authoredTemplatesChanged &&
       !excluded(action) &&
       !!(currentState as RootState).undoable.present.overlayTemplates
         ?.hasPendingUpdate &&
@@ -4973,7 +5087,7 @@ listenerMiddleware.startListening({
       currentSelectedOverlayId,
     );
 
-    listenerApi.dispatch(itemSlice.actions.clearTransientState());
+    listenerApi.dispatch(itemSlice.actions.clearUndoRedoTransientState());
 
     const preservedItemSelection = getItemSelectionForUndoRedo(
       previousState.undoable.present.item,
@@ -5005,102 +5119,67 @@ listenerMiddleware.startListening({
     flushPendingItemMutations(getItemMutationOwner(itemBeforePendingFlush));
     const itemAfterUndoRedo =
       (listenerApi.getState() as RootState).undoable.present.item;
-    const itemPersistenceChanged = !_.isEqual(
-      sanitizeTransientItemState(itemAfterUndoRedo),
-      sanitizeTransientItemState(previousState.undoable.present.item),
-    );
-    if (itemPersistenceChanged && itemAfterUndoRedo._id) {
-      const owner = getItemMutationOwner(itemAfterUndoRedo);
-      const contentOwner = itemAfterUndoRedo.contentOwner;
-      const itemDatabase = contentOwner
-        ? getContentDatabaseForOwner(contentOwner) ??
-          (contentOwner.scopeId === "unscoped" ? dbAtStart : undefined)
-        : dbAtStart;
-      if (itemDatabase) {
-        const targetId = itemAfterUndoRedo._id;
-        const expectedState = sanitizeTransientItemState(itemAfterUndoRedo);
-        const churchIdAtReadStart = globalFireDbInfo.churchId;
-        const sessionTokenAtReadStart = getContentDatabaseSessionToken(itemDatabase.name);
-        const latestPersistedItem = await loadItemWithSongHydration(itemDatabase, targetId)
-          .catch(() => null);
-        // A component may still have accepted text queued outside Redux while
-        // the authoritative read was pending. Materialize it before deciding
-        // whether this response still owns the baseline rebase.
-        flushPendingItemMutations(owner);
-        const activeItem =
-          (listenerApi.getState() as RootState).undoable.present.item;
-        const activeContentOwner = getActiveContentDatabaseOwner();
-        const databaseIsStillOwned = contentOwner && contentOwner.scopeId !== "unscoped"
-          ? activeContentOwner?.scopeId === contentOwner.scopeId &&
-            activeContentOwner.databaseKey === contentOwner.databaseKey &&
-            activeContentOwner.churchId === contentOwner.churchId &&
-            getContentDatabaseForOwner(contentOwner) === itemDatabase
-          : db === itemDatabase && !activeContentOwner;
-        const noNewerAutosave = !pendingItemAutosaves.has(itemAutosaveKey(itemAfterUndoRedo)) &&
-          !itemAutosaveDebounces.has(itemAutosaveKey(itemAfterUndoRedo)) &&
-          !itemAutosaveWriteQueues.has(itemAutosaveKey(itemAfterUndoRedo));
-        if (
-          latestPersistedItem &&
-          latestPersistedItem._id === targetId &&
-          sameItemMutationScope(itemAfterUndoRedo, activeItem) &&
-          databaseIsStillOwned &&
-          globalFireDbInfo.churchId === churchIdAtReadStart &&
-          getContentDatabaseSessionToken(itemDatabase.name) === sessionTokenAtReadStart &&
-          _.isEqual(sanitizeTransientItemState(activeItem), expectedState) &&
-          noNewerAutosave
-        ) {
-          listenerApi.dispatch(
-            itemSlice.actions.rebaseItemPersistence(latestPersistedItem),
-          );
-        }
-      }
-    }
+    const itemPersistenceChanged = getItemPersistenceChanges(
+      itemAfterUndoRedo,
+      previousState.undoable.present.item as DBItem,
+    ).length > 0;
 
     // Only force update for slices that actually changed during undo/redo
-    if (itemPersistenceChanged) {
+    if (itemPersistenceChanged && itemAfterUndoRedo.hasPendingUpdate) {
       listenerApi.dispatch(itemSlice.actions.forceUpdate());
     }
 
+    const currentOverlay = currentState.undoable.present.overlay.selectedOverlay;
+    const previousOverlay = previousState.undoable.present.overlay.selectedOverlay;
     if (
+      currentOverlay?.id && currentOverlay.id === previousOverlay?.id &&
       !_.isEqual(
-        currentState.undoable.present.overlay,
-        previousState.undoable.present.overlay,
+        normalizeOverlayForPersistenceCompare(currentOverlay),
+        normalizeOverlayForPersistenceCompare(previousOverlay),
       )
     ) {
       listenerApi.dispatch(overlaySlice.actions.forceUpdate());
     }
 
-    if (
-      !_.isEqual(
-        currentState.undoable.present.overlays,
-        previousState.undoable.present.overlays,
-      )
-    ) {
+    if (!_.isEqual(
+      currentState.undoable.present.overlays.list.map(({ id }) => id),
+      previousState.undoable.present.overlays.list.map(({ id }) => id),
+    )) {
       listenerApi.dispatch(overlaysSlice.actions.forceUpdate());
     }
 
-    if (
-      !_.isEqual(
-        currentState.undoable.present.itemList,
-        previousState.undoable.present.itemList,
-      )
-    ) {
+    if (currentState.undoable.present.itemList.hasPendingUpdate && !_.isEqual(
+      currentState.undoable.present.itemList.list,
+      previousState.undoable.present.itemList.list,
+    )) {
       listenerApi.dispatch(itemListSlice.actions.forceUpdate());
     }
 
-    if (
-      !_.isEqual(
-        currentState.undoable.present.itemLists,
-        previousState.undoable.present.itemLists,
-      )
-    ) {
+    if (!_.isEqual(
+      {
+        currentLists: currentState.undoable.present.itemLists.currentLists,
+        activeList: currentState.undoable.present.itemLists.activeList,
+      },
+      {
+        currentLists: previousState.undoable.present.itemLists.currentLists,
+        activeList: previousState.undoable.present.itemLists.activeList,
+      },
+    )) {
       listenerApi.dispatch(itemListsSlice.actions.forceUpdate());
     }
 
     if (
       !_.isEqual(
-        currentState.undoable.present.preferences,
-        previousState.undoable.present.preferences,
+        {
+          preferences: currentState.undoable.present.preferences.preferences,
+          monitorSettings: currentState.undoable.present.preferences.monitorSettings,
+          quickLinks: currentState.undoable.present.preferences.quickLinks,
+        },
+        {
+          preferences: previousState.undoable.present.preferences.preferences,
+          monitorSettings: previousState.undoable.present.preferences.monitorSettings,
+          quickLinks: previousState.undoable.present.preferences.quickLinks,
+        },
       )
     ) {
       listenerApi.dispatch(preferencesSlice.actions.forceUpdate());
@@ -5108,8 +5187,20 @@ listenerMiddleware.startListening({
 
     if (
       !_.isEqual(
-        currentState.undoable.present.credits,
-        previousState.undoable.present.credits,
+        {
+          list: currentState.undoable.present.credits.list,
+          creditsHistory: currentState.undoable.present.credits.creditsHistory,
+          transitionScene: currentState.undoable.present.credits.transitionScene,
+          creditsScene: currentState.undoable.present.credits.creditsScene,
+          scheduleName: currentState.undoable.present.credits.scheduleName,
+        },
+        {
+          list: previousState.undoable.present.credits.list,
+          creditsHistory: previousState.undoable.present.credits.creditsHistory,
+          transitionScene: previousState.undoable.present.credits.transitionScene,
+          creditsScene: previousState.undoable.present.credits.creditsScene,
+          scheduleName: previousState.undoable.present.credits.scheduleName,
+        },
       )
     ) {
       listenerApi.dispatch(creditsSlice.actions.forceUpdate());
@@ -5117,8 +5208,14 @@ listenerMiddleware.startListening({
 
     if (
       !_.isEqual(
-        currentState.undoable.present.overlayTemplates,
-        previousState.undoable.present.overlayTemplates,
+        {
+          templatesByType: currentState.undoable.present.overlayTemplates.templatesByType,
+          defaultTemplateIdsByType: currentState.undoable.present.overlayTemplates.defaultTemplateIdsByType,
+        },
+        {
+          templatesByType: previousState.undoable.present.overlayTemplates.templatesByType,
+          defaultTemplateIdsByType: previousState.undoable.present.overlayTemplates.defaultTemplateIdsByType,
+        },
       )
     ) {
       listenerApi.dispatch(overlayTemplatesSlice.actions.forceUpdate());
@@ -5259,6 +5356,7 @@ type OutlineDatabaseAction = Action & {
 const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) => {
   const historyOutline = action.type === "@@redux-undo/UNDO" || action.type === "@@redux-undo/REDO"
     ? state?.undoable.present.itemList : undefined;
+  const historyPresent = historyOutline ? state?.undoable.present : undefined;
   const databaseChanged = outlineStateDatabase !== db;
   if (action.type === "RESET") {
     // Clear before caching/reducing: logout must never save or rehydrate the
@@ -5286,15 +5384,79 @@ const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) =
     } as RootState;
   }
   const reduced = combinedReducers(state, action);
+  let historyRestored = reduced;
+  if (historyPresent && state?.undoable?.present) {
+    const live = state.undoable.present;
+    const restored = reduced.undoable.present;
+    const activeOwner = getActiveContentDatabaseOwner();
+    const historyItemOwnerIsCurrent = (() => {
+      const owner = restored.item.contentOwner;
+      return owner && owner.scopeId !== "unscoped"
+        ? !!activeOwner &&
+          owner.scopeId === activeOwner.scopeId &&
+          owner.databaseKey === activeOwner.databaseKey &&
+          owner.churchId === activeOwner.churchId &&
+          owner.accountId === activeOwner.accountId &&
+          globalFireDbInfo.churchId === owner.churchId &&
+          getContentDatabaseForOwner(owner) === db
+        : !activeOwner;
+    })();
+    const sameContentOwner = sameItemContentOwner(live.item, restored.item);
+    const item = historyItemOwnerIsCurrent && sameContentOwner
+      ? sameItemMutationScope(live.item, restored.item)
+        ? itemSlice.reducer(
+          restored.item,
+          itemSlice.actions.restoreUndoRedoState({ current: live.item }),
+        )
+        : restored.item
+      : live.item;
+    const itemLists = live.itemLists.contentDatabaseKey === restored.itemLists.contentDatabaseKey &&
+      live.itemLists.scope === restored.itemLists.scope
+      ? itemListsSlice.reducer(
+        restored.itemLists,
+        itemListsSlice.actions.restoreUndoRedoState({
+          current: live.itemLists,
+          historical: restored.itemLists,
+        }),
+      )
+      : live.itemLists;
+
+    const databaseKey = action.meta?.outlineDatabaseKey ??
+      live.itemLists.contentDatabaseKey ?? "";
+    const selectedOutlineId = live.itemLists.selectedList?._id;
+    const outlineOwnerKey = getOutlineOwnerKey(databaseKey, selectedOutlineId);
+    const outlineOwnerIsCurrent = live.itemLists.contentDatabaseKey === databaseKey &&
+      restored.itemLists.contentDatabaseKey === databaseKey &&
+      live.itemLists.selectedList?._id === restored.itemLists.selectedList?._id &&
+      live.itemList.outlineOwnerKey === outlineOwnerKey &&
+      live.itemList.loadedOutlineId === selectedOutlineId;
+    const itemList = outlineOwnerIsCurrent
+      ? itemListSlice.reducer(
+        restored.itemList,
+        itemListSlice.actions.restoreUndoRedoState({
+          current: live.itemList,
+          historical: restored.itemList,
+        }),
+      )
+      : live.itemList;
+
+    historyRestored = {
+      ...reduced,
+      undoable: {
+        ...reduced.undoable,
+        present: { ...restored, item, itemLists, itemList },
+      },
+    };
+  }
   const retained = action.type === "RESET" ? undefined : historyOutline ? {
     remoteConflicts: historyOutline.remoteConflicts,
     pendingRevisionResolutions: historyOutline.pendingRevisionResolutions,
   } : db && (isStoreResetAction(action) || databaseChanged)
     ? outlineDraftsByDb.get(outlineDraftDatabaseKey(db)) ?? (databaseChanged ? { remoteConflicts: {}, pendingRevisionResolutions: {} } : undefined)
     : undefined;
-  let next = reduced;
+  let next = historyRestored;
   if (retained) {
-    const itemList = { ...reduced.undoable.present.itemList, ...retained };
+    const itemList = { ...historyRestored.undoable.present.itemList, ...retained };
     const outlineId = itemList.loadedOutlineId;
     if (historyOutline && outlineId && retained.remoteConflicts[outlineId]) {
       const conflict = retained.remoteConflicts[outlineId];
@@ -5303,12 +5465,33 @@ const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) =
       itemList.hasPendingUpdate = true;
     }
     next = {
-      ...reduced,
+      ...historyRestored,
       undoable: {
-        ...reduced.undoable,
-        present: { ...reduced.undoable.present, itemList },
+        ...historyRestored.undoable,
+        present: { ...historyRestored.undoable.present, itemList },
       },
     };
+  }
+  if (itemActionsThatRefreshHistoryMetadata(action)) {
+    const currentItem = next.undoable.present.item;
+    if (currentItem._id) {
+      const refreshSnapshot = (snapshot: typeof next.undoable.present) => {
+        if (!sameItemMutationScope(snapshot.item, currentItem)) return snapshot;
+        const item = itemSlice.reducer(
+          snapshot.item,
+          itemSlice.actions.restoreUndoRedoState({ current: currentItem }),
+        );
+        return item === snapshot.item ? snapshot : { ...snapshot, item };
+      };
+      next = {
+        ...next,
+        undoable: {
+          ...next.undoable,
+          past: next.undoable.past.map(refreshSnapshot),
+          future: next.undoable.future.map(refreshSnapshot),
+        },
+      };
+    }
   }
   const present = next.undoable.present;
   const databaseKey = action.meta?.outlineDatabaseKey ?? present.itemLists.contentDatabaseKey ?? "";

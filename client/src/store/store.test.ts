@@ -2,10 +2,15 @@ import type { DBItem, ItemContentOwner, ItemState, SongV2Documents } from "../ty
 import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
+import React from "react";
+import { Provider } from "react-redux";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import Undo from "../containers/Toolbar/ToolbarElements/Undo";
 import { loadSongV2Snapshot } from "../utils/songPersistence";
 import { createSongV2 } from "../utils/songV2Writer";
 import { createNewSlide } from "../utils/slideCreation";
 import { formatSong } from "../utils/overflow";
+import { createOutlineMoveIntent } from "../utils/outlineSync";
 
 const mockedCrossWindowLocks = new Map<string, Promise<void>>();
 if (typeof navigator !== "undefined") {
@@ -2157,12 +2162,12 @@ describe("authoritative Song V2 reads in controller and Undo/Redo paths", () => 
     env.store.dispatch({ type: "@@redux-undo/UNDO" });
     await flushListenerEffects();
     const afterUndo = env.store.getState().undoable.present.item;
-    expect(env.db.get.mock.calls.slice(readsBeforeUndo).some(([id]) => id === env.physical.root._id)).toBe(true);
-    expect(rebase).toHaveBeenCalled();
-    expect(rebase.mock.calls.map(([doc]) => (doc as any).arrangements[0].slides[0].boxes[0].words)).toContain("First V2 edit");
+    expect(env.db.get).toHaveBeenCalledTimes(readsBeforeUndo);
+    expect(rebase).not.toHaveBeenCalled();
     expect(afterUndo.arrangements[0].slides[0].boxes[0].words).toBe("Authoritative V2 lyrics");
     expect(afterUndo.baseItem).toMatchObject({ docType: "song-v2-root", _id: songId });
     expect(afterUndo.baseItem.arrangements[0].slides[0].boxes[0].words).toBe("First V2 edit");
+    expect(afterUndo.hasPendingUpdate).toBe(true);
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
@@ -2177,7 +2182,7 @@ describe("authoritative Song V2 reads in controller and Undo/Redo paths", () => 
     expect(env.docs.get(songId)).toEqual(env.staleV1);
   });
 
-  it("flushes a component edit accepted during the Undo/Redo hydration read", async () => {
+  it("keeps a synchronous Undo baseline when a newer component edit follows immediately", async () => {
     const env = setup();
     const owner: ItemContentOwner = {
       scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
@@ -2190,31 +2195,19 @@ describe("authoritative Song V2 reads in controller and Undo/Redo paths", () => 
     await jest.advanceTimersByTimeAsync(1500);
     await flushListenerEffects();
 
-    let releaseRoot!: (doc: any) => void;
-    let started!: () => void;
-    const rootReadStarted = new Promise<void>(resolve => { started = resolve; });
-    const rootRead = new Promise<any>(resolve => { releaseRoot = resolve; });
-    const originalGet = env.db.get.getMockImplementation()!;
-    let heldRoot = false;
-    env.db.get.mockImplementation((id: string) => {
-      if (id === env.physical.root._id && !heldRoot) {
-        heldRoot = true;
-        started();
-        return rootRead;
-      }
-      return originalGet(id);
-    });
+    const baselineBeforeUndo = env.store.getState().undoable.present.item.baseItem;
     env.store.dispatch({ type: "@@redux-undo/UNDO" });
-    await rootReadStarted;
-
-    const mutationOwner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item)!;
-    env.deferredMutations.scheduleOwnedItemMutation(mutationOwner, 200, () => env.updateLyrics("Component edit during read"));
-    releaseRoot(env.docs.get(env.physical.root._id));
+    expect(env.store.getState().undoable.present.item.baseItem).toEqual(baselineBeforeUndo);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    env.updateLyrics("Component edit immediately after undo");
     await flushListenerEffects();
 
     expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words)
-      .toBe("Component edit during read");
+      .toBe("Component edit immediately after undo");
     expect(env.store.getState().undoable.present.item.baseItem).toMatchObject({ docType: "song-v2-root", _id: songId });
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Component edit immediately after undo");
   });
 
   it("hydrates a stale V1 predecessor from V2 and buffers unresolved conflicts for a view-only controller", async () => {
@@ -2381,6 +2374,133 @@ describe("authoritative Song V2 reads in controller and Undo/Redo paths", () => 
     expect(env.store.getState().undoable.present.item.pendingRemoteItem.arrangements[0].slides[0].boxes[0].words)
       .toBe("Safe disjoint merge");
     expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+  });
+});
+
+describe("song undo and redo persistence against PouchDB", () => {
+  const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  const readWords = (item: any) => item.arrangements?.[0]?.slides?.[0]?.boxes?.[0]?.words ??
+    item.slides?.[0]?.boxes?.[0]?.words;
+  const waitForSavedWords = async (store: any, words: string) => {
+    const matches = () => {
+      const item = store.getState().undoable.present.item;
+      return !item.hasPendingUpdate && readWords(item) === words && readWords(item.baseItem) === words;
+    };
+    if (matches()) return;
+    await new Promise<void>((resolve) => {
+      let unsubscribe = () => {};
+      const check = () => {
+        if (!matches()) return;
+        unsubscribe();
+        resolve();
+      };
+      unsubscribe = store.subscribe(check);
+      check();
+    });
+  };
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it.each(["legacy", "song-v2"] as const)("saves lyrics through Undo, Redo, and a third edit for %s songs", async format => {
+    const songId = `undo-${format}-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(songId, { adapter: "idb" });
+    const recoveryStore = new Map<string, any>();
+    const env = loadStoreWithItemPersistence(recoveryStore, false, database);
+    const owner: ItemContentOwner = {
+      scopeId: `user-a:church-a:${database.name}`,
+      databaseKey: database.name,
+      churchId: "church-a",
+      accountId: "user-a",
+    };
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(database.name);
+    session.markInitialReplicationComplete();
+    env.globalFireDbInfo.churchId = owner.churchId;
+    env.deferredMutations.setActiveContentDatabase(owner, database as never);
+    env.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    jest.runAllTimers();
+
+    try {
+      const slide = {
+        id: "verse-1",
+        name: "Verse 1",
+        type: "Verse",
+        boxes: [{ id: "verse-box", words: "Original lyrics", width: 100, height: 100 }],
+      };
+      const source = createSongDoc({
+        _id: songId,
+        name: "Undo Song",
+        slides: [slide],
+        arrangements: [{
+          id: "master",
+          name: "Master",
+          formattedLyrics: [],
+          songOrder: [],
+          slides: [slide],
+        }],
+      }) as DBItem;
+
+      if (format === "legacy") {
+        const result = await database.put(source as any);
+        const baseline = await database.get<DBItem>(result.id);
+        env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      } else {
+        const physical = env.songPersistence.serializeSongToV2Documents(source);
+        for (const document of [physical.root, ...physical.arrangements, ...physical.slides]) {
+          await database.put(document as any);
+        }
+        const baseline = await env.songPersistence.loadItemWithSongHydration(database as never, songId);
+        env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      }
+
+      const updateWords = (words: string) => {
+        const item = env.store.getState().undoable.present.item;
+        const slides = clone(item.arrangements?.[item.selectedArrangement ?? 0]?.slides ?? item.slides);
+        slides[0].boxes[0].words = words;
+        env.store.dispatch(env.itemSlice.actions._updateSlides(slides));
+      };
+      const saveWords = async (words: string) => {
+        const saved = waitForSavedWords(env.store, words);
+        await jest.advanceTimersByTimeAsync(1500);
+        await flushListenerEffects();
+        await saved;
+      };
+      const persistedWords = async () => format === "legacy"
+        ? readWords(await database.get(songId))
+        : readWords((await env.songPersistence.loadSongV2Snapshot(database as never, songId)).hydrated);
+
+      updateWords("First saved edit");
+      await saveWords("First saved edit");
+      expect(await persistedWords()).toBe("First saved edit");
+      expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(readWords(env.store.getState().undoable.present.item)).toBe("Original lyrics");
+      expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+      expect(readWords(env.store.getState().undoable.present.item.baseItem)).toBe("First saved edit");
+      await saveWords("Original lyrics");
+      expect(await persistedWords()).toBe("Original lyrics");
+
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(readWords(env.store.getState().undoable.present.item)).toBe("First saved edit");
+      expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+      await saveWords("First saved edit");
+      expect(await persistedWords()).toBe("First saved edit");
+
+      updateWords("Third edit after Redo");
+      await saveWords("Third edit after Redo");
+      expect(await persistedWords()).toBe("Third edit after Redo");
+      const finalItem = env.store.getState().undoable.present.item;
+      expect(finalItem.hasPendingUpdate).toBe(false);
+      expect(finalItem.hasRemoteUpdate).toBe(false);
+      expect(finalItem.pendingRemoteItem).toBeNull();
+      expect(finalItem.pendingSongV2Conflicts).toBeUndefined();
+      expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([]);
+    } finally {
+      session.release();
+      env.deferredMutations.setActiveContentDatabase(null);
+      await database.destroy();
+    }
   });
 });
 
@@ -7678,7 +7798,10 @@ describe("store module", () => {
 });
 
 const loadStoreWithItemListPersistence = (
-  { initialReplicationComplete = true }: { initialReplicationComplete?: boolean } = {},
+  {
+    initialReplicationComplete = true,
+    databaseOverride,
+  }: { initialReplicationComplete?: boolean; databaseOverride?: PouchDB.Database } = {},
 ) => {
   let storeModule: any;
   let itemListSliceModule: any;
@@ -7698,7 +7821,7 @@ const loadStoreWithItemListPersistence = (
     churchId: "church-test",
     isConnected: true,
   };
-  const db = {
+  const mockDb = {
     name: "outline-persistence-test-db",
     get: jest.fn(),
     put: jest
@@ -7708,6 +7831,7 @@ const loadStoreWithItemListPersistence = (
     info: jest.fn(),
     bulkDocs: jest.fn(),
   };
+  const db: any = databaseOverride ?? mockDb;
 
   let activeDb: unknown = db;
   let activePostMessage = postMessage;
@@ -7800,6 +7924,323 @@ describe("item list outline persistence", () => {
       }),
     );
   };
+
+  const initializePouchOutlineStore = async (
+    database: PouchDB.Database,
+    rows: ReturnType<typeof createServiceItem>[],
+  ) => {
+    await database.put({
+      _id: "outline-a",
+      docType: "itemListDetails",
+      name: "Sunday",
+      items: rows,
+      overlays: [],
+    } as any);
+    const env = loadStoreWithItemListPersistence({ databaseOverride: database });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([
+      { _id: "outline-a", name: "Sunday" },
+    ]));
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: rows }));
+    env.store.dispatch({ type: "CONTROLLER_PAGE_READY" });
+    await jest.advanceTimersByTimeAsync(20);
+    await flushListenerEffects();
+    return env;
+  };
+
+  const readPersistedOutlineItems = async (database: PouchDB.Database) =>
+    (await database.get<{ items: ReturnType<typeof createServiceItem>[] }>("outline-a")).items;
+
+  const waitForOutlineState = async (
+    store: any,
+    baseline: ReturnType<typeof createServiceItem>[],
+    hasPendingUpdate: boolean,
+  ) => {
+    const matches = () => {
+      const itemList = store.getState().undoable.present.itemList;
+      return itemList.hasPendingUpdate === hasPendingUpdate &&
+        JSON.stringify(itemList.syncBaseline ?? []) === JSON.stringify(baseline);
+    };
+    if (matches()) return;
+    await new Promise<void>((resolve) => {
+      let unsubscribe = () => {};
+      const check = () => {
+        if (!matches()) return;
+        unsubscribe();
+        resolve();
+      };
+      unsubscribe = store.subscribe(check);
+      check();
+    });
+  };
+
+  it("keeps toolbar Undo/Redo and keyboard shortcuts on the same history path", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    const added = createServiceItem({ name: "C", _id: "song-c", listId: "row-c" });
+    try {
+      env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]));
+      env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: [first, second] }));
+      env.store.dispatch({ type: "CONTROLLER_PAGE_READY" });
+      await jest.advanceTimersByTimeAsync(20);
+      await flushListenerEffects();
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([first, second, added]));
+
+      render(React.createElement(Provider, {
+        store: env.store,
+        children: React.createElement(Undo),
+      }));
+      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+
+      fireEvent.keyDown(document.body, { key: "y", ctrlKey: true });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+
+      fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+
+      fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+    } finally {
+      cleanup();
+      jest.useRealTimers();
+    }
+  });
+
+  it("persists a saved addition through Undo and Redo with the original row identity", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-undo-redo-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    const added = createServiceItem({ name: "C", _id: "song-c", listId: "row-c" });
+    try {
+      const env = await initializePouchOutlineStore(database, [first, second]);
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([first, second, added]));
+      const listId = env.store.getState().undoable.present.itemList.list[2].listId;
+      const addedSave = waitForOutlineState(env.store, [first, second, added], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await addedSave;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second]);
+      expect(env.store.getState().undoable.present.itemList.syncBaseline).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const deletedSave = waitForOutlineState(env.store, [first, second], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await deletedSave;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second]);
+
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      const redone = env.store.getState().undoable.present.itemList;
+      expect(redone.list.map((row: { listId: string }) => row.listId)).toEqual(["row-a", "row-b", listId]);
+      expect(redone.hasPendingUpdate).toBe(true);
+      const redoneSave = waitForOutlineState(env.store, [first, second, added], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await redoneSave;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.syncBaseline).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+      expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions).toEqual({});
+
+      const deletedSecond = [first, added];
+      env.store.dispatch(env.itemListSlice.actions.updateItemList(deletedSecond));
+      const deleteSave = waitForOutlineState(env.store, deletedSecond, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await deleteSave;
+      expect(await readPersistedOutlineItems(database)).toEqual(deletedSecond);
+
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const restoredDelete = waitForOutlineState(env.store, [first, second, added], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await restoredDelete;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second, added]);
+
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual(deletedSecond);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const redoneDelete = waitForOutlineState(env.store, deletedSecond, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await redoneDelete;
+      expect(await readPersistedOutlineItems(database)).toEqual(deletedSecond);
+    } finally {
+      jest.useRealTimers();
+      await database.destroy();
+    }
+  });
+
+  it("coalesces rapid add Undo/Redo actions before the debounce and keeps reordering intent", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-undo-rapid-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    const third = createServiceItem({ name: "C", _id: "song-c", listId: "row-c" });
+    try {
+      const env = await initializePouchOutlineStore(database, [first, second, third]);
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([first, second, third, createServiceItem({ name: "D", _id: "song-d", listId: "row-d" })]));
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.itemList.list.map((row: { listId: string }) => row.listId))
+        .toEqual(["row-a", "row-b", "row-c", "row-d"]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const rapidSave = waitForOutlineState(env.store, [first, second, third, createServiceItem({ name: "D", _id: "song-d", listId: "row-d" })], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await rapidSave;
+      expect((await readPersistedOutlineItems(database)).map((row: { listId: string }) => row.listId))
+        .toEqual(["row-a", "row-b", "row-c", "row-d"]);
+
+      const ownerKey = env.store.getState().undoable.present.itemList.outlineOwnerKey;
+      const moved = [first, third, second, (await readPersistedOutlineItems(database))[3]];
+      const intent = createOutlineMoveIntent({
+        outlineId: "outline-a",
+        ownerKey,
+        resultingItems: moved,
+        movedIds: ["row-b"],
+      })!;
+      env.store.dispatch(env.itemListSlice.actions.moveItemListRows({ items: moved, intent }));
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.pendingMoveIntents).toEqual([]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      const restoredMove = env.store.getState().undoable.present.itemList;
+      expect(restoredMove.pendingMoveIntents).toEqual([intent]);
+      expect(restoredMove.hasPendingUpdate).toBe(true);
+      const movedSave = waitForOutlineState(env.store, moved, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await movedSave;
+      expect((await readPersistedOutlineItems(database)).map((row: { listId: string }) => row.listId))
+        .toEqual(["row-a", "row-c", "row-b", "row-d"]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+    } finally {
+      jest.useRealTimers();
+      await database.destroy();
+    }
+  });
+
+  it("keeps incompatible edits from two Controllers in conflict review", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-undo-conflict-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    try {
+      const controllerA = await initializePouchOutlineStore(database, [first, second]);
+      const controllerB = loadStoreWithItemListPersistence({ databaseOverride: database });
+      controllerB.store.dispatch(controllerB.itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]));
+      controllerB.store.dispatch(controllerB.itemListSlice.actions.initiateItemList({
+        outlineId: "outline-a",
+        items: [first, second],
+      }));
+      controllerB.store.dispatch({ type: "CONTROLLER_PAGE_READY" });
+      await jest.advanceTimersByTimeAsync(20);
+      await flushListenerEffects();
+
+      const editA = [{ ...first, name: "A from Controller A" }, second];
+      controllerA.store.dispatch(controllerA.itemListSlice.actions.updateItemList(editA));
+      const saveA = waitForOutlineState(controllerA.store, editA, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await saveA;
+
+      const editB = [{ ...first, name: "A from Controller B" }, second];
+      controllerB.store.dispatch(controllerB.itemListSlice.actions.updateItemList(editB));
+      const conflictRecorded = new Promise<void>((resolve) => {
+        let unsubscribe = () => {};
+        const check = () => {
+          if (!controllerB.store.getState().undoable.present.itemList.remoteConflicts["outline-a"]) return;
+          unsubscribe();
+          resolve();
+        };
+        unsubscribe = controllerB.store.subscribe(check);
+        check();
+      });
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await conflictRecorded;
+
+      expect(await readPersistedOutlineItems(database)).toEqual(editA);
+      expect(controllerB.store.getState().undoable.present.itemList.list).toEqual(editB);
+      expect(controllerB.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      expect(controllerB.store.getState().undoable.present.itemList.remoteConflicts["outline-a"])
+        .toMatchObject({ localItems: editB, remoteItems: editA });
+      expect(controllerB.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"])
+        .toBeUndefined();
+    } finally {
+      jest.useRealTimers();
+      await database.destroy();
+    }
+  });
+
+  it("saves an Undo deletion after an earlier real PouchDB write settles", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-undo-inflight-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    const added = createServiceItem({ name: "C", _id: "song-c", listId: "row-c" });
+    let releaseWrite!: () => void;
+    let writeStarted!: () => void;
+    const writeStartedPromise = new Promise<void>((resolve) => { writeStarted = resolve; });
+    const heldWrite = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    try {
+      const env = await initializePouchOutlineStore(database, [first, second]);
+      const originalPut = database.put.bind(database);
+      let held = false;
+      jest.spyOn(database, "put").mockImplementation(async (document: any, ...args: any[]) => {
+        const result = await (originalPut as any)(document, ...args);
+        if (document._id === "outline-a" && !held) {
+          held = true;
+          writeStarted();
+          await heldWrite;
+        }
+        return result;
+      });
+
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([first, second, added]));
+      const advanceWrite = jest.advanceTimersByTimeAsync(1500);
+      await writeStartedPromise;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second, added]);
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second]);
+      const firstAck = waitForOutlineState(env.store, [first, second, added], true);
+      releaseWrite();
+      await advanceWrite;
+      await flushListenerEffects();
+      await firstAck;
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const finalSave = waitForOutlineState(env.store, [first, second], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await finalSave;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+      expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    } finally {
+      jest.useRealTimers();
+      await database.destroy();
+    }
+  });
 
   it("retains the latest unresolved draft through controller teardown and profile navigation without saving it", async () => {
     jest.useFakeTimers();

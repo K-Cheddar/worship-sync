@@ -128,11 +128,11 @@ const exitBackgroundTargetSelectModeIfNoTargets = (state: ItemState) => {
   state.mobileBackgroundTargetSelectMode = false;
 };
 
-const resetTransientItemState = (state: ItemState) => {
+const resetTransientItemState = (state: ItemState, preservePendingUpdate = false) => {
   state.isLoading = false;
   state.isSectionLoading = false;
   state.isItemFormatting = false;
-  state.hasPendingUpdate = false;
+  if (!preservePendingUpdate) state.hasPendingUpdate = false;
   state.restoreFocusToBox = null;
 };
 
@@ -365,6 +365,41 @@ export const itemSlice = createSlice({
       state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
       state.remoteUpdateReason = null;
+    },
+    restoreUndoRedoState: (state, action: PayloadAction<{
+      current: ItemState;
+      baseline?: DBItem;
+    }>) => {
+      const { current, baseline } = action.payload;
+      if (state._id !== current._id || state.type !== current.type) return current;
+
+      // Undo history owns authored item content. Keep the live persistence and
+      // editor metadata so an old snapshot cannot roll back the revision or
+      // re-open a remote update that has already been resolved.
+      state.contentOwner = current.contentOwner;
+      state.docType = current.docType;
+      state.listId = current.listId;
+      state.baseItem = baseline ?? current.baseItem;
+      state.songAudio = current.songAudio;
+      state.pendingRemoteItem = current.pendingRemoteItem;
+      state.pendingSongV2Conflicts = current.pendingSongV2Conflicts;
+      state.hasRemoteUpdate = current.hasRemoteUpdate;
+      state.remoteUpdateReason = current.remoteUpdateReason;
+      state.selectedSlide = current.selectedSlide;
+      state.selectedBox = current.selectedBox;
+      state.isLyricsEditorOpen = current.isLyricsEditorOpen;
+      state.isLoading = current.isLoading;
+      state.isSectionLoading = current.isSectionLoading;
+      state.isItemFormatting = current.isItemFormatting;
+      state.restoreFocusToBox = current.restoreFocusToBox;
+      state.backgroundTargetSlideIds = current.backgroundTargetSlideIds;
+      state.backgroundTargetRangeAnchorId = current.backgroundTargetRangeAnchorId;
+      state.mobileBackgroundTargetSelectMode = current.mobileBackgroundTargetSelectMode;
+      const currentBaseline = baseline ?? current.baseItem;
+      state.hasPendingUpdate = currentBaseline
+        ? getItemPersistenceChanges(state, currentBaseline).length > 0 ||
+          !!current.pendingSongV2Conflicts?.length || !!current.remoteUpdateReason
+        : !!current.hasPendingUpdate;
     },
     replaceMediaReferencesInActiveItem: (
       state,
@@ -606,6 +641,9 @@ export const itemSlice = createSlice({
     },
     clearTransientState: (state) => {
       resetTransientItemState(state);
+    },
+    clearUndoRedoTransientState: (state) => {
+      resetTransientItemState(state, true);
     },
     markItemPersisted: {
       prepare: (persisted: DBItem, authored?: DBItem) => ({ payload: persisted, meta: { authored } }),
@@ -1311,6 +1349,7 @@ export const {
   _setName,
   _updateArrangements,
   clearTransientState,
+  clearUndoRedoTransientState,
   setActiveItem,
   setActiveItemOccurrence,
   replaceMediaReferencesInActiveItem,

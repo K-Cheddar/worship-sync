@@ -146,6 +146,21 @@ export const itemListsSlice = createSlice({
         reselectWithinScope(state);
       }
     },
+    restoreUndoRedoState: (state, action: PayloadAction<{
+      current: ItemListState;
+      historical: ItemListState;
+    }>) => {
+      const { current, historical } = action.payload;
+      if (
+        current.contentDatabaseKey !== historical.contentDatabaseKey ||
+        current.scope !== historical.scope
+      ) return current;
+
+      Object.assign(state, current);
+      state.currentLists = historical.currentLists;
+      state.activeList = historical.activeList;
+      reselectWithinScope(state);
+    },
     updateItemLists: (state, action: PayloadAction<ItemList[]>) => {
       ensureScopeState(state);
       state.currentLists = action.payload;
@@ -313,6 +328,7 @@ export const {
   retryRegistrySave,
   keepRegistryChanges,
   restorePendingRegistryChanges,
+  restoreUndoRedoState,
   forceUpdate,
 } = itemListsSlice.actions;
 

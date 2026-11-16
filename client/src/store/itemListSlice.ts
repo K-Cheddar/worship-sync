@@ -7,7 +7,7 @@ import {
   isLocalImageUrl,
   type LocalImageReferencePatch,
 } from "../utils/localImageAssets";
-import { reconcileOutlineItems, type OutlineMoveIntent } from "../utils/outlineSync";
+import { createOutlineMoveIntent, reconcileOutlineItems, type OutlineMoveIntent } from "../utils/outlineSync";
 import type { OutlineRevisionConflict, OutlineRevisionSelection } from "../utils/persistServiceListField";
 
 export type OutlineRemoteConflict = {
@@ -39,7 +39,7 @@ type UpdateItemListFromRemotePayload =
   | ServiceItem[]
   | { items: ServiceItem[]; outlineId?: string };
 
-type ItemListState = {
+export type ItemListState = {
   outlineOwnerKey?: string;
   outlineLoadGeneration?: number;
   pendingByOutline?: Record<string, ServiceItem[]>;
@@ -101,6 +101,28 @@ const preserveCursor = (state: ItemListState) => {
     Math.min(state.insertPointIndex, state.list.length - 1),
   );
 };
+
+const restoreMoveIntentsForHistory = (
+  items: ServiceItem[],
+  baseline: ServiceItem[],
+  candidates: OutlineMoveIntent[],
+  ownerKey: string,
+  outlineId: string,
+): OutlineMoveIntent[] => candidates.flatMap((candidate) => {
+  if (candidate.ownerKey !== ownerKey || candidate.outlineId !== outlineId) return [];
+  const movedIds = candidate.movedIds.filter((id) =>
+    items.some((item) => item.listId === id) && baseline.some((item) => item.listId === id),
+  );
+  if (!movedIds.length) return [];
+
+  const intent = createOutlineMoveIntent({ outlineId, ownerKey, resultingItems: items, movedIds });
+  const baselineIntent = createOutlineMoveIntent({ outlineId, ownerKey, resultingItems: baseline, movedIds });
+  if (!intent || (baselineIntent &&
+    intent.beforeId === baselineIntent.beforeId &&
+    intent.afterId === baselineIntent.afterId &&
+    intent.edge === baselineIntent.edge)) return [];
+  return [intent];
+});
 
 export const itemListSlice = createSlice({
   name: "itemList",
@@ -225,6 +247,65 @@ export const itemListSlice = createSlice({
           delete state.pendingMoveIntentsByOutline?.[currentOwnerKey];
         }
       }
+    },
+    restoreUndoRedoState: (state, action: PayloadAction<{
+      current: ItemListState;
+      historical: ItemListState;
+    }>) => {
+      const { current, historical } = action.payload;
+      if (
+        current.outlineOwnerKey !== historical.outlineOwnerKey ||
+        current.loadedOutlineId !== historical.loadedOutlineId
+      ) return current;
+
+      const ownerKey = current.outlineOwnerKey;
+      const outlineId = current.loadedOutlineId;
+      const baseline = current.syncBaseline ?? [];
+      const list = historical.list;
+      const moveIntents = ownerKey && outlineId
+        ? restoreMoveIntentsForHistory(
+          list,
+          baseline,
+          historical.pendingMoveIntents ?? [],
+          ownerKey,
+          outlineId,
+        )
+        : [];
+
+      Object.assign(state, current);
+      state.pendingByOutline = { ...(current.pendingByOutline ?? {}) };
+      state.syncBaselineByOutline = { ...(current.syncBaselineByOutline ?? {}) };
+      state.pendingMoveIntentsByOutline = { ...(current.pendingMoveIntentsByOutline ?? {}) };
+      state.remoteConflicts = Object.fromEntries(
+        Object.entries(current.remoteConflicts ?? {}).map(([id, conflict]) => [id, { ...conflict }]),
+      );
+      state.pendingRevisionResolutions = { ...(current.pendingRevisionResolutions ?? {}) };
+      state.list = list;
+      state.pendingMoveIntents = moveIntents;
+
+      const conflict = outlineId ? state.remoteConflicts[outlineId] : undefined;
+      const hasPendingRevisionResolution = Boolean(
+        outlineId && state.pendingRevisionResolutions[outlineId],
+      );
+      if (conflict) conflict.localItems = list;
+      state.hasPendingUpdate = !!(conflict && !conflict.resolutionChoice) ||
+        hasPendingRevisionResolution ||
+        !isSameRows(list, baseline);
+
+      if (ownerKey && state.hasPendingUpdate) {
+        state.pendingByOutline ??= {};
+        state.pendingByOutline[ownerKey] = list;
+        state.syncBaselineByOutline ??= {};
+        state.syncBaselineByOutline[ownerKey] = baseline.map((item) => ({ ...item }));
+        state.pendingMoveIntentsByOutline ??= {};
+        if (moveIntents.length) state.pendingMoveIntentsByOutline[ownerKey] = moveIntents;
+        else delete state.pendingMoveIntentsByOutline[ownerKey];
+      } else if (ownerKey) {
+        delete state.pendingByOutline?.[ownerKey];
+        delete state.syncBaselineByOutline?.[ownerKey];
+        delete state.pendingMoveIntentsByOutline?.[ownerKey];
+      }
+      preserveCursor(state);
     },
     updateItemListFromRemote: (
       state,
@@ -782,6 +863,7 @@ export const {
   addItemToItemList,
   ensureCanvaItemInItemList,
   initiateItemList,
+  restoreUndoRedoState,
   setIsInitialized,
   setActiveItemInList,
   setItemListIsLoading,
