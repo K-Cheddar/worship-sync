@@ -4,7 +4,7 @@ import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
 import React from "react";
 import { Provider } from "react-redux";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import Undo from "../containers/Toolbar/ToolbarElements/Undo";
 import { loadSongV2Snapshot } from "../utils/songPersistence";
 import { createSongV2 } from "../utils/songV2Writer";
@@ -553,8 +553,13 @@ describe("v2 remote refresh and pending-input boundaries", () => {
         owner: ownerA,
         sessionToken: sessionA.token,
       }]));
-      await new Promise(resolve => setTimeout(resolve, 100));
-      await flushListenerEffects();
+      await waitFor(async () => {
+        await flushListenerEffects();
+        const refreshed = envA!.store.getState().undoable.present.item;
+        expect(refreshed.pendingRemoteItem?.arrangements[0].formattedLyrics.map(
+          (section: { words: string }) => section.words,
+        )).toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      }, { timeout: 4000, interval: 50 });
 
       const offered = envA.store.getState().undoable.present.item;
       expect(offered.pendingSongV2Conflicts).toBeUndefined();
@@ -584,8 +589,13 @@ describe("v2 remote refresh and pending-input boundaries", () => {
         owner: ownerB,
         sessionToken: sessionB.token,
       }]));
-      await new Promise(resolve => setTimeout(resolve, 100));
-      await flushListenerEffects();
+      await waitFor(async () => {
+        await flushListenerEffects();
+        const refreshed = envB!.store.getState().undoable.present.item;
+        expect(refreshed.pendingRemoteItem?.arrangements[0].formattedLyrics.map(
+          (section: { words: string }) => section.words,
+        )).toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      }, { timeout: 4000, interval: 50 });
       const offeredToB = envB.store.getState().undoable.present.item;
       expect(offeredToB.pendingSongV2Conflicts).toBeUndefined();
       expect(offeredToB.pendingRemoteItem?.arrangements[0].formattedLyrics.map((section: { words: string }) => section.words))
@@ -623,7 +633,7 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       await envB?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
       await Promise.all([localDb.destroy(), remoteDb.destroy()]);
     }
-  });
+  }, 15000);
 
   it("autosaves resumed edits through the restored account owner after conflict resolution", async () => {
     const env = setup();
