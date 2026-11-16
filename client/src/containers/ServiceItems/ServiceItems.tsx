@@ -1,9 +1,12 @@
 import { useDispatch, useSelector } from "../../hooks";
 import {
   updateItemList,
+  moveItemListRows,
   addItemToItemList,
   removeItemsFromList,
+  resolveOutlineConflict,
   setActiveItemInList,
+  retryItemListLoad,
 } from "../../store/itemListSlice";
 import { useLocation, useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent, DragStartEvent, DragOverlay } from "@dnd-kit/core";
@@ -48,6 +51,8 @@ import NextServiceCountdownText from "../../components/NextServiceCountdownText/
 import type { ServiceTime } from "../../types";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
+import OutlineRevisionReview from "./OutlineRevisionReview";
+import { createOutlineMoveIntent } from "../../utils/outlineSync";
 
 const EMPTY_SERVICE_TIMES: ServiceTime[] = [];
 
@@ -58,11 +63,31 @@ const ServiceItems = () => {
   const controllerBasePath = useControllerBasePath();
   const {
     list: serviceItems,
+    outlineOwnerKey,
     isLoading,
+    loadError,
+    isRetrying,
+    isInitialized,
     initialItems,
     selectedItemListId,
     insertPointIndex,
   } = useSelector((state) => state.undoable.present.itemList);
+  const loadedOutlineId = useSelector(
+    (state) => state.undoable.present.itemList.loadedOutlineId,
+  );
+  const remoteOutlineConflict = useSelector((state) => {
+    const itemList = state.undoable.present.itemList;
+    return itemList.loadedOutlineId
+      ? itemList.remoteConflicts?.[itemList.loadedOutlineId]
+      : undefined;
+  });
+  const [outlineReviewOwner, setOutlineReviewOwner] = useState<string>();
+  let conflictMessage = "Some outline changes need a decision before they can be saved.";
+  if (remoteOutlineConflict?.resolutionChoice) {
+    conflictMessage = "Saving your choice. Your draft stays open until it finishes.";
+  } else if (remoteOutlineConflict?.saveError) {
+    conflictMessage = "Could not save your choice. Review the changes and try again.";
+  }
   const mediaList = useSelector((state) => state.media.list);
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
   const serviceTimes = useSelector(
@@ -78,6 +103,14 @@ const ServiceItems = () => {
   const { selectedList } = useSelector(
     (state) => state.undoable.present.itemLists
   );
+  const outlineReviewIdentity = JSON.stringify([outlineOwnerKey, loadedOutlineId, selectedList?._id]);
+  const outlineReviewOpen = Boolean(remoteOutlineConflict) && outlineReviewOwner === outlineReviewIdentity;
+  useEffect(() => {
+    setOutlineReviewOwner(undefined);
+  }, [outlineReviewIdentity]);
+  useEffect(() => {
+    if (!remoteOutlineConflict) setOutlineReviewOwner(undefined);
+  }, [remoteOutlineConflict]);
   const { db } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const { mode } = usePresentationControllerMode();
@@ -290,7 +323,16 @@ const ServiceItems = () => {
       Math.min(insertIndex, updatedServiceItems.length)
     );
     updatedServiceItems.splice(clampedInsert, 0, ...elementsToMove);
-    dispatch(updateItemList(updatedServiceItems));
+    const moveIntent = selectedList?._id && outlineOwnerKey
+      ? createOutlineMoveIntent({
+        outlineId: selectedList._id,
+        ownerKey: outlineOwnerKey,
+        resultingItems: updatedServiceItems,
+        movedIds: elementsToMove.map(item => item.listId),
+      })
+      : undefined;
+    if (moveIntent) dispatch(moveItemListRows({ items: updatedServiceItems, intent: moveIntent }));
+    else dispatch(updateItemList(updatedServiceItems));
   };
 
   const openHeadingCreateWindow = useCallback(() => {
@@ -793,6 +835,28 @@ const ServiceItems = () => {
         <div className="min-h-0 border-b-2 border-white/25 bg-black/55 shadow-[inset_0_1px_0_0_rgba(255,255,255,0.08)]">
           <Outlines servicePanel className="w-full min-w-0" />
         </div>
+        {remoteOutlineConflict && loadedOutlineId && loadedOutlineId === selectedList?._id && (
+          <div
+            className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-400/40 bg-amber-950/40 px-3 py-2 text-sm"
+            role="alert"
+          >
+            <p className="min-w-0 flex-1">
+              {isViewOnlyAccess(access) ? "Some outline changes need review by an editing Controller." : conflictMessage}
+            </p>
+            {!isViewOnlyAccess(access) && !remoteOutlineConflict.resolutionChoice && <Button
+              variant="secondary"
+              onClick={() => setOutlineReviewOwner(outlineReviewIdentity)}
+            >Review changes</Button>}
+            {!isViewOnlyAccess(access) && <OutlineRevisionReview
+              isOpen={outlineReviewOpen}
+              onClose={() => setOutlineReviewOwner(undefined)}
+              conflict={remoteOutlineConflict} draft={serviceItems}
+              onSave={(items) => dispatch(resolveOutlineConflict({
+                outlineId: loadedOutlineId, choice: "keep-local", reviewedItems: items,
+                draftItems: serviceItems, reviewedRemoteItems: remoteOutlineConflict.remoteItems,
+              }))} />}
+          </div>
+        )}
         {visibleActionBarItemDefs.length > 0 && (
           <div className="border-b border-white/10 px-2 py-1 min-w-0">
             <ActionBar items={visibleActionBarItemDefs} overflowMenuClassName="min-w-48" />
@@ -888,7 +952,15 @@ const ServiceItems = () => {
             </form>
           </FloatingWindow>
         ) : null}
-        {!isLoading && serviceItems.length === 0 && (
+        {!isLoading && (loadError || isRetrying) && (
+          <div className="flex items-center justify-between gap-2 text-sm p-3 text-amber-100" role="alert">
+            <p>{isRetrying ? "Trying again…" : loadError}</p>
+            <Button variant="secondary" disabled={isRetrying} onClick={() => dispatch(retryItemListLoad())}>
+              Try again
+            </Button>
+          </div>
+        )}
+        {!isLoading && !loadError && serviceItems.length === 0 && (
           <p className="text-sm p-2">
             {!isViewOnlyAccess(access)
               ? "This outline is empty. Create a new item or add an existing one using the buttons above."
@@ -897,7 +969,7 @@ const ServiceItems = () => {
         )}
         {isLoading ? (
           <ServiceOutlineSkeleton />
-        ) : (
+        ) : loadError && !(isInitialized && loadedOutlineId === selectedList?._id) ? null : (
           <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
             <ul
               ref={setNodeRef}

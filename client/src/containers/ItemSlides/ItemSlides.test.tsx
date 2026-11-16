@@ -1645,6 +1645,7 @@ describe("ItemSlides", () => {
       name: "Song",
       _id: "song-2",
       listId: "list-2",
+      arrangements: [{ slides: baseSlides }],
     };
 
     render(

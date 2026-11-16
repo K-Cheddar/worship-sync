@@ -22,7 +22,13 @@ describe("persistSongAudioAttachment", () => {
       songAudio: { ...audio, id: "audio-1", key: "old-key" },
     };
     const put = jest.fn().mockResolvedValue({ rev: "2-new" });
-    const db = { get: jest.fn().mockResolvedValue(existing), put } as any;
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === existing._id) return existing;
+        throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      }),
+      put,
+    } as any;
 
     const saved = await persistSongAudioAttachment({
       db,
@@ -44,7 +50,13 @@ describe("persistSongAudioAttachment", () => {
       songAudio: audio,
     };
     const put = jest.fn().mockResolvedValue({ rev: "2-new" });
-    const db = { get: jest.fn().mockResolvedValue(existing), put } as any;
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === existing._id) return existing;
+        throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      }),
+      put,
+    } as any;
 
     const saved = await persistSongAudioAttachment({
       db,

@@ -1,6 +1,42 @@
+import type { DBItem, ItemContentOwner, ItemState, SongV2Documents } from "../types";
+import "core-js/stable/structured-clone";
+import "fake-indexeddb/auto";
+import PouchDB from "pouchdb-browser";
+import React from "react";
+import { Provider } from "react-redux";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import Undo from "../containers/Toolbar/ToolbarElements/Undo";
+import { loadSongV2Snapshot } from "../utils/songPersistence";
+import { createSongV2 } from "../utils/songV2Writer";
+import { createNewSlide } from "../utils/slideCreation";
+import { formatSong } from "../utils/overflow";
+import { createOutlineMoveIntent } from "../utils/outlineSync";
+
+const mockedCrossWindowLocks = new Map<string, Promise<void>>();
+if (typeof navigator !== "undefined") {
+  Object.defineProperty(navigator, "locks", {
+    configurable: true,
+    value: {
+      request: async (name: string, _options: unknown, callback: (lock: unknown) => Promise<unknown>) => {
+        const previous = mockedCrossWindowLocks.get(name) ?? Promise.resolve();
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        const queued = previous.catch(() => undefined).then(() => held);
+        mockedCrossWindowLocks.set(name, queued);
+        await previous.catch(() => undefined);
+        try {
+          return await callback({ name, mode: "exclusive" });
+        } finally {
+          release();
+          if (mockedCrossWindowLocks.get(name) === queued) mockedCrossWindowLocks.delete(name);
+        }
+      },
+    },
+  });
+}
+
 const flushListenerEffects = async () => {
-  await Promise.resolve();
-  await Promise.resolve();
+  for (let attempt = 0; attempt < 12; attempt += 1) await Promise.resolve();
 };
 
 // Pure selectors/helpers from the slot-based presentation slice (no store side effects).
@@ -209,26 +245,76 @@ const loadStoreWithOverlayTemplatePersistence = () => {
   };
 };
 
-let mockActiveItemDb: any;
-const loadStoreWithItemPersistence = () => {
+const loadStoreWithItemPersistence = (
+  recoveryStore = new Map<string, any>(),
+  useRealRecoveryStorage = false,
+  databaseOverride?: PouchDB.Database,
+) => {
   let storeModule: any;
   let itemSliceModule: any;
-  let mutationsModule: typeof import("./deferredItemMutations");
+  let songPersistenceModule: any;
+  let recoveryStorage: any;
+  let deferredMutations!: typeof import("./deferredItemMutations");
+  let contentReplicationActivity!: typeof import("../utils/contentReplicationActivity");
+  let replicationConflicts: any;
   let selectionModule: typeof import("./controllerItemSelection");
   const postMessage = jest.fn();
   const db = {
+    name: "item-content-db",
     get: jest.fn(),
     put: jest.fn(),
+    remove: jest.fn(),
+    allDocs: jest.fn(),
   };
-  mockActiveItemDb = db;
+  let activeDatabase: any = databaseOverride ?? db;
+  const globalFireDbInfo = {
+    db: undefined,
+    database: undefined,
+    churchId: "",
+    canWriteSongContent: true,
+  };
 
   jest.isolateModules(() => {
+    jest.doMock("../utils/songV2AutosaveRecovery", () => {
+      const actual = jest.requireActual("../utils/songV2AutosaveRecovery");
+      if (useRealRecoveryStorage) return actual;
+      const sameOwner = (left: ItemContentOwner, right: ItemContentOwner) =>
+        left.scopeId === right.scopeId && left.databaseKey === right.databaseKey &&
+        left.churchId === right.churchId && left.accountId === right.accountId;
+      return {
+        ...actual,
+        putSongV2AutosaveRecovery: jest.fn(async (record: any) => { recoveryStore.set(record.id, record); return true; }),
+        listSongV2AutosaveRecoveries: jest.fn(async (owner: ItemContentOwner) =>
+          [...recoveryStore.values()].filter(record => sameOwner(record.owner, owner))),
+        markSongV2AutosaveRecoveryNeedsReview: jest.fn(async (id: string, owner: ItemContentOwner) => {
+          const record = recoveryStore.get(id);
+          if (record && sameOwner(record.owner, owner)) recoveryStore.set(id, { ...record, status: "needs-review" });
+        }),
+        markSongV2AutosaveRecoveryDiscarded: jest.fn(async (id: string, owner: ItemContentOwner) => {
+          const record = recoveryStore.get(id);
+          if (record && sameOwner(record.owner, owner)) {
+            recoveryStore.set(id, { id, owner: record.owner, itemId: record.itemId, status: "discarded" });
+          }
+        }),
+        deleteSongV2AutosaveRecovery: jest.fn(async (id: string, owner: ItemContentOwner) => {
+          const record = recoveryStore.get(id);
+          if (record && sameOwner(record.owner, owner)) recoveryStore.delete(id);
+        }),
+      };
+    });
+    jest.doMock("../utils/songPersistence", () => {
+      const actual = jest.requireActual("../utils/songPersistence");
+      return {
+        ...actual,
+        saveSong: jest.fn(actual.saveSong),
+      };
+    });
     jest.doMock("../context/controllerInfo", () => ({
-      get globalDb() { return mockActiveItemDb; },
+      get globalDb() { return activeDatabase; },
       globalBroadcastRef: { postMessage },
     }));
     jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: { db: undefined, database: undefined },
+      globalFireDbInfo,
       globalHostId: "host-123",
     }));
     jest.doMock("firebase/database", () => ({
@@ -240,26 +326,1690 @@ const loadStoreWithItemPersistence = () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     storeModule = require("./store");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
+    recoveryStorage = require("../utils/songV2AutosaveRecovery");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemSliceModule = require("./itemSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    selectionModule = require("./controllerItemSelection");
+    songPersistenceModule = require("../utils/songPersistence");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    mutationsModule = require("./deferredItemMutations");
+    deferredMutations = require("./deferredItemMutations");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    contentReplicationActivity = require("../utils/contentReplicationActivity");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    replicationConflicts = require("../utils/songV2ReplicationConflicts");
+    selectionModule = require("./controllerItemSelection");
   });
 
   return {
     store: storeModule.default,
     itemSlice: itemSliceModule.itemSlice,
     selectControllerItem: selectionModule!.selectControllerItem,
-    deferredMutations: mutationsModule!,
     updateSlides: itemSliceModule.updateSlides,
     updateSlideVideoBackgroundLoop: itemSliceModule.updateSlideVideoBackgroundLoop,
     updateSlideVideoBackgroundSendMode: itemSliceModule.updateSlideVideoBackgroundSendMode,
     db,
+    recoveryStore,
+    recoveryStorage,
+    globalFireDbInfo,
     postMessage,
-    setGlobalDb: (next: unknown) => { mockActiveItemDb = next; },
+    setGlobalDb: (next: unknown) => { activeDatabase = next; },
+    songPersistence: songPersistenceModule,
+    deferredMutations,
+    contentReplicationActivity,
+    replicationConflicts,
+    songV2DocumentsChanged: storeModule.songV2DocumentsChanged,
   };
 };
+
+describe("v2 remote refresh and pending-input boundaries", () => {
+  const structuredClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  function setup(
+    recoveryStore?: Map<string, any>,
+    options: {
+      useRealRecoveryStorage?: boolean;
+      source?: any;
+      seedDocuments?: Map<string, any>;
+      sharedDocuments?: Map<string, any>;
+      database?: PouchDB.Database;
+      baseline?: any;
+    } = {},
+  ) {
+    const env = loadStoreWithItemPersistence(
+      recoveryStore,
+      options.useRealRecoveryStorage,
+      options.database,
+    );
+    const source = options.source ?? createSongDoc({ arrangements: [{ id: "a", name: "Master", formattedLyrics: [], songOrder: [],
+      slides: ["A", "B"].map(id => ({ id, name: `Verse 1${id}`, type: "Verse", boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }] })),
+    }] });
+    const physical: SongV2Documents = env.songPersistence.serializeSongToV2Documents(source);
+    const docs = options.sharedDocuments ?? (options.seedDocuments
+      ? new Map([...options.seedDocuments.entries()].map(([id, document]) => [id, structuredClone(document)]))
+      : new Map<string, any>([physical.root, ...physical.arrangements, ...physical.slides].map(doc => [doc._id, { ...doc, _rev: "1-base" }])));
+    if (!options.database) {
+      env.db.get.mockImplementation(async id => {
+        const doc = docs.get(id);
+        if (!doc) throw Object.assign(new Error("missing"), { status: 404 });
+        return structuredClone(doc);
+      });
+      mockV2AllDocs(env.db, docs);
+      env.db.put.mockImplementation(async next => {
+        const old = docs.get(next._id);
+        if (old && old._rev !== next._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+        const rev = `${Number(old?._rev.split("-")[0] ?? 0) + 1}-saved`;
+        docs.set(next._id, structuredClone({ ...next, _rev: rev }));
+        return { ok: true, id: next._id, rev };
+      });
+    }
+    const baseline = options.baseline ?? env.songPersistence.hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map(doc => docs.get(doc._id)), physical.slides.map(doc => docs.get(doc._id)), true);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem(baseline));
+    const edit = (words: string) => {
+      const slides = structuredClone(env.store.getState().undoable.present.item.arrangements[0].slides);
+      slides[0].boxes[0].words = words;
+      env.store.dispatch(env.itemSlice.actions._updateSlides(slides));
+    };
+    const editSong = (name: string, words: string) => {
+      env.store.dispatch(env.itemSlice.actions._setName(name));
+      edit(words);
+    };
+    return { ...env, docs, physical, baseline, edit, editSong };
+  }
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it("reconciles independent verse and chorus saves through the active Controller refresh", async () => {
+    jest.useRealTimers();
+    const songId = `store-v2-independent-sections-${Date.now()}-${Math.random()}`;
+    const localDb = new PouchDB(`${songId}-local`, { adapter: "idb" });
+    const remoteDb = new PouchDB(`${songId}-remote`, { adapter: "idb" });
+    const source = formatSong({
+      _id: songId,
+      type: "song",
+      name: "Better (w/ Standing on the Promises)",
+      selectedArrangement: 0,
+      selectedSlide: 1,
+      selectedBox: 1,
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+      arrangements: [{
+        id: "master",
+        name: "Master",
+        songOrder: [{ id: "verse-order", name: "Verse 1" }, { id: "chorus-order", name: "Chorus" }],
+        formattedLyrics: [
+          { id: "verse", name: "Verse 1", type: "Verse", words: "verse base", slideSpan: 1 },
+          { id: "chorus", name: "Chorus", type: "Chorus", words: "chorus baseline", slideSpan: 1 },
+        ],
+        slides: [
+          createNewSlide({ type: "Title", words: ["", "Better"] }),
+          createNewSlide({ type: "Verse", words: ["", "verse base"] }),
+          createNewSlide({ type: "Chorus", words: ["", "chorus baseline"] }),
+        ],
+      }],
+    } as ItemState) as DBItem;
+    let envA: ReturnType<typeof setup> | undefined;
+    let envB: ReturnType<typeof setup> | undefined;
+    let sessionA: { token: symbol; markInitialReplicationComplete: () => void; release: () => void } | undefined;
+    let sessionB: { token: symbol; markInitialReplicationComplete: () => void; release: () => void } | undefined;
+    try {
+      await createSongV2(localDb, source);
+      await localDb.replicate.to(remoteDb);
+      const baselineSnapshot = await loadSongV2Snapshot(localDb, songId);
+      const baseline = baselineSnapshot.hydrated;
+      envA = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: localDb,
+        baseline,
+      });
+      envB = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: remoteDb,
+        baseline,
+      });
+      await envA.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await envB.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      const ownerA: ItemContentOwner = {
+        scopeId: `user-a:church-a:${songId}`, databaseKey: songId, churchId: "church-a", accountId: "user-a",
+      };
+      const ownerB: ItemContentOwner = {
+        scopeId: `user-b:church-a:${songId}`, databaseKey: songId, churchId: "church-a", accountId: "user-b",
+      };
+      envA.globalFireDbInfo.churchId = ownerA.churchId;
+      envB.globalFireDbInfo.churchId = ownerB.churchId;
+      sessionA = envA.contentReplicationActivity.beginContentDatabaseSession(localDb.name);
+      sessionA.markInitialReplicationComplete();
+      sessionB = envB.contentReplicationActivity.beginContentDatabaseSession(remoteDb.name);
+      sessionB.markInitialReplicationComplete();
+      envA.deferredMutations.setActiveContentDatabase(ownerA, localDb as never);
+      envB.deferredMutations.setActiveContentDatabase(ownerB, remoteDb as never);
+      envA.store.dispatch(envA.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: ownerA }));
+      envA.store.dispatch(envA.itemSlice.actions.setIsLyricsEditorOpen(true));
+      envB.store.dispatch(envB.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: ownerB }));
+      envB.store.dispatch(envB.itemSlice.actions.setIsLyricsEditorOpen(true));
+      const localPuts = jest.spyOn(localDb, "put");
+      const remotePuts = jest.spyOn(remoteDb, "put");
+
+      const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+      const editSection = (song: DBItem, section: number, words: string) => {
+        const draft = clone(song);
+        const lyric = draft.arrangements[0].formattedLyrics[section];
+        lyric.words = words;
+        const slide = draft.arrangements[0].slides.find(candidate => candidate.name === lyric.name)!;
+        slide.boxes[1].words = words;
+        return draft;
+      };
+      const waitForSectionText = async (database: PouchDB.Database, section: number, words: string) => {
+        for (let attempt = 0; attempt < 30; attempt += 1) {
+          const snapshot = await loadSongV2Snapshot(database, songId, true);
+          if (snapshot.hydrated.arrangements[0].formattedLyrics[section]?.words === words) return snapshot;
+          await new Promise(resolve => setTimeout(resolve, 100));
+          await flushListenerEffects();
+        }
+        throw new Error(`Song section ${section} did not persist: ${words}`);
+      };
+      const localEdit = editSection(baseline, 0, "Verse edited on Controller A");
+      envA.store.dispatch(envA.itemSlice.actions._updateArrangements(localEdit.arrangements));
+      await waitForSectionText(localDb, 0, "Verse edited on Controller A");
+      await flushListenerEffects();
+      expect(envA.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+      expect(localPuts.mock.calls.map(([document]) => document._id)).toEqual([
+        baselineSnapshot.slides.find(slide => slide.name === "Verse 1")!._id,
+        baselineSnapshot.arrangements[0]._id,
+      ]);
+
+      const remoteEdit = editSection(baseline, 1, "Chorus edited on Controller B");
+      envB.store.dispatch(envB.itemSlice.actions._updateArrangements(remoteEdit.arrangements));
+      await waitForSectionText(remoteDb, 1, "Chorus edited on Controller B");
+      await flushListenerEffects();
+      expect(envB.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+      expect(remotePuts.mock.calls.map(([document]) => document._id)).toEqual([
+        baselineSnapshot.slides.find(slide => slide.name === "Chorus")!._id,
+        baselineSnapshot.arrangements[0]._id,
+      ]);
+      const equivalentSlide = baselineSnapshot.slides.find(slide => slide.name === "Title")!;
+      const localEquivalentBranch = await localDb.get<typeof equivalentSlide>(equivalentSlide._id);
+      await localDb.put({ ...localEquivalentBranch, updatedAt: "2026-11-11T00:00:00.000Z" });
+      const equivalentBranch = await remoteDb.get<typeof equivalentSlide>(equivalentSlide._id);
+      await remoteDb.put({ ...equivalentBranch, updatedAt: "2026-11-12T00:00:00.000Z" });
+
+      await localDb.replicate.to(remoteDb);
+      await remoteDb.replicate.to(localDb);
+      const beforeRefresh = await loadSongV2Snapshot(localDb, songId, true);
+      expect(beforeRefresh.conflicts).toContainEqual(expect.objectContaining({
+        documentId: baselineSnapshot.arrangements[0]._id,
+      }));
+      expect(beforeRefresh.physicalConflicts).toContainEqual(expect.objectContaining({
+        documentId: equivalentSlide._id,
+      }));
+
+      envA.store.dispatch(envA.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: localDb as never,
+        owner: ownerA,
+        sessionToken: sessionA.token,
+      }]));
+      await waitFor(async () => {
+        await flushListenerEffects();
+        const refreshed = envA!.store.getState().undoable.present.item;
+        expect(refreshed.pendingRemoteItem?.arrangements[0].formattedLyrics.map(
+          (section: { words: string }) => section.words,
+        )).toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      }, { timeout: 4000, interval: 50 });
+
+      const offered = envA.store.getState().undoable.present.item;
+      expect(offered.pendingSongV2Conflicts).toBeUndefined();
+      expect(offered.pendingRemoteItem?.arrangements[0].formattedLyrics[0].words)
+        .toBe("Verse edited on Controller A");
+      expect(offered.pendingRemoteItem?.arrangements[0].formattedLyrics[1].words)
+        .toBe("Chorus edited on Controller B");
+      envA.store.dispatch(envA.itemSlice.actions.applyPendingRemoteItem(true, true));
+      await flushListenerEffects();
+
+      const adopted = envA.store.getState().undoable.present.item;
+      expect(adopted.hasRemoteUpdate).toBe(false);
+      expect(adopted.hasPendingUpdate).toBe(false);
+      expect(adopted.pendingRemoteItem).toBeNull();
+      expect(adopted.pendingSongV2Conflicts).toBeUndefined();
+      expect(adopted.arrangements[0].formattedLyrics.map((section: { words: string }) => section.words))
+        .toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      const reconciled = await loadSongV2Snapshot(localDb, songId, true);
+      expect(reconciled.conflicts).toBeUndefined();
+      expect(reconciled.physicalConflicts).toBeUndefined();
+
+      await localDb.replicate.to(remoteDb);
+      envB.store.dispatch(envB.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: remoteDb as never,
+        owner: ownerB,
+        sessionToken: sessionB.token,
+      }]));
+      await waitFor(async () => {
+        await flushListenerEffects();
+        const refreshed = envB!.store.getState().undoable.present.item;
+        expect(refreshed.pendingRemoteItem?.arrangements[0].formattedLyrics.map(
+          (section: { words: string }) => section.words,
+        )).toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      }, { timeout: 4000, interval: 50 });
+      const offeredToB = envB.store.getState().undoable.present.item;
+      expect(offeredToB.pendingSongV2Conflicts).toBeUndefined();
+      expect(offeredToB.pendingRemoteItem?.arrangements[0].formattedLyrics.map((section: { words: string }) => section.words))
+        .toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      envB.store.dispatch(envB.itemSlice.actions.applyPendingRemoteItem(true, true));
+      await flushListenerEffects();
+      const adoptedByB = envB.store.getState().undoable.present.item;
+      expect(adoptedByB.hasRemoteUpdate).toBe(false);
+      expect(adoptedByB.hasPendingUpdate).toBe(false);
+      expect(adoptedByB.pendingSongV2Conflicts).toBeUndefined();
+      expect(adoptedByB.arrangements[0].formattedLyrics.map((section: { words: string }) => section.words))
+        .toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+      const otherController = await loadSongV2Snapshot(remoteDb, songId, true);
+      expect(otherController.conflicts).toBeUndefined();
+      expect(otherController.hydrated.arrangements[0].formattedLyrics.map(section => section.words))
+        .toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
+
+      const continued = editSection(adopted, 1, "Third edit after reconciliation");
+      envA.store.dispatch(envA.itemSlice.actions._updateArrangements(continued.arrangements));
+      const finalSnapshot = await waitForSectionText(localDb, 1, "Third edit after reconciliation");
+      await flushListenerEffects();
+      const finalState = envA.store.getState().undoable.present.item;
+      expect(finalState.hasPendingUpdate).toBe(false);
+      expect(finalState.hasRemoteUpdate).toBe(false);
+      expect(finalState.pendingSongV2Conflicts).toBeUndefined();
+      expect(finalSnapshot.conflicts).toBeUndefined();
+      expect(finalSnapshot.hydrated.arrangements[0].formattedLyrics[1].words)
+        .toBe("Third edit after reconciliation");
+    } finally {
+      sessionA?.release();
+      sessionB?.release();
+      envA?.deferredMutations.setActiveContentDatabase(null);
+      envB?.deferredMutations.setActiveContentDatabase(null);
+      await envA?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await envB?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await Promise.all([localDb.destroy(), remoteDb.destroy()]);
+    }
+  }, 15000);
+
+  it("autosaves resumed edits through the restored account owner after conflict resolution", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a",
+      databaseKey: "db-a",
+      churchId: "",
+      accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    const unrelatedDb = {
+      name: "unrelated-account-db",
+      get: jest.fn((...args: any[]) => env.db.get(...args)),
+      put: jest.fn(),
+      allDocs: jest.fn((...args: any[]) => env.db.allDocs(...args)),
+    };
+    env.setGlobalDb(unrelatedDb);
+
+    env.edit("Resumed edit after resolution");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(env.db.put).toHaveBeenCalled();
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Resumed edit after resolution");
+    expect(unrelatedDb.put).not.toHaveBeenCalled();
+    expect(env.store.getState().undoable.present.item.contentOwner).toEqual(owner);
+  });
+
+  it("retries a pending V2 save without waiting for another replication event", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    session.markInitialReplicationComplete();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    env.recoveryStorage.putSongV2AutosaveRecovery.mockRejectedValueOnce(new Error("IndexedDB temporarily blocked"));
+
+    env.editSong("Retry title", "Retry lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.recoveryStore.size).toBe(0);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+
+    await jest.advanceTimersByTimeAsync(500);
+    await flushListenerEffects();
+    expect(env.docs.get(env.physical.root._id).name).toBe("Retry title");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Retry lyrics");
+    expect(env.recoveryStore.size).toBe(0);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+
+    session.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("keeps the draft visibly pending and stops after bounded checkpoint retries", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    session.markInitialReplicationComplete();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    env.recoveryStorage.putSongV2AutosaveRecovery.mockRejectedValue(new Error("IndexedDB remains unavailable"));
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    env.editSong("Pending title", "Pending lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    for (const delay of [500, 1_000, 2_000, 4_000, 8_000]) {
+      await jest.advanceTimersByTimeAsync(delay);
+      await flushListenerEffects();
+    }
+
+    const { selectAnyAutosavePending } = require("./autosaveIndicatorSlice");
+    expect(env.recoveryStorage.putSongV2AutosaveRecovery).toHaveBeenCalledTimes(6);
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(selectAnyAutosavePending(env.store.getState())).toBe(true);
+
+    errorSpy.mockRestore();
+    session.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("keeps the draft and recovery record when durable Use Their Changes discard fails", async () => {
+    const recoveryStore = new Map<string, any>();
+    const env = setup(recoveryStore);
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const desired = {
+      ...env.baseline,
+      contentOwner: owner,
+      name: "Rejected local title",
+    };
+    const record = {
+      id: env.recoveryStorage.createSongV2AutosaveRecoveryId(owner, desired._id),
+      owner,
+      itemId: desired._id,
+      desired,
+      baseline: env.baseline,
+      mutationVersion: 1,
+      status: "needs-review",
+    };
+    recoveryStore.set(record.id, record);
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    session.markInitialReplicationComplete();
+    for (let attempt = 0; attempt < 100 &&
+      env.store.getState().undoable.present.item.name !== desired.name; attempt += 1) {
+      await flushListenerEffects();
+    }
+    const remoteItem = {
+      ...env.baseline,
+      name: "Remote title",
+    };
+    env.docs.set(env.physical.root._id, {
+      ...env.docs.get(env.physical.root._id),
+      name: remoteItem.name,
+    });
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(remoteItem));
+    env.store.dispatch(env.itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+    env.recoveryStorage.markSongV2AutosaveRecoveryDiscarded.mockRejectedValueOnce(
+      new Error("IndexedDB transaction aborted"),
+    );
+
+    await env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+
+    expect(env.store.getState().undoable.present.item.name).toBe(desired.name);
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem.name).toBe("Remote title");
+    expect(env.store.getState().undoable.present.item.remoteUpdateReason).toBe("song-recovery-discard-failed");
+    expect(recoveryStore.get(record.id).status).toBe("needs-review");
+    expect(env.db.put).not.toHaveBeenCalled();
+
+    await env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+    expect(env.store.getState().undoable.present.item.name).toBe("Remote title");
+    expect(recoveryStore.get(record.id)).toEqual({
+      id: record.id,
+      owner,
+      itemId: record.itemId,
+      status: "discarded",
+    });
+
+    session.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("keeps a remote choice pending when authoritative snapshot verification fails", async () => {
+    const recoveryStore = new Map<string, any>();
+    const env = setup(recoveryStore);
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const desired = { ...env.baseline, contentOwner: owner, name: "Rejected local title" };
+    const record = {
+      id: env.recoveryStorage.createSongV2AutosaveRecoveryId(owner, desired._id),
+      owner,
+      itemId: desired._id,
+      desired,
+      baseline: env.baseline,
+      mutationVersion: 1,
+      status: "needs-review",
+    };
+    recoveryStore.set(record.id, record);
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    session.markInitialReplicationComplete();
+    for (let attempt = 0; attempt < 100 &&
+      env.store.getState().undoable.present.item.name !== desired.name; attempt += 1) {
+      await flushListenerEffects();
+    }
+
+    const remoteItem = { ...env.baseline, name: "Remote title" };
+    env.docs.set(env.physical.root._id, {
+      ...env.docs.get(env.physical.root._id),
+      name: remoteItem.name,
+    });
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(remoteItem));
+    env.store.dispatch(env.itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+    const snapshotReadError = new Error("PouchDB temporarily unavailable");
+    const snapshotSpy = jest.spyOn(env.songPersistence, "loadSongV2Snapshot")
+      .mockRejectedValueOnce(snapshotReadError);
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+
+    const current = env.store.getState().undoable.present.item;
+    expect(current.name).toBe(desired.name);
+    expect(current.pendingRemoteItem?.name).toBe("Remote title");
+    expect(current.remoteUpdateReason).toBe("song-recovery-discard-failed");
+    expect(recoveryStore.get(record.id).status).toBe("needs-review");
+    expect(env.recoveryStorage.markSongV2AutosaveRecoveryDiscarded).not.toHaveBeenCalled();
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalledWith(
+      "Could not verify the current song before applying the remote snapshot",
+      snapshotReadError,
+    );
+
+    snapshotSpy.mockRestore();
+    errorSpy.mockRestore();
+    session.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("preserves edits typed while Use Their Changes is waiting for durable discard", async () => {
+    const recoveryStore = new Map<string, any>();
+    const env = setup(recoveryStore);
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const desired = { ...env.baseline, contentOwner: owner, name: "Local title" };
+    const record = {
+      id: env.recoveryStorage.createSongV2AutosaveRecoveryId(owner, desired._id),
+      owner,
+      itemId: desired._id,
+      desired,
+      baseline: env.baseline,
+      mutationVersion: 1,
+      status: "needs-review",
+    };
+    recoveryStore.set(record.id, record);
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    session.markInitialReplicationComplete();
+    for (let attempt = 0; attempt < 100 &&
+      env.store.getState().undoable.present.item.name !== desired.name; attempt += 1) {
+      await flushListenerEffects();
+    }
+    const remoteItem = structuredClone(env.baseline);
+    remoteItem.arrangements[0].slides[1].boxes[0].words = "Remote slide B";
+    const remoteDocuments = env.songPersistence.serializeSongToV2Documents(remoteItem) as SongV2Documents;
+    const remoteSlideB = remoteDocuments.slides.find(slide => slide.id === "B");
+    expect(remoteSlideB).toBeDefined();
+    env.docs.set(remoteSlideB!._id, {
+      ...remoteSlideB,
+      _rev: env.docs.get(remoteSlideB!._id)._rev,
+    });
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(remoteItem));
+    env.store.dispatch(env.itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+
+    let discardStarted!: () => void;
+    let finishDiscard!: () => void;
+    const started = new Promise<void>(resolve => { discardStarted = resolve; });
+    const gate = new Promise<void>(resolve => { finishDiscard = resolve; });
+    env.recoveryStorage.markSongV2AutosaveRecoveryDiscarded.mockImplementationOnce(async (id: string, discardOwner: ItemContentOwner) => {
+      discardStarted();
+      await gate;
+      const current = recoveryStore.get(id);
+      if (current && current.owner.accountId === discardOwner.accountId) {
+        recoveryStore.set(id, { id, owner: current.owner, itemId: current.itemId, status: "discarded" });
+      }
+    });
+
+    const apply = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+    await started;
+    env.edit("Typed while discarding");
+    finishDiscard();
+    await apply;
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const current = env.store.getState().undoable.present.item;
+    expect(current.name).toBe("Local title");
+    expect(current.arrangements[0].slides[0].boxes[0].words).toBe("Typed while discarding");
+    expect(current.hasRemoteUpdate).toBe(true);
+    expect(env.docs.get(env.physical.root._id).name).toBe("Local title");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Typed while discarding");
+    expect(env.docs.get(env.physical.slides[1]._id).boxes[0].words).toBe("Remote slide B");
+    expect(recoveryStore.get(record.id).status).toBe("discarded");
+
+    session.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("adopts the current PouchDB snapshot after a remote title conflicts with a partial save", async () => {
+    jest.useRealTimers();
+    const songId = `store-v2-remote-choice-${Date.now()}-${Math.random()}`;
+    const localDb = new PouchDB(`${songId}-local`, { adapter: "idb" });
+    const remoteDb = new PouchDB(`${songId}-remote`, { adapter: "idb" });
+    const source = createSongDoc({
+      _id: songId,
+      arrangements: [{
+        id: "a", name: "Master", formattedLyrics: [], songOrder: [],
+        slides: ["A", "B"].map(id => ({
+          id, name: `Verse ${id}`, type: "Verse",
+          boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }],
+        })),
+      }],
+    }) as Parameters<typeof createSongV2>[1];
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>(resolve => { releaseFirstWrite = resolve; });
+    let firstWriteCommitted!: () => void;
+    const firstWrite = new Promise<void>(resolve => { firstWriteCommitted = resolve; });
+    let env: ReturnType<typeof setup> | undefined;
+    let session: { release: () => void } | undefined;
+    let applyingRemote: Promise<unknown> | undefined;
+    let put: jest.SpyInstance | undefined;
+    let consoleErrorSpy: jest.SpyInstance | undefined;
+
+    try {
+      consoleErrorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+      await createSongV2(localDb, source);
+      await localDb.replicate.to(remoteDb);
+      const baseline = (await loadSongV2Snapshot(localDb, songId)).hydrated;
+      const startingRootRevision = baseline._rev;
+      env = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: localDb,
+        baseline,
+      });
+      await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      const owner: ItemContentOwner = {
+        scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+      };
+      env.globalFireDbInfo.churchId = owner.churchId;
+      const contentSession = env.contentReplicationActivity.beginContentDatabaseSession(localDb.name);
+      session = contentSession;
+      env.deferredMutations.setActiveContentDatabase(owner, localDb as never);
+      contentSession.markInitialReplicationComplete();
+      env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(true));
+
+      const originalPut = localDb.put.bind(localDb);
+      put = jest.spyOn(localDb, "put").mockImplementation(async document => {
+        const result = await originalPut(document);
+        if (document._id === `song-v2:slide:${songId}:a:A`) {
+          firstWriteCommitted();
+          await firstWriteGate;
+        }
+        return result;
+      });
+
+      env.editSong("Local title", "Local lyrics");
+      await firstWrite;
+      const partial = await loadSongV2Snapshot(localDb, songId);
+      expect(partial.hydrated.name).toBe(baseline.name);
+      expect(partial.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      const partialSlideA = partial.slides.find(slide => slide.id === "A");
+      const remoteSlideA = (await loadSongV2Snapshot(remoteDb, songId)).slides.find(slide => slide.id === "A");
+      expect(partialSlideA?.boxes[0].words).toBe("Local lyrics");
+      expect(remoteSlideA?.boxes[0].words).toBe("A");
+
+      const remoteBaseline = await loadSongV2Snapshot(remoteDb, songId);
+      const remoteEdit = structuredClone(remoteBaseline.hydrated);
+      remoteEdit.name = "Remote title";
+      await env.songPersistence.saveSong(
+        remoteDb,
+        remoteEdit,
+        remoteBaseline.hydrated,
+        undefined,
+        remoteBaseline,
+      );
+      const remoteSaved = await loadSongV2Snapshot(remoteDb, songId);
+      expect(remoteSaved.root._rev).not.toBe(startingRootRevision);
+      await remoteDb.replicate.to(localDb);
+
+      const replicated = await loadSongV2Snapshot(localDb, songId, true);
+      expect(replicated.root._rev).toBe(remoteSaved.root._rev);
+      expect(replicated.hydrated.name).toBe("Remote title");
+      expect(replicated.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(env.store.getState().undoable.present.item.pendingRemoteItem).toBeNull();
+
+      env.store.dispatch(env.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: localDb as never,
+        owner,
+        sessionToken: contentSession.token,
+      }]));
+      await new Promise(resolve => setTimeout(resolve, 70));
+      await flushListenerEffects();
+
+      const buffered = env.store.getState().undoable.present.item;
+      expect(buffered.hasRemoteUpdate).toBe(true);
+      expect(buffered.pendingRemoteItem?.name).toBe("Remote title");
+      expect(buffered.pendingRemoteItem?.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(buffered.isLyricsEditorOpen).toBe(true);
+      const remoteDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      applyingRemote = remoteDecision;
+      let remoteDecisionSettled = false;
+      void remoteDecision.then(
+        () => { remoteDecisionSettled = true; },
+        () => { remoteDecisionSettled = true; },
+      );
+      await new Promise(resolve => setTimeout(resolve, 10));
+      expect(remoteDecisionSettled).toBe(false);
+      releaseFirstWrite();
+      await remoteDecision;
+
+      const physical = await loadSongV2Snapshot(localDb, songId, true);
+      const editor = env.store.getState().undoable.present.item;
+      expect(put?.mock.calls.map(([document]) => document._id)).toContain(physical.root._id);
+      expect(physical.hydrated.name).toBe("Remote title");
+      expect(physical.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(editor.name).toBe(physical.hydrated.name);
+      expect(editor.arrangements[0].slides[0].boxes[0].words).toBe(physical.hydrated.arrangements[0].slides[0].boxes[0].words);
+      expect(editor.baseItem?._rev).toBe(physical.root._rev);
+      expect(editor.hasPendingUpdate).toBe(false);
+      expect(editor.hasRemoteUpdate).toBe(false);
+      expect(editor.pendingRemoteItem).toBeNull();
+      expect(editor.pendingSongV2Conflicts).toBeUndefined();
+      expect(editor.remoteUpdateReason).toBeNull();
+      expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([expect.objectContaining({ status: "discarded" })]);
+      expect(physical.root._rev).toBe(remoteSaved.root._rev);
+      expect(physical.root._rev).not.toBe(startingRootRevision);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "Could not save active song draft",
+        expect.objectContaining({ name: "SongV2ConcurrentEditError" }),
+      );
+    } finally {
+      releaseFirstWrite();
+      await applyingRemote?.catch(() => undefined);
+      if (put) put.mockRestore();
+      consoleErrorSpy?.mockRestore();
+      if (session) {
+        session.release();
+        env?.deferredMutations.setActiveContentDatabase(null);
+      }
+      await env?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await Promise.all([localDb.destroy(), remoteDb.destroy()]);
+    }
+  });
+
+  it("does not leave a stale remote slide snapshot after an in-flight local save succeeds", async () => {
+    jest.useRealTimers();
+    const songId = `store-v2-remote-slide-choice-${Date.now()}-${Math.random()}`;
+    const localDb = new PouchDB(`${songId}-local`, { adapter: "idb" });
+    const remoteDb = new PouchDB(`${songId}-remote`, { adapter: "idb" });
+    const source = createSongDoc({
+      _id: songId,
+      arrangements: [{
+        id: "a", name: "Master", formattedLyrics: [], songOrder: [],
+        slides: ["A", "B"].map(id => ({
+          id, name: `Verse ${id}`, type: "Verse",
+          boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }],
+        })),
+      }],
+    }) as Parameters<typeof createSongV2>[1];
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>(resolve => { releaseFirstWrite = resolve; });
+    let firstWriteCommitted!: () => void;
+    const firstWrite = new Promise<void>(resolve => { firstWriteCommitted = resolve; });
+    let env: ReturnType<typeof setup> | undefined;
+    let session: { release: () => void } | undefined;
+    let applyingRemote: Promise<unknown> | undefined;
+    let put: jest.SpyInstance | undefined;
+
+    try {
+      await createSongV2(localDb, source);
+      await localDb.replicate.to(remoteDb);
+      const baseline = (await loadSongV2Snapshot(localDb, songId)).hydrated;
+      env = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: localDb,
+        baseline,
+      });
+      await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      const owner: ItemContentOwner = {
+        scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+      };
+      env.globalFireDbInfo.churchId = owner.churchId;
+      const contentSession = env.contentReplicationActivity.beginContentDatabaseSession(localDb.name);
+      session = contentSession;
+      env.deferredMutations.setActiveContentDatabase(owner, localDb as never);
+      contentSession.markInitialReplicationComplete();
+      env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(true));
+
+      const originalPut = localDb.put.bind(localDb);
+      put = jest.spyOn(localDb, "put").mockImplementation(async document => {
+        const result = await originalPut(document);
+        if (document._id === `song-v2:slide:${songId}:a:A`) {
+          firstWriteCommitted();
+          await firstWriteGate;
+        }
+        return result;
+      });
+
+      env.editSong("Local title", "Local lyrics");
+      await firstWrite;
+      const remoteBaseline = await loadSongV2Snapshot(remoteDb, songId);
+      const remoteEdit = structuredClone(remoteBaseline.hydrated);
+      remoteEdit.arrangements[0].slides[1].boxes[0].words = "Remote slide B";
+      await env.songPersistence.saveSong(
+        remoteDb,
+        remoteEdit,
+        remoteBaseline.hydrated,
+        undefined,
+        remoteBaseline,
+      );
+      const remoteSaved = await loadSongV2Snapshot(remoteDb, songId);
+      expect(remoteSaved.root._rev).toBe(baseline._rev);
+      await remoteDb.replicate.to(localDb);
+
+      const replicated = await loadSongV2Snapshot(localDb, songId, true);
+      expect(replicated.hydrated.name).toBe(baseline.name);
+      expect(replicated.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(replicated.hydrated.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+      env.store.dispatch(env.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: localDb as never,
+        owner,
+        sessionToken: contentSession.token,
+      }]));
+      await new Promise(resolve => setTimeout(resolve, 70));
+      await flushListenerEffects();
+
+      const buffered = env.store.getState().undoable.present.item;
+      expect(buffered.hasRemoteUpdate).toBe(true);
+      expect(buffered.pendingRemoteItem?.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+      const remoteDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      applyingRemote = remoteDecision;
+      releaseFirstWrite();
+      await remoteDecision;
+
+      const physical = await loadSongV2Snapshot(localDb, songId, true);
+      expect(put?.mock.calls.map(([document]) => document._id)).toContain(physical.root._id);
+      expect(physical.hydrated.name).toBe("Local title");
+      expect(physical.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local lyrics");
+      expect(physical.hydrated.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+
+      const refreshedEditor = env.store.getState().undoable.present.item;
+      expect(refreshedEditor.hasRemoteUpdate).toBe(true);
+      expect(refreshedEditor.pendingRemoteItem?.name).toBe(physical.hydrated.name);
+      expect(refreshedEditor.pendingRemoteItem?.arrangements[0].slides[0].boxes[0].words)
+        .toBe(physical.hydrated.arrangements[0].slides[0].boxes[0].words);
+      expect(refreshedEditor.pendingRemoteItem?.arrangements[0].slides[1].boxes[0].words)
+        .toBe(physical.hydrated.arrangements[0].slides[1].boxes[0].words);
+
+      const refreshedRemoteDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      if (refreshedRemoteDecision instanceof Promise) applyingRemote = refreshedRemoteDecision;
+      await refreshedRemoteDecision;
+      const editor = env.store.getState().undoable.present.item;
+      expect(editor.name).toBe(physical.hydrated.name);
+      expect(editor.arrangements[0].slides[0].boxes[0].words).toBe(physical.hydrated.arrangements[0].slides[0].boxes[0].words);
+      expect(editor.arrangements[0].slides[1].boxes[0].words).toBe(physical.hydrated.arrangements[0].slides[1].boxes[0].words);
+      expect(editor.baseItem?._rev).toBe(physical.root._rev);
+      expect(editor.hasPendingUpdate).toBe(false);
+      expect(editor.hasRemoteUpdate).toBe(false);
+      expect(editor.pendingRemoteItem).toBeNull();
+      expect(editor.pendingSongV2Conflicts).toBeUndefined();
+      expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([]);
+    } finally {
+      releaseFirstWrite();
+      await applyingRemote?.catch(() => undefined);
+      if (put) put.mockRestore();
+      if (session) {
+        session.release();
+        env?.deferredMutations.setActiveContentDatabase(null);
+      }
+      await env?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await Promise.all([localDb.destroy(), remoteDb.destroy()]);
+    }
+  });
+
+  it("detects an optional slide field added while a remote choice is being verified", async () => {
+    jest.useRealTimers();
+    const songId = `store-v2-remote-optional-slide-field-${Date.now()}-${Math.random()}`;
+    const localDb = new PouchDB(`${songId}-local`, { adapter: "idb" });
+    const remoteDb = new PouchDB(`${songId}-remote`, { adapter: "idb" });
+    const source = createSongDoc({
+      _id: songId,
+      arrangements: [{
+        id: "a", name: "Master", formattedLyrics: [], songOrder: [],
+        slides: ["A", "B"].map(id => ({
+          id, name: `Verse ${id}`, type: "Verse",
+          boxes: [{ id: `${id}-box`, words: id, width: 100, height: 100 }],
+        })),
+      }],
+    }) as Parameters<typeof createSongV2>[1];
+    let releaseFirstWrite!: () => void;
+    const firstWriteGate = new Promise<void>(resolve => { releaseFirstWrite = resolve; });
+    let firstWriteCommitted!: () => void;
+    const firstWrite = new Promise<void>(resolve => { firstWriteCommitted = resolve; });
+    let releaseSnapshotRead!: () => void;
+    const snapshotReadGate = new Promise<void>(resolve => { releaseSnapshotRead = resolve; });
+    let verificationReadStarted!: () => void;
+    const verificationRead = new Promise<void>(resolve => { verificationReadStarted = resolve; });
+    let env: ReturnType<typeof setup> | undefined;
+    let session: { release: () => void } | undefined;
+    let put: jest.SpyInstance | undefined;
+    let snapshotSpy: jest.SpyInstance<
+      ReturnType<typeof loadSongV2Snapshot>,
+      Parameters<typeof loadSongV2Snapshot>
+    > | undefined;
+    let unsubscribe: (() => void) | undefined;
+    let applyingRemote: Promise<unknown> | undefined;
+
+    try {
+      await createSongV2(localDb, source);
+      await localDb.replicate.to(remoteDb);
+      const baseline = (await loadSongV2Snapshot(localDb, songId)).hydrated;
+      env = setup(undefined, {
+        useRealRecoveryStorage: true,
+        source,
+        database: localDb,
+        baseline,
+      });
+      await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      const owner: ItemContentOwner = {
+        scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+      };
+      env.globalFireDbInfo.churchId = owner.churchId;
+      const contentSession = env.contentReplicationActivity.beginContentDatabaseSession(localDb.name);
+      session = contentSession;
+      env.deferredMutations.setActiveContentDatabase(owner, localDb as never);
+      contentSession.markInitialReplicationComplete();
+      env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(true));
+
+      const originalPut = localDb.put.bind(localDb);
+      put = jest.spyOn(localDb, "put").mockImplementation(async document => {
+        const result = await originalPut(document);
+        if (document._id === `song-v2:slide:${songId}:a:A`) {
+          firstWriteCommitted();
+          await firstWriteGate;
+        }
+        return result;
+      });
+
+      let pauseNextSnapshotRead = false;
+      unsubscribe = env.store.subscribe(() => {
+        const current = env!.store.getState().undoable.present.item;
+        if (current.arrangements[0]?.slides[0]?.boxes[0]?.words === "Local slide A" &&
+          !current.hasPendingUpdate && !current.pendingRemoteItem) {
+          pauseNextSnapshotRead = true;
+        }
+      });
+      const originalLoadSnapshot = env.songPersistence.loadSongV2Snapshot.bind(env.songPersistence);
+      snapshotSpy = jest.spyOn(env.songPersistence, "loadSongV2Snapshot") as unknown as NonNullable<typeof snapshotSpy>;
+      snapshotSpy.mockImplementation(
+        async (database: PouchDB.Database, requestedSongId: string, includeConflicts?: boolean) => {
+          if (pauseNextSnapshotRead && requestedSongId === songId) {
+            pauseNextSnapshotRead = false;
+            verificationReadStarted();
+            await snapshotReadGate;
+          }
+          return originalLoadSnapshot(database, requestedSongId, includeConflicts);
+        },
+      );
+
+      env.edit("Local slide A");
+      await firstWrite;
+      const remoteBaseline = await loadSongV2Snapshot(remoteDb, songId);
+      const firstRemoteEdit = structuredClone(remoteBaseline.hydrated);
+      firstRemoteEdit.arrangements[0].slides[1].boxes[0].words = "Remote slide B";
+      await env.songPersistence.saveSong(
+        remoteDb,
+        firstRemoteEdit,
+        remoteBaseline.hydrated,
+        undefined,
+        remoteBaseline,
+      );
+      const firstRemoteSave = await loadSongV2Snapshot(remoteDb, songId);
+      expect(firstRemoteSave.root._rev).toBe(baseline._rev);
+      await remoteDb.replicate.to(localDb);
+      env.store.dispatch(env.songV2DocumentsChanged([{
+        songId,
+        libraryChanged: false,
+        database: localDb as never,
+        owner,
+        sessionToken: contentSession.token,
+      }]));
+      await new Promise(resolve => setTimeout(resolve, 70));
+      await flushListenerEffects();
+
+      const offeredItem = env.store.getState().undoable.present.item.pendingRemoteItem;
+      expect(offeredItem?.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+      expect(offeredItem?.arrangements[0].slides[1].mediaSource).toBeUndefined();
+      const remoteDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      applyingRemote = remoteDecision;
+      let remoteDecisionSettled = false;
+      void remoteDecision.then(
+        () => { remoteDecisionSettled = true; },
+        () => { remoteDecisionSettled = true; },
+      );
+
+      releaseFirstWrite();
+      await verificationRead;
+      expect(remoteDecisionSettled).toBe(false);
+
+      // Keep the Redux offer at the earlier revision while the physical child
+      // update arrives during the authoritative reread.
+      const latestRemoteBaseline = await loadSongV2Snapshot(remoteDb, songId);
+      const latestRemoteEdit = structuredClone(latestRemoteBaseline.hydrated);
+      latestRemoteEdit.arrangements[0].slides[1].mediaSource = {
+        kind: "local-video-input",
+        sourceId: "camera-1",
+        label: "Camera 1",
+      };
+      await env.songPersistence.saveSong(
+        remoteDb,
+        latestRemoteEdit,
+        latestRemoteBaseline.hydrated,
+        undefined,
+        latestRemoteBaseline,
+      );
+      const latestRemoteSave = await loadSongV2Snapshot(remoteDb, songId);
+      expect(latestRemoteSave.root._rev).toBe(baseline._rev);
+      expect(latestRemoteSave.hydrated.arrangements[0].slides[1].mediaSource)
+        .toEqual(latestRemoteEdit.arrangements[0].slides[1].mediaSource);
+      await remoteDb.replicate.to(localDb);
+      releaseSnapshotRead();
+      await remoteDecision;
+
+      const physical = await loadSongV2Snapshot(localDb, songId, true);
+      expect(physical.root._rev).toBe(baseline._rev);
+      expect(physical.hydrated.arrangements[0].slides[0].boxes[0].words).toBe("Local slide A");
+      expect(physical.hydrated.arrangements[0].slides[1].boxes[0].words).toBe("Remote slide B");
+      expect(physical.hydrated.arrangements[0].slides[1].mediaSource)
+        .toEqual(latestRemoteEdit.arrangements[0].slides[1].mediaSource);
+
+      const refreshedEditor = env.store.getState().undoable.present.item;
+      expect(refreshedEditor.hasRemoteUpdate).toBe(true);
+      expect(refreshedEditor.pendingRemoteItem?.arrangements[0].slides[1].mediaSource)
+        .toEqual(physical.hydrated.arrangements[0].slides[1].mediaSource);
+
+      const refreshedDecision = env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+      if (refreshedDecision instanceof Promise) applyingRemote = refreshedDecision;
+      await refreshedDecision;
+      const editor = env.store.getState().undoable.present.item;
+      expect(editor.arrangements[0].slides[1].mediaSource)
+        .toEqual(physical.hydrated.arrangements[0].slides[1].mediaSource);
+      expect(editor.hasRemoteUpdate).toBe(false);
+      expect(editor.pendingRemoteItem).toBeNull();
+      expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([]);
+    } finally {
+      releaseFirstWrite();
+      releaseSnapshotRead();
+      await applyingRemote?.catch(() => undefined);
+      unsubscribe?.();
+      snapshotSpy?.mockRestore();
+      put?.mockRestore();
+      if (session) {
+        session.release();
+        env?.deferredMutations.setActiveContentDatabase(null);
+      }
+      await env?.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+      await Promise.all([localDb.destroy(), remoteDb.destroy()]);
+    }
+  });
+
+  it("ignores unrelated slides, coalesces active notifications, and uses only scoped reads", async () => {
+    const env = setup();
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "unrelated", libraryChanged: false }]));
+    await jest.advanceTimersByTimeAsync(50);
+    expect(env.db.get).not.toHaveBeenCalled();
+    expect(env.db.allDocs).not.toHaveBeenCalled();
+    for (let i = 0; i < 3; i++) env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: false }]));
+    await jest.advanceTimersByTimeAsync(50);
+    expect(env.db.get).toHaveBeenCalledTimes(1);
+    expect(env.db.allDocs).toHaveBeenCalledTimes(2);
+    expect(env.db.allDocs.mock.calls.every(([options]) => Array.isArray(options.keys))).toBe(true);
+  });
+
+  it("flushes accepted input during its 200ms debounce before buffering a remote update", async () => {
+    const env = setup();
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.store.dispatch(env.itemSlice.actions.setHasPendingUpdate(true));
+    env.deferredMutations.scheduleOwnedItemMutation(owner!, 200, () => env.edit("typed B"));
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate({ ...env.baseline, name: "remote" }));
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("typed B");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1700);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("typed B");
+  });
+
+  it("saves unrelated root changes while v2 revision leaves await review", async () => {
+    const env = setup();
+    const conflict = {
+      documentId: env.physical.arrangements[0]._id,
+      winningRevision: "1-base",
+      revisions: ["2-competing"],
+    };
+    env.store.dispatch(env.itemSlice.actions.bufferSongV2RevisionConflict({
+      item: env.baseline,
+      conflicts: [conflict],
+    }));
+    env.store.dispatch(env.itemSlice.actions._setName("Unreviewed edit"));
+    await jest.advanceTimersByTimeAsync(1700);
+    expect(env.store.getState().undoable.present.item.name).toBe("Unreviewed edit");
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toEqual([conflict]);
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    expect(env.db.put.mock.calls[0][0]).toMatchObject({
+      _id: env.physical.root._id,
+      name: "Unreviewed edit",
+    });
+  });
+
+  it("flushes other owned pending mutations before a broad refresh decides the editor is clean", async () => {
+    const env = setup();
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.deferredMutations.scheduleOwnedItemMutation(owner!, 200, () => env.edit("accepted input"));
+    const remoteB = env.docs.get(env.physical.slides[1]._id);
+    env.docs.set(remoteB._id, { ...remoteB, _rev: "2-remote", boxes: [{ ...remoteB.boxes[0], words: "remote B" }] });
+    env.store.dispatch({ type: "allDocs/updateAllSongDocs", payload: [env.songPersistence.songToLibraryProjection(env.baseline)] });
+    await jest.advanceTimersByTimeAsync(0);
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("accepted input");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("accepted input");
+    expect(env.docs.get(env.physical.slides[1]._id).boxes[0].words).toBe("remote B");
+  });
+
+  it("rechecks cleanliness when a stale automatic adoption runs after new input was accepted", async () => {
+    const env = setup();
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(env.baseline));
+    env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(true));
+    env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem(true));
+    expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem(true, true));
+    expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+    env.store.dispatch(env.itemSlice.actions.setIsLyricsEditorOpen(false));
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate(env.baseline));
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.deferredMutations.scheduleOwnedItemMutation(owner!, 200, () => env.edit("typed after clean render"));
+    env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem(true));
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("typed after clean render");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("typed after clean render");
+  });
+
+  it("does not acknowledge text typed during an in-flight save until that text is written", async () => {
+    const env = setup();
+    const originalPut = env.db.put.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    env.db.put.mockImplementationOnce(async next => { await gate; return originalPut(next); });
+    env.edit("first");
+    await jest.advanceTimersByTimeAsync(1500);
+    const owner = env.deferredMutations.getItemMutationOwner(env.store.getState().undoable.present.item);
+    env.store.dispatch(env.itemSlice.actions.setHasPendingUpdate(true));
+    env.deferredMutations.scheduleOwnedItemMutation(owner!, 200, () => env.edit("second typed"));
+    release();
+    await jest.advanceTimersByTimeAsync(0);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("second typed");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("first");
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("second typed");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("finishes a multi-document V2 save after a newer edit supersedes it mid-commit", async () => {
+    const env = setup();
+    const originalPut = env.db.put.getMockImplementation()!;
+    let committedFirstDocument!: () => void;
+    let releaseFirstDocument!: () => void;
+    let committedThirdDocument!: () => void;
+    let releaseThirdDocument!: () => void;
+    const firstCommit = new Promise<void>(resolve => { committedFirstDocument = resolve; });
+    const firstCommitGate = new Promise<void>(resolve => { releaseFirstDocument = resolve; });
+    const thirdCommit = new Promise<void>(resolve => { committedThirdDocument = resolve; });
+    const thirdCommitGate = new Promise<void>(resolve => { releaseThirdDocument = resolve; });
+    let writes = 0;
+    env.db.put.mockImplementation(async next => {
+      const result = await originalPut(next);
+      writes += 1;
+      if (writes === 1) {
+        committedFirstDocument();
+        await firstCommitGate;
+      } else if (writes === 3) {
+        committedThirdDocument();
+        await thirdCommitGate;
+      }
+      return result;
+    });
+
+    env.editSong("First save title", "First save lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    await firstCommit;
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First save lyrics");
+    expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
+
+    env.editSong("Latest save title", "Latest save lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    releaseFirstDocument();
+    await flushListenerEffects();
+    await thirdCommit;
+    expect(env.docs.get(env.physical.root._id).name).toBe("First save title");
+    expect(env.store.getState().undoable.present.item.name).toBe("Latest save title");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    releaseThirdDocument();
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const latest = (await env.songPersistence.loadSongV2Snapshot(env.db as never, env.baseline._id)).hydrated;
+    expect(writes).toBeGreaterThanOrEqual(4);
+    expect(latest.name).toBe("Latest save title");
+    expect(latest.arrangements[0].slides[0].boxes[0].words).toBe("Latest save lyrics");
+    expect(env.docs.get(env.physical.root._id).name).not.toBe("First save title");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).not.toBe("First save lyrics");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+  });
+
+  it("recovers an interrupted partial V2 save after the same authorized session owner returns", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const firstSession = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    firstSession.markInitialReplicationComplete();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+
+    const originalPut = env.db.put.getMockImplementation()!;
+    let committedFirstDocument!: () => void;
+    let releaseFirstDocument!: () => void;
+    const firstCommit = new Promise<void>(resolve => { committedFirstDocument = resolve; });
+    const firstCommitGate = new Promise<void>(resolve => { releaseFirstDocument = resolve; });
+    let writes = 0;
+    env.db.put.mockImplementation(async next => {
+      const result = await originalPut(next);
+      writes += 1;
+      if (writes === 1) {
+        committedFirstDocument();
+        await firstCommitGate;
+      }
+      return result;
+    });
+
+    env.editSong("First save title", "First save lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    await firstCommit;
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First save lyrics");
+    expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
+
+    // A newer edit is coalesced while the first operation is already durable
+    // on one slide document but has not yet published its root metadata.
+    env.editSong("Latest save title", "Latest save lyrics");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    env.globalFireDbInfo.canWriteSongContent = false;
+    env.globalFireDbInfo.churchId = "";
+    firstSession.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+    releaseFirstDocument();
+    await flushListenerEffects();
+
+    expect(writes).toBe(1);
+    expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First save lyrics");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+
+    env.globalFireDbInfo.churchId = owner.churchId;
+    env.globalFireDbInfo.canWriteSongContent = true;
+    const restoredSession = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    restoredSession.markInitialReplicationComplete();
+    for (let attempt = 0; attempt < 100 &&
+      env.docs.get(env.physical.root._id).name !== "Latest save title"; attempt += 1) {
+      await flushListenerEffects();
+    }
+    await flushListenerEffects();
+
+    const latest = (await env.songPersistence.loadSongV2Snapshot(env.db as never, env.baseline._id)).hydrated;
+    expect(latest.name).toBe("Latest save title");
+    expect(latest.arrangements[0].slides[0].boxes[0].words).toBe("Latest save lyrics");
+    expect(env.docs.get(env.physical.root._id).name).not.toBe("First save title");
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).not.toBe("First save lyrics");
+    expect(writes).toBeGreaterThanOrEqual(4);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+
+    restoredSession.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("keeps one window's partial checkpoint when another independent store saves the same song", async () => {
+    jest.useRealTimers();
+    const first = setup(undefined, { useRealRecoveryStorage: true });
+    await first.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    first.globalFireDbInfo.churchId = owner.churchId;
+    const firstSession = first.contentReplicationActivity.beginContentDatabaseSession(first.db.name);
+    first.deferredMutations.setActiveContentDatabase(owner, first.db as never);
+    firstSession.markInitialReplicationComplete();
+    first.store.dispatch(first.itemSlice.actions.setActiveItem({ ...first.baseline, contentOwner: owner }));
+
+    const firstPut = first.db.put.getMockImplementation()!;
+    let firstCommitted!: () => void;
+    let releaseFirst!: () => void;
+    const firstCommit = new Promise<void>(resolve => { firstCommitted = resolve; });
+    const firstGate = new Promise<void>(resolve => { releaseFirst = resolve; });
+    first.db.put.mockImplementationOnce(async document => {
+      const result = await firstPut(document);
+      firstCommitted();
+      await firstGate;
+      return result;
+    });
+    first.editSong("Window A title", "Window A lyrics");
+    await new Promise(resolve => setTimeout(resolve, 1600));
+    await flushListenerEffects();
+    await firstCommit;
+    const firstRecord = (await first.recoveryStorage.listSongV2AutosaveRecoveries(owner))[0];
+    expect(firstRecord).toBeDefined();
+    expect(first.docs.get(first.physical.slides[0]._id).boxes[0].words).toBe("Window A lyrics");
+
+    const second = setup(undefined, {
+      useRealRecoveryStorage: true,
+      source: first.baseline,
+      sharedDocuments: first.docs,
+    });
+    second.globalFireDbInfo.churchId = owner.churchId;
+    const secondSession = second.contentReplicationActivity.beginContentDatabaseSession(second.db.name);
+    second.deferredMutations.setActiveContentDatabase(owner, second.db as never);
+    secondSession.markInitialReplicationComplete();
+    second.store.dispatch(second.itemSlice.actions.setActiveItem({ ...second.baseline, contentOwner: owner }));
+    for (let attempt = 0; attempt < 100 &&
+      second.store.getState().undoable.present.item.name !== "Window A title"; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    const secondSlides = structuredClone(second.store.getState().undoable.present.item.arrangements[0].slides);
+    secondSlides[1].boxes[0].words = "Window B lyrics";
+    second.store.dispatch(second.itemSlice.actions._updateSlides(secondSlides));
+    await new Promise(resolve => setTimeout(resolve, 1600));
+    await flushListenerEffects();
+
+    const recordsAfterSecondSave = await second.recoveryStorage.listSongV2AutosaveRecoveries(owner);
+    expect(second.db.put).not.toHaveBeenCalled();
+    expect(recordsAfterSecondSave).toHaveLength(1);
+    expect(recordsAfterSecondSave[0].id).toBe(firstRecord.id);
+    expect(recordsAfterSecondSave[0].desired.name).toBe("Window A title");
+    expect(second.docs.get(second.physical.slides[0]._id).boxes[0].words).toBe("Window A lyrics");
+
+    first.globalFireDbInfo.canWriteSongContent = false;
+    first.globalFireDbInfo.churchId = "";
+    releaseFirst();
+    for (let attempt = 0; attempt < 300 &&
+      second.docs.get(second.physical.slides[1]._id).boxes[0].words !== "Window B lyrics"; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushListenerEffects();
+    }
+    await flushListenerEffects();
+    const retained = await first.recoveryStorage.listSongV2AutosaveRecoveries(owner);
+    expect(retained).toEqual([]);
+    expect(first.docs.get(first.physical.root._id).name).toBe("Window A title");
+    expect(first.docs.get(first.physical.slides[0]._id).boxes[0].words).toBe("Window A lyrics");
+    expect(first.docs.get(first.physical.slides[1]._id).boxes[0].words).toBe("Window B lyrics");
+
+    await first.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+    firstSession.release();
+    first.deferredMutations.setActiveContentDatabase(null);
+    secondSession.release();
+    second.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("does not restore a durably discarded draft after a renderer restart", async () => {
+    jest.useRealTimers();
+    const env = setup(undefined, { useRealRecoveryStorage: true });
+    await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const rejectedDraft = { ...env.baseline, contentOwner: owner, name: "Rejected draft" };
+    await env.recoveryStorage.putSongV2AutosaveRecovery({
+      id: env.recoveryStorage.createSongV2AutosaveRecoveryId(owner, rejectedDraft._id),
+      owner,
+      itemId: rejectedDraft._id,
+      desired: rejectedDraft,
+      baseline: env.baseline,
+      mutationVersion: 1,
+      status: "needs-review",
+    });
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    session.markInitialReplicationComplete();
+    for (let attempt = 0; attempt < 100 &&
+      env.store.getState().undoable.present.item.name !== rejectedDraft.name; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushListenerEffects();
+    }
+    env.docs.set(env.physical.root._id, {
+      ...env.docs.get(env.physical.root._id),
+      name: "Accepted remote title",
+    });
+    env.store.dispatch(env.itemSlice.actions.bufferRemoteItemUpdate({
+      ...env.baseline,
+      name: "Accepted remote title",
+    }));
+    env.store.dispatch(env.itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+
+    await env.store.dispatch(env.itemSlice.actions.applyPendingRemoteItem());
+    expect(env.store.getState().undoable.present.item.name).toBe("Accepted remote title");
+    expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([{
+      id: expect.any(String),
+      owner,
+      itemId: rejectedDraft._id,
+      status: "discarded",
+    }]);
+
+    const restarted = setup(undefined, {
+      useRealRecoveryStorage: true,
+      source: env.baseline,
+      seedDocuments: env.docs,
+    });
+    restarted.globalFireDbInfo.churchId = owner.churchId;
+    const restartedSession = restarted.contentReplicationActivity.beginContentDatabaseSession(restarted.db.name);
+    restarted.deferredMutations.setActiveContentDatabase(owner, restarted.db as never);
+    restarted.store.dispatch(restarted.itemSlice.actions.setActiveItem({ ...restarted.baseline, contentOwner: owner }));
+    restartedSession.markInitialReplicationComplete();
+    const recoveryAfterRestart = await restarted.recoveryStorage.listSongV2AutosaveRecoveries(owner);
+    await flushListenerEffects();
+
+    expect(recoveryAfterRestart).toEqual([expect.objectContaining({
+      owner,
+      itemId: rejectedDraft._id,
+      status: "discarded",
+    })]);
+    expect(restarted.store.getState().undoable.present.item.name).not.toBe(rejectedDraft.name);
+    expect(restarted.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    expect(restarted.db.put).not.toHaveBeenCalled();
+
+    await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+    session.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+    restartedSession.release();
+    restarted.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("does not load or write a persisted recovery in a view-only Controller session", async () => {
+    jest.useRealTimers();
+    const env = setup(undefined, { useRealRecoveryStorage: true });
+    await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    const draft = { ...env.baseline, contentOwner: owner, name: "Saved local draft" };
+    const record = {
+      id: env.recoveryStorage.createSongV2AutosaveRecoveryId(owner, draft._id),
+      owner,
+      itemId: draft._id,
+      desired: draft,
+      baseline: env.baseline,
+      mutationVersion: 1,
+      status: "pending" as const,
+    };
+    await env.recoveryStorage.putSongV2AutosaveRecovery(record);
+    env.globalFireDbInfo.churchId = owner.churchId;
+    env.globalFireDbInfo.canWriteSongContent = false;
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    session.markInitialReplicationComplete();
+    await new Promise(resolve => setTimeout(resolve, 30));
+
+    expect(env.db.get).not.toHaveBeenCalled();
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.store.getState().undoable.present.item.name).toBe(env.baseline.name);
+    expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([record]);
+
+    await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+    session.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("waits for initial replication and recovers a partial V2 save after a renderer reload", async () => {
+    jest.useRealTimers();
+    const env = setup(undefined, { useRealRecoveryStorage: true });
+    await env.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a",
+    };
+    env.globalFireDbInfo.churchId = owner.churchId;
+    const firstSession = env.contentReplicationActivity.beginContentDatabaseSession(env.db.name);
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    firstSession.markInitialReplicationComplete();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+
+    const originalPut = env.db.put.getMockImplementation()!;
+    let committedFirstDocument!: () => void;
+    let releaseFirstDocument!: () => void;
+    const firstCommit = new Promise<void>(resolve => { committedFirstDocument = resolve; });
+    const firstCommitGate = new Promise<void>(resolve => { releaseFirstDocument = resolve; });
+    env.db.put.mockImplementationOnce(async next => {
+      expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toHaveLength(1);
+      const result = await originalPut(next);
+      committedFirstDocument();
+      await firstCommitGate;
+      return result;
+    });
+
+    env.editSong("Recovered title", "Recovered lyrics");
+    await new Promise(resolve => setTimeout(resolve, 1600));
+    await flushListenerEffects();
+    await firstCommit;
+    expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toHaveLength(1);
+
+    env.globalFireDbInfo.canWriteSongContent = false;
+    env.globalFireDbInfo.churchId = "";
+    firstSession.release();
+    env.deferredMutations.setActiveContentDatabase(null);
+    releaseFirstDocument();
+    await flushListenerEffects();
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Recovered lyrics");
+    expect(env.docs.get(env.physical.root._id).name).toBe(env.baseline.name);
+
+    // A fresh renderer has a fresh store and PouchDB object. The owner-scoped
+    // IndexedDB recovery survives, while the new local PouchDB starts empty.
+    const restored = setup(undefined, { useRealRecoveryStorage: true });
+    restored.docs.clear();
+    restored.db.get.mockClear();
+    restored.db.put.mockClear();
+    restored.globalFireDbInfo.churchId = owner.churchId;
+    restored.globalFireDbInfo.canWriteSongContent = true;
+    const otherOwner: ItemContentOwner = {
+      ...owner,
+      scopeId: "user-b:church-a:db-a",
+      accountId: "user-b",
+    };
+    const otherSession = restored.contentReplicationActivity.beginContentDatabaseSession(restored.db.name);
+    restored.deferredMutations.setActiveContentDatabase(otherOwner, restored.db as never);
+    restored.store.dispatch(restored.itemSlice.actions.setActiveItem({ ...restored.baseline, contentOwner: otherOwner }));
+    otherSession.markInitialReplicationComplete();
+    await flushListenerEffects();
+    expect(restored.db.get).not.toHaveBeenCalled();
+    expect(restored.db.put).not.toHaveBeenCalled();
+    expect(await restored.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toHaveLength(1);
+    expect(await restored.recoveryStorage.listSongV2AutosaveRecoveries(otherOwner)).toHaveLength(0);
+    otherSession.release();
+    restored.deferredMutations.setActiveContentDatabase(null);
+
+    const otherChurchOwner: ItemContentOwner = {
+      ...owner,
+      scopeId: "user-a:church-b:db-a",
+      churchId: "church-b",
+    };
+    restored.globalFireDbInfo.churchId = otherChurchOwner.churchId;
+    const otherChurchSession = restored.contentReplicationActivity.beginContentDatabaseSession(restored.db.name);
+    restored.deferredMutations.setActiveContentDatabase(otherChurchOwner, restored.db as never);
+    restored.store.dispatch(restored.itemSlice.actions.setActiveItem({
+      ...restored.baseline,
+      contentOwner: otherChurchOwner,
+    }));
+    otherChurchSession.markInitialReplicationComplete();
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(restored.db.get).not.toHaveBeenCalled();
+    expect(restored.db.put).not.toHaveBeenCalled();
+    expect(await restored.recoveryStorage.listSongV2AutosaveRecoveries(otherChurchOwner)).toHaveLength(0);
+    expect(await restored.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toHaveLength(1);
+    otherChurchSession.release();
+    restored.deferredMutations.setActiveContentDatabase(null);
+
+    restored.globalFireDbInfo.churchId = owner.churchId;
+    const restoredSession = restored.contentReplicationActivity.beginContentDatabaseSession(restored.db.name);
+    restored.deferredMutations.setActiveContentDatabase(owner, restored.db as never);
+    restored.store.dispatch(restored.itemSlice.actions.setActiveItem({ ...restored.baseline, contentOwner: owner }));
+    await flushListenerEffects();
+    expect(restored.db.get).not.toHaveBeenCalled();
+    expect(restored.db.put).not.toHaveBeenCalled();
+
+    // Initial remote pull populates the partially committed slide before the
+    // readiness signal releases recovery.
+    for (const document of env.docs.values()) {
+      restored.docs.set(document._id, structuredClone(document));
+    }
+    restored.db.get.mockRejectedValueOnce(Object.assign(
+      new Error("Song root has not arrived in the first pull yet"),
+      { status: 404 },
+    ));
+    restoredSession.markInitialReplicationComplete();
+    for (let attempt = 0; attempt < 100 && restored.db.get.mock.calls.length === 0; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      await flushListenerEffects();
+    }
+    expect(restored.db.get).toHaveBeenCalledTimes(1);
+    expect(restored.db.put).not.toHaveBeenCalled();
+    expect(await restored.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toHaveLength(1);
+
+    // A later replication activity retries the retained record after the
+    // initial-ready attempt hit a transient local 404.
+    const laterReplication = restored.contentReplicationActivity.trackContentReplication(restored.db.name);
+    laterReplication.release();
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      await flushListenerEffects();
+      if ((await restored.recoveryStorage.listSongV2AutosaveRecoveries(owner)).length === 0) break;
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+
+    const latest = (await restored.songPersistence.loadSongV2Snapshot(
+      restored.db as never,
+      restored.baseline._id,
+    )).hydrated;
+    expect(latest.name).toBe("Recovered title");
+    expect(latest.arrangements[0].slides[0].boxes[0].words).toBe("Recovered lyrics");
+    expect(await restored.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toHaveLength(0);
+    expect(restored.db.put).toHaveBeenCalled();
+
+    await restored.recoveryStorage.clearSongV2AutosaveRecoveriesForTests();
+    restoredSession.release();
+    restored.deferredMutations.setActiveContentDatabase(null);
+  });
+
+  it("re-reads an older remote response after a successful save instead of replacing the saved content", async () => {
+    const env = setup();
+    const read = env.db.allDocs.getMockImplementation()!;
+    let release!: () => void;
+    let calls = 0;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    env.db.allDocs.mockImplementation(async options => {
+      const result = structuredClone(await read(options));
+      if (++calls === 2) await gate;
+      return result;
+    });
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: false }]));
+    await jest.advanceTimersByTimeAsync(50);
+    env.edit("newest");
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    release();
+    await jest.advanceTimersByTimeAsync(50);
+    const item = env.store.getState().undoable.present.item;
+    expect(item.arrangements[0].slides[0].boxes[0].words).toBe("newest");
+    expect(item.hasRemoteUpdate).toBe(false);
+    expect(item.pendingRemoteItem).toBeNull();
+  });
+
+  it("ignores a changed-song load after switching databases with the same item ID", async () => {
+    const env = setup();
+    let release!: (doc: unknown) => void;
+    env.db.get.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+    env.store.dispatch(env.songV2DocumentsChanged([{ songId: "song-1", libraryChanged: true }]));
+    await jest.advanceTimersByTimeAsync(50);
+    const otherDb = { get: jest.fn(), put: jest.fn(), allDocs: jest.fn() };
+    env.setGlobalDb(otherDb);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, name: "Other church" }));
+    release(env.docs.get(env.physical.root._id));
+    await jest.advanceTimersByTimeAsync(50);
+    expect(env.store.getState().undoable.present.item.name).toBe("Other church");
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem).toBeNull();
+    expect(otherDb.get).not.toHaveBeenCalled();
+    expect(otherDb.put).not.toHaveBeenCalled();
+  });
+
+  it.each(["mine", "theirs"])("retains unresolved drafts through a late acknowledgment and resolves only displayed leaves for %s", async choice => {
+    const env = setup();
+    const approved = [{ documentId: env.physical.arrangements[0]._id, winningRevision: "1-base", revisions: ["2-displayed"] }];
+    const remote = { ...env.baseline, name: "Remote version" };
+    const prune = jest.spyOn(env.replicationConflicts, "pruneResolvedSongV2Conflicts")
+      .mockImplementation(async (_db: unknown, adopted: unknown) => adopted);
+    env.store.dispatch(env.itemSlice.actions.bufferSongV2RevisionConflict({ item: remote, conflicts: approved }));
+    env.store.dispatch(env.itemSlice.actions.markItemPersisted(env.baseline, env.baseline));
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem.name).toBe("Remote version");
+    env.store.dispatch(choice === "mine" ? env.itemSlice.actions.keepLocalItemChanges() : env.itemSlice.actions.applyPendingRemoteItem());
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(prune).toHaveBeenCalledWith(env.db, expect.anything(), approved, expect.any(Function));
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    prune.mockRestore();
+  });
+});
 
 const createOverlay = (id: string, name: string) => ({
   id,
@@ -294,6 +2044,476 @@ const createSongDoc = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+const mockV2AllDocs = (db: { allDocs?: jest.Mock }, docs: Map<string, any>) => {
+  db.allDocs = jest.fn(async ({ keys, startkey, endkey }: {
+    keys?: string[];
+    startkey?: string;
+    endkey?: string;
+  }) => {
+    const selected = keys
+      ? keys.map((id) => [id, docs.get(id)] as const)
+      : [...docs.entries()].filter(([id]) =>
+          (!startkey || id >= startkey) && (!endkey || id <= endkey),
+        );
+    return {
+      rows: selected.map(([id, doc]) => doc
+        ? { id, key: id, value: { rev: doc._rev }, doc }
+        : { id, key: id, error: "not_found" }),
+    };
+  });
+};
+
+describe("authoritative Song V2 reads in controller and Undo/Redo paths", () => {
+  const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  const songId = "migrated-song";
+  let activeDeferredMutations: ReturnType<typeof loadStoreWithItemPersistence>["deferredMutations"] | undefined;
+  const setup = () => {
+    const env = loadStoreWithItemPersistence();
+    activeDeferredMutations = env.deferredMutations;
+    const source = createSongDoc({
+      _id: songId,
+      name: "Migrated song",
+      arrangements: [{
+        id: "a",
+        name: "Master",
+        formattedLyrics: [],
+        songOrder: [],
+        slides: ["A", "B"].map(id => ({
+          id, name: `Verse 1${id}`, type: "Verse",
+          boxes: [{ id: `${id}-box`, words: id === "A" ? "Authoritative V2 lyrics" : "Second V2 slide", width: 100, height: 100 }],
+        })),
+      }],
+    }) as any;
+    const physical: SongV2Documents = env.songPersistence.serializeSongToV2Documents(source);
+    const staleV1 = clone({
+      ...source,
+      name: "Stale V1 predecessor",
+      arrangements: [{
+        ...source.arrangements[0],
+        slides: source.arrangements[0].slides.map((slide: any, index: number) => ({
+          ...slide, boxes: [{ ...slide.boxes[0], words: index === 0 ? "Obsolete V1 lyrics" : "Old V1 slide" }],
+        })),
+      }],
+    });
+    const docs = new Map<string, any>([
+      ...[physical.root, ...physical.arrangements, ...physical.slides]
+        .map(doc => [doc._id, { ...doc, _rev: "1-base" }] as const),
+      [songId, staleV1],
+    ]);
+    env.db.get.mockImplementation(async (id: string, options?: { rev?: string }) => {
+      const doc = docs.get(id);
+      if (!doc) throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+      if (options?.rev && doc._conflicts?.includes(options.rev)) {
+        const branch = clone(doc);
+        delete branch._conflicts;
+        branch._rev = options.rev;
+        branch.name = `${branch.name} competing authored name`;
+        return branch;
+      }
+      return clone(doc);
+    });
+    (env.db as any).changes = jest.fn(async () => ({ results: [] }));
+    mockV2AllDocs(env.db, docs);
+    env.db.put.mockImplementation(async next => {
+      const previous = docs.get(next._id);
+      if (previous && next._rev !== previous._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = `${Number(previous?._rev?.split("-")[0] ?? 0) + 1}-written`;
+      docs.set(next._id, clone({ ...next, _rev: rev }));
+      return { ok: true, id: next._id, rev };
+    });
+    env.db.remove.mockImplementation(async (id: string, rev: string) => {
+      const current = docs.get(id);
+      if (!current || current._rev !== rev) throw Object.assign(new Error("missing revision"), { status: 404 });
+      docs.delete(id);
+      return { ok: true, id, rev };
+    });
+    const baseline = env.songPersistence.hydrateSongFromV2Documents(
+      docs.get(physical.root._id),
+      physical.arrangements.map(doc => docs.get(doc._id)),
+      physical.slides.map(doc => docs.get(doc._id)),
+      true,
+    );
+    const updateLyrics = (words: string) => {
+      const active = env.store.getState().undoable.present.item;
+      const slides = clone(active.arrangements[0].slides);
+      slides[0].boxes[0].words = words;
+      env.store.dispatch(env.itemSlice.actions._updateSlides(slides));
+    };
+    return { ...env, docs, physical, staleV1, baseline, updateLyrics };
+  };
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => {
+    activeDeferredMutations?.setActiveContentDatabase(null);
+    activeDeferredMutations = undefined;
+    jest.useRealTimers();
+  });
+
+  it("keeps a migrated song's baseline authoritative through Undo, Redo, and a later save", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    jest.runAllTimers();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    env.updateLyrics("First V2 edit");
+    expect(env.store.getState().undoable.past.length).toBeGreaterThan(0);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("First V2 edit");
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    const verifiedLatest = await env.songPersistence.loadItemWithSongHydration(env.db as never, songId);
+    expect(verifiedLatest.arrangements[0].slides[0].boxes[0].words).toBe("First V2 edit");
+    const readsBeforeUndo = env.db.get.mock.calls.length;
+    const rebase = jest.spyOn(env.itemSlice.actions, "rebaseItemPersistence");
+
+    env.store.dispatch({ type: "@@redux-undo/UNDO" });
+    await flushListenerEffects();
+    const afterUndo = env.store.getState().undoable.present.item;
+    expect(env.db.get).toHaveBeenCalledTimes(readsBeforeUndo);
+    expect(rebase).not.toHaveBeenCalled();
+    expect(afterUndo.arrangements[0].slides[0].boxes[0].words).toBe("Authoritative V2 lyrics");
+    expect(afterUndo.baseItem).toMatchObject({ docType: "song-v2-root", _id: songId });
+    expect(afterUndo.baseItem.arrangements[0].slides[0].boxes[0].words).toBe("First V2 edit");
+    expect(afterUndo.hasPendingUpdate).toBe(true);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    env.store.dispatch({ type: "@@redux-undo/REDO" });
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("First V2 edit");
+    env.updateLyrics("Saved after redo");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Saved after redo");
+    expect(env.docs.get(songId)).toEqual(env.staleV1);
+  });
+
+  it("keeps a synchronous Undo baseline when a newer component edit follows immediately", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    jest.runAllTimers();
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    env.updateLyrics("Saved V2 edit");
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const baselineBeforeUndo = env.store.getState().undoable.present.item.baseItem;
+    env.store.dispatch({ type: "@@redux-undo/UNDO" });
+    expect(env.store.getState().undoable.present.item.baseItem).toEqual(baselineBeforeUndo);
+    expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    env.updateLyrics("Component edit immediately after undo");
+    await flushListenerEffects();
+
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words)
+      .toBe("Component edit immediately after undo");
+    expect(env.store.getState().undoable.present.item.baseItem).toMatchObject({ docType: "song-v2-root", _id: songId });
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.docs.get(env.physical.slides[0]._id).boxes[0].words).toBe("Component edit immediately after undo");
+  });
+
+  it("hydrates a stale V1 predecessor from V2 and buffers unresolved conflicts for a view-only controller", async () => {
+    const env = setup();
+    env.globalFireDbInfo.canWriteSongContent = false;
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-competing"] });
+
+    await env.store.dispatch(env.selectControllerItem({ _id: songId, listId: "view-outline", type: "song" }, env.db as never));
+    const active = env.store.getState().undoable.present.item;
+    expect(active.name).toBe("Migrated song");
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("Authoritative V2 lyrics");
+    expect(active.pendingSongV2Conflicts).toEqual([expect.objectContaining({
+      documentId: env.physical.arrangements[0]._id,
+      revisions: ["2-competing"],
+    })]);
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.db.remove).not.toHaveBeenCalled();
+    expect(env.docs.get(songId)).toEqual(env.staleV1);
+  });
+
+  it("restores calculated monitor layout when activating a V2 snapshot without persisted layout", async () => {
+    const env = setup();
+    expect(env.physical.arrangements[0]).not.toHaveProperty("monitorLayout");
+    const expected = await env.songPersistence.loadSong(env.db as never, songId);
+    expect(expected.arrangements[0].monitorLayout).toBeDefined();
+
+    await env.store.dispatch(env.selectControllerItem(
+      { _id: songId, listId: "monitor-layout-outline", type: "song" }, env.db as never,
+    ));
+
+    const active = env.store.getState().undoable.present.item;
+    expect(active.arrangements[0].monitorLayout).toEqual(expected.arrangements[0].monitorLayout);
+    expect(env.store.getState().allDocs.allSongDocs.find((doc: any) => doc._id === songId)
+      ?.arrangements[0].monitorLayout).toEqual(expected.arrangements[0].monitorLayout);
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.db.remove).not.toHaveBeenCalled();
+  });
+
+  it("uses guarded automatic reconciliation when an authorized editor opens a conflicting V2 song", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.globalFireDbInfo.canWriteSongContent = true;
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-disjoint"] });
+    const merged = clone(env.baseline);
+    merged.arrangements[0].slides[0].boxes[0].words = "Authorized disjoint merge";
+    const reconcile = jest.spyOn(env.replicationConflicts, "loadReconciledSongV2Snapshot")
+      .mockImplementation(async (...args: unknown[]) => {
+        const snapshot = args[2] as any;
+        return { ...snapshot, conflicts: undefined, hydrated: merged };
+      });
+
+    await env.store.dispatch(env.selectControllerItem(
+      { _id: songId, listId: "editor-outline", type: "song" }, env.db as never,
+    ));
+
+    expect(reconcile).toHaveBeenCalledWith(env.db, songId, expect.anything(), expect.any(Function));
+    expect(env.store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words)
+      .toBe("Authorized disjoint merge");
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+  });
+
+  it("keeps an authorized selection reconciliation valid after its first write while suppressing stale activation", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-disjoint"] });
+    const merged = clone(env.baseline);
+    merged.arrangements[0].slides[0].boxes[0].words = "Authorized disjoint merge";
+    let guardAfterSelectionChange: (() => boolean) | undefined;
+    jest.spyOn(env.replicationConflicts, "loadReconciledSongV2Snapshot")
+      .mockImplementation(async (...args: unknown[]) => {
+        const [database, , snapshot, guard] = args as [any, string, any, (() => boolean) & { onWriteCommitted?: () => void }];
+        expect(guard()).toBe(true);
+        await database.put({ ...arrangement, updatedAt: "first durable reconciliation write" });
+        guard.onWriteCommitted?.();
+        await env.store.dispatch(env.selectControllerItem(
+          { _id: "other-item", listId: "next-outline", type: "free" }, env.db as never,
+        ));
+        guardAfterSelectionChange = guard;
+        return { ...snapshot, conflicts: undefined, hydrated: merged };
+      });
+
+    await env.store.dispatch(env.selectControllerItem(
+      { _id: songId, listId: "editor-outline", type: "song" }, env.db as never,
+    ));
+
+    expect(guardAfterSelectionChange?.()).toBe(true);
+    expect(env.store.getState().undoable.present.item._id).toBe("other-item");
+    expect(env.store.getState().undoable.present.item.arrangements).toEqual([]);
+  });
+
+  it("does not reconcile or retire conflict leaves on a view-only replication refresh", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    env.globalFireDbInfo.canWriteSongContent = false;
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-competing"] });
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+
+    env.store.dispatch({
+      type: "allDocs/applyItemDocumentChange",
+      payload: { id: songId, doc: env.songPersistence.songToLibraryProjection(env.baseline) },
+    });
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toEqual([expect.objectContaining({
+      documentId: env.physical.arrangements[0]._id,
+      revisions: ["2-competing"],
+    })]);
+
+    env.store.dispatch(env.songV2DocumentsChanged([{
+      songId, libraryChanged: false, database: env.db as never, owner,
+    }]));
+    await jest.advanceTimersByTimeAsync(50);
+    await flushListenerEffects();
+
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toEqual([expect.objectContaining({
+      documentId: env.physical.arrangements[0]._id,
+      revisions: ["2-competing"],
+    })]);
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(env.db.remove).not.toHaveBeenCalled();
+    expect(env.docs.get(songId)).toEqual(env.staleV1);
+  });
+
+  it("keeps automatic reconciliation on the authorized active-song replication path", async () => {
+    const env = setup();
+    const owner: ItemContentOwner = {
+      scopeId: "user-a:church-a:db-a", databaseKey: "db-a", churchId: "", accountId: "user-a",
+    };
+    env.deferredMutations.setActiveContentDatabase(owner, env.db as never);
+    const arrangement = env.docs.get(env.physical.arrangements[0]._id);
+    env.docs.set(arrangement._id, { ...arrangement, _conflicts: ["2-disjoint"] });
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...env.baseline, contentOwner: owner }));
+    const merged = clone(env.baseline);
+    merged.arrangements[0].slides[0].boxes[0].words = "Safe disjoint merge";
+    const reconcile = jest.spyOn(env.replicationConflicts, "loadReconciledSongV2Snapshot")
+      .mockImplementation(async (...args: unknown[]) => {
+        const snapshot = args[2] as any;
+        return {
+          ...snapshot,
+          conflicts: undefined,
+          hydrated: merged,
+        };
+      });
+
+    env.store.dispatch(env.songV2DocumentsChanged([{
+      songId, libraryChanged: false, database: env.db as never, owner,
+    }]));
+    await jest.advanceTimersByTimeAsync(50);
+    await flushListenerEffects();
+
+    expect(reconcile).toHaveBeenCalledWith(env.db, songId, expect.anything(), expect.any(Function));
+    expect(env.store.getState().undoable.present.item.pendingRemoteItem.arrangements[0].slides[0].boxes[0].words)
+      .toBe("Safe disjoint merge");
+    expect(env.store.getState().undoable.present.item.pendingSongV2Conflicts).toBeUndefined();
+  });
+});
+
+describe("song undo and redo persistence against PouchDB", () => {
+  const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  const readWords = (item: any) => item.arrangements?.[0]?.slides?.[0]?.boxes?.[0]?.words ??
+    item.slides?.[0]?.boxes?.[0]?.words;
+  const waitForSavedWords = async (store: any, words: string) => {
+    const matches = () => {
+      const item = store.getState().undoable.present.item;
+      return !item.hasPendingUpdate && readWords(item) === words && readWords(item.baseItem) === words;
+    };
+    if (matches()) return;
+    await new Promise<void>((resolve) => {
+      let unsubscribe = () => {};
+      const check = () => {
+        if (!matches()) return;
+        unsubscribe();
+        resolve();
+      };
+      unsubscribe = store.subscribe(check);
+      check();
+    });
+  };
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it.each(["legacy", "song-v2"] as const)("saves lyrics through Undo, Redo, and a third edit for %s songs", async format => {
+    const songId = `undo-${format}-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(songId, { adapter: "idb" });
+    const recoveryStore = new Map<string, any>();
+    const env = loadStoreWithItemPersistence(recoveryStore, false, database);
+    const owner: ItemContentOwner = {
+      scopeId: `user-a:church-a:${database.name}`,
+      databaseKey: database.name,
+      churchId: "church-a",
+      accountId: "user-a",
+    };
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(database.name);
+    session.markInitialReplicationComplete();
+    env.globalFireDbInfo.churchId = owner.churchId;
+    env.deferredMutations.setActiveContentDatabase(owner, database as never);
+    env.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    jest.runAllTimers();
+
+    try {
+      const slide = {
+        id: "verse-1",
+        name: "Verse 1",
+        type: "Verse",
+        boxes: [{ id: "verse-box", words: "Original lyrics", width: 100, height: 100 }],
+      };
+      const source = createSongDoc({
+        _id: songId,
+        name: "Undo Song",
+        slides: [slide],
+        arrangements: [{
+          id: "master",
+          name: "Master",
+          formattedLyrics: [],
+          songOrder: [],
+          slides: [slide],
+        }],
+      }) as DBItem;
+
+      if (format === "legacy") {
+        const result = await database.put(source as any);
+        const baseline = await database.get<DBItem>(result.id);
+        env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      } else {
+        const physical = env.songPersistence.serializeSongToV2Documents(source);
+        for (const document of [physical.root, ...physical.arrangements, ...physical.slides]) {
+          await database.put(document as any);
+        }
+        const baseline = await env.songPersistence.loadItemWithSongHydration(database as never, songId);
+        env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+      }
+
+      const updateWords = (words: string) => {
+        const item = env.store.getState().undoable.present.item;
+        const slides = clone(item.arrangements?.[item.selectedArrangement ?? 0]?.slides ?? item.slides);
+        slides[0].boxes[0].words = words;
+        env.store.dispatch(env.itemSlice.actions._updateSlides(slides));
+      };
+      const saveWords = async (words: string) => {
+        const saved = waitForSavedWords(env.store, words);
+        await jest.advanceTimersByTimeAsync(1500);
+        await flushListenerEffects();
+        await saved;
+      };
+      const persistedWords = async () => format === "legacy"
+        ? readWords(await database.get(songId))
+        : readWords((await env.songPersistence.loadSongV2Snapshot(database as never, songId)).hydrated);
+
+      updateWords("First saved edit");
+      await saveWords("First saved edit");
+      expect(await persistedWords()).toBe("First saved edit");
+      expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(readWords(env.store.getState().undoable.present.item)).toBe("Original lyrics");
+      expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+      expect(readWords(env.store.getState().undoable.present.item.baseItem)).toBe("First saved edit");
+      await saveWords("Original lyrics");
+      expect(await persistedWords()).toBe("Original lyrics");
+
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(readWords(env.store.getState().undoable.present.item)).toBe("First saved edit");
+      expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+      await saveWords("First saved edit");
+      expect(await persistedWords()).toBe("First saved edit");
+
+      updateWords("Third edit after Redo");
+      await saveWords("Third edit after Redo");
+      expect(await persistedWords()).toBe("Third edit after Redo");
+      const finalItem = env.store.getState().undoable.present.item;
+      expect(finalItem.hasPendingUpdate).toBe(false);
+      expect(finalItem.hasRemoteUpdate).toBe(false);
+      expect(finalItem.pendingRemoteItem).toBeNull();
+      expect(finalItem.pendingSongV2Conflicts).toBeUndefined();
+      expect(await env.recoveryStorage.listSongV2AutosaveRecoveries(owner)).toEqual([]);
+    } finally {
+      session.release();
+      env.deferredMutations.setActiveContentDatabase(null);
+      await database.destroy();
+    }
+  });
+});
+
 // Characterization tests deliberately assert the current defects. Convert the
 // defect expectations to preservation expectations when the fixes are approved.
 describe("item content integrity investigation", () => {
@@ -302,6 +2522,7 @@ describe("item content integrity investigation", () => {
     slides: [createScreenSlide(id + "-slide", id + " exclusive words")],
     arrangements: type === "song" ? [{
       id: id + "-arrangement", name: "Master",
+      monitorLayout: { currentFontSizePx: 300, nextFontSizePx: 300 },
       slides: [createScreenSlide(id + "-arr-slide", id + " exclusive words")],
       formattedLyrics: [{ id: id + "-section", type: "Verse", name: "Verse",
         words: id + " exclusive words", slideSpan: 1 }],
@@ -323,7 +2544,13 @@ describe("item content integrity investigation", () => {
         formattedSections: [{ sectionNum: 1, words: "free-A exclusive words", slideSpan: 1 }] }],
       ["free-B", fixture("free-B", "free")],
     ]);
-    runtime.db.get.mockImplementation(async (id: string) => clone(docs.get(id)));
+    runtime.db.get.mockImplementation(async (id: string) => {
+      const document = docs.get(id);
+      if (!document) {
+        throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+      }
+      return clone(document);
+    });
     const commit = async (doc: Fixture) => {
       const current = docs.get(doc._id);
       if (current?._rev !== doc._rev) throw Object.assign(new Error("conflict"), { status: 409 });
@@ -351,15 +2578,17 @@ describe("item content integrity investigation", () => {
     select("song-B");
     await tick();
     expect(docs.get("song-A")).toMatchObject({
-      slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })],
       arrangements: [expect.objectContaining({ slides: [expect.objectContaining({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" })] })],
     });
+    expect(docs.get("song-A")).not.toHaveProperty("slides");
     expect(docs.get("song-B")).toEqual(beforeB);
     select("song-A");
-    expect(store.getState().undoable.present.item.slides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" });
+    expect(store.getState().undoable.present.item.slides).toEqual([]);
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "restart" });
     await store.dispatch(updateSlideVideoBackgroundLoop({ loop: true }));
     await tick();
-    expect(docs.get("song-A")).toMatchObject({ slides: [expect.objectContaining({ videoBackgroundLoop: true, videoBackgroundSendMode: "restart" })] });
+    expect(docs.get("song-A")).toMatchObject({ arrangements: [expect.objectContaining({ slides: [expect.objectContaining({ videoBackgroundLoop: true, videoBackgroundSendMode: "restart" })] })] });
+    expect(docs.get("song-A")).not.toHaveProperty("slides");
   });
 
   it("preserves newer unsaved input through an earlier local Pouch change and save acknowledgment", async () => {
@@ -419,8 +2648,18 @@ describe("item content integrity investigation", () => {
   it("finishes A after its delayed get resolves while B starts a newer save", async () => {
     const { docs, select, edit, tick, db } = setup();
     const held = deferred<Fixture>();
-    db.get.mockImplementation((id: string) => id === "song-A"
-      ? held.promise : Promise.resolve(clone(docs.get(id))));
+    let heldARead = false;
+    db.get.mockImplementation((id: string) => {
+      if (id === "song-A" && !heldARead) {
+        heldARead = true;
+        return held.promise;
+      }
+      const document = docs.get(id);
+      if (!document) {
+        return Promise.reject(Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" }));
+      }
+      return Promise.resolve(clone(document));
+    });
     select("song-A"); edit("A canceled"); await tick();
     select("song-B"); edit("B saved");
     held.resolve(clone(docs.get("song-A")!)); await flushListenerEffects();
@@ -615,13 +2854,18 @@ describe("item content integrity investigation", () => {
     const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote edit" };
     docs.set("song-A", remote);
     store.dispatch({ type: "allDocs/hydrateItemCache", payload: [remote, docs.get("song-B")] });
+    // Active songs use arrangement-owned slide content even when the remote
+    // library row still has legacy root slides.
+    const { normalizeItemSlides } = require("../utils/activeItemSlides");
     expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
     await tick();
     expect(docs.get("song-A")).toEqual(remote);
     expect(docs.get("song-B")?.name).toBe("song-B");
     expect(store.getState().undoable.present.item.name).toBe("Local edit");
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
-    expect(store.getState().undoable.present.item.pendingRemoteItem).toEqual(remote);
+    expect(store.getState().undoable.present.item.pendingRemoteItem).toEqual(
+      normalizeItemSlides(remote),
+    );
   });
 
   it("does not clear a newer pending indicator when an older save completes", async () => {
@@ -1167,6 +3411,7 @@ describe("store module", () => {
       }));
       jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo: fireInfo, globalHostId: "host-123" }));
       jest.doMock("../utils/dbUtils", () => ({
+        invalidateLibraryRefresh: jest.fn(),
         migrateLegacyCreditsToActiveOutlineIfNeeded: migrate,
         ensureCreditsIndexDoc: ensure,
         getCreditsByIds: getCredits,
@@ -2293,7 +4538,15 @@ describe("store module", () => {
     const { store, itemSlice, db } = loadStoreWithItemPersistence();
     const previousAudio = createSongAudio("audio-old");
     const attachedAudio = createSongAudio("audio-new");
-    db.get.mockResolvedValue(createSongDoc({ _rev: "2-song", name: "Edited while uploading", songAudio: attachedAudio }));
+    db.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("missing v2 root"), { status: 404, name: "not_found" });
+      }
+      if (id === "song-1") {
+        return createSongDoc({ _rev: "2-song", name: "Edited while uploading", songAudio: attachedAudio });
+      }
+      throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+    });
     db.put.mockResolvedValue({ rev: "3-song" });
 
     store.dispatch(
@@ -2327,12 +4580,16 @@ describe("store module", () => {
 
   it("preserves newer persisted song audio during an ordinary item autosave", async () => {
     jest.useFakeTimers();
-    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    const { store, itemSlice, db, songPersistence } = loadStoreWithItemPersistence();
     const staleAudio = createSongAudio("audio-old");
     const persistedAudio = createSongAudio("audio-new");
-    db.get.mockResolvedValue(
-      createSongDoc({ _rev: "2-song", songAudio: persistedAudio }),
-    );
+    const persistedSong = createSongDoc({ _rev: "2-song", songAudio: persistedAudio });
+    db.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("Not found"), { status: 404 });
+      }
+      return persistedSong;
+    });
     db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "3-song" });
 
     store.dispatch(
@@ -2351,13 +4608,387 @@ describe("store module", () => {
         songAudio: persistedAudio,
       }),
     );
+    expect(songPersistence.saveSong).toHaveBeenCalledTimes(1);
+    expect(songPersistence.saveSong).toHaveBeenCalledWith(
+      db,
+      expect.objectContaining({ name: "Edited Song", songAudio: persistedAudio }),
+      expect.objectContaining({ _rev: "2-song", songAudio: persistedAudio }),
+      undefined,
+      undefined,
+      expect.any(Function),
+    );
+    songPersistence.saveSong.mockClear();
+  });
+
+  it("uses baseItem intent for v2 autosave, preserves remote siblings, and advances the baseline", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const persistence = require("../utils/songPersistence");
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = persistence;
+    const authored = createSongDoc({
+      arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+        { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "a-box", words: "A old", width: 1920, height: 1080 }] },
+        { id: "b1", name: "B1", type: "Verse", boxes: [{ id: "b-box", words: "B old", width: 1920, height: 1080 }] },
+      ] }],
+    });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>();
+    docs.set(physical.root._id, { ...physical.root, _rev: "1-root" });
+    physical.arrangements.forEach((doc: any) => docs.set(doc._id, { ...doc, _rev: "1-arr" }));
+    physical.slides.forEach((doc: any) => docs.set(doc._id, { ...doc, _rev: "1-slide" }));
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    let sequence = 1;
+    db.put.mockImplementation(async (next: any) => {
+      const existing = docs.get(next._id);
+      if (existing && next._rev !== existing._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = `${++sequence}-saved`;
+      docs.set(next._id, { ...next, _rev: rev });
+      return { ok: true, id: next._id, rev };
+    });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), physical.slides.map((doc: any) => docs.get(doc._id)));
+    const remoteB = docs.get(physical.slides[1]._id);
+    docs.set(remoteB._id, { ...remoteB, boxes: [{ ...remoteB.boxes[0], words: "B remote" }], _rev: "2-remote" });
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    const localSlides = baseline.arrangements[0].slides.map((slide: any) => ({ ...slide, boxes: slide.id === "a1" ? [{ ...slide.boxes[0], words: "A local" }] : slide.boxes }));
+    store.dispatch(itemSlice.actions._updateSlides(localSlides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put.mock.calls.map(([doc]: [any]) => doc._id)).toEqual([physical.slides[0]._id]);
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides[1].boxes[0].words).toBe("B remote");
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    const librarySong = store.getState().allDocs.allSongDocs.find((doc: any) => doc._id === "song-1");
+    expect(librarySong.arrangements[0].slides).toEqual([]);
+    store.dispatch(itemSlice.actions.applyPendingRemoteItem());
+    expect(store.getState().undoable.present.item.arrangements[0].slides[1].boxes[0].words).toBe("B remote");
+    const nextSlides = store.getState().undoable.present.item.arrangements[0].slides.map((slide: any) => ({ ...slide, boxes: slide.id === "b1" ? [{ ...slide.boxes[0], words: "B next" }] : slide.boxes }));
+    store.dispatch(itemSlice.actions._updateSlides(nextSlides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(docs.get(physical.slides[1]._id).boxes[0].words).toBe("B next");
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides[1].boxes[0].words).toBe("B next");
+  });
+
+  it("keeps a v2 same-slide draft dirty when a concurrent edit conflicts", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const persistence = require("../utils/songPersistence");
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = persistence;
+    const authored = createSongDoc({ arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    const slide = docs.get(physical.slides[0]._id);
+    docs.set(slide._id, { ...slide, boxes: [{ ...slide.boxes[0], words: "remote" }], _rev: "2-remote" });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), [slide]);
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    store.dispatch(itemSlice.actions._updateSlides([{ ...baseline.arrangements[0].slides[0], boxes: [{ ...baseline.arrangements[0].slides[0].boxes[0], words: "local" }] }]));
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("local");
+    expect(store.getState().undoable.present.item.remoteUpdateReason).toBe("song-content-conflict");
+
+    // A late acknowledgment must not replace the unresolved remote choice or
+    // make the local draft look persisted.
+    store.dispatch(itemSlice.actions.markItemPersisted(baseline, baseline));
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.remoteUpdateReason).toBe("song-content-conflict");
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe("local");
+    expect(store.getState().undoable.present.item.pendingRemoteItem.arrangements[0].slides[0].boxes[0].words).toBe("remote");
+    expect(errorSpy).toHaveBeenCalledWith("Could not save active song draft", expect.objectContaining({ name: "SongV2ConcurrentEditError" }));
+  });
+
+  it("keeps a failed Song v2 network save pending without classifying it as a content conflict", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const persistence = require("../utils/songPersistence");
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = persistence;
+    const authored = createSongDoc({ arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    db.put.mockRejectedValue(Object.assign(new Error("offline"), { status: 500 }));
+    const baseline = hydrateSongFromV2Documents(
+      docs.get(physical.root._id),
+      physical.arrangements.map((doc: any) => docs.get(doc._id)),
+      physical.slides.map((doc: any) => docs.get(doc._id)),
+    );
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    store.dispatch(itemSlice.actions._updateSlides([{
+      ...baseline.arrangements[0].slides[0],
+      boxes: [{ ...baseline.arrangements[0].slides[0].boxes[0], words: "local draft" }],
+    }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const active = store.getState().undoable.present.item;
+    expect(docs.get(physical.slides[0]._id).boxes[0].words).toBe("old");
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("local draft");
+    expect(active.hasPendingUpdate).toBe(true);
+    expect(active.remoteUpdateReason).toBeNull();
+    expect(active.hasRemoteUpdate).toBe(false);
+    errorSpy.mockRestore();
+  });
+
+  it("preserves an open v1 draft and surfaces a migration that wins at the commit check", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { serializeSongToV2Documents } = require("../utils/songPersistence");
+    const authored: any = createSongDoc({ arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "before", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const v2Docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "2-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "2-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "2-slide" }]),
+    ]);
+    let rootReads = 0;
+    db.get.mockImplementation(async (id: string) => {
+      if (id === physical.root._id) {
+        rootReads += 1;
+        if (rootReads >= 2) return v2Docs.get(id);
+        throw Object.assign(new Error("not found"), { status: 404, name: "not_found" });
+      }
+      if (id === authored._id) return authored;
+      const doc = v2Docs.get(id);
+      if (doc) return doc;
+      throw Object.assign(new Error("not found"), { status: 404, name: "not_found" });
+    });
+    mockV2AllDocs(db as any, v2Docs);
+    const errorSpy = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    store.dispatch(itemSlice.actions.setActiveItem(authored));
+    store.dispatch(itemSlice.actions._updateSlides([{
+      ...authored.arrangements[0].slides[0],
+      boxes: [{ ...authored.arrangements[0].slides[0].boxes[0], words: "draft from old editor" }],
+    }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const active = store.getState().undoable.present.item;
+    expect(db.put).not.toHaveBeenCalled();
+    expect(active.hasPendingUpdate).toBe(true);
+    expect(active.hasRemoteUpdate).toBe(true);
+    expect(active.remoteUpdateReason).toBe("song-version-transition");
+    expect(active.arrangements[0].slides[0].boxes[0].words).toBe("draft from old editor");
+    expect(active.pendingRemoteItem.docType).toBe("song-v2-root");
+    expect(errorSpy).toHaveBeenCalledWith("Could not save active song draft", expect.objectContaining({ name: "SongV2VersionTransitionError" }));
+  });
+
+  it("retries a partial v2 autosave, advances the baseline, and clears dirty state", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = require("../utils/songPersistence");
+    const authored = createSongDoc({ shouldSkipTitle: false, arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "a-box", words: "A old", width: 1920, height: 1080 }] },
+      { id: "b1", name: "B1", type: "Verse", boxes: [{ id: "b-box", words: "B old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    let sequence = 1;
+    let failed = false;
+    db.put.mockImplementation(async (next: any) => {
+      if (next._id === physical.slides[1]._id && !failed) {
+        failed = true;
+        throw new Error("temporary offline failure");
+      }
+      const existing = docs.get(next._id);
+      if (existing && next._rev !== existing._rev) throw Object.assign(new Error("conflict"), { status: 409 });
+      const rev = `${++sequence}-saved`;
+      docs.set(next._id, { ...next, _rev: rev });
+      return { ok: true, id: next._id, rev };
+    });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), physical.slides.map((doc: any) => docs.get(doc._id)));
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    const localSlides = baseline.arrangements[0].slides.map((slide: any, index: number) => ({ ...slide, boxes: [{ ...slide.boxes[0], words: `Local ${index + 1}` }] }));
+    store.dispatch(itemSlice.actions._updateSlides(localSlides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put.mock.calls.map(([doc]: [any]) => doc._id)).toEqual([physical.slides[0]._id, physical.slides[1]._id]);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides[0].boxes[0].words).toBe("A old");
+
+    store.dispatch(itemSlice.actions._updateSlides(store.getState().undoable.present.item.arrangements[0].slides));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put.mock.calls.slice(2).map(([doc]: [any]) => doc._id)).toEqual([physical.slides[1]._id]);
+    expect(store.getState().undoable.present.item.baseItem.arrangements[0].slides.map((slide: any) => slide.boxes[0].words)).toEqual(["Local 1", "Local 2"]);
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    expect(store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+    expect(store.getState().allDocs.allSongDocs.find((doc: any) => doc._id === "song-1").arrangements[0].slides).toEqual([]);
+  });
+
+  it("buffers remote content after a late v2 Pouch 409 while preserving the dirty draft", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db } = loadStoreWithItemPersistence();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { serializeSongToV2Documents, hydrateSongFromV2Documents } = require("../utils/songPersistence");
+    const authored = createSongDoc({ shouldSkipTitle: false, arrangements: [{ id: "a", name: "A", formattedLyrics: [], songOrder: [], slides: [
+      { id: "a1", name: "A1", type: "Verse", boxes: [{ id: "box", words: "old", width: 1920, height: 1080 }] },
+    ] }] });
+    const physical = serializeSongToV2Documents(authored);
+    const docs = new Map<string, any>([
+      [physical.root._id, { ...physical.root, _rev: "1-root" }],
+      ...physical.arrangements.map((doc: any) => [doc._id, { ...doc, _rev: "1-arr" }]),
+      ...physical.slides.map((doc: any) => [doc._id, { ...doc, _rev: "1-slide" }]),
+    ]);
+    db.get.mockImplementation(async (id: string) => {
+      const found = docs.get(id);
+      if (!found) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      return found;
+    });
+    mockV2AllDocs(db as any, docs);
+    db.put.mockImplementation(async (next: any) => {
+      const remote = { ...next, boxes: [{ ...next.boxes[0], words: "remote" }], _rev: "2-remote" };
+      docs.set(next._id, remote);
+      throw Object.assign(new Error("late conflict"), { status: 409 });
+    });
+    const baseline = hydrateSongFromV2Documents(docs.get(physical.root._id), physical.arrangements.map((doc: any) => docs.get(doc._id)), physical.slides.map((doc: any) => docs.get(doc._id)));
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    store.dispatch(itemSlice.actions._updateSlides([{ ...baseline.arrangements[0].slides[0], boxes: [{ ...baseline.arrangements[0].slides[0].boxes[0], words: "local" }] }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const item = store.getState().undoable.present.item;
+    expect(item.hasPendingUpdate).toBe(true);
+    expect(item.hasRemoteUpdate).toBe(true);
+    expect(item.arrangements[0].slides[0].boxes[0].words).toBe("local");
+    expect(item.pendingRemoteItem.arrangements[0].slides[0].boxes[0].words).toBe("remote");
+    expect(item.baseItem.arrangements[0].slides[0].boxes[0].words).toBe("old");
+  });
+
+  it("omits legacy root slides from song saves and retains non-song slide persistence", async () => {
+    jest.useFakeTimers();
+    const { store, itemSlice, db, songPersistence } = loadStoreWithItemPersistence();
+    const arrangementSlide = { id: "arr-slide", name: "Verse", type: "Verse", boxes: [] };
+    const persistedSong = createSongDoc({
+      _rev: "1-song", slides: [{ id: "legacy", name: "Legacy", type: "Verse", boxes: [] }],
+      arrangements: [{ id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [], slides: [arrangementSlide] }],
+    });
+    db.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("Not found"), { status: 404 });
+      }
+      return persistedSong;
+    });
+    db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "2-song" });
+    store.dispatch(itemSlice.actions.setActiveItem(createSongDoc({
+      _rev: "1-song", slides: [{ id: "legacy", name: "Legacy", type: "Verse", boxes: [] }],
+      arrangements: [{ id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [], slides: [arrangementSlide] }],
+    })));
+    store.dispatch(itemSlice.actions._setName("Saved Song"));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    const savedSong = db.put.mock.calls[0][0];
+    expect(savedSong).not.toHaveProperty("slides");
+    expect(savedSong.arrangements[0].slides).toEqual([arrangementSlide]);
+    expect(songPersistence.saveSong).toHaveBeenCalledTimes(1);
+    songPersistence.saveSong.mockClear();
+
+    const nonSong = createTimerItem({ _rev: "1-timer" });
+    store.dispatch(itemSlice.actions.setActiveItem(nonSong));
+    db.get.mockResolvedValue(nonSong);
+    db.put.mockClear();
+    store.dispatch(itemSlice.actions._setName("Saved Timer"));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(db.put.mock.calls[0][0].slides).toEqual(nonSong.slides);
+    expect(songPersistence.saveSong).not.toHaveBeenCalled();
+  });
+
+  it("updates the selected arrangement's compact monitor layout when source sizing inputs change", async () => {
+    const { store, itemSlice, updateSlides } = loadStoreWithItemPersistence();
+    const initialSlide = {
+      id: "verse-1",
+      name: "Verse 1",
+      type: "Verse",
+      boxes: [{ words: "" }, { words: "short", width: 100, isBold: false, isItalic: false }],
+    };
+    store.dispatch(itemSlice.actions.setActiveItem(createSongDoc({
+      monitorLayout: undefined,
+      arrangements: [{
+        id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [],
+        monitorLayout: { currentFontSizePx: 1, nextFontSizePx: 2 },
+        slides: [initialSlide],
+      }],
+    })));
+
+    const updatedSlide = {
+      ...initialSlide,
+      boxes: [initialSlide.boxes[0], { ...initialSlide.boxes[1], words: "a much longer lyric line that should need more space" }],
+    };
+    await store.dispatch(updateSlides({ slides: [updatedSlide] })).unwrap();
+
+    const state = store.getState().undoable.present.item;
+    expect(state.slides).toEqual([]);
+    expect(state.arrangements[0].slides).toEqual([updatedSlide]);
+    expect(state.arrangements[0].monitorLayout).not.toEqual({
+      currentFontSizePx: 1,
+      nextFontSizePx: 2,
+    });
   });
 
   it("does not restore removed song audio during an ordinary item autosave", async () => {
     jest.useFakeTimers();
     const { store, itemSlice, db } = loadStoreWithItemPersistence();
     const staleAudio = createSongAudio("audio-old");
-    db.get.mockResolvedValue(createSongDoc({ _rev: "2-song" }));
+    db.get.mockImplementation(async (id: string) => {
+      if (id !== "song-1") {
+        throw Object.assign(new Error("missing document"), { status: 404 });
+      }
+      return createSongDoc({ _rev: "2-song" });
+    });
     db.put.mockResolvedValue({ ok: true, id: "song-1", rev: "3-song" });
 
     store.dispatch(
@@ -2373,6 +5004,8 @@ describe("store module", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({
         name: "Edited Song",
+        _id: "song-1",
+        type: "song",
       }),
     );
     expect(db.put.mock.calls[0][0]).not.toHaveProperty("songAudio");
@@ -2382,7 +5015,12 @@ describe("store module", () => {
     jest.useFakeTimers();
     const { store, itemSlice, db: dbA, postMessage, setGlobalDb } =
       loadStoreWithItemPersistence();
-    dbA.get.mockResolvedValue(createSongDoc({ _rev: "1-song" }));
+    dbA.get.mockImplementation(async (id: string) => {
+      if (id.startsWith("song-v2:root:")) {
+        throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+      }
+      return createSongDoc({ _rev: "1-song", _id: id });
+    });
     dbA.put.mockResolvedValue({ ok: true, id: "song-1", rev: "2-song" });
     const dbB = { get: jest.fn(), put: jest.fn() };
 
@@ -5170,19 +7808,30 @@ describe("store module", () => {
 });
 
 const loadStoreWithItemListPersistence = (
-  { initialReplicationComplete = true }: { initialReplicationComplete?: boolean } = {},
+  {
+    initialReplicationComplete = true,
+    databaseOverride,
+  }: { initialReplicationComplete?: boolean; databaseOverride?: PouchDB.Database } = {},
 ) => {
   let storeModule: any;
   let itemListSliceModule: any;
   let itemListsSliceModule: any;
   let overlaySliceModule: any;
   let overlaysSliceModule: any;
+  let presentationSyncErrorBusModule: any;
   let allDocsSliceModule: any;
   let servicePlanningImportSliceModule: any;
   let activeControllerPresenceModule: any;
   let contentReplicationActivityModule: any;
+  let deferredMutationsModule: any;
   const postMessage = jest.fn();
-  const db = {
+  const globalFireDbInfo = {
+    db: undefined,
+    database: "outline-persistence-test-db",
+    churchId: "church-test",
+    isConnected: true,
+  };
+  const mockDb = {
     name: "outline-persistence-test-db",
     get: jest.fn(),
     put: jest
@@ -5192,8 +7841,9 @@ const loadStoreWithItemListPersistence = (
     info: jest.fn(),
     bulkDocs: jest.fn(),
   };
+  const db: any = databaseOverride ?? mockDb;
 
-  let activeDb = db;
+  let activeDb: unknown = db;
   let activePostMessage = postMessage;
   jest.isolateModules(() => {
     jest.doMock("../context/controllerInfo", () => ({
@@ -5201,12 +7851,7 @@ const loadStoreWithItemListPersistence = (
       get globalBroadcastRef() { return { postMessage: activePostMessage }; },
     }));
     jest.doMock("../context/globalInfo", () => ({
-      globalFireDbInfo: {
-        db: undefined,
-        database: "outline-persistence-test-db",
-        churchId: "church-test",
-        isConnected: true,
-      },
+      globalFireDbInfo,
       globalHostId: "host-123",
     }));
     jest.doMock("firebase/database", () => ({
@@ -5226,6 +7871,7 @@ const loadStoreWithItemListPersistence = (
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     overlaysSliceModule = require("./overlaysSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
+    presentationSyncErrorBusModule = require("../utils/presentationSyncErrorBus");
     allDocsSliceModule = require("./allDocsSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     servicePlanningImportSliceModule = require("./servicePlanningImportSlice");
@@ -5233,6 +7879,8 @@ const loadStoreWithItemListPersistence = (
     activeControllerPresenceModule = require("../utils/activeControllerPresence");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     contentReplicationActivityModule = require("../utils/contentReplicationActivity");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    deferredMutationsModule = require("./deferredItemMutations");
   });
 
   const contentDatabaseSession =
@@ -5247,12 +7895,17 @@ const loadStoreWithItemListPersistence = (
     itemListsSlice: itemListsSliceModule.itemListsSlice,
     overlaySlice: overlaySliceModule.overlaySlice,
     overlaysSlice: overlaysSliceModule.overlaysSlice,
+    registerPresentationSyncErrorHandler:
+      presentationSyncErrorBusModule.registerPresentationSyncErrorHandler,
     allDocsSlice: allDocsSliceModule.allDocsSlice,
     servicePlanningImportSlice: servicePlanningImportSliceModule.servicePlanningImportSlice,
     activeControllerPresence: activeControllerPresenceModule,
     contentReplicationActivity: contentReplicationActivityModule,
+    deferredMutations: deferredMutationsModule,
     contentDatabaseSession,
+    globalFireDbInfo,
     db,
+    setGlobalDb: (next: unknown) => { activeDb = next; },
     postMessage,
     switchDatabase: (next: typeof db, publish: typeof postMessage) => { activeDb = next; activePostMessage = publish; },
   };
@@ -5273,12 +7926,806 @@ describe("item list outline persistence", () => {
       ]),
     );
     store.dispatch(
-      itemListSlice.actions.initiateItemList([
-        createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
-      ]),
+      itemListSlice.actions.initiateItemList({
+        outlineId: "outline-a",
+        items: [
+          createServiceItem({ name: "Current", _id: "song-1", listId: "l1" }),
+        ],
+      }),
     );
   };
 
+  const initializePouchOutlineStore = async (
+    database: PouchDB.Database,
+    rows: ReturnType<typeof createServiceItem>[],
+  ) => {
+    await database.put({
+      _id: "outline-a",
+      docType: "itemListDetails",
+      name: "Sunday",
+      items: rows,
+      overlays: [],
+    } as any);
+    const env = loadStoreWithItemListPersistence({ databaseOverride: database });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([
+      { _id: "outline-a", name: "Sunday" },
+    ]));
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: rows }));
+    env.store.dispatch({ type: "CONTROLLER_PAGE_READY" });
+    await jest.advanceTimersByTimeAsync(20);
+    await flushListenerEffects();
+    return env;
+  };
+
+  const readPersistedOutlineItems = async (database: PouchDB.Database) =>
+    (await database.get<{ items: ReturnType<typeof createServiceItem>[] }>("outline-a")).items;
+
+  const waitForOutlineState = async (
+    store: any,
+    baseline: ReturnType<typeof createServiceItem>[],
+    hasPendingUpdate: boolean,
+  ) => {
+    const matches = () => {
+      const itemList = store.getState().undoable.present.itemList;
+      return itemList.hasPendingUpdate === hasPendingUpdate &&
+        JSON.stringify(itemList.syncBaseline ?? []) === JSON.stringify(baseline);
+    };
+    if (matches()) return;
+    await new Promise<void>((resolve) => {
+      let unsubscribe = () => {};
+      const check = () => {
+        if (!matches()) return;
+        unsubscribe();
+        resolve();
+      };
+      unsubscribe = store.subscribe(check);
+      check();
+    });
+  };
+
+  it("keeps toolbar Undo/Redo and keyboard shortcuts on the same history path", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    const added = createServiceItem({ name: "C", _id: "song-c", listId: "row-c" });
+    try {
+      env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]));
+      env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: [first, second] }));
+      env.store.dispatch({ type: "CONTROLLER_PAGE_READY" });
+      await jest.advanceTimersByTimeAsync(20);
+      await flushListenerEffects();
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([first, second, added]));
+
+      render(React.createElement(Provider, {
+        store: env.store,
+        children: React.createElement(Undo),
+      }));
+      fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+
+      fireEvent.keyDown(document.body, { key: "y", ctrlKey: true });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+
+      fireEvent.keyDown(document.body, { key: "z", ctrlKey: true });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+
+      fireEvent.click(screen.getByRole("button", { name: "Redo" }));
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+    } finally {
+      cleanup();
+      jest.useRealTimers();
+    }
+  });
+
+  it("persists a saved addition through Undo and Redo with the original row identity", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-undo-redo-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    const added = createServiceItem({ name: "C", _id: "song-c", listId: "row-c" });
+    try {
+      const env = await initializePouchOutlineStore(database, [first, second]);
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([first, second, added]));
+      const listId = env.store.getState().undoable.present.itemList.list[2].listId;
+      const addedSave = waitForOutlineState(env.store, [first, second, added], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await addedSave;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second]);
+      expect(env.store.getState().undoable.present.itemList.syncBaseline).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const deletedSave = waitForOutlineState(env.store, [first, second], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await deletedSave;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second]);
+
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      const redone = env.store.getState().undoable.present.itemList;
+      expect(redone.list.map((row: { listId: string }) => row.listId)).toEqual(["row-a", "row-b", listId]);
+      expect(redone.hasPendingUpdate).toBe(true);
+      const redoneSave = waitForOutlineState(env.store, [first, second, added], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await redoneSave;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.syncBaseline).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+      expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions).toEqual({});
+
+      const deletedSecond = [first, added];
+      env.store.dispatch(env.itemListSlice.actions.updateItemList(deletedSecond));
+      const deleteSave = waitForOutlineState(env.store, deletedSecond, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await deleteSave;
+      expect(await readPersistedOutlineItems(database)).toEqual(deletedSecond);
+
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second, added]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const restoredDelete = waitForOutlineState(env.store, [first, second, added], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await restoredDelete;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second, added]);
+
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual(deletedSecond);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const redoneDelete = waitForOutlineState(env.store, deletedSecond, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await redoneDelete;
+      expect(await readPersistedOutlineItems(database)).toEqual(deletedSecond);
+    } finally {
+      jest.useRealTimers();
+      await database.destroy();
+    }
+  });
+
+  it("coalesces rapid add Undo/Redo actions before the debounce and keeps reordering intent", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-undo-rapid-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    const third = createServiceItem({ name: "C", _id: "song-c", listId: "row-c" });
+    try {
+      const env = await initializePouchOutlineStore(database, [first, second, third]);
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([first, second, third, createServiceItem({ name: "D", _id: "song-d", listId: "row-d" })]));
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.itemList.list.map((row: { listId: string }) => row.listId))
+        .toEqual(["row-a", "row-b", "row-c", "row-d"]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const rapidSave = waitForOutlineState(env.store, [first, second, third, createServiceItem({ name: "D", _id: "song-d", listId: "row-d" })], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await rapidSave;
+      expect((await readPersistedOutlineItems(database)).map((row: { listId: string }) => row.listId))
+        .toEqual(["row-a", "row-b", "row-c", "row-d"]);
+
+      const ownerKey = env.store.getState().undoable.present.itemList.outlineOwnerKey;
+      const moved = [first, third, second, (await readPersistedOutlineItems(database))[3]];
+      const intent = createOutlineMoveIntent({
+        outlineId: "outline-a",
+        ownerKey,
+        resultingItems: moved,
+        movedIds: ["row-b"],
+      })!;
+      env.store.dispatch(env.itemListSlice.actions.moveItemListRows({ items: moved, intent }));
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.pendingMoveIntents).toEqual([]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      const restoredMove = env.store.getState().undoable.present.itemList;
+      expect(restoredMove.pendingMoveIntents).toEqual([intent]);
+      expect(restoredMove.hasPendingUpdate).toBe(true);
+      const movedSave = waitForOutlineState(env.store, moved, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await movedSave;
+      expect((await readPersistedOutlineItems(database)).map((row: { listId: string }) => row.listId))
+        .toEqual(["row-a", "row-c", "row-b", "row-d"]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+    } finally {
+      jest.useRealTimers();
+      await database.destroy();
+    }
+  });
+
+  it("keeps incompatible edits from two Controllers in conflict review", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-undo-conflict-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    try {
+      const controllerA = await initializePouchOutlineStore(database, [first, second]);
+      const controllerB = loadStoreWithItemListPersistence({ databaseOverride: database });
+      controllerB.store.dispatch(controllerB.itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]));
+      controllerB.store.dispatch(controllerB.itemListSlice.actions.initiateItemList({
+        outlineId: "outline-a",
+        items: [first, second],
+      }));
+      controllerB.store.dispatch({ type: "CONTROLLER_PAGE_READY" });
+      await jest.advanceTimersByTimeAsync(20);
+      await flushListenerEffects();
+
+      const editA = [{ ...first, name: "A from Controller A" }, second];
+      controllerA.store.dispatch(controllerA.itemListSlice.actions.updateItemList(editA));
+      const saveA = waitForOutlineState(controllerA.store, editA, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await saveA;
+
+      const editB = [{ ...first, name: "A from Controller B" }, second];
+      controllerB.store.dispatch(controllerB.itemListSlice.actions.updateItemList(editB));
+      const conflictRecorded = new Promise<void>((resolve) => {
+        let unsubscribe = () => {};
+        const check = () => {
+          if (!controllerB.store.getState().undoable.present.itemList.remoteConflicts["outline-a"]) return;
+          unsubscribe();
+          resolve();
+        };
+        unsubscribe = controllerB.store.subscribe(check);
+        check();
+      });
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await conflictRecorded;
+
+      expect(await readPersistedOutlineItems(database)).toEqual(editA);
+      expect(controllerB.store.getState().undoable.present.itemList.list).toEqual(editB);
+      expect(controllerB.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      expect(controllerB.store.getState().undoable.present.itemList.remoteConflicts["outline-a"])
+        .toMatchObject({ localItems: editB, remoteItems: editA });
+      expect(controllerB.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"])
+        .toBeUndefined();
+    } finally {
+      jest.useRealTimers();
+      await database.destroy();
+    }
+  });
+
+  it("saves an Undo deletion after an earlier real PouchDB write settles", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-undo-inflight-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    const added = createServiceItem({ name: "C", _id: "song-c", listId: "row-c" });
+    let releaseWrite!: () => void;
+    let writeStarted!: () => void;
+    const writeStartedPromise = new Promise<void>((resolve) => { writeStarted = resolve; });
+    const heldWrite = new Promise<void>((resolve) => { releaseWrite = resolve; });
+    try {
+      const env = await initializePouchOutlineStore(database, [first, second]);
+      const originalPut = database.put.bind(database);
+      let held = false;
+      jest.spyOn(database, "put").mockImplementation(async (document: any, ...args: any[]) => {
+        const result = await (originalPut as any)(document, ...args);
+        if (document._id === "outline-a" && !held) {
+          held = true;
+          writeStarted();
+          await heldWrite;
+        }
+        return result;
+      });
+
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([first, second, added]));
+      const advanceWrite = jest.advanceTimersByTimeAsync(1500);
+      await writeStartedPromise;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second, added]);
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([first, second]);
+      const firstAck = waitForOutlineState(env.store, [first, second, added], true);
+      releaseWrite();
+      await advanceWrite;
+      await flushListenerEffects();
+      await firstAck;
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+      const finalSave = waitForOutlineState(env.store, [first, second], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await finalSave;
+      expect(await readPersistedOutlineItems(database)).toEqual([first, second]);
+      expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+      expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    } finally {
+      jest.useRealTimers();
+      await database.destroy();
+    }
+  });
+
+  it("retains the latest unresolved draft through controller teardown and profile navigation without saving it", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } = loadStoreWithItemListPersistence();
+    hydrateOutline(store, itemListSlice, itemListsSlice);
+    store.dispatch(itemListSlice.actions.updateItemList([createServiceItem({ name: "Local", listId: "l1", _id: "song-1" })]));
+    store.dispatch(itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [createServiceItem({ name: "Remote", listId: "l1", _id: "song-1" })] }));
+    store.dispatch(itemListSlice.actions.addItemToItemList(createServiceItem({ name: "Added after notice", _id: "later" })));
+    const draft = store.getState().undoable.present.itemList.list;
+    store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline-b", name: "B", controllerScope: "aux" }]));
+    store.dispatch(itemListsSlice.actions.setOutlineScope("aux"));
+    store.dispatch(itemListSlice.actions.initiateItemList({ outlineId: "outline-b", items: [] }));
+    store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    store.dispatch(itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: [createServiceItem({ name: "Remote", listId: "l1", _id: "song-1" })] }));
+    await jest.advanceTimersByTimeAsync(2000);
+    expect(store.getState().undoable.present.itemList.list).toEqual(draft);
+    expect(store.getState().undoable.present.itemList.remoteConflicts["outline-a"].localItems).toEqual(draft);
+    expect(db.put.mock.calls.filter(([document]: [Record<string, unknown>]) => document._id === "outline-a")).toEqual([]);
+    jest.useRealTimers();
+  });
+
+  it("isolates retained outline drafts when churches use the same outline ID", () => {
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([createServiceItem({ name: "Local A", listId: "l1", _id: "song-1" })]));
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [createServiceItem({ name: "Remote A", listId: "l1", _id: "song-1" })] }));
+    const otherDb = { get: jest.fn(), put: jest.fn() };
+    env.setGlobalDb(otherDb);
+    env.store.dispatch({ type: "RESET" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    env.setGlobalDb(env.db);
+    env.store.dispatch({ type: "RESET" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(otherDb.put).not.toHaveBeenCalled();
+  });
+
+  it("keeps conflict ownership and baseline outside undo history while undoing and redoing later row edits", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    env.store.dispatch({ type: "CONTROLLER_PAGE_READY" });
+    await jest.advanceTimersByTimeAsync(20);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([createServiceItem({ name: "Local", listId: "l1", _id: "song-1" })]));
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [createServiceItem({ name: "Remote", listId: "l1", _id: "song-1" })] }));
+    await jest.advanceTimersByTimeAsync(501);
+    env.store.dispatch(env.itemListSlice.actions.addItemToItemList(createServiceItem({ name: "Later row", _id: "later" })));
+    const latest = env.store.getState().undoable.present.itemList.list;
+    env.store.dispatch({ type: "@@redux-undo/UNDO" });
+    const undone = env.store.getState().undoable.present.itemList;
+    expect(undone.remoteConflicts["outline-a"]).toBeDefined();
+    expect(undone.remoteConflicts["outline-a"].localItems).toEqual(undone.list);
+    expect(undone.syncBaseline[0].name).toBe("Remote");
+    env.store.dispatch({ type: "@@redux-undo/REDO" });
+    const redone = env.store.getState().undoable.present.itemList;
+    expect(redone.list).toEqual(latest);
+    expect(redone.remoteConflicts["outline-a"].localItems).toEqual(latest);
+    expect(env.db.put).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it("clears all retained databases, pending revision choices and undo history on full account RESET", () => {
+    const env = loadStoreWithItemListPersistence();
+    const firstDb = env.db;
+    const secondDb = { name: "another-church", get: jest.fn(), put: jest.fn() };
+    const row = createServiceItem({ name: "Private draft", listId: "l1", _id: "song-1" });
+    for (const database of [firstDb, secondDb]) {
+      env.setGlobalDb(database);
+      env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+      hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+      env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+      env.store.dispatch(env.itemListSlice.actions.recordOutlineConflict({
+        outlineId: "outline-a", baselineItems: [], localItems: [row], remoteItems: [{ ...row, name: "Saved" }],
+        revisionConflict: { graph: { winningRevision: "2-a", conflictRevisions: ["2-b"], histories: {} }, versions: [] },
+      }));
+      env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({ outlineId: "outline-a", choice: "keep-local" }));
+    }
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"]).toBeDefined();
+    env.store.dispatch({ type: "RESET" });
+    expect(env.store.getState().undoable.past).toEqual([]);
+    expect(env.store.getState().undoable.future).toEqual([]);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions).toEqual({});
+    for (const database of [secondDb, firstDb]) {
+      env.setGlobalDb(database);
+      // Simulate the next authenticated account reopening the same databases.
+      env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+      hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions).toEqual({});
+      expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    }
+    expect(env.db.put).not.toHaveBeenCalled();
+    expect(secondDb.put).not.toHaveBeenCalled();
+  });
+
+  it.each(["read", "write"])("ignores a late outline %s after logout and sign-in with the same database handle", async (stage) => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    const row = createServiceItem({ name: "Old account draft", listId: "l1", _id: "song-1" });
+    let finish!: (value: unknown) => void;
+    const pending = new Promise((resolve) => { finish = resolve; });
+    env.db.get.mockResolvedValue({ _id: "outline-a", _rev: "1-base", items: [createServiceItem({ name: "Current", listId: "l1", _id: "song-1" })], overlays: [] });
+    if (stage === "read") env.db.get.mockReturnValueOnce(pending);
+    else env.db.put.mockReturnValueOnce(pending);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+    await jest.advanceTimersByTimeAsync(1500);
+    env.store.dispatch({ type: "RESET" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    finish(stage === "read" ? { _id: "outline-a", _rev: "2-remote", items: [{ ...row, name: "Old account remote" }] } : { rev: "2-saved" });
+    await flushListenerEffects();
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    expect(env.store.getState().undoable.present.itemList.list[0].name).toBe("Current");
+    expect(env.postMessage).not.toHaveBeenCalled();
+    expect(env.db.put).toHaveBeenCalledTimes(stage === "read" ? 0 : 1);
+    jest.useRealTimers();
+  });
+
+  it("retains newer edits when an earlier conflict resolution is acknowledged after controller teardown", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    const remote = createServiceItem({ name: "Remote", listId: "l1", _id: "song-1" });
+    env.db.get.mockResolvedValue({ _id: "outline-a", _rev: "2-remote", items: [remote] });
+    let finish!: (value: { rev: string }) => void;
+    env.db.put.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([{ ...remote, name: "Local" }]));
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [remote] }));
+    env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({ outlineId: "outline-a", choice: "keep-local" }));
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    env.store.dispatch(env.itemListSlice.actions.addItemToItemList(createServiceItem({ name: "After submission", _id: "later" })));
+    const latest = env.store.getState().undoable.present.itemList.list;
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    finish({ rev: "3-saved" });
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemList.loadedOutlineId).toBeUndefined();
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"].localItems).toEqual(latest);
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Sunday" }]));
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: env.db.put.mock.calls[0][0].items }));
+    expect(env.store.getState().undoable.present.itemList.list.map((item: { name: string }) => item.name)).toEqual(["Local", "After submission"]);
+    jest.useRealTimers();
+  });
+
+  it("does not replace a newer remote conflict with an error from an older in-flight read", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    const row = createServiceItem({ name: "Local", listId: "l1", _id: "song-1" });
+    let finish!: (value: unknown) => void;
+    env.db.get.mockReturnValueOnce(new Promise((resolve) => { finish = resolve; }));
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+    await jest.advanceTimersByTimeAsync(1500);
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [{ ...row, name: "Newest remote" }] }));
+    env.store.dispatch(env.itemListSlice.actions.addItemToItemList(createServiceItem({ name: "Later", _id: "later" })));
+    finish({ _id: "outline-a", _rev: "2-older", items: [{ ...row, name: "Older remote" }] });
+    await flushListenerEffects();
+    const conflict = env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"];
+    expect(conflict.remoteItems[0].name).toBe("Newest remote");
+    expect(conflict.localItems.map((item: { name: string }) => item.name)).toEqual(["Local", "Later"]);
+    expect(env.db.put).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  it("restores retained drafts when a database handle is recreated for the same church", () => {
+    const env = loadStoreWithItemListPersistence();
+    Object.assign(env.db, { name: "church-a-content" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    const row = createServiceItem({ name: "Local A", listId: "l1", _id: "song-1" });
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([row]));
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: [{ ...row, name: "Remote A" }] }));
+    env.setGlobalDb({ name: "church-a-content", get: jest.fn(), put: jest.fn() });
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    expect(env.store.getState().undoable.present.itemList.list).toEqual([row]);
+  });
+
+  it.each(["debounce", "write"])("saves the reviewed rows before edits during %s and then autosaves the newer draft", async (stage) => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const base = [createServiceItem({ _id: "welcome", listId: "a", name: "Welcome" })];
+    const first = [{ ...base[0], name: "Welcome A" }];
+    const second = [{ ...base[0], name: "Welcome B" }, createServiceItem({ _id: "closing", listId: "c", name: "Closing Song" })];
+    const later = createServiceItem({ _id: "later", listId: "later", name: "Added while saving" });
+    const common = { _id: "outline-a", name: "Sunday", overlays: ["overlay"] };
+    let current: Record<string, any> = { ...common, items: first, _rev: "2-first", _revisions: { start: 2, ids: ["first", "base"] } };
+    let conflicts = ["2-second"];
+    let acknowledge!: () => void;
+    const acknowledgement = new Promise<void>((resolve) => { acknowledge = resolve; });
+    const other = { ...common, items: second, _rev: "2-second", _revisions: { start: 2, ids: ["second", "base"] } };
+    env.db.get.mockImplementation(async (_id: string, options?: { rev?: string }) => {
+      if (options?.rev === "1-base") return { ...common, items: base, _rev: "1-base" };
+      if (options?.rev === "2-second") return other;
+      return { ...current, _conflicts: conflicts };
+    });
+    env.db.put.mockImplementation(async (doc: Record<string, any>) => {
+      current = { ...doc, _rev: "3-saved", _revisions: { start: 3, ids: ["saved", "first", "base"] } };
+      if (stage === "write" && env.db.put.mock.calls.length === 1) await acknowledgement;
+      return { rev: current._rev };
+    });
+    const remove = jest.fn(async () => { conflicts = []; });
+    Object.assign(env.db, { remove });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: first }));
+    const review = { baselineItems: base, localItems: first, remoteItems: second };
+    env.store.dispatch(env.itemListSlice.actions.recordOutlineConflict({
+      outlineId: "outline-a", baselineItems: first, localItems: first, remoteItems: first,
+      revisionConflict: { graph: { winningRevision: "2-first", conflictRevisions: ["2-second"], histories: { "2-first": ["2-first", "1-base"], "2-second": ["2-second", "1-base"] } },
+        versions: [{ revision: "2-first", items: first }, { revision: "2-second", items: second }], itemReview: review,
+        remoteDocument: { ...common, _rev: "2-first", items: [first[0], second[1]] },
+      },
+    }));
+    env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({
+      outlineId: "outline-a", choice: "keep-local", draftItems: first, reviewedItems: second,
+      revisionSelection: { kind: "rows", review, choices: { '["a","name"]': "remote" } },
+      reviewedRevisionConflict: env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"].revisionConflict,
+    }));
+    // Editing during debounce must not change the previewed commit or prevent
+    // the subsequent ordinary autosave of newer work.
+    if (stage === "write") await jest.advanceTimersByTimeAsync(1500);
+    env.store.dispatch(env.itemListSlice.actions.updateItemList([...second, later]));
+    if (stage === "debounce") await jest.advanceTimersByTimeAsync(1500);
+    else acknowledge();
+    await flushListenerEffects();
+    expect(env.db.put.mock.calls[0][0].items).toEqual(second);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect({ stage: "after resolution", items: env.store.getState().undoable.present.itemList.list }).toEqual({ stage: "after resolution", items: [...second, later] });
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect({ stage: "after autosave", items: current.items, pending: env.store.getState().undoable.present.itemList.hasPendingUpdate }).toEqual({ stage: "after autosave", items: [...second, later], pending: false });
+    expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    jest.useRealTimers();
+  });
+
+  it("allows registry Retry save after the creating controller session has unmounted", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    let current = { _id: "ItemLists", _rev: "1-base", itemLists: [{ _id: "outline-a", name: "A" }], activeList: { _id: "outline-a", name: "A" } };
+    env.db.get.mockImplementation(async () => ({ ...current }));
+    env.db.put.mockRejectedValueOnce(new Error("offline")).mockImplementation(async (doc: typeof current) => {
+      current = { ...doc, _rev: "2-saved" };
+      return { rev: current._rev };
+    });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists(current.itemLists));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Unsaved rename" }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists(current.itemLists));
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Unsaved rename");
+    expect(env.store.getState().undoable.present.itemLists.selectedList?.name).toBe("Unsaved rename");
+    env.store.dispatch(env.itemListsSlice.actions.retryRegistrySave());
+    await flushListenerEffects();
+    expect(current.itemLists[0].name).toBe("Unsaved rename");
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Unsaved rename");
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("idle");
+    jest.useRealTimers();
+  });
+
+  it("completes a delayed registry write only in its original database after a church switch", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    let finish!: (value: { rev: string }) => void;
+    const gate = new Promise<{ rev: string }>((resolve) => { finish = resolve; });
+    env.db.get.mockResolvedValue({ _id: "ItemLists", _rev: "1-base", itemLists: [{ _id: "outline-a", name: "A" }], activeList: { _id: "outline-a", name: "A" } });
+    env.db.put.mockReturnValueOnce(gate);
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Church A" }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    const otherDb = { get: jest.fn(), put: jest.fn() };
+    env.setGlobalDb(otherDb);
+    env.store.dispatch({ type: "RESET" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Church B" }]));
+    finish({ rev: "2-saved" });
+    await flushListenerEffects();
+    expect(otherDb.get).not.toHaveBeenCalled();
+    expect(otherDb.put).not.toHaveBeenCalled();
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Church B");
+    expect(env.postMessage).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
+
+  const registryOwner = (churchId: string, accountId = "account-test"): ItemContentOwner => ({
+    scopeId: JSON.stringify([churchId, accountId, `db-${churchId}`, "outline-persistence-test-db"]),
+    databaseKey: `db-${churchId}`,
+    churchId,
+    accountId,
+  });
+  const bindRegistryOwner = (
+    env: ReturnType<typeof loadStoreWithItemListPersistence>,
+    owner: ItemContentOwner,
+    database: any,
+  ) => {
+    env.deferredMutations.setActiveContentDatabase(owner, database);
+    return database === env.db
+      ? env.contentDatabaseSession
+      : env.contentReplicationActivity.beginContentDatabaseSession(database.name);
+  };
+  const registryDocument = (name: string) => ({
+    _id: "ItemLists", _rev: "1-base",
+    itemLists: [{ _id: "outline-a", name }],
+    activeList: { _id: "outline-a", name },
+  });
+
+  it("drains a debounced registry edit before teardown and cancels the old debounce wakeup", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const owner = registryOwner("church-test");
+    bindRegistryOwner(env, owner, env.db);
+    let current = registryDocument("A");
+    env.db.get.mockImplementation(async () => ({ ...current }));
+    env.db.put.mockImplementation(async (doc: typeof current) => {
+      current = { ...doc, _rev: "2-saved" };
+      return { rev: current._rev };
+    });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists(current.itemLists));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Unsaved rename" }]));
+    await flushListenerEffects();
+
+    await env.deferredMutations.flushContentDatabaseBeforeTeardown(owner, env.db);
+    expect(current.itemLists[0].name).toBe("Unsaved rename");
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it("waits for an in-flight registry write during database teardown", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const owner = registryOwner("church-test");
+    bindRegistryOwner(env, owner, env.db);
+    env.db.get.mockResolvedValue(registryDocument("A"));
+    let release!: (value: { rev: string }) => void;
+    const gate = new Promise<{ rev: string }>((resolve) => { release = resolve; });
+    env.db.put.mockReturnValue(gate);
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "In flight" }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+
+    let drained = false;
+    const teardown = env.deferredMutations.flushContentDatabaseBeforeTeardown(owner, env.db)
+      .then(() => { drained = true; });
+    await flushListenerEffects();
+    expect(drained).toBe(false);
+    release({ rev: "2-saved" });
+    await teardown;
+    expect(drained).toBe(true);
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it("retains a failed teardown write and retries it after the same owner gets a new DB handle", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const owner = registryOwner("church-test");
+    bindRegistryOwner(env, owner, env.db);
+    env.db.get.mockResolvedValue(registryDocument("A"));
+    env.db.put.mockRejectedValue(new Error("offline"));
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Retained edit" }]));
+    await flushListenerEffects();
+    await env.deferredMutations.flushContentDatabaseBeforeTeardown(owner, env.db);
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
+
+    const replacement = {
+      name: env.db.name,
+      get: jest.fn().mockResolvedValue(registryDocument("A")),
+      put: jest.fn().mockResolvedValue({ rev: "2-retried" }),
+    };
+    const newSession = bindRegistryOwner(env, owner, replacement);
+    newSession.markInitialReplicationComplete();
+    env.setGlobalDb(replacement);
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "A" }]));
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Retained edit");
+    env.store.dispatch(env.itemListsSlice.actions.retryRegistrySave());
+    await flushListenerEffects();
+
+    expect(replacement.put).toHaveBeenCalledWith(expect.objectContaining({
+      _id: "ItemLists",
+      itemLists: [{ _id: "outline-a", name: "Retained edit" }],
+    }));
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("idle");
+    jest.useRealTimers();
+  });
+
+  it("retires failed registry edits on logout before another account opens the same church database", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const ownerA = registryOwner("church-test", "account-a");
+    bindRegistryOwner(env, ownerA, env.db);
+    env.db.get.mockResolvedValue(registryDocument("Sunday"));
+    env.db.put.mockRejectedValue(new Error("offline"));
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Sunday" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Account A private edit" }]));
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("error");
+    await env.deferredMutations.flushContentDatabaseBeforeTeardown(ownerA, env.db);
+
+    env.store.dispatch({ type: "RESET" });
+    await flushListenerEffects();
+    const ownerB = registryOwner("church-test", "account-b");
+    bindRegistryOwner(env, ownerB, env.db);
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Sunday" }]));
+    await flushListenerEffects();
+
+    expect(env.store.getState().undoable.present.itemLists.currentLists).toEqual([
+      { _id: "outline-a", name: "Sunday" },
+    ]);
+    expect(env.store.getState().undoable.present.itemLists.registrySave.status).toBe("idle");
+    env.store.dispatch(env.itemListsSlice.actions.retryRegistrySave());
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    jest.useRealTimers();
+  });
+
+  it("finishes an old owner's in-flight teardown write without publishing into the switched church", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const ownerA = registryOwner("church-test", "account-a");
+    bindRegistryOwner(env, ownerA, env.db);
+    env.db.get.mockResolvedValue(registryDocument("Church A"));
+    let finish!: (value: { rev: string }) => void;
+    env.db.put.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Church A" }]));
+    env.store.dispatch(env.itemListsSlice.actions.updateItemLists([{ _id: "outline-a", name: "Local A" }]));
+    await flushListenerEffects();
+
+    const teardown = env.deferredMutations.flushContentDatabaseBeforeTeardown(ownerA, env.db);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    const ownerB = registryOwner("church-b", "account-b");
+    const churchBDb = {
+      name: "church-b-db",
+      get: jest.fn().mockResolvedValue(registryDocument("Church B")),
+      put: jest.fn().mockResolvedValue({ rev: "2-b" }),
+    };
+    const sessionB = bindRegistryOwner(env, ownerB, churchBDb);
+    sessionB.markInitialReplicationComplete();
+    env.setGlobalDb(churchBDb);
+    env.globalFireDbInfo.churchId = "church-b";
+    env.store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([{ _id: "outline-a", name: "Church B" }]));
+    finish({ rev: "2-a" });
+    await teardown;
+    await flushListenerEffects();
+
+    expect(churchBDb.get).not.toHaveBeenCalled();
+    expect(churchBDb.put).not.toHaveBeenCalled();
+    expect(env.store.getState().undoable.present.itemLists.currentLists[0].name).toBe("Church B");
+    expect(env.postMessage).not.toHaveBeenCalled();
+    jest.useRealTimers();
+  });
   const configureBibleCleanupDatabase = (
     db: any,
     bibleDoc: Record<string, any>,
@@ -6403,7 +9850,7 @@ describe("item list outline persistence", () => {
     logError.mockRestore();
   });
 
-  it("discards a delayed outline save after a remote hydrate during debounce", async () => {
+  it("preserves both drafts and pauses autosave after conflicting remote content arrives during debounce", async () => {
     jest.useFakeTimers();
     const { store, itemListSlice, itemListsSlice, db } =
       loadStoreWithItemListPersistence();
@@ -6429,11 +9876,138 @@ describe("item list outline persistence", () => {
 
     expect(db.put).not.toHaveBeenCalled();
     expect(store.getState().undoable.present.itemList.list[0].name).toBe(
-      "Remote Current",
+      "Stale Local",
     );
-    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(
-      false,
+    expect(store.getState().undoable.present.itemList.remoteConflicts["outline-a"]).toEqual(
+      expect.objectContaining({
+        localItems: [expect.objectContaining({ name: "Stale Local" })],
+        remoteItems: [expect.objectContaining({ name: "Remote Current" })],
+      }),
     );
+  });
+
+  it("merges a remote row edit into local work that is still in autosave debounce", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const baseline = [
+      createServiceItem({ name: "A", _id: "song-a", listId: "row-a" }),
+      createServiceItem({ name: "B", _id: "song-b", listId: "row-b" }),
+    ];
+    const remote = [baseline[0], { ...baseline[1], name: "B remote" }];
+    db.get.mockResolvedValue({
+      _id: "outline-a",
+      _rev: "2-remote",
+      items: remote,
+      overlays: [],
+    });
+    store.dispatch(
+      itemListsSlice.actions.initiateItemLists([
+        { _id: "outline-a", name: "Sunday" },
+      ]),
+    );
+    store.dispatch(itemListSlice.actions.initiateItemList({
+      outlineId: "outline-a",
+      items: baseline,
+    }));
+    store.dispatch(itemListSlice.actions.updateItemList([
+      { ...baseline[0], name: "A local" },
+      baseline[1],
+    ]));
+    store.dispatch(itemListSlice.actions.updateItemListFromRemote({
+      outlineId: "outline-a",
+      items: remote,
+    }));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining({ listId: "row-a", name: "A local" }),
+      expect.objectContaining({ listId: "row-b", name: "B remote" }),
+    ]);
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({
+      _id: "outline-a",
+      items: expect.arrayContaining([
+        expect.objectContaining({ name: "A local" }),
+        expect.objectContaining({ name: "B remote" }),
+      ]),
+    }));
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+  });
+
+  it("keeps merged remote rows when a newer local draft arrives before save acknowledgment", async () => {
+    jest.useFakeTimers();
+    const { store, itemListSlice, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const baseline = [
+      createServiceItem({ name: "A", _id: "song-a", listId: "row-a" }),
+      createServiceItem({ name: "B", _id: "song-b", listId: "row-b" }),
+    ];
+    let currentDoc: Record<string, any> = {
+      _id: "outline-a",
+      _rev: "2-remote",
+      items: [baseline[0], { ...baseline[1], name: "B remote" }],
+      overlays: [],
+    };
+    let submittedDoc: Record<string, any> | undefined;
+    let finishFirstPut!: (result: { ok: boolean; rev: string }) => void;
+    db.get.mockImplementation(async () => ({ ...currentDoc }));
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (!submittedDoc) {
+        submittedDoc = { ...document };
+        return new Promise((resolve) => {
+          finishFirstPut = resolve;
+        });
+      }
+      currentDoc = { ...document, _rev: "4-newer-draft" };
+      return { ok: true, rev: "4-newer-draft" };
+    });
+
+    store.dispatch(itemListsSlice.actions.initiateItemLists([
+      { _id: "outline-a", name: "Sunday" },
+    ]));
+    store.dispatch(itemListSlice.actions.initiateItemList({
+      outlineId: "outline-a",
+      items: baseline,
+    }));
+    const submittedItems = [
+      { ...baseline[0], name: "A saved" },
+      baseline[1],
+    ];
+    store.dispatch(itemListSlice.actions.updateItemList(submittedItems));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(submittedDoc?.items).toEqual([
+      expect.objectContaining({ name: "A saved", listId: "row-a" }),
+      expect.objectContaining({ name: "B remote", listId: "row-b" }),
+    ]);
+
+    store.dispatch(itemListSlice.actions.updateItemList([
+      { ...submittedItems[0], name: "A newer draft" },
+      baseline[1],
+    ]));
+    currentDoc = { ...submittedDoc!, _rev: "3-first-save" };
+    finishFirstPut({ ok: true, rev: "3-first-save" });
+    await flushListenerEffects();
+
+    expect(store.getState().undoable.present.itemList.list).toEqual([
+      expect.objectContaining({ name: "A newer draft", listId: "row-a" }),
+      expect.objectContaining({ name: "B remote", listId: "row-b" }),
+    ]);
+    expect(store.getState().undoable.present.itemList.syncBaseline).toEqual(
+      submittedDoc?.items,
+    );
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(true);
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(currentDoc.items).toEqual([
+      expect.objectContaining({ name: "A newer draft", listId: "row-a" }),
+      expect.objectContaining({ name: "B remote", listId: "row-b" }),
+    ]);
+    expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
   });
 
   it("still persists after selection changes during debounce", async () => {
@@ -6468,6 +10042,104 @@ describe("item list outline persistence", () => {
         ]),
       }),
     );
+  });
+
+  it("rebases a debounced local registry rename over independent replicated changes", async () => {
+    jest.useFakeTimers();
+    const { store, itemListsSlice, db, postMessage } =
+      loadStoreWithItemListPersistence();
+    let current: Record<string, any> = {
+      _id: "ItemLists",
+      _rev: "1-base",
+      itemLists: [
+        { _id: "outline-a", name: "A" },
+        { _id: "outline-b", name: "B" },
+      ],
+      activeList: { _id: "outline-a", name: "A" },
+      selectedIdByScope: { presentation: "outline-a", aux: "outline-b" },
+    };
+    db.get.mockImplementation(async (id: string) => {
+      if (id !== "ItemLists") throw new Error(`Unexpected document ${id}`);
+      return { ...current };
+    });
+    db.put.mockImplementation(async (document: Record<string, any>) => {
+      if (document._rev !== current._rev) {
+        throw Object.assign(new Error("conflict"), { status: 409 });
+      }
+      current = { ...document, _rev: "2-saved" };
+      return { ok: true, rev: "2-saved" };
+    });
+    store.dispatch(itemListsSlice.actions.initiateItemLists({
+      itemLists: current.itemLists,
+    }));
+    store.dispatch(itemListsSlice.actions.updateItemLists([
+      { _id: "outline-a", name: "A local rename" },
+      current.itemLists[1],
+    ]));
+    current = {
+      ...current,
+      _rev: "2-remote",
+      itemLists: [
+        current.itemLists[0],
+        { _id: "outline-b", name: "B remote rename" },
+        { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
+      ],
+      activeList: { _id: "outline-b", name: "B remote rename" },
+      selectedIdByScope: {
+        presentation: "outline-b",
+        aux: "outline-c",
+        anotherController: "outline-z",
+      },
+    };
+    store.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
+      itemLists: current.itemLists,
+      activeListId: current.activeList._id,
+    }));
+
+    expect(store.getState().undoable.present.itemLists.currentLists).toEqual([
+      { _id: "outline-a", name: "A local rename" },
+      { _id: "outline-b", name: "B remote rename" },
+      { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
+    ]);
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).toHaveBeenCalledWith("ItemLists");
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(current.itemLists).toEqual([
+      { _id: "outline-a", name: "A local rename" },
+      { _id: "outline-b", name: "B remote rename" },
+      { _id: "outline-c", name: "Remote addition", controllerScope: "aux" },
+    ]);
+    expect(current.selectedIdByScope).toEqual({ presentation: "outline-b", aux: "outline-c", anotherController: "outline-z" });
+    expect(current.activeList._id).toBe("outline-b");
+    expect(postMessage).toHaveBeenCalled();
+  });
+
+  it("keeps outline selection local and does not save selection-only changes", async () => {
+    jest.useFakeTimers();
+    const { store, itemListsSlice, db } =
+      loadStoreWithItemListPersistence();
+    const current = [{ _id: "outline-a", name: "A" }, { _id: "outline-b", name: "B" }];
+    store.dispatch(itemListsSlice.actions.initiateItemLists([
+      ...current,
+    ]));
+    store.dispatch(itemListsSlice.actions.selectItemList("outline-b"));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+
+    expect(db.get).not.toHaveBeenCalled();
+    expect(db.put).not.toHaveBeenCalled();
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe("outline-b");
+    expect(store.getState().undoable.present.itemLists.activeList?._id).toBe("outline-a");
+
+    store.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
+      itemLists: current,
+      activeListId: "outline-a",
+    }));
+    expect(store.getState().undoable.present.itemLists.selectedList?._id).toBe("outline-b");
+    jest.useRealTimers();
   });
 });
 

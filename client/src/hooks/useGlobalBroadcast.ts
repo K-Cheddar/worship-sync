@@ -16,11 +16,16 @@ export const useGlobalBroadcast = (
 
   useEffect(() => {
     if (!globalBroadcastRef) return;
+    const channel = globalBroadcastRef;
+    const pending = new Map<string, unknown>();
 
     const handleMessage = (msg: MessageEvent) => {
       if (msg.data?.type !== "update") return;
       // Ignore our own messages (BroadcastChannel delivers to sender too)
       if (msg.data?.data?.hostId === globalHostId) return;
+      const raw = msg.data?.data?.docs;
+      const docs = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+      for (const doc of docs) pending.set(doc?._id ?? JSON.stringify(doc), doc);
 
       // Clear existing timeout
       if (timeoutRef.current) {
@@ -29,18 +34,16 @@ export const useGlobalBroadcast = (
 
       // Set new timeout for debounced callback
       timeoutRef.current = setTimeout(() => {
-        const raw = msg.data?.data?.docs;
-        const detail = Array.isArray(raw) ? raw : raw != null ? [raw] : [];
+        const detail = [...pending.values()];
+        pending.clear();
         callbackRef.current({ detail });
       }, delay);
     };
 
-    globalBroadcastRef.addEventListener("message", handleMessage);
+    channel.addEventListener("message", handleMessage);
 
     return () => {
-      if (globalBroadcastRef) {
-        globalBroadcastRef.removeEventListener("message", handleMessage);
-      }
+      channel.removeEventListener("message", handleMessage);
       // Clean up timeout on unmount
       if (timeoutRef.current) {
         clearTimeout(timeoutRef.current);

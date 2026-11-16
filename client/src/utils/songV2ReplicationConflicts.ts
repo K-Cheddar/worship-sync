@@ -1,0 +1,729 @@
+import type {
+  DBItem, ItemState, SongV2ArrangementDocument, SongV2RootDocument,
+  SongV2SlideDocument,
+} from "../types";
+import {
+  getSongV2ArrangementDocId, getSongV2RootDocId, getSongV2SlideDocId,
+  hydrateSongFromV2Documents, loadSongV2Snapshot, serializeSongToV2Documents,
+  rememberCommittedSongV2Merge,
+  type SongV2RevisionConflict, type SongV2Snapshot,
+} from "./songPersistence";
+import {
+  assertSongV2MutationAllowed,
+  saveSongV2FromBaseline,
+  type SongV2MutationGuard,
+} from "./songV2Writer";
+import { formatSong } from "./overflow";
+import { mergeLyricText } from "./mergeLyricText";
+import { mergeSongV2AuthoredValue } from "./songV2AuthoredContent";
+import _ from "lodash";
+
+type RevisionDocument = SongV2RootDocument | SongV2ArrangementDocument | SongV2SlideDocument;
+export type SongV2ConflictRevisionOption = { revision: string; document: RevisionDocument };
+export type SongV2ConflictRevisionOptions = {
+  conflict: SongV2RevisionConflict;
+  options: SongV2ConflictRevisionOption[];
+};
+export type SongV2ConflictComparisonDocuments = {
+  arrangements: SongV2ArrangementDocument[];
+  slides: SongV2SlideDocument[];
+  missingArrangementIds: string[];
+  missingSlideIds: string[];
+};
+export type SongV2RevisionSelection = { song: DBItem; sourceRevisions: Record<string, string> };
+
+export class SongV2ReplicationConflictError extends Error {
+  constructor(readonly snapshot: SongV2Snapshot) {
+    super("Concurrent song revisions need review.");
+    this.name = "SongV2ReplicationConflictError";
+  }
+}
+
+export class SongV2ConflictReviewStaleError extends Error {
+  constructor(readonly songId: string) {
+    super("The song changed while its saved versions were being reviewed. Reload the review before saving.");
+    this.name = "SongV2ConflictReviewStaleError";
+  }
+}
+
+type RevisionHistory = { _revisions?: { start: number; ids: string[] } };
+type RevisionMetadata = RevisionHistory & { _conflicts?: string[] };
+const revisions = (doc: RevisionHistory) => doc._revisions?.ids.map((id, i) => `${doc._revisions!.start - i}-${id}`) ?? [];
+const withoutRevisionMetadata = <T extends RevisionDocument>(doc: T): T => {
+  return _.omit(doc as T & RevisionMetadata, ["_revisions", "_conflicts"]) as T;
+};
+const structure = (doc: SongV2ArrangementDocument) => ({
+  ..._.omit(doc, ["_rev", "_revisions", "_conflicts", "createdAt", "createdBy", "updatedAt", "updatedBy", "monitorLayout"]),
+  formattedLyrics: doc.formattedLyrics.map(lyric => ({ ...lyric, words: undefined, slideSpan: undefined })),
+});
+
+const authoredRevisionBody = <T extends RevisionDocument>(document: T): T =>
+  _.omit(document as T & RevisionMetadata,
+    ["_rev", "_revisions", "_conflicts", "createdAt", "createdBy", "updatedAt", "updatedBy"]) as T;
+
+type SharedAncestor<T extends RevisionDocument> = { ancestor: T; branches: T[] };
+async function loadSharedAncestor<T extends RevisionDocument>(
+  db: PouchDB.Database,
+  documentId: string,
+  winningRevision: string,
+  losingRevisions: string[],
+): Promise<SharedAncestor<T> | undefined> {
+  if (!losingRevisions.length) return;
+  try {
+    const histories = await Promise.all([winningRevision, ...losingRevisions].map(revision =>
+      db.get<T & RevisionMetadata>(documentId, { rev: revision, revs: true }),
+    ));
+    const branchHistories = histories.slice(1).map(document => new Set(revisions(document)));
+    const ancestorRevision = revisions(histories[0]).find(revision =>
+      branchHistories.every(history => history.has(revision)),
+    );
+    if (!ancestorRevision) return;
+    const ancestor = await db.get<T>(documentId, { rev: ancestorRevision });
+    return {
+      ancestor: authoredRevisionBody(ancestor),
+      branches: histories.slice(1).map(authoredRevisionBody),
+    };
+  } catch {
+    // Missing history or ancestor bodies are not enough evidence to reconcile.
+    return;
+  }
+}
+
+function mergeArrangementRevisions(
+  ancestor: SongV2ArrangementDocument,
+  winner: SongV2ArrangementDocument,
+  branches: SongV2ArrangementDocument[],
+): SongV2ArrangementDocument | undefined {
+  if (ancestor.formattedLyrics.some(lyric => lyric.textDocument) ||
+    !_.isEqual(structure(ancestor), structure(winner)) ||
+    branches.some(branch => !_.isEqual(structure(ancestor), structure(branch)))) return;
+
+  let formattedLyrics = winner.formattedLyrics;
+  let monitorLayout = winner.monitorLayout;
+  for (const branch of branches) {
+    let conflict = false;
+    formattedLyrics = formattedLyrics.map((lyric, index) => {
+      const words = mergeLyricText(
+        ancestor.formattedLyrics[index].words,
+        lyric.words,
+        branch.formattedLyrics[index].words,
+      );
+      if (words === null) {
+        conflict = true;
+        return lyric;
+      }
+      return { ...lyric, words };
+    });
+    if (conflict) return;
+    const layout = mergeSongV2AuthoredValue(ancestor.monitorLayout, monitorLayout, branch.monitorLayout);
+    if (!layout.ok) return;
+    monitorLayout = layout.value as SongV2ArrangementDocument["monitorLayout"];
+  }
+  return { ...winner, formattedLyrics, monitorLayout };
+}
+
+const matchesLyricPage = (slideName: string | undefined, name: string) =>
+  slideName === name || (slideName?.startsWith(name) &&
+    /^[a-z]+$/i.test(slideName.slice(name.length).replace(/\u200B/g, "")));
+
+const generatedSlideLayout = (slide: SongV2SlideDocument) => ({
+  id: slide.id,
+  type: slide.type,
+  name: slide.name,
+  boxes: slide.boxes.map(box => _.pick(box, [
+    "id", "x", "y", "width", "height", "fontSize", "align", "isBold", "isItalic",
+    "excludeFromOverflow", "shouldKeepAspectRatio", "topMargin", "sideMargin",
+  ])),
+});
+
+const withoutGeneratedLyrics = (slide: SongV2SlideDocument, textBoxIndex: number) => ({
+  ...slide,
+  boxes: slide.boxes.map((box, index) => index === textBoxIndex ? { ...box, words: undefined } : box),
+});
+
+type ArrangementMergeEvidence = {
+  ancestor: SongV2ArrangementDocument;
+  winner: SongV2ArrangementDocument;
+  branches: SongV2ArrangementDocument[];
+};
+
+const lyricSectionForSlide = (
+  arrangement: SongV2ArrangementDocument,
+  slide: SongV2SlideDocument,
+) => {
+  const matches = arrangement.formattedLyrics.filter(lyric => matchesLyricPage(slide.name, lyric.name));
+  return matches.length === 1 ? matches[0] : undefined;
+};
+
+function generatedWordsForSlide(
+  snapshot: SongV2Snapshot,
+  arrangement: SongV2ArrangementDocument,
+  baseSlide: SongV2SlideDocument,
+  boxIndex: number,
+): string | undefined {
+  const arrangementIndex = snapshot.root.arrangementIds.indexOf(arrangement.arrangementId);
+  const slideIndex = arrangement.slideIds.indexOf(baseSlide.id);
+  if (arrangementIndex < 0 || slideIndex < 0) return;
+  const arrangements = snapshot.arrangements.map(current =>
+    current.arrangementId === arrangement.arrangementId ? arrangement : current,
+  );
+  const slides = snapshot.slides.map(current => current._id === baseSlide._id ? baseSlide : current);
+  const hydrated = hydrateSongFromV2Documents(snapshot.root, arrangements, slides, true);
+  const rendered = formatSong({
+    ...hydrated,
+    selectedArrangement: arrangementIndex,
+    selectedSlide: slideIndex,
+    selectedBox: boxIndex,
+  } as ItemState).arrangements[arrangementIndex]?.slides?.find(slide => slide.id === baseSlide.id);
+  return rendered?.boxes[boxIndex]?.words;
+}
+
+async function mergeSlideRevision(
+  db: PouchDB.Database,
+  snapshot: SongV2Snapshot,
+  desired: DBItem,
+  conflict: SongV2RevisionConflict,
+  arrangementEvidence: Map<string, ArrangementMergeEvidence>,
+): Promise<boolean> {
+  const winner = snapshot.slides.find(document => document._id === conflict.documentId);
+  if (!winner || conflict.revisions.length !== 1) return false;
+  const shared = await loadSharedAncestor<SongV2SlideDocument>(
+    db, winner._id, winner._rev ?? "", conflict.revisions,
+  );
+  if (!shared) return false;
+  const base = shared.ancestor;
+  const winnerBody = authoredRevisionBody(winner);
+  const branches = shared.branches;
+  if (branches.some(branch => branch._id !== base._id || branch.id !== base.id ||
+    branch.arrangementId !== base.arrangementId || branch.songId !== base.songId)) return false;
+
+  const evidence = arrangementEvidence.get(base.arrangementId);
+  const baseArrangement = evidence?.ancestor;
+  const generatedSection = baseArrangement ? lyricSectionForSlide(baseArrangement, base) : undefined;
+  const textBoxIndex = 1;
+  const canRegenerate = Boolean(evidence && generatedSection && !generatedSection.textDocument &&
+    base.boxes[textBoxIndex] && !base.boxes[textBoxIndex].excludeFromOverflow &&
+    !base.boxes[textBoxIndex].textDocument &&
+    _.isEqual(generatedSlideLayout(base), generatedSlideLayout(winnerBody)) &&
+    branches.every(branch => _.isEqual(generatedSlideLayout(base), generatedSlideLayout(branch))) &&
+    [evidence.ancestor, evidence.winner, ...evidence.branches].every(arrangement =>
+      _.isEqual(structure(evidence.ancestor), structure(arrangement)) &&
+      arrangement.slideIds.includes(base.id),
+    ));
+
+  if (canRegenerate && evidence) {
+    const candidateWords = [evidence.ancestor, evidence.winner, ...evidence.branches]
+      .map(arrangement => generatedWordsForSlide(snapshot, arrangement, base, textBoxIndex));
+    const baseWords = candidateWords[0];
+    const winnerWords = winnerBody.boxes[textBoxIndex]?.words;
+    const branchWords = branches.map(branch => branch.boxes[textBoxIndex]?.words);
+    if (baseWords !== undefined && candidateWords.includes(winnerWords) &&
+      branchWords.every(words => candidateWords.includes(words)) &&
+      candidateWords.some(words => words !== baseWords)) {
+      const normalizedWinner = authoredRevisionBody(withoutGeneratedLyrics(winnerBody, textBoxIndex) as SongV2SlideDocument);
+      let merged = normalizedWinner;
+      for (const branch of branches) {
+        const normalizedBranch = authoredRevisionBody(withoutGeneratedLyrics(branch, textBoxIndex) as SongV2SlideDocument);
+        const result = mergeSongV2AuthoredValue(
+          authoredRevisionBody(withoutGeneratedLyrics(base, textBoxIndex) as SongV2SlideDocument),
+          merged,
+          normalizedBranch,
+        );
+        if (!result.ok) return false;
+        merged = result.value as SongV2SlideDocument;
+      }
+
+      const arrangementIndex = desired.arrangements.findIndex(arrangement => arrangement.id === base.arrangementId);
+      const desiredArrangement = desired.arrangements[arrangementIndex];
+      const desiredSlideIndex = desiredArrangement?.slides.findIndex(slide => slide.id === base.id) ?? -1;
+      if (arrangementIndex < 0 || !desiredArrangement || desiredSlideIndex < 0) return false;
+      const regenerated = formatSong({
+        ...desired,
+        selectedArrangement: arrangementIndex,
+        selectedSlide: desiredSlideIndex,
+        selectedBox: textBoxIndex,
+      } as ItemState).arrangements[arrangementIndex]?.slides?.find(slide => slide.id === base.id);
+      if (!regenerated || regenerated.name !== base.name || regenerated.type !== base.type ||
+        !_.isEqual(generatedSlideLayout(base), generatedSlideLayout({
+          ...regenerated,
+          _id: base._id,
+          docType: base.docType,
+          songId: base.songId,
+          arrangementId: base.arrangementId,
+        } as SongV2SlideDocument))) return false;
+
+      const mergedSlide = merged as SongV2SlideDocument;
+      const boxes = mergedSlide.boxes.map((box, index) => index === textBoxIndex
+        ? { ...box, words: regenerated.boxes[textBoxIndex]?.words }
+        : box);
+      const slide = _.omit(mergedSlide,
+        ["_id", "_rev", "_revisions", "_conflicts", "docType", "songId", "arrangementId", "createdAt", "createdBy", "updatedAt", "updatedBy"]);
+      desiredArrangement.slides = desiredArrangement.slides.map(current =>
+        current.id === base.id ? { ...current, ...slide, boxes } : current,
+      );
+      return true;
+    }
+  }
+
+  let merged = authoredRevisionBody(winnerBody);
+  const baseBody = authoredRevisionBody(base);
+  for (const branch of branches) {
+    const result = mergeSongV2AuthoredValue(baseBody, merged, authoredRevisionBody(branch));
+    if (!result.ok) return false;
+    merged = result.value as SongV2SlideDocument;
+  }
+  const arrangementIndex = desired.arrangements.findIndex(arrangement => arrangement.id === base.arrangementId);
+  const arrangement = desired.arrangements[arrangementIndex];
+  if (!arrangement) return false;
+  const slide = _.omit(merged as SongV2SlideDocument,
+    ["_id", "_rev", "_revisions", "_conflicts", "docType", "songId", "arrangementId", "createdAt", "createdBy", "updatedAt", "updatedBy"]);
+  arrangement.slides = arrangement.slides.map(current => current.id === base.id
+    ? { ...current, ...slide }
+    : current);
+  return true;
+}
+
+const unresolvedFingerprints = new WeakMap<PouchDB.Database, Map<string, string>>();
+const conflictFingerprint = (snapshot: SongV2Snapshot) => JSON.stringify(
+  [...(snapshot.conflicts ?? [])]
+    .map(conflict => [conflict.documentId, conflict.winningRevision, [...conflict.revisions].sort()])
+    .sort(([a], [b]) => String(a).localeCompare(String(b))),
+);
+const getUnresolvedFingerprint = (db: PouchDB.Database, songId: string) => unresolvedFingerprints.get(db)?.get(songId);
+const setUnresolvedFingerprint = (db: PouchDB.Database, songId: string, fingerprint: string) => {
+  let bySong = unresolvedFingerprints.get(db);
+  if (!bySong) { bySong = new Map(); unresolvedFingerprints.set(db, bySong); }
+  bySong.set(songId, fingerprint);
+};
+const clearUnresolvedFingerprint = (db: PouchDB.Database, songId: string) => unresolvedFingerprints.get(db)?.delete(songId);
+
+const documentsIn = (snapshot: SongV2Snapshot): RevisionDocument[] => [
+  snapshot.root, ...snapshot.arrangements, ...snapshot.slides,
+];
+
+const sameRevisionGraph = (expected: SongV2Snapshot, current: SongV2Snapshot) => {
+  const expectedById = new Map(documentsIn(expected).map(doc => [doc._id, doc._rev]));
+  const currentById = new Map(documentsIn(current).map(doc => [doc._id, doc._rev]));
+  return expectedById.size === currentById.size && [...expectedById].every(([id, rev]) => currentById.get(id) === rev);
+};
+
+const sameConflictSet = (expected: SongV2RevisionConflict[], current: SongV2RevisionConflict[]) => {
+  if (expected.length !== current.length) return false;
+  const currentById = new Map(current.map(conflict => [conflict.documentId, conflict]));
+  return expected.every(conflict => {
+    const latest = currentById.get(conflict.documentId);
+    return latest?.winningRevision === conflict.winningRevision &&
+      _.isEqual([...latest.revisions].sort(), [...conflict.revisions].sort());
+  });
+};
+
+async function prune(
+  db: PouchDB.Database,
+  conflicts: SongV2RevisionConflict[],
+  committed: SongV2Snapshot,
+  mutationGuard: SongV2MutationGuard,
+): Promise<boolean> {
+  const committedById = new Map(documentsIn(committed).map(doc => [doc._id, doc]));
+  const pending: SongV2RevisionConflict[] = [];
+
+  // Validate the full set before removing any leaf. A newer unseen branch must
+  // stop the whole retirement pass rather than leave a partial decision.
+  for (const conflict of conflicts) {
+    const expected = committedById.get(conflict.documentId);
+    if (!expected?._rev) return false;
+    let current: RevisionDocument & { _conflicts?: string[] };
+    try {
+      current = await db.get<RevisionDocument & { _conflicts?: string[] }>(conflict.documentId, { conflicts: true });
+    } catch {
+      return false;
+    }
+    if (current._rev !== expected._rev ||
+      !_.isEqual([...(current._conflicts ?? [])].sort(), [...conflict.revisions].sort())) return false;
+    pending.push(conflict);
+  }
+
+  for (const conflict of pending) {
+    for (const rev of conflict.revisions) {
+      assertSongV2MutationAllowed(mutationGuard);
+      try {
+        await db.remove(conflict.documentId, rev);
+        mutationGuard.onWriteCommitted?.();
+      }
+      catch (error) {
+        if (![404, 409].includes((error as { status?: number }).status ?? 0)) throw error;
+      }
+    }
+  }
+  return true;
+}
+
+/** Reads every recorded leaf body by revision. This function never writes. */
+export async function loadSongV2ConflictRevisionOptions(
+  db: PouchDB.Database,
+  snapshot: SongV2Snapshot,
+): Promise<SongV2ConflictRevisionOptions[]> {
+  const byId = new Map(documentsIn(snapshot).map(doc => [doc._id, doc]));
+  const options: SongV2ConflictRevisionOptions[] = [];
+  for (const conflict of snapshot.conflicts ?? []) {
+    const winner = byId.get(conflict.documentId);
+    if (!winner || winner._rev !== conflict.winningRevision) throw new SongV2ConflictReviewStaleError(snapshot.root.songId);
+    const revisionsToRead = [winner._rev!, ...conflict.revisions];
+    const versions = await Promise.all(revisionsToRead.map(async revision => ({
+      revision,
+      document: await db.get<RevisionDocument>(conflict.documentId, { rev: revision, revs: true }),
+    })));
+    options.push({ conflict, options: versions });
+  }
+  return options;
+}
+
+/** Loads only arrangement and slide documents referenced by the reviewed revisions. */
+export async function loadSongV2ConflictComparisonDocuments(
+  db: PouchDB.Database,
+  snapshot: SongV2Snapshot,
+  revisionOptions: SongV2ConflictRevisionOptions[],
+): Promise<SongV2ConflictComparisonDocuments> {
+  const rootOptions = revisionOptions.flatMap(entry => entry.options.flatMap(option =>
+    option.document.docType === "song-v2-root" ? [option.document] : [],
+  ));
+  const arrangementOptions = revisionOptions.flatMap(entry => entry.options.flatMap(option =>
+    option.document.docType === "song-v2-arrangement" ? [option.document] : [],
+  ));
+  const slideOptions = revisionOptions.flatMap(entry => entry.options.flatMap(option =>
+    option.document.docType === "song-v2-slide" ? [option.document] : [],
+  ));
+  const arrangementsById = new Map<string, SongV2ArrangementDocument>();
+  for (const arrangement of [...snapshot.arrangements, ...arrangementOptions]) {
+    if (!arrangementsById.has(arrangement.arrangementId)) arrangementsById.set(arrangement.arrangementId, arrangement);
+  }
+  const arrangementIds = [...new Set([
+    ...snapshot.root.arrangementIds,
+    ...rootOptions.flatMap(root => root.arrangementIds),
+    ...arrangementOptions.map(arrangement => arrangement.arrangementId),
+  ])];
+  const missingArrangementIds = arrangementIds.filter(id => !arrangementsById.has(id));
+  if (missingArrangementIds.length) {
+    try {
+      const result = await db.allDocs({
+        keys: missingArrangementIds.map(id => getSongV2ArrangementDocId(snapshot.root.songId, id)),
+        include_docs: true,
+      });
+      for (const row of result.rows) {
+        if (!("doc" in row) || !row.doc) continue;
+        const document = row.doc as unknown as SongV2ArrangementDocument;
+        if (document.docType === "song-v2-arrangement" && document.songId === snapshot.root.songId) {
+          arrangementsById.set(document.arrangementId, document);
+        }
+      }
+    } catch {
+      // Missing comparison context is reported as uncertain in the review UI.
+    }
+  }
+  const slideReferences = [...new Map([
+    ...snapshot.arrangements.flatMap(arrangement => arrangement.slideIds.map(id => [
+      `${arrangement.arrangementId}:${id}`, { arrangementId: arrangement.arrangementId, id },
+    ] as const)),
+    ...arrangementOptions.flatMap(arrangement => arrangement.slideIds.map(id => [
+      `${arrangement.arrangementId}:${id}`, { arrangementId: arrangement.arrangementId, id },
+    ] as const)),
+    ...[...rootOptions.flatMap(root => root.arrangementIds), ...snapshot.root.arrangementIds]
+      .flatMap(id => (arrangementsById.get(id)?.slideIds ?? []).map(slideId => [
+        `${id}:${slideId}`, { arrangementId: id, id: slideId },
+      ] as const)),
+  ]).values()];
+  const slidesById = new Map<string, SongV2SlideDocument>();
+  for (const slide of [...snapshot.slides, ...slideOptions]) {
+    const key = `${slide.arrangementId}:${slide.id}`;
+    if (!slidesById.has(key)) slidesById.set(key, slide);
+  }
+  const missingSlideIds = slideReferences.filter(({ arrangementId, id }) => !slidesById.has(`${arrangementId}:${id}`));
+  if (missingSlideIds.length) {
+    try {
+      const result = await db.allDocs({
+        keys: missingSlideIds.map(({ arrangementId, id }) => getSongV2SlideDocId(snapshot.root.songId, arrangementId, id)),
+        include_docs: true,
+      });
+      for (const row of result.rows) {
+        if (!("doc" in row) || !row.doc) continue;
+        const document = row.doc as unknown as SongV2SlideDocument;
+        if (document.docType === "song-v2-slide" && document.songId === snapshot.root.songId) {
+          slidesById.set(`${document.arrangementId}:${document.id}`, document);
+        }
+      }
+    } catch {
+      // Missing comparison context is reported as uncertain in the review UI.
+    }
+  }
+  return {
+    arrangements: [...arrangementsById.values()],
+    slides: [...slidesById.values()],
+    missingArrangementIds: missingArrangementIds.filter(id => !arrangementsById.has(id)),
+    missingSlideIds: missingSlideIds.filter(({ arrangementId, id }) => !slidesById.has(`${arrangementId}:${id}`))
+      .map(({ arrangementId, id }) => `${arrangementId}:${id}`),
+  };
+}
+
+/** Builds a complete canonical song from explicit physical revision choices. */
+export async function buildSongV2RevisionSelection(
+  db: PouchDB.Database,
+  snapshot: SongV2Snapshot,
+  revisionOptions: SongV2ConflictRevisionOptions[],
+  selectedRevisions: Record<string, string>,
+): Promise<SongV2RevisionSelection> {
+  const optionById = new Map(revisionOptions.map(entry => [entry.conflict.documentId, entry]));
+  const currentById = new Map(documentsIn(snapshot).map(doc => [doc._id, doc]));
+  const sourceRevisions: Record<string, string> = {};
+
+  const readChosen = async <T extends RevisionDocument>(id: string): Promise<T> => {
+    const entry = optionById.get(id);
+    if (entry) {
+      const selected = selectedRevisions[id] ?? entry.conflict.winningRevision;
+      const option = entry.options.find(candidate => candidate.revision === selected);
+      if (!option) throw new SongV2ConflictReviewStaleError(snapshot.root.songId);
+      sourceRevisions[id] = option.revision;
+      return withoutRevisionMetadata(option.document) as T;
+    }
+    const current = currentById.get(id);
+    if (current) {
+      sourceRevisions[id] = current._rev ?? "";
+      return withoutRevisionMetadata(current) as T;
+    }
+    const document = await db.get<T & { _conflicts?: string[] }>(id, { conflicts: true, revs: true });
+    if (document._conflicts?.length) throw new SongV2ConflictReviewStaleError(snapshot.root.songId);
+    sourceRevisions[id] = document._rev ?? "";
+    return withoutRevisionMetadata(document) as T;
+  };
+
+  const root = await readChosen<SongV2RootDocument>(getSongV2RootDocId(snapshot.root.songId));
+  const arrangements: SongV2ArrangementDocument[] = [];
+  for (const arrangementId of root.arrangementIds) {
+    arrangements.push(await readChosen<SongV2ArrangementDocument>(
+      getSongV2ArrangementDocId(root.songId, arrangementId),
+    ));
+  }
+  const slides: SongV2SlideDocument[] = [];
+  for (const arrangement of arrangements) {
+    for (const slideId of arrangement.slideIds) {
+      slides.push(await readChosen<SongV2SlideDocument>(
+        getSongV2SlideDocId(root.songId, arrangement.arrangementId, slideId),
+      ));
+    }
+  }
+  return {
+    song: hydrateSongFromV2Documents(root, arrangements, slides, true),
+    sourceRevisions,
+  };
+}
+
+/** Saves a reviewed choice only if the reviewed winning graph and every leaf are still current. */
+export async function resolveSongV2ConflictReview(
+  db: PouchDB.Database,
+  reviewed: SongV2Snapshot,
+  adopted: DBItem,
+  approved: SongV2RevisionConflict[],
+  sourceRevisions: Record<string, string>,
+  mutationGuard: SongV2MutationGuard,
+): Promise<{ song: DBItem; conflictsRetired: boolean }> {
+  const current = await loadSongV2Snapshot(db, reviewed.root.songId, true);
+  const currentConflicts = current.conflicts ?? [];
+  if (!sameRevisionGraph(reviewed, current) ||
+    !sameConflictSet(approved, currentConflicts) ||
+    !sameConflictSet(reviewed.conflicts ?? [], currentConflicts)) {
+    throw new SongV2ConflictReviewStaleError(reviewed.root.songId);
+  }
+
+  const conflictById = new Map(approved.map(conflict => [conflict.documentId, conflict]));
+  const currentById = new Map(documentsIn(current).map(doc => [doc._id, doc]));
+  for (const [id, revision] of Object.entries(sourceRevisions)) {
+    const conflict = conflictById.get(id);
+    if (conflict) {
+      if (revision !== conflict.winningRevision && !conflict.revisions.includes(revision)) {
+        throw new SongV2ConflictReviewStaleError(reviewed.root.songId);
+      }
+      continue;
+    }
+    const expected = currentById.get(id);
+    const latest = expected ?? await db.get<RevisionDocument & { _conflicts?: string[] }>(id, { conflicts: true });
+    const latestConflicts = (latest as RevisionDocument & { _conflicts?: string[] })._conflicts;
+    if (latest._rev !== revision || latestConflicts?.length) {
+      throw new SongV2ConflictReviewStaleError(reviewed.root.songId);
+    }
+  }
+
+  const saved = await saveSongV2FromBaseline(
+    db, current.hydrated, adopted, current, mutationGuard,
+    approved.map(conflict => conflict.documentId),
+  );
+  const pruned = await pruneResolvedSongV2Conflicts(db, saved.song, approved, mutationGuard, saved.snapshot);
+  clearUnresolvedFingerprint(db, reviewed.root.songId);
+  return { song: saved.song, conflictsRetired: Boolean(pruned) };
+}
+
+/** Retires only explicitly approved leaves after their intended content is already durable. */
+export async function pruneResolvedSongV2Conflicts(
+  db: PouchDB.Database,
+  adopted: DBItem,
+  approved: SongV2RevisionConflict[],
+  mutationGuard: SongV2MutationGuard,
+  expectedSnapshot?: SongV2Snapshot,
+  preservedConflicts: SongV2RevisionConflict[] = [],
+): Promise<DBItem | undefined> {
+  const snapshot = await loadSongV2Snapshot(db, adopted._id, true);
+  if (expectedSnapshot && !sameRevisionGraph(expectedSnapshot, snapshot)) return;
+  const approvedById = new Map(approved.map(conflict => [conflict.documentId, new Set(conflict.revisions)]));
+  const preservedById = new Map(preservedConflicts.map(conflict =>
+    [conflict.documentId, new Set(conflict.revisions)],
+  ));
+  for (const conflict of snapshot.conflicts ?? []) {
+    const allowed = approvedById.get(conflict.documentId) ?? preservedById.get(conflict.documentId);
+    if (!allowed || conflict.revisions.some(revision => !allowed.has(revision))) return;
+  }
+  for (const physical of snapshot.physicalConflicts ?? []) {
+    const approvedRevisions = approvedById.get(physical.documentId);
+    const preservedRevisions = preservedById.get(physical.documentId);
+    if (!approvedRevisions && !preservedRevisions) return;
+    if (preservedRevisions && !_.isEqual([...physical.revisions].sort(), [...preservedRevisions].sort())) return;
+    if (approvedRevisions && physical.revisions.some(revision => !approvedRevisions.has(revision))) return;
+  }
+  // After choosing a revision, some approved leaves may now be authored-body
+  // equivalents of the winner. They remain safe to retire, along with other
+  // equivalent leaves captured in this same validated physical read.
+  const retirementConflicts = (snapshot.physicalConflicts ?? [])
+    .filter(conflict => approvedById.has(conflict.documentId));
+  const canonicalContent = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(canonicalContent);
+    if (value !== null && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value)
+        .filter(([, child]) => child !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, child]) => [key, canonicalContent(child)]));
+    }
+    return value;
+  };
+  const content = (song: DBItem) => {
+    const docs = serializeSongToV2Documents(song);
+    return [docs.root, ...docs.arrangements, ...docs.slides]
+      .map(doc => _.omit(doc, ["_rev", "_revisions", "_conflicts", "createdAt", "createdBy", "updatedAt", "updatedBy"]))
+      .map(canonicalContent)
+      .sort((left, right) => String((left as { _id: string })._id).localeCompare(String((right as { _id: string })._id)));
+  };
+  if (!_.isEqual(content(snapshot.hydrated), content(adopted))) return;
+  if (!(await prune(db, retirementConflicts, snapshot, mutationGuard))) return;
+  if (snapshot.conflicts?.length) setUnresolvedFingerprint(db, adopted._id, conflictFingerprint(snapshot));
+  else clearUnresolvedFingerprint(db, adopted._id);
+  return snapshot.hydrated;
+}
+
+/** Reconcile canonical lyrics and slide changes supported by shared authored evidence. */
+export async function loadReconciledSongV2Snapshot(
+  db: PouchDB.Database,
+  songId: string,
+  initial: SongV2Snapshot | undefined,
+  mutationGuard: SongV2MutationGuard,
+): Promise<SongV2Snapshot> {
+  const snapshot = initial ?? await loadSongV2Snapshot(db, songId, true);
+  if (!snapshot.conflicts?.length) {
+    clearUnresolvedFingerprint(db, songId);
+    return snapshot;
+  }
+  const fingerprint = conflictFingerprint(snapshot);
+  const unresolved = (): SongV2Snapshot => {
+    setUnresolvedFingerprint(db, songId, fingerprint);
+    return snapshot;
+  };
+  if (getUnresolvedFingerprint(db, songId) === fingerprint) return unresolved();
+
+  const desired = JSON.parse(JSON.stringify(snapshot.hydrated)) as DBItem;
+  if (snapshot.conflicts.some(conflict => conflict.documentId === snapshot.root._id)) return unresolved();
+  const reconciledDocumentIds = new Set<string>();
+  const arrangementEvidence = new Map<string, ArrangementMergeEvidence>();
+  for (const conflict of snapshot.conflicts) {
+    const winner = snapshot.arrangements.find(doc => doc._id === conflict.documentId);
+    if (!winner) continue;
+    const shared = await loadSharedAncestor<SongV2ArrangementDocument>(
+      db, winner._id, winner._rev ?? "", conflict.revisions,
+    );
+    if (!shared) continue;
+    const mergedArrangement = mergeArrangementRevisions(shared.ancestor, winner, shared.branches);
+    if (!mergedArrangement) continue;
+    const index = desired.arrangements.findIndex(arrangement => arrangement.id === winner.arrangementId);
+    if (index < 0) continue;
+    const candidate = formatSong({
+      ...desired,
+      selectedArrangement: index,
+      selectedSlide: 1,
+      selectedBox: 1,
+      arrangements: desired.arrangements.map((arrangement, arrangementIndex) =>
+        arrangementIndex === index ? { ...arrangement, ...mergedArrangement } : arrangement,
+      ),
+    } as ItemState).arrangements[index];
+    if (!candidate || !_.isEqual(candidate.slides.map(slide => slide.id), winner.slideIds)) continue;
+    desired.arrangements[index] = { ...candidate, monitorLayout: mergedArrangement.monitorLayout };
+    reconciledDocumentIds.add(conflict.documentId);
+    arrangementEvidence.set(winner.arrangementId, {
+      ancestor: shared.ancestor,
+      winner: authoredRevisionBody(winner),
+      branches: shared.branches,
+    });
+  }
+
+  for (const conflict of snapshot.conflicts) {
+    if (snapshot.arrangements.some(arrangement => arrangement._id === conflict.documentId)) continue;
+    if (await mergeSlideRevision(db, snapshot, desired, conflict, arrangementEvidence)) {
+      reconciledDocumentIds.add(conflict.documentId);
+    }
+  }
+  if (!reconciledDocumentIds.size) return unresolved();
+
+  const latest = await loadSongV2Snapshot(db, songId, true);
+  if (!sameRevisionGraph(snapshot, latest) || !sameConflictSet(snapshot.conflicts, latest.conflicts ?? [])) {
+    throw new SongV2ReplicationConflictError(latest);
+  }
+  assertSongV2MutationAllowed(mutationGuard);
+  const saved = await saveSongV2FromBaseline(
+    db, latest.hydrated, desired, latest, mutationGuard,
+    [...reconciledDocumentIds],
+  );
+  const physicalConflicts = snapshot.physicalConflicts ?? snapshot.conflicts;
+  const meaningfulConflictIds = new Set(snapshot.conflicts.map(conflict => conflict.documentId));
+  const approvedConflicts = physicalConflicts.filter(conflict =>
+    reconciledDocumentIds.has(conflict.documentId) || !meaningfulConflictIds.has(conflict.documentId),
+  );
+  const preservedConflicts = physicalConflicts.filter(conflict =>
+    meaningfulConflictIds.has(conflict.documentId) && !reconciledDocumentIds.has(conflict.documentId),
+  );
+  let retired = false;
+  try {
+    retired = await pruneResolvedSongV2Conflicts(
+      db, saved.song, approvedConflicts, mutationGuard, saved.snapshot, preservedConflicts,
+    )
+      .then(Boolean);
+  } catch {
+    // The merged authored content is already durable. Leaf retirement is
+    // cleanup, and a failed cleanup must not disable that verified content.
+  }
+  if (retired) {
+    if (!preservedConflicts.length) {
+      clearUnresolvedFingerprint(db, songId);
+      return saved.snapshot;
+    }
+    const reconciled = await loadSongV2Snapshot(db, songId, true);
+    if (reconciled.conflicts?.length) setUnresolvedFingerprint(db, songId, conflictFingerprint(reconciled));
+    else clearUnresolvedFingerprint(db, songId);
+    return reconciled;
+  }
+
+  // Losing song-edit permission always remains a hard boundary, even when the
+  // content merge itself is already durable and leaf cleanup is pending.
+  assertSongV2MutationAllowed(mutationGuard);
+  const latestAfterCleanup = await loadSongV2Snapshot(db, songId, true);
+  if (rememberCommittedSongV2Merge(
+    db, saved.snapshot, latestAfterCleanup, approvedConflicts, preservedConflicts,
+  )) {
+    const reconciled = await loadSongV2Snapshot(db, songId, true);
+    if (reconciled.conflicts?.length) setUnresolvedFingerprint(db, songId, conflictFingerprint(reconciled));
+    else clearUnresolvedFingerprint(db, songId);
+    return reconciled;
+  }
+  throw new SongV2ReplicationConflictError(latestAfterCleanup);
+}

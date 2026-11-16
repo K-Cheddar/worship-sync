@@ -25,9 +25,10 @@ import overlaysReducer, {
 import { overlaySlice } from "../store/overlaySlice";
 import { normalizeOverlayForSync } from "../utils/overlayUtils";
 import { plainTextToRichText } from "../types/richText";
+import allDocsReducer from "../store/allDocsSlice";
 
 type SyncTestState = {
-  allDocs: { allSongDocs: never[]; allFreeFormDocs: never[] };
+  allDocs: ReturnType<typeof allDocsReducer>;
   undoable: {
     present: {
       overlays: ReturnType<typeof overlaysReducer>;
@@ -45,7 +46,7 @@ type SyncTestState = {
 };
 
 const initialSyncTestState: SyncTestState = {
-  allDocs: { allSongDocs: [], allFreeFormDocs: [] },
+  allDocs: allDocsReducer(undefined, { type: "test/init" }),
   undoable: {
     present: {
       overlays: overlaysReducer(undefined, { type: "test/init" }),

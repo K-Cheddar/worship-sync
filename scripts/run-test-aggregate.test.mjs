@@ -177,7 +177,7 @@ test("maps each standalone client browser script exactly once and excludes auth 
   assert.deepEqual(mappedClientScripts, clientScripts);
   assert.deepEqual(mappedRootScripts, ["test:e2e:controller", "test:e2e:scheduling", "test:e2e:smoke"]);
   assert.equal(new Set(E2E_SUITES.map((suite) => suite.script)).size, E2E_SUITES.length);
-  assert.equal(E2E_SUITES.length, 16);
+  assert.equal(E2E_SUITES.length, 17);
   assert.ok(!E2E_SUITES.some((suite) => ["test:e2e:auth", "test:e2e:auth:refresh"].includes(suite.script)));
   assert.ok(!E2E_SUITES.some((suite) => suite.script.startsWith("test:e2e:auth:")));
   assert.ok(!E2E_SUITES.some((suite) => suite.script === "test:e2e:browser"));

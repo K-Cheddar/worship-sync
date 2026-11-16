@@ -1,4 +1,6 @@
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef } from "react";
+import { useCallback, useContext, useEffect, useRef, useSyncExternalStore } from "react";
+import { songV2DocumentsChanged } from "../../store/store";
+import { useLayoutEffect } from "react";
 import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
 import _ from "lodash";
@@ -16,9 +18,12 @@ import {
 } from "../../types";
 import {
   initiateItemList,
+  forceUpdate as forceItemListUpdate,
+  setItemListLoadError,
   setIsInitialized as setItemListIsInitialized,
   setItemListIsLoading,
   updateItemListFromRemote,
+  setItemListIsRetrying,
 } from "../../store/itemListSlice";
 import {
   initiateOverlayList,
@@ -74,6 +79,7 @@ import {
   requireMediaLibraryV2,
 } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
+import { forceUpdate as forceOverlaysUpdate } from "../../store/overlaysSlice";
 import { setIsInitialized as setItemListsIsInitialized } from "../../store/itemListsSlice";
 import { initiateServices } from "../../store/serviceTimesSlice";
 import { ServiceTime } from "../../types";
@@ -93,7 +99,14 @@ import {
 } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
 import { loadOrCreateControllerMediaRouteFolders } from "../../utils/controllerMediaRouteFolders";
-import { getOutlineDatabaseKey, getOutlineOwnerKey, setOutlineContentDatabase } from "../../store/outlineContent";
+import { beginOutlineContentLifecycle, getOutlineDatabaseKey, getOutlineOwnerKey, setOutlineContentDatabase } from "../../store/outlineContent";
+import type { ItemContentOwner } from "../../types";
+import { getActiveContentDatabaseOwner, getContentDatabaseForOwner } from "../../store/deferredItemMutations";
+import {
+  getContentDatabaseSessionToken,
+  subscribeToContentActivity,
+} from "../../utils/contentReplicationActivity";
+import { reconcileConcurrentOutlineMoves } from "../../utils/persistServiceListField";
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -107,6 +120,14 @@ export const useControllerPageLifecycle = () => {
   const { showToast } = useToast();
   const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote, bootstrapReady, canCreateBootstrapDocuments } =
     useContext(ControllerInfoContext) || {};
+  const contentDatabaseSessionToken = useSyncExternalStore(
+    subscribeToContentActivity,
+    () => db ? getContentDatabaseSessionToken(db.name) : null,
+    () => null,
+  );
+  const cloudRef = useRef(cloud);
+  cloudRef.current = cloud;
+  const hasCloud = Boolean(cloud);
   const {
     access,
     refreshPresentationListeners,
@@ -114,31 +135,61 @@ export const useControllerPageLifecycle = () => {
     firebaseDb,
     loginState,
   } = useContext(GlobalInfoContext) || {};
+  const accessRef = useRef(access);
+  accessRef.current = access;
+  const canReconcileOutlineMoves = useCallback((movedRows: DBItemListDetails["items"]) => {
+    const currentAccess = accessRef.current;
+    return currentAccess === "full" || (currentAccess === "music" && movedRows.every(row =>
+      row.type === "song" || row.type === "free",
+    ));
+  }, []);
 
-  const selectedList = useSelector(
-    (state) => state.undoable.present.itemLists.selectedList,
+  const selectedListId = useSelector(
+    (state) => state.undoable.present.itemLists.selectedList?._id,
   );
+  const outlineScope = useSelector(
+    (state) => state.undoable.present.itemLists.scope,
+  );
+  const outlineLoadAttempt = useSelector((state) => state.undoable.present.itemList.loadAttempt);
+  const outlineEventsRef = useRef(new Set<string>());
   const outlineLoadGeneration = useSelector((state) => state.undoable.present.itemList.outlineLoadGeneration);
   useLayoutEffect(() => {
     dispatch(setOutlineContentDatabase(db ? getOutlineDatabaseKey(db) : ""));
   }, [db, dispatch]);
+  const lifecycleOwnerKey = getOutlineOwnerKey(db ? getOutlineDatabaseKey(db) : "", selectedListId);
+  useLayoutEffect(
+    () => beginOutlineContentLifecycle(lifecycleOwnerKey),
+    [lifecycleOwnerKey],
+  );
   const databaseRef = useRef(db);
   databaseRef.current = db;
   const selectedOutlineIdentityRef = useRef({
-    listId: selectedList?._id,
+    listId: selectedListId,
     controllerId: activeControllerId,
+    scope: outlineScope,
+    database: db,
     generation: 0,
   });
   if (
-    selectedOutlineIdentityRef.current.listId !== selectedList?._id ||
-    selectedOutlineIdentityRef.current.controllerId !== activeControllerId
+    selectedOutlineIdentityRef.current.listId !== selectedListId ||
+    selectedOutlineIdentityRef.current.controllerId !== activeControllerId ||
+    selectedOutlineIdentityRef.current.scope !== outlineScope ||
+    selectedOutlineIdentityRef.current.database !== db
   ) {
     selectedOutlineIdentityRef.current = {
-      listId: selectedList?._id,
+      listId: selectedListId,
       controllerId: activeControllerId,
+      scope: outlineScope,
+      database: db,
       generation: selectedOutlineIdentityRef.current.generation + 1,
     };
   }
+  const lastLoadedOutlineContextRef = useRef<{
+    db: typeof db;
+    controllerId: string;
+    scope: string;
+    outlineId: string;
+  } | null>(null);
   const serviceListSyncGenerationRef = useRef(0);
   const loadedPreferencesRef = useRef<{
     db: PouchDB.Database;
@@ -197,16 +248,82 @@ export const useControllerPageLifecycle = () => {
         if (databaseRef.current !== db || (store.getState() as RootState).undoable.present.itemLists.contentDatabaseKey !== (db ? getOutlineDatabaseKey(db) : "")) return;
         const updates = event.detail;
         if (!Array.isArray(updates)) return;
+        const songs = new Map<string, boolean>();
         let refetchOverlayHistory = false;
         for (const _update of updates) {
+          if (typeof _update._id === "string" && _update._id.startsWith("song-v2:")) {
+            const match = /^song-v2:(root|arrangement|slide):([^:]+)/.exec(_update._id);
+            if (match) {
+              const songId = decodeURIComponent(match[2]);
+              songs.set(songId, (songs.get(songId) ?? false) || match[1] !== "slide");
+            }
+            continue;
+          }
+          if (_update.docType === "song-v2-root" && _update.type === "song") {
+            songs.set(_update._id, true);
+            continue;
+          }
           const currentState = store.getState() as RootState;
           const currentSelectedList =
             currentState.undoable.present.itemLists.selectedList;
           if (currentSelectedList?._id && _update._id === currentSelectedList._id) {
-            const update = _update as DBItemListDetails;
+            const dbAtRead = databaseRef.current;
+            if (!dbAtRead) continue;
+            const databaseSessionToken = getContentDatabaseSessionToken(dbAtRead.name);
             const selectionIdentity = selectedOutlineIdentityRef.current;
+            const eventKey = _update._rev ? `${selectionIdentity.generation}:${_update._id}:${_update._rev}` : undefined;
+            const events = outlineEventsRef.current;
+            if (eventKey && events.has(eventKey)) continue;
+            if (eventKey) events.add(eventKey);
+            const clearPendingEvent = () => {
+              if (eventKey) events.delete(eventKey);
+            };
+            if (events.size > 200) events.delete(events.values().next().value!);
             const outlineGeneration = currentState.undoable.present.itemList.outlineLoadGeneration;
             const syncGeneration = ++serviceListSyncGenerationRef.current;
+            const isCurrentUpdate = () => {
+              const current = (store.getState() as RootState).undoable.present;
+              return databaseRef.current === dbAtRead &&
+                getContentDatabaseSessionToken(dbAtRead.name) === databaseSessionToken &&
+                selectedOutlineIdentityRef.current.generation === selectionIdentity.generation &&
+                serviceListSyncGenerationRef.current === syncGeneration &&
+                current.itemLists.selectedList?._id === _update._id &&
+                current.itemList.outlineLoadGeneration === outlineGeneration;
+            };
+            let update: DBItemListDetails;
+            try {
+              const head = await dbAtRead.get(_update._id, { conflicts: true }) as DBItemListDetails;
+              if (!isCurrentUpdate()) {
+                clearPendingEvent();
+                continue;
+              }
+              if (!head) throw new Error("The selected outline document was not returned by the database");
+              update = head;
+              if (accessRef.current === "full" || accessRef.current === "music") {
+                const reconciled = await reconcileConcurrentOutlineMoves(
+                  dbAtRead,
+                  _update._id,
+                  isCurrentUpdate,
+                  canReconcileOutlineMoves,
+                  update,
+                );
+                if (!isCurrentUpdate()) {
+                  clearPendingEvent();
+                  continue;
+                }
+                if (reconciled) update = reconciled;
+              }
+            } catch (error) {
+              if (eventKey) events.delete(eventKey);
+              if (isCurrentUpdate()) {
+                dispatch(setItemListLoadError("Could not check this outline for updates. Check the connection and try again."));
+              }
+              throw error;
+            }
+            if (!isCurrentUpdate()) {
+              clearPendingEvent();
+              continue;
+            }
             dispatch(
               setServicePlanningOutlinePlanBinding(
                 update.servicePlanBinding ?? null,
@@ -214,11 +331,18 @@ export const useControllerPageLifecycle = () => {
             );
             if (cloud) {
               const remoteItems = formatItemList(update.items || [], cloud);
+              const itemListState = (store.getState() as RootState).undoable.present.itemList;
               if (
-                !currentState.undoable.present.itemList.hasPendingUpdate &&
-                !_.isEqual(currentState.undoable.present.itemList.list, remoteItems)
+                itemListState.isInitialized && itemListState.loadedOutlineId === update._id &&
+                !_.isEqual(itemListState.syncBaseline, remoteItems)
               ) {
-                dispatch(updateItemListFromRemote(remoteItems));
+                dispatch(updateItemListFromRemote({
+                  outlineId: update._id,
+                  items: remoteItems,
+                }));
+                if (itemListState.isLoading) {
+                  dispatch(setItemListIsLoading(false));
+                }
               }
             }
 
@@ -227,10 +351,17 @@ export const useControllerPageLifecycle = () => {
             const overlayIdsAtRead = currentOverlayState.list.map((o) => o.id);
             if (
               !currentOverlayState.hasPendingUpdate &&
-              !_.isEqual(overlayIdsAtRead, remoteOverlayIds)
+              (!currentOverlayState.isInitialized ||
+                !_.isEqual(overlayIdsAtRead, remoteOverlayIds))
             ) {
+              if (!currentOverlayState.isInitialized) {
+                refetchOverlayHistory = true;
+              }
               const dbAtRead = databaseRef.current;
-              if (!dbAtRead) continue;
+              if (!dbAtRead) {
+                clearPendingEvent();
+                continue;
+              }
               const overlaysAtRead = currentOverlayState.list;
               const formattedOverlays = await getOverlaysByIds(
                 dbAtRead,
@@ -240,6 +371,7 @@ export const useControllerPageLifecycle = () => {
               const latestOverlays = latestState.undoable.present.overlays;
               const latestSelectionIdentity = selectedOutlineIdentityRef.current;
               if (
+                !isCurrentUpdate() ||
                 databaseRef.current !== dbAtRead ||
                 latestSelectionIdentity.generation !== selectionIdentity.generation ||
                 latestState.undoable.present.itemLists.selectedList?._id !== update._id ||
@@ -251,6 +383,7 @@ export const useControllerPageLifecycle = () => {
                   overlayIdsAtRead,
                 )
               ) {
+                clearPendingEvent();
                 continue;
               }
 
@@ -277,7 +410,11 @@ export const useControllerPageLifecycle = () => {
                 freshList,
                 store.getState as () => OverlaySyncRootSlice,
               );
-              dispatch(updateOverlayListFromRemote(mergedList));
+              if (!latestOverlays.isInitialized) {
+                dispatch(initiateOverlayList(mergedList));
+              } else {
+                dispatch(updateOverlayListFromRemote(mergedList));
+              }
               const selectedOverlayId = (store.getState() as OverlaySyncRootSlice)
                 .undoable.present.overlay.selectedOverlay?.id;
               if (selectedOverlayId) {
@@ -296,18 +433,32 @@ export const useControllerPageLifecycle = () => {
             refetchOverlayHistory = true;
           }
         }
+        if (songs.size) {
+          const databaseAtChange = db;
+          const ownerAtChange = getActiveContentDatabaseOwner();
+          if (databaseAtChange && (!ownerAtChange || getContentDatabaseForOwner(ownerAtChange) === databaseAtChange)) {
+            const sessionToken = getContentDatabaseSessionToken(databaseAtChange.name);
+            dispatch(songV2DocumentsChanged([...songs].map(([songId, libraryChanged]) => ({
+              songId,
+              libraryChanged,
+              database: databaseAtChange,
+              owner: ownerAtChange as ItemContentOwner | null,
+              sessionToken,
+            }))));
+          }
+        }
         const dbForHistory = databaseRef.current;
         if (refetchOverlayHistory && dbForHistory) {
           const overlayHistory = await getAllOverlayHistory(dbForHistory);
           if (databaseRef.current === dbForHistory) {
             dispatch(mergeOverlayHistoryFromDb(overlayHistory));
-          }
+        }
         }
       } catch (e) {
         console.error(e);
       }
     },
-    [dispatch, cloud, store, db],
+    [dispatch, cloud, db, store, canReconcileOutlineMoves],
   );
 
   const updateMediaFromExternal = useCallback(
@@ -684,59 +835,171 @@ export const useControllerPageLifecycle = () => {
   useEffect(() => {
     let cancelled = false;
     const ownerState = (store.getState() as RootState).undoable.present;
-    const ownerKey = getOutlineOwnerKey(db ? getOutlineDatabaseKey(db) : "", selectedList?._id);
+    const ownerKey = getOutlineOwnerKey(db ? getOutlineDatabaseKey(db) : "", selectedListId);
+    const databaseSessionTokenAtStart = contentDatabaseSessionToken;
     const generation = ownerState.itemList.outlineLoadGeneration;
     const isCurrent = () => {
       const current = (store.getState() as RootState).undoable.present;
       return !cancelled && databaseRef.current === db &&
+        (!db || getContentDatabaseSessionToken(db.name) === databaseSessionTokenAtStart) &&
         current.itemList.outlineOwnerKey === ownerKey && current.itemList.outlineLoadGeneration === generation;
     };
 
     const getItemList = async () => {
-      if (!db || !cloud) return;
+      if (!db || !cloudRef.current) return;
+      const cloudAtLoad = cloudRef.current;
+      const selectionAtLoad = selectedOutlineIdentityRef.current;
+      const isCurrentLoad = () =>
+        isCurrent() &&
+        databaseRef.current === db &&
+        selectedOutlineIdentityRef.current.generation === selectionAtLoad.generation &&
+        selectedOutlineIdentityRef.current.listId === selectedListId &&
+        selectedOutlineIdentityRef.current.scope === outlineScope;
       // No selected outline (empty registry): leave empty state, never keep skeletons.
-      if (!selectedList?._id) {
-        if (!isCurrent()) return;
-        dispatch(initiateItemList([]));
+      if (!selectedListId) {
+        if (!isCurrentLoad()) return;
+        dispatch(initiateItemList({ items: [], outlineId: null }));
         dispatch(initiateOverlayList([]));
+        lastLoadedOutlineContextRef.current = null;
         dispatch(setServicePlanningOutlinePlanBinding(null));
         dispatch(setItemListIsLoading(false));
+        dispatch(setItemListIsRetrying(false));
         return;
       }
-      if (!isCurrent()) return;
-      dispatch(setItemListIsLoading(true));
+      const currentState = store.getState() as RootState;
+      const currentItemList = currentState.undoable.present.itemList;
+      const lastLoadedContext = lastLoadedOutlineContextRef.current;
+      const reduxHasCurrentOutline =
+        currentItemList.isInitialized &&
+        currentItemList.loadedOutlineId === selectedListId;
+      const contextMatches = lastLoadedContext
+        ? lastLoadedContext.db === db &&
+          lastLoadedContext.controllerId === activeControllerId &&
+          lastLoadedContext.scope === outlineScope &&
+          lastLoadedContext.outlineId === selectedListId
+        : reduxHasCurrentOutline;
+      let hasUsableContent = reduxHasCurrentOutline && contextMatches;
+      const shouldLoadOutlineOverlays =
+        !hasUsableContent || !currentState.undoable.present.overlays.isInitialized;
+      const retained = currentItemList.remoteConflicts?.[selectedListId];
+      if (!hasUsableContent && retained) {
+        dispatch(initiateItemList({ outlineId: selectedListId, items: retained.remoteItems }));
+        dispatch(setItemListIsLoading(false));
+        hasUsableContent = true;
+      }
+      if (!hasUsableContent) dispatch(setItemListIsLoading(true));
+      dispatch(setItemListLoadError(null));
       try {
-        const response: DBItemListDetails | undefined = await db.get(
-          selectedList._id,
-        );
-        if (!isCurrent()) return;
+        let response: DBItemListDetails | undefined;
+        let contentSyncGeneration = serviceListSyncGenerationRef.current;
+        let readWasStable = false;
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          contentSyncGeneration = serviceListSyncGenerationRef.current;
+          const head = await db.get(selectedListId, { conflicts: true }) as DBItemListDetails;
+          if (!isCurrentLoad()) return;
+          if (!head || typeof head !== "object") throw new Error("The selected outline document was not returned by the database");
+          response = head;
+          if (!isCurrentLoad()) return;
+          if (serviceListSyncGenerationRef.current === contentSyncGeneration) {
+            readWasStable = true;
+            break;
+          }
+        }
+        if (!readWasStable || serviceListSyncGenerationRef.current !== contentSyncGeneration) {
+          dispatch(setItemListLoadError(
+            "This outline kept changing while it loaded. Wait for updates to finish, then try again.",
+          ));
+          dispatch(setItemListIsLoading(false));
+          dispatch(setItemListIsRetrying(false));
+          return;
+        }
+        if ((accessRef.current === "full" || accessRef.current === "music") && isCurrentLoad()) {
+          try {
+            const reconciled = await reconcileConcurrentOutlineMoves(
+              db,
+              selectedListId,
+              () => isCurrentLoad() && serviceListSyncGenerationRef.current === contentSyncGeneration,
+              canReconcileOutlineMoves,
+              response,
+            );
+            if (reconciled) response = reconciled;
+          } catch (error) {
+            // Reconciliation is opportunistic. A failed read or write leaves
+            // the winning saved outline available through the normal load.
+            console.error("Could not reconcile concurrent outline moves", error);
+          }
+          if (!isCurrentLoad()) return;
+        }
+        if (!response || typeof response !== "object") {
+          throw new Error("The selected outline document was not returned by the database");
+        }
         const itemList = response?.items || [];
         const overlayIds = response?.overlays || [];
-        dispatch(
-          setServicePlanningOutlinePlanBinding(
-            response?.servicePlanBinding ?? null,
-          ),
-        );
-        if (!(store.getState() as RootState).undoable.present.itemList.hasPendingUpdate) {
-          dispatch(initiateItemList(formatItemList(itemList, cloud)));
+        const currentBinding = (store.getState() as RootState)
+          .servicePlanningImport.outlinePlanBinding;
+        const nextBinding = response?.servicePlanBinding ?? null;
+        if (!_.isEqual(currentBinding, nextBinding)) {
+          dispatch(setServicePlanningOutlinePlanBinding(nextBinding));
         }
-        dispatch(setItemListIsInitialized(true));
-        const formattedOverlays = await getOverlaysByIds(db, overlayIds);
-        if (!isCurrent()) return;
-        if (!(store.getState() as RootState).undoable.present.overlays.hasPendingUpdate) {
-          dispatch(initiateOverlayList(formattedOverlays));
+
+        const formattedItems = formatItemList(itemList, cloudAtLoad);
+        if (!isCurrentLoad()) return;
+        if (hasUsableContent) {
+          dispatch(updateItemListFromRemote({
+            outlineId: selectedListId,
+            items: formattedItems,
+          }));
+        } else {
+          dispatch(initiateItemList({
+            items: formattedItems,
+            outlineId: selectedListId,
+          }));
         }
-        dispatch(setOverlaysIsInitialized(true));
-        const overlayHistory = await getAllOverlayHistory(db);
-        if (!isCurrent()) return;
-        dispatch(mergeOverlayHistoryFromDb(overlayHistory));
+        const hydratedItemList = (store.getState() as RootState).undoable.present.itemList;
+        if (
+          hydratedItemList.outlineOwnerKey === ownerKey &&
+          hydratedItemList.hasPendingUpdate &&
+          hydratedItemList.pendingByOutline?.[ownerKey]
+        ) {
+          dispatch(forceItemListUpdate());
+        }
+        lastLoadedOutlineContextRef.current = {
+          db,
+          controllerId: activeControllerId,
+          scope: outlineScope,
+          outlineId: selectedListId,
+        };
+
+        if (shouldLoadOutlineOverlays) {
+          const formattedOverlays = await getOverlaysByIds(db, overlayIds);
+          if (!isCurrentLoad()) return;
+          if (serviceListSyncGenerationRef.current === contentSyncGeneration) {
+            dispatch(initiateOverlayList(formattedOverlays));
+            const hydratedOverlays = (store.getState() as RootState).undoable.present.overlays;
+            if (
+              hydratedOverlays.outlineOwnerKey === ownerKey &&
+              hydratedOverlays.hasPendingUpdate &&
+              hydratedOverlays.pendingByOutline?.[ownerKey]
+            ) {
+              dispatch(forceOverlaysUpdate());
+            }
+            const overlayHistory = await getAllOverlayHistory(db);
+            if (!isCurrentLoad()) return;
+            if (serviceListSyncGenerationRef.current === contentSyncGeneration) {
+              dispatch(mergeOverlayHistoryFromDb(overlayHistory));
+            }
+          }
+        }
       } catch (e) {
-        if (!isCurrent()) return;
+        if (!isCurrentLoad()) return;
         console.error(e);
-        dispatch(setServicePlanningOutlinePlanBinding(null));
+        dispatch(setItemListLoadError(
+          "Could not load this outline. Check the connection and try again.",
+        ));
       }
-      if (isCurrent()) {
+      if (isCurrentLoad()) {
         dispatch(setItemListIsLoading(false));
+        dispatch(setItemListIsRetrying(false));
       }
     };
     void getItemList();
@@ -744,7 +1007,7 @@ export const useControllerPageLifecycle = () => {
     return () => {
       cancelled = true;
     };
-  }, [dispatch, db, selectedList, cloud, bootstrapReady, store, outlineLoadGeneration]);
+  }, [dispatch, db, selectedListId, hasCloud, cloud, bootstrapReady, activeControllerId, outlineScope, outlineLoadAttempt, outlineLoadGeneration, store, canReconcileOutlineMoves, contentDatabaseSessionToken]);
 
   useEffect(() => {
     if (!updater) return;

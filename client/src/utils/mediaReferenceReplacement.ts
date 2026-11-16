@@ -1,3 +1,4 @@
+import { normalizeItemSlides } from "./activeItemSlides";
 import type {
   Arrangment,
   Box,
@@ -73,27 +74,9 @@ export const replaceMediaReferencesInSlide = (
   replacement: MediaReferenceReplacement,
 ) => {
   const boxes = replaceBoxes(slide.boxes, replacement) as Box[];
-  const monitorCurrentBandBoxes = replaceBoxes(
-    slide.monitorCurrentBandBoxes,
-    replacement,
-  );
-  const monitorNextBandBoxes = replaceBoxes(
-    slide.monitorNextBandBoxes,
-    replacement,
-  );
-  if (
-    boxes === slide.boxes &&
-    monitorCurrentBandBoxes === slide.monitorCurrentBandBoxes &&
-    monitorNextBandBoxes === slide.monitorNextBandBoxes
-  ) {
-    return slide;
-  }
-  return {
-    ...slide,
-    boxes,
-    monitorCurrentBandBoxes,
-    monitorNextBandBoxes,
-  };
+  if (boxes === slide.boxes) return slide;
+  const { monitorCurrentBandBoxes: _current, monitorNextBandBoxes: _next, ...clean } = slide;
+  return { ...clean, boxes };
 };
 
 const replaceSlides = (
@@ -128,6 +111,10 @@ export const replaceMediaReferencesInItem = <T extends {
   background?: string;
   slides?: ItemSlideType[];
   arrangements?: Arrangment[];
+  type?: string;
+  _id?: string;
+  name?: string;
+  selectedArrangement?: number;
 }>(item: T, replacement: MediaReferenceReplacement): T => {
   const background = mediaReferenceMatches(
     replacement.oldMedia,
@@ -145,7 +132,7 @@ export const replaceMediaReferencesInItem = <T extends {
   ) {
     return item;
   }
-  return { ...item, background, slides, arrangements };
+  return normalizeItemSlides({ ...item, background, slides, arrangements }) as T;
 };
 
 const replaceOverlayInfo = (

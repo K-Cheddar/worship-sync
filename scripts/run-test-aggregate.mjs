@@ -100,6 +100,11 @@ export const E2E_SUITES = [
     script: "test:e2e:schedules-performance",
     client: true,
   },
+  {
+    name: "Schedule staffing responsive",
+    script: "test:e2e:schedule-staffing-responsive",
+    client: true,
+  },
 ];
 
 const firebaseSchedulingEnv = [

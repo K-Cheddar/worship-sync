@@ -1,4 +1,4 @@
-import { useCallback, useContext, useState } from "react";
+import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { Music, Pencil } from "lucide-react";
 import { Button } from "../../components/Button";
 import Icon from "../../components/Icon/Icon";
@@ -10,9 +10,11 @@ import { ItemDetailsEditorFields, type ItemDetailsSavePayload } from "../../comp
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { deleteSongAudioWithRetry, getSongAudioUrl, uploadSongAudio } from "../../api/auth";
+import { useDispatch } from "../../hooks";
+import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import { broadcastItemUpdate } from "../../store/store";
-import { applyPouchAudit } from "../../utils/pouchAudit";
 import { deleteSongAudioBeforeClearingMetadata } from "../../utils/persistSongAudioAttachment";
+import { loadSong, saveSong, songToLibraryProjection } from "../../utils/songPersistence";
 import type { Arrangment, DBItem, SongAudio, SongMetadata } from "../../types";
 
 type ServicePlanSongDetailsPanelProps = {
@@ -24,6 +26,14 @@ type ServicePlanSongDetailsPanelProps = {
 const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }: ServicePlanSongDetailsPanelProps) => {
   const { db } = useContext(ControllerInfoContext) || {};
   const { churchId } = useContext(GlobalInfoContext) || {};
+  const dispatch = useDispatch();
+  const persistenceScopeRef = useRef({ db, churchId });
+  persistenceScopeRef.current = { db, churchId };
+  const mountedRef = useRef(false);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
   const [arrangementIndex, setArrangementIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [isEditingLyrics, setIsEditingLyrics] = useState(false);
@@ -33,31 +43,34 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
     onEditingChange?.(next);
   };
 
-  const persistSongPatch = useCallback(async (patch: ItemDetailsSavePayload & { songAudioPatch?: SongAudio | null }) => {
+  const persistSongPatch = useCallback(async (patch: Omit<ItemDetailsSavePayload, "name"> & { name?: string; songAudioPatch?: SongAudio | null }, baselineSong?: DBItem) => {
     if (!db) throw new Error("The song library is not available. Try again.");
-    const existing = (await db.get(song._id)) as DBItem;
-    const next: DBItem = { ...existing, name: patch.name };
+    const existing = baselineSong ?? await loadSong(db, song._id);
+    const next: DBItem = { ...existing, name: patch.name ?? existing.name };
     if (patch.songMetadataPatch !== undefined) {
-      if (patch.songMetadataPatch === null) delete next.songMetadata;
+      if (patch.songMetadataPatch === null) next.songMetadata = undefined;
       else next.songMetadata = patch.songMetadataPatch;
     }
     if (patch.songLinksPatch !== undefined) next.songLinks = patch.songLinksPatch;
     if (patch.songAudioPatch !== undefined) {
-      if (patch.songAudioPatch === null) delete next.songAudio;
+      if (patch.songAudioPatch === null) next.songAudio = undefined;
       else next.songAudio = patch.songAudioPatch;
     }
-    const audited = applyPouchAudit(existing, next, { isNew: false });
-    const result = await db.put(audited);
-    const saved = { ...audited, _rev: result.rev };
+    const saved = await saveSong(db, next, existing);
+    if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
+      persistenceScopeRef.current.churchId !== churchId) return;
+    dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
     broadcastItemUpdate(saved);
-  }, [db, song._id]);
+  }, [db, dispatch, song._id, churchId]);
 
   const uploadSongAudioForEdit = useCallback(async (file: File) => {
-    if (!churchId) throw new Error("Sign in to attach an MP3.");
-    const previousAudio = song.songAudio;
+    if (!churchId || !db) throw new Error("Sign in to attach an MP3.");
+    const loadedSong = await loadSong(db, song._id);
+    const baselineSong = loadedSong.docType === "song-v2-root" ? loadedSong : undefined;
+    const previousAudio = baselineSong?.songAudio ?? song.songAudio;
     const audio = await uploadSongAudio({ churchId, songId: song._id, file, previousAudio });
     try {
-      await persistSongPatch({ name: song.name, songAudioPatch: audio });
+      await persistSongPatch({ songAudioPatch: audio }, baselineSong);
     } catch (error) {
       if (!previousAudio || previousAudio.key !== audio.key) {
         try { await deleteSongAudioWithRetry({ churchId, songId: song._id, audio }); }
@@ -69,7 +82,7 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
       try { await deleteSongAudioWithRetry({ churchId, songId: song._id, audio: previousAudio }); }
       catch (error) { console.error("Error cleaning replaced song audio:", error); }
     }
-  }, [churchId, persistSongPatch, song]);
+  }, [churchId, db, persistSongPatch, song]);
 
   const getSongAudioUrlForEdit = useCallback(async (disposition: "inline" | "attachment") => {
     if (!churchId || !song.songAudio) throw new Error("Sign in to listen to this MP3.");
@@ -78,37 +91,62 @@ const ServicePlanSongDetailsPanel = ({ song, canEdit = false, onEditingChange }:
   }, [churchId, song]);
 
   const removeSongAudioForEdit = useCallback(async () => {
-    if (!churchId || !song.songAudio) return;
-    const audio = song.songAudio;
+    if (!churchId || !db || !song.songAudio) return;
+    const baselineSong = await loadSong(db, song._id);
+    const audio = baselineSong.docType === "song-v2-root"
+      ? baselineSong.songAudio ?? song.songAudio
+      : song.songAudio;
+    if (baselineSong.docType === "song-v2-root") {
+      await persistSongPatch({ songAudioPatch: null }, baselineSong);
+      try {
+        await deleteSongAudioWithRetry({ churchId, songId: song._id, audio });
+      } catch (error) {
+        console.error("Error cleaning removed song audio:", error);
+      }
+      return;
+    }
     await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () => deleteSongAudioWithRetry({ churchId, songId: song._id, audio }),
-      clearMetadata: () => persistSongPatch({ name: song.name, songAudioPatch: null }),
+      clearMetadata: () => persistSongPatch({ songAudioPatch: null }),
     });
-  }, [churchId, persistSongPatch, song]);
+  }, [churchId, db, persistSongPatch, song]);
 
   const handleSave = async (payload: ItemDetailsSavePayload) => {
     await persistSongPatch(payload);
   };
 
   const saveLyrics = useCallback(async ({
+    baselineSong,
     arrangements,
     selectedArrangement,
     songMetadata,
   }: {
+    baselineSong: DBItem;
     arrangements: Arrangment[];
     selectedArrangement: number;
     songMetadata?: SongMetadata;
   }) => {
     if (!db) throw new Error("The song library is not available. Try again.");
-    const existing = (await db.get(song._id)) as DBItem;
-    const next: DBItem = { ...existing, arrangements, selectedArrangement };
-    if (songMetadata === undefined) delete next.songMetadata;
+    const latestSong = await loadSong(db, baselineSong._id);
+    // Keep the v2 baseline from when editing began so the writer can detect
+    // conflicts at the arrangement/slide level. Legacy songs need the newest
+    // root revision for Pouch while retaining the user's draft content.
+    const saveBaseline = latestSong.docType === "song-v2-root"
+      ? baselineSong
+      : latestSong;
+    const next: DBItem = {
+      ...(latestSong.docType === "song-v2-root" ? baselineSong : latestSong),
+      arrangements,
+      selectedArrangement,
+    };
+    if (songMetadata === undefined) next.songMetadata = undefined;
     else next.songMetadata = songMetadata;
-    const audited = applyPouchAudit(existing, next, { isNew: false });
-    const result = await db.put(audited);
-    const saved = { ...audited, _rev: result.rev };
+    const saved = await saveSong(db, next, saveBaseline);
+    if (!mountedRef.current || persistenceScopeRef.current.db !== db ||
+      persistenceScopeRef.current.churchId !== churchId) return;
+    dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
     broadcastItemUpdate(saved);
-  }, [db, song._id]);
+  }, [db, dispatch, churchId]);
 
   return (
     <div className="space-y-4" aria-label={`Song details for ${song.name}`}>

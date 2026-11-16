@@ -53,7 +53,45 @@ test("Firestore transaction aborts during roster linking are retryable conflicts
   assert.equal(attempts, 3);
 });
 
-test("Firestore roster linking rechecks state after an aborted transaction", async () => {
+test("Firestore roster linking rechecks state after a closed transaction", async () => {
+  let attempts = 0;
+  const operations = createVolunteerIdentityOperations({
+    COLLECTIONS: {},
+    requireFirestore: () => ({
+      runTransaction: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw Object.assign(new Error("3 INVALID_ARGUMENT: Transaction is invalid or closed."), {
+            code: 3,
+          });
+        }
+        throw Object.assign(new Error("That account is not active."), {
+          statusCode: 404,
+        });
+      },
+    }),
+    getDoc: async () => null,
+    queryDocs: async () => [],
+    setDoc: async () => {},
+    deleteDoc: async () => {},
+    nowIso: () => "2026-10-23T00:00:00.000Z",
+  });
+
+  await assert.rejects(
+    operations.linkRosterMember({
+      churchId: "church",
+      memberId: "member",
+      userId: "user",
+    }),
+    (error) => {
+      assert.equal(error.statusCode, 404);
+      return true;
+    },
+  );
+  assert.equal(attempts, 2);
+});
+
+test("Firestore roster linking retries an aborted transaction and surfaces the refreshed result", async () => {
   let attempts = 0;
   const operations = createVolunteerIdentityOperations({
     COLLECTIONS: {},

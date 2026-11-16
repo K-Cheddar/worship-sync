@@ -16,7 +16,9 @@ import { createMockControllerContext } from "../../test/mocks";
 import type { DBItemListDetails } from "../../types";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 
-let mockDatabase: ReturnType<typeof database> | undefined;
+// Jest hoists module mocks ahead of imports, so this binding must not have a TDZ.
+// eslint-disable-next-line no-var
+var mockDatabase: ReturnType<typeof database> | undefined;
 const mockPublish = jest.fn();
 jest.mock("../../context/controllerInfo", () => ({
   ControllerInfoContext: jest.requireActual("react").createContext(null),
@@ -388,7 +390,10 @@ describe("outline switching with real reducers, listeners and PouchDB boundaries
     const write = deferred<void>(); db.heldWrites.set("a", write);
     edit("draft-a");
     act(() => {
-      store.dispatch(itemListsSlice.actions.updateItemLists([{ _id: "a", name: "A" }, { _id: "b", name: "B", controllerScope: "aux" }]));
+      store.dispatch(itemListsSlice.actions.updateItemLists([
+        { _id: "a", name: "A" },
+        { _id: "b", name: "B", ...(transition === "scope" ? { controllerScope: "aux" } : {}) },
+      ]));
       store.dispatch(transition === "scope" ? itemListsSlice.actions.setOutlineScope("aux") : itemListsSlice.actions.updateItemListsFromRemote([{ _id: "b", name: "B" }]));
     });
     await drain();
