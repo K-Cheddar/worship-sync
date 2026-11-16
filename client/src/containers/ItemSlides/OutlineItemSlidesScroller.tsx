@@ -238,9 +238,10 @@ const OutlineVirtualSlide = memo(
       ) {
         return section.slides;
       }
-      return ensureSlidesHaveMonitorBandFormatting(section.slides);
+      return ensureSlidesHaveMonitorBandFormatting(section.slides, section.monitorLayout);
     }, [
       previewMode,
+      section.monitorLayout,
       section.slides,
       section.type,
       monitorSettings.showNextSlide,

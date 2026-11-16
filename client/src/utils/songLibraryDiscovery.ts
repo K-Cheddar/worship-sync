@@ -12,6 +12,7 @@ export type SongLibraryDiagnostic = {
 export function discoverSongLibrary(documents: unknown[]): {
   songs: DBItem[];
   diagnostics: SongLibraryDiagnostic[];
+  activatedSongIds: string[];
 } {
   const songs = new Map<string, DBItem>();
   const roots: SongV2RootDocument[] = [];
@@ -38,6 +39,7 @@ export function discoverSongLibrary(documents: unknown[]): {
     }
   }
   const diagnostics: SongLibraryDiagnostic[] = [];
+  const activatedSongIds = new Set<string>();
   for (const root of roots) {
     // The physical root ID also suppresses a stale predecessor if songId is corrupt.
     let physicalSongId = root.songId;
@@ -46,6 +48,8 @@ export function discoverSongLibrary(documents: unknown[]): {
     } catch { /* Invalid encoding is reported by root validation below. */ }
     songs.delete(physicalSongId);
     songs.delete(root.songId);
+    activatedSongIds.add(physicalSongId);
+    activatedSongIds.add(root.songId);
     if (root.deletedAt) continue;
     try {
       if (root._id !== getSongV2RootDocId(root.songId)) throw new Error("Invalid root identity");
@@ -57,5 +61,5 @@ export function discoverSongLibrary(documents: unknown[]): {
       });
     }
   }
-  return { songs: [...songs.values()], diagnostics };
+  return { songs: [...songs.values()], diagnostics, activatedSongIds: [...activatedSongIds] };
 }

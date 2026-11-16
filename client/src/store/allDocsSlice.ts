@@ -1,4 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import isEqual from "lodash/isEqual";
 import type { DBHeading, DBItem } from "../types";
 import type { SongLibraryDiagnostic } from "../utils/songLibraryDiscovery";
 import {
@@ -40,6 +41,8 @@ type AllDocsState = {
   changeVersion: number;
   /** Targeted v2 child-content invalidation, separate from library projection changes. */
   songContentVersions: Record<string, number>;
+  /** Logical songs whose V2 root has activated authoritative V2 storage. */
+  activatedSongIds: Record<string, true>;
   songLibraryDiagnostics: SongLibraryDiagnostic[];
   allSongDocs: DBItem[];
   allFreeFormDocs: DBItem[];
@@ -55,6 +58,7 @@ const initialState: AllDocsState = {
   session: 0,
   changeVersion: 0,
   songContentVersions: {},
+  activatedSongIds: {},
   songLibraryDiagnostics: [],
   allSongDocs: [],
   allFreeFormDocs: [],
@@ -76,12 +80,36 @@ export const allDocsSlice = createSlice({
     updateSongLibraryDiagnostics: (state, action: PayloadAction<SongLibraryDiagnostic[]>) => {
       state.songLibraryDiagnostics = action.payload;
     },
+    markSongV2Activated: (state, action: PayloadAction<string[]>) => {
+      action.payload.forEach(songId => { state.activatedSongIds[songId] = true; });
+    },
+    applySongLibraryRefresh: (state, action: PayloadAction<{
+      songId: string;
+      projection?: DBItem;
+      diagnostic?: SongLibraryDiagnostic;
+    }>) => {
+      const { songId, projection, diagnostic } = action.payload;
+      state.activatedSongIds[songId] = true;
+      const previous = state.allSongDocs.find(item => item._id === songId);
+      const next = projection ? normalizeLibrarySong(projection) : undefined;
+      const nextDiagnostics = state.songLibraryDiagnostics.filter(item => item.songId !== songId);
+      if (diagnostic) nextDiagnostics.push(diagnostic);
+      const diagnosticsChanged = !isEqual(state.songLibraryDiagnostics, nextDiagnostics);
+      const projectionChanged = !isEqual(previous, next);
+      if (!projectionChanged && !diagnosticsChanged) return;
+      state.allSongDocs = state.allSongDocs.filter(item => item._id !== songId);
+      if (next) state.allSongDocs.push(next);
+      state.songLibraryDiagnostics = nextDiagnostics;
+      state.changeVersion += 1;
+    },
     invalidateSongContent: (state, action: PayloadAction<string>) => {
       const songId = action.payload;
       state.songContentVersions[songId] = (state.songContentVersions[songId] ?? 0) + 1;
     },
     updateAllSongDocs: (state, action: PayloadAction<DBItem[]>) => {
-      state.allSongDocs = action.payload.map(normalizeLibrarySong);
+      state.allSongDocs = action.payload
+        .filter(song => song.docType === "song-v2-root" || !state.activatedSongIds[song._id])
+        .map(normalizeLibrarySong);
     },
     updateAllFreeFormDocs: (state, action: PayloadAction<DBItem[]>) => {
       state.allFreeFormDocs = action.payload;
@@ -99,7 +127,7 @@ export const allDocsSlice = createSlice({
       const arr = state[key];
       const idx = arr.findIndex((candidate) => candidate._id === doc._id);
       if (doc.type === "song" && doc.docType !== "song-v2-root" &&
-        (arr[idx]?.docType === "song-v2-root" || state.songLibraryDiagnostics.some((diagnostic) => diagnostic.songId === doc._id))) return;
+        (state.activatedSongIds[doc._id] || arr[idx]?.docType === "song-v2-root" || state.songLibraryDiagnostics.some((diagnostic) => diagnostic.songId === doc._id))) return;
       if (idx >= 0) arr[idx] = doc;
       else arr.push(doc);
     },
@@ -111,7 +139,7 @@ export const allDocsSlice = createSlice({
         const arr = state[key];
         const idx = arr.findIndex((candidate) => candidate._id === doc._id);
         if (doc.type === "song" && doc.docType !== "song-v2-root" &&
-          (arr[idx]?.docType === "song-v2-root" || state.songLibraryDiagnostics.some((diagnostic) => diagnostic.songId === doc._id))) continue;
+          (state.activatedSongIds[doc._id] || arr[idx]?.docType === "song-v2-root" || state.songLibraryDiagnostics.some((diagnostic) => diagnostic.songId === doc._id))) continue;
         if (idx >= 0) arr[idx] = doc;
         else arr.push(doc);
       }
@@ -186,7 +214,7 @@ export const allDocsSlice = createSlice({
       const doc = inputDoc?.type === "song" ? normalizeLibrarySong(inputDoc as DBItem) : inputDoc;
       if (!deleted && doc?.type === "song" && doc.docType !== "song-v2-root") {
         const existingSong = state.allSongDocs.find((item) => item._id === id);
-        if (existingSong?.docType === "song-v2-root" || state.songLibraryDiagnostics.some((diagnostic) => diagnostic.songId === id)) return;
+        if (state.activatedSongIds[id] || existingSong?.docType === "song-v2-root" || state.songLibraryDiagnostics.some((diagnostic) => diagnostic.songId === id)) return;
       }
       state.changeVersion += 1;
       if (!deleted && doc?.type === "song" && doc.docType === "song-v2-root") {
@@ -213,6 +241,8 @@ export const allDocsSlice = createSlice({
 
 export const {
   updateSongLibraryDiagnostics,
+  markSongV2Activated,
+  applySongLibraryRefresh,
   invalidateSongContent,
   updateAllSongDocs,
   updateAllFreeFormDocs,

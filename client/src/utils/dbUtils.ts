@@ -1,6 +1,7 @@
 import { discoverSongLibrary } from "./songLibraryDiscovery";
 import {
   updateSongLibraryDiagnostics,
+  markSongV2Activated,
   updateAllSongDocs,
   updateAllFreeFormDocs,
   updateAllTimerDocs,
@@ -717,7 +718,8 @@ export const updateAllDocs = async (
     const keys = manifest.rows.map((row) => row.id ?? row.key ?? (row.doc as DBItem | undefined)?._id)
       .filter((id): id is string => Boolean(id) && !id.startsWith("song-v2:slide:"));
     const allDocs = (keys.length ? await db.allDocs({ keys, include_docs: true }) : { rows: [] }) as allDocsType;
-    const { songs: allSongs, diagnostics } = discoverSongLibrary(allDocs.rows.map((row) => row.doc));
+    const songLibrary = discoverSongLibrary(allDocs.rows.map((row) => row.doc));
+    const { songs: allSongs, diagnostics, activatedSongIds } = songLibrary;
 
     const allFreeFormDocs = allDocs.rows
       .filter((row) => (row.doc as any)?.type === "free")
@@ -734,6 +736,7 @@ export const updateAllDocs = async (
     if (!shouldApply() || libraryRefreshVersions.get(db) !== refreshVersion) return false;
 
     dispatch(updateSongLibraryDiagnostics(diagnostics));
+    dispatch(markSongV2Activated(activatedSongIds));
     if (diagnostics.length) console.warn("Incomplete v2 song library projections", diagnostics);
     dispatch(updateAllSongDocs(allSongs));
     dispatch(updateAllFreeFormDocs(allFreeFormDocs));

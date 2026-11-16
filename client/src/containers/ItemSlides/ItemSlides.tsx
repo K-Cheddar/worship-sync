@@ -784,9 +784,10 @@ const ItemSlidesContent = () => {
     ) {
       return renderedSlides;
     }
-    return ensureSlidesHaveMonitorBandFormatting(renderedSlides);
+    return ensureSlidesHaveMonitorBandFormatting(renderedSlides, itemMonitorLayout);
   }, [
     effectivePreviewMode,
+    itemMonitorLayout,
     monitorPreviewSettings.showNextSlide,
     renderedSlides,
     type,
