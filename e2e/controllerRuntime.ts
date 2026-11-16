@@ -215,6 +215,25 @@ if (typeof window !== 'undefined' && window.__controllerE2ENetworkGuardInstalled
     let source = await response.text();
     const pathname = new URL(route.request().url()).pathname;
     if (pathname.endsWith("/controllerInfo.tsx")) {
+      const providerSnapshotMarker = /  const value = useMemo\(\r?\n/;
+      if (!providerSnapshotMarker.test(source)) {
+        throw new Error("Controller E2E could not instrument content replication progress and connection status.");
+      }
+      source = source.replace(providerSnapshotMarker, `
+  if (typeof window !== "undefined") {
+    window.__controllerE2EControllerDataState = () => ({
+      dbProgress,
+      bibleDbProgress,
+      connectionStatus: {
+        status: connectionStatus.status,
+        retryCount: connectionStatus.retryCount,
+        failureReason: connectionStatus.failureReason,
+        message: connectionStatus.message
+      }
+    });
+  }
+  const value = useMemo(
+`);
       source += `\nwindow.__controllerE2E = {
         database: () => globalDb,
         remote: (databaseName = globalDb.name) => new PouchDB(import.meta.env.VITE_COUCHDB_HOST + '/' + databaseName, {
@@ -376,6 +395,16 @@ declare global {
       writeCapabilitiesDisabled: boolean;
     };
     __controllerE2EFirebaseStatus?: () => any;
+    __controllerE2EControllerDataState?: () => {
+      dbProgress: number;
+      bibleDbProgress: number;
+      connectionStatus: {
+        status: string;
+        retryCount: number;
+        failureReason?: string;
+        message?: string;
+      };
+    };
     __controllerE2EReadFirebasePath?: (path: string) => Promise<unknown>;
     __controllerE2EDirectFirebaseWrite?: (path: string, value: unknown) => Promise<void>;
     __controllerE2ERunTransactionProbe?: (path: string) => Promise<{
@@ -406,9 +435,154 @@ export async function readControllerStartupSnapshot(page: Page) {
       const { churchId: _churchId, ...safeStatus } = status;
       return safeStatus;
     })(),
+    contentDatabaseAvailable: !!window.__controllerE2E?.database(),
+    controllerData: window.__controllerE2EControllerDataState?.() ?? null,
     startup: window.__controllerE2EStartupSnapshot?.() ?? null,
     networkDiagnostics: window.__controllerE2ESafeDiagnostics?.slice(-20) ?? [],
+  })).then((snapshot) => ({
+    ...snapshot,
+    controllerData: snapshot.controllerData
+      ? {
+          ...snapshot.controllerData,
+          connectionStatus: {
+            ...snapshot.controllerData.connectionStatus,
+            ...(snapshot.controllerData.connectionStatus.message
+              ? { message: redactControllerDiagnosticText(snapshot.controllerData.connectionStatus.message) }
+              : {}),
+          },
+        }
+      : null,
   }));
+}
+
+type ControllerStartupSnapshot = Awaited<ReturnType<typeof readControllerStartupSnapshot>>;
+
+export function formatControllerStartupDiagnostics(
+  reason: string,
+  snapshot: ControllerStartupSnapshot | null,
+  localContentDatabase: unknown,
+  error?: unknown,
+) {
+  return [
+    reason,
+    `Safe startup state: ${JSON.stringify(snapshot)}`,
+    `Local content database state: ${JSON.stringify(localContentDatabase)}`,
+    `Sanitized browser diagnostics: ${JSON.stringify(snapshot?.networkDiagnostics ?? [])}`,
+    ...(error ? [`Startup wait failure: ${redactControllerDiagnosticText(String(error))}`] : []),
+  ].join("\n");
+}
+
+export type ControllerInitializationOutcome = "pending" | "ready" | "failed";
+
+export function isControllerDatabaseReady(
+  snapshot: ControllerStartupSnapshot | null | undefined,
+): boolean {
+  const firebase = snapshot?.firebase;
+  const startup = snapshot?.startup;
+  return Boolean(
+    snapshot?.contentDatabaseAvailable &&
+    snapshot.isolation?.networkGuardInstalled &&
+    snapshot.isolation?.longPollingConfigured &&
+    snapshot.isolation?.writeCapabilitiesDisabled &&
+    firebase?.databaseAvailable &&
+    firebase.sharedDataAuthenticated &&
+    firebase.connected &&
+    firebase.demoTenant &&
+    firebase.databaseUrlSupported &&
+    firebase.networkGuardInstalled &&
+    firebase.longPollingConfigured &&
+    firebase.writeCapabilitiesDisabled &&
+    startup?.controllerProfiles?.loaded &&
+    startup.controllerProfiles.syncedToCurrentChurch &&
+    startup.displayOutputs?.loaded &&
+    startup.displayOutputs.syncedToCurrentChurch &&
+    startup.itemLibrary?.remoteReplicationComplete &&
+    startup.itemLibrary.initialized &&
+    !startup.itemLibrary.errorPresent &&
+    startup.outline?.listsInitialized &&
+    startup.outline.activeListInitialized
+  );
+}
+
+export function getControllerInitializationOutcome(
+  snapshot: ControllerStartupSnapshot | null | undefined,
+  overlayHidden: boolean,
+): ControllerInitializationOutcome {
+  if (
+    snapshot?.controllerData?.connectionStatus.status === "failed" ||
+    snapshot?.startup?.itemLibrary?.errorPresent === true
+  ) {
+    return "failed";
+  }
+
+  const contentSyncReady = snapshot?.controllerData?.dbProgress === 100 &&
+    snapshot.controllerData.connectionStatus.status === "connected";
+  return overlayHidden && contentSyncReady && isControllerDatabaseReady(snapshot)
+    ? "ready"
+    : "pending";
+}
+
+export async function controllerStartupDiagnostics(page: Page, reason: string, error?: unknown) {
+  const snapshot = await readControllerStartupSnapshot(page).catch(() => null);
+  const pouch = await page.evaluate(async () => {
+    const database = window.__controllerE2E?.database();
+    if (!database) return { available: false };
+    try {
+      const [info, rows] = await Promise.all([
+        database.info(),
+        database.allDocs({ include_docs: false, update_seq: true, limit: 0 }),
+      ]);
+      return {
+        available: true,
+        adapter: typeof database.type === "function" ? database.type() : "unknown",
+        documentCount: typeof info.doc_count === "number" ? info.doc_count : null,
+        sequenceAvailable: rows.update_seq !== undefined,
+      };
+    } catch (diagnosticError) {
+      return {
+        available: true,
+        diagnosticError: diagnosticError instanceof Error ? diagnosticError.name : "unknown",
+      };
+    }
+  }).catch(() => ({ available: false, diagnosticError: "browser_unavailable" }));
+  return formatControllerStartupDiagnostics(reason, snapshot, pouch, error);
+}
+
+/** Wait for the smoke/controller app to finish its real startup path. */
+export async function waitForControllerStartup(page: Page) {
+  try {
+    await expect.poll(async () => {
+      const [snapshot, overlayHidden] = await Promise.all([
+        readControllerStartupSnapshot(page).catch(() => null),
+        page.getByTestId("controller-loading-overlay").isHidden().catch(() => false),
+      ]);
+      return getControllerInitializationOutcome(snapshot, overlayHidden);
+    }, {
+      timeout: 90_000,
+      message: "Controller startup, content replication, and outline hydration must complete under the authenticated smoke runtime",
+    }).not.toBe("pending");
+
+    const [snapshot, overlayHidden] = await Promise.all([
+      readControllerStartupSnapshot(page).catch(() => null),
+      page.getByTestId("controller-loading-overlay").isHidden().catch(() => false),
+    ]);
+    const outcome = getControllerInitializationOutcome(snapshot, overlayHidden);
+    if (outcome === "failed") {
+      throw new Error("The controller reported a failed content replication or library initialization state.");
+    }
+    if (outcome !== "ready") {
+      throw new Error("Controller startup readiness changed while the smoke test was collecting its final state.");
+    }
+    await expect(page.locator("#controller-main")).toBeVisible();
+    await waitForControllerDatabase(page);
+    await expect(page.getByTestId("controller-loading-overlay")).toBeHidden();
+  } catch (error) {
+    throw new Error(await controllerStartupDiagnostics(
+      page,
+      "Controller startup did not complete; the smoke workflow cannot treat primary navigation as ready.",
+      error,
+    ));
+  }
 }
 
 export async function waitForControllerConfiguration(page: Page) {
@@ -448,11 +622,10 @@ export async function waitForControllerDatabase(page: Page) {
   )), { timeout: 120_000, message: "Controller E2E Firebase isolation must be installed before database use" }).toBe(true);
   await waitForControllerConfiguration(page);
   try {
-    await expect.poll(() => page.evaluate(() => {
-    const state = window.__controllerE2EStore?.getState();
-    return Boolean(window.__controllerE2E?.initialReplicationComplete?.() && state?.allDocs?.isInitialized && !state.allDocs.error &&
-      state.undoable.present.itemLists.isInitialized && state.undoable.present.itemList.isInitialized);
-    }), { timeout: 90_000, message: "Controller library, remote replication, and outline hydration must complete" }).toBe(true);
+    await expect.poll(async () => {
+      const snapshot = await readControllerStartupSnapshot(page).catch(() => null);
+      return isControllerDatabaseReady(snapshot);
+    }, { timeout: 90_000, message: "Controller library, remote replication, and outline hydration must complete" }).toBe(true);
   } catch (error) {
     const startup = await readControllerStartupSnapshot(page).catch(() => null);
     const pouch = await page.evaluate(async () => {

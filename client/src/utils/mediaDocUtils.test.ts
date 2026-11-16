@@ -192,6 +192,72 @@ describe("v2 media repository", () => {
     expect(db.remove).toHaveBeenCalledWith(expect.objectContaining({ _id: mediaItemDocId("delete") }));
   });
 
+  it("rechecks persisted row ownership after a Media item conflict", async () => {
+    const rowB: MediaType = {
+      ...media("local_input_camera", "Camera"),
+      source: "local",
+      background: "local-video-input://camera",
+      thumbnail: "",
+      localVideoInput: { kind: "local-video-input", sourceId: "camera" },
+      localImage: {
+        id: "thumbnail-b",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "thumbnail-b.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-and-cloud" as const,
+      },
+    } as MediaType;
+    const rowC: MediaType = {
+      ...rowB,
+      thumbnail: "",
+      localImage: {
+        id: "thumbnail-c",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "thumbnail-c.webp",
+        contentType: "image/webp",
+        storagePolicy: "local-only",
+      },
+    };
+    const { db, docs } = makePersistedDb([], [rowB]);
+    const put = db.put as jest.Mock;
+    const ownerChecks: Array<string | undefined> = [];
+    put.mockImplementationOnce(async () => {
+      docs.set(mediaItemDocId(rowC.id), {
+        ...rowC,
+        _id: mediaItemDocId(rowC.id),
+        docType: "mediaItem",
+        _rev: "2",
+      });
+      throw Object.assign(new Error("conflict"), { status: 409, name: "conflict" });
+    });
+
+    await persistMediaLibraryChanges(
+      db,
+      { list: [rowB], folders: [] },
+      {
+        list: [{ ...rowB, thumbnail: "https://res.cloudinary.com/example/b.webp" }],
+        folders: [],
+      },
+      () => true,
+      new Set(),
+      new Set(),
+      (_id, current) => {
+        ownerChecks.push(current?.localImage?.id);
+        return current?.localVideoInput?.sourceId === "camera" &&
+          current.localImage?.id === "thumbnail-b";
+      },
+    );
+
+    expect(ownerChecks).toEqual(["thumbnail-b", "thumbnail-c"]);
+    expect(put).toHaveBeenCalledTimes(1);
+    expect(docs.get(mediaItemDocId(rowC.id))).toEqual(expect.objectContaining({
+      thumbnail: "",
+      localImage: expect.objectContaining({ id: "thumbnail-c" }),
+    }));
+  });
+
   it("merges thumbnail fields into the latest persisted Media metadata", async () => {
     const beforeRow: MediaType = {
       ...media("camera", "Main camera"),

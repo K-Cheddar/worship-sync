@@ -9,12 +9,25 @@ import {
   isMailSlurpRequest,
   readSavedE2EDeviceIdentity,
 } from "./authRequestPolicy";
-import { allowedE2EAuthOrigins } from "./authOrigins";
+import {
+  allowedE2EAuthOrigins,
+  firebaseAuthRequestMatchers,
+  isTrustedFirebaseAuthOrigin,
+  shouldIgnoreE2EHTTPSErrors,
+} from "./authOrigins";
 import { isAllowedSmokeChurchRead } from "./smokeRequestPolicy";
 
 const baseURL = "https://local.worshipsync.net:3000/";
 const trustedOrigins = allowedE2EAuthOrigins(baseURL);
 const deviceIdentity = "saved-test-device";
+
+test("HTTPS certificate exceptions are limited to approved local development hosts", () => {
+  assert.equal(shouldIgnoreE2EHTTPSErrors("https://local.worshipsync.net:3000/"), true);
+  assert.equal(shouldIgnoreE2EHTTPSErrors("https://localhost:3000/"), true);
+  assert.equal(shouldIgnoreE2EHTTPSErrors("https://example.com/"), false);
+  assert.equal(shouldIgnoreE2EHTTPSErrors("not a URL"), false);
+});
+
 const validRequest = {
   method: "POST",
   url: "https://local.worshipsync.net:5000/api/auth/session",
@@ -31,7 +44,12 @@ const validRequest = {
 
 const startRecoveryFixture = async () => {
   const state = {
-    mode: "authenticated" as "authenticated" | "email-verification",
+    mode: "authenticated" as
+      | "authenticated"
+      | "wrong-account"
+      | "wrong-tenant"
+      | "incomplete-session"
+      | "email-verification",
     sessionRequests: 0,
     emailRequests: 0,
     requestSummaries: [] as Array<{ requestNewCode: unknown; hasIdToken: boolean; deviceMatches: boolean }>,
@@ -54,21 +72,28 @@ const startRecoveryFixture = async () => {
         deviceMatches: body.deviceId === deviceIdentity,
       });
       if (state.mode === "email-verification") {
-        response.writeHead(200, { "content-type": "application/json" });
+        response.writeHead(200, {
+          "content-type": "application/json",
+          "set-cookie": "worshipsync_sid=unverified-session; Path=/; HttpOnly; SameSite=Lax",
+        });
         response.end(JSON.stringify({ success: true, requiresEmailCode: true }));
         return;
       }
       response.writeHead(200, {
         "content-type": "application/json",
-        "set-cookie": "worshipsync_sid=fixture-valid-session; Path=/; HttpOnly; SameSite=Lax",
+        "set-cookie": `worshipsync_sid=fixture-${state.mode}-session; Path=/; HttpOnly; SameSite=Lax`,
       });
       response.end(JSON.stringify({
         success: true,
         bootstrap: {
           authenticated: true,
-          sessionKind: "human",
-          churchId: "demo",
-          user: { email: "e2e@example.invalid" },
+          sessionKind: state.mode === "incomplete-session" ? "workstation" : "human",
+          churchId: state.mode === "wrong-tenant" ? "other-church" : "demo",
+          user: {
+            email: state.mode === "wrong-account"
+              ? "someone-else@example.invalid"
+              : "e2e@example.invalid",
+          },
           device: { deviceId: "trusted-server-device" },
         },
       }));
@@ -94,47 +119,38 @@ const startRecoveryFixture = async () => {
   };
 };
 
-const runThroughPageAndContextGuards = async (
+const runThroughContextGuard = async (
   context: import("@playwright/test").BrowserContext,
   baseURL: string,
 ) => {
   const page = await context.newPage();
-  const trusted = new Set([new URL(baseURL).origin]);
-  await page.route(/\/api\/auth(?:\/|$)/, async (route) => {
-    let body: unknown;
-    try { body = route.request().postDataJSON(); } catch { /* fail closed */ }
-    if (authorizeSilentSessionRequest({
-      method: route.request().method(),
-      url: route.request().url(),
-      body,
-      trustedOrigins: trusted,
-      expectedDeviceIdentity: deviceIdentity,
-    }).allowed) {
-      await route.fallback();
-      return;
-    }
-    await route.abort("blockedbyclient");
-  });
   await page.goto(baseURL);
-  const result = await page.evaluate(async ({ idToken, deviceId }) => {
-    const response = await fetch("/api/auth/session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ idToken, deviceId, requestNewCode: false }),
-    });
-    const payload = await response.json();
-    const authenticated = payload.bootstrap?.authenticated === true;
-    document.body.innerHTML = authenticated
-      ? "<h1>Authenticated Home</h1>"
-      : "<h1>Sign in required</h1>";
-    return {
-      status: response.status,
-      outcome: response.headers.get("x-e2e-auth-recovery-outcome"),
-      authenticated,
-    };
-  }, { idToken: "fixture-id-token", deviceId: deviceIdentity });
+  const result = await requestRecovery(page);
   return { page, result };
 };
+
+const requestRecovery = (page: import("@playwright/test").Page) =>
+  page.evaluate(async ({ idToken, deviceId }) => {
+    try {
+      const response = await fetch("/api/auth/session", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ idToken, deviceId, requestNewCode: false }),
+      });
+      const payload = await response.json();
+      const authenticated = payload.bootstrap?.authenticated === true;
+      document.body.innerHTML = authenticated
+        ? "<h1>Authenticated Home</h1>"
+        : "<h1>Sign in required</h1>";
+      return {
+        status: response.status,
+        outcome: response.headers.get("x-e2e-auth-recovery-outcome"),
+        authenticated,
+      };
+    } catch {
+      return { blocked: true };
+    }
+  }, { idToken: "fixture-id-token", deviceId: deviceIdentity });
 
 test("permits only a trusted-origin no-email session request for the saved device", () => {
   assert.deepEqual(authorizeSilentSessionRequest(validRequest), { allowed: true });
@@ -222,6 +238,20 @@ test("MailSlurp stays outside the allowed request set", () => {
   assert.equal(isMailSlurpRequest("https://mailslurp.com.attacker.invalid/"), false);
 });
 
+test("Firebase auth allows only HTTPS default-port origins and intercepts every exact-host port", () => {
+  for (const provider of ["identitytoolkit", "securetoken"] as const) {
+    const host = provider === "identitytoolkit"
+      ? "identitytoolkit.googleapis.com"
+      : "securetoken.googleapis.com";
+    assert.equal(isTrustedFirebaseAuthOrigin(`https://${host}/v1/test`, provider), true);
+    assert.equal(isTrustedFirebaseAuthOrigin(`https://${host}:443/v1/test`, provider), true);
+    assert.equal(isTrustedFirebaseAuthOrigin(`http://${host}/v1/test`, provider), false);
+    assert.equal(isTrustedFirebaseAuthOrigin(`https://${host}:444/v1/test`, provider), false);
+    assert.equal(firebaseAuthRequestMatchers[provider].test(`https://${host}:444/v1/test`), true);
+    assert.equal(firebaseAuthRequestMatchers[provider].test(`https://${host}.attacker.invalid/v1/test`), false);
+  }
+});
+
 test("smoke permits only read-only requests to the demo church API", () => {
   const apiURL = "https://local.worshipsync.net:5000/api/churches/demo/teams";
   assert.equal(isAllowedSmokeChurchRead("GET", apiURL, baseURL, "demo"), true);
@@ -238,7 +268,7 @@ test("smoke permits only read-only requests to the demo church API", () => {
   );
 });
 
-test("page and context guards recover to Home without an OTP and stop on email verification", async (t) => {
+test("context guard shares one recovery attempt across pages and rejects unverified identities without cookies", async (t) => {
   const fixture = await startRecoveryFixture();
   t.after(fixture.close);
   const browser = await chromium.launch({ headless: true });
@@ -254,63 +284,72 @@ test("page and context guards recover to Home without an OTP and stop on email v
     },
   });
 
-  const successContext = await makeContext();
-  const successGuard = await installSavedSessionAuthRequestGuard(
-    successContext,
+  const context = await makeContext();
+  const guard = await installSavedSessionAuthRequestGuard(
+    context,
     fixture.baseURL,
     { email: "e2e@example.invalid", churchId: "demo" },
   );
-  const success = await runThroughPageAndContextGuards(successContext, fixture.baseURL);
-  assert.deepEqual(success.result, {
-    status: 200,
-    outcome: "authenticated",
-    authenticated: true,
-  });
-  assert.equal(await success.page.locator("h1").textContent(), "Authenticated Home");
-  assert.ok((await successContext.cookies(fixture.baseURL)).some(
-    (cookie) => cookie.name === "worshipsync_sid",
-  ));
-  const repeatedRecoveryWasBlocked = await success.page.evaluate(async () => {
+  try {
+    const firstPage = await runThroughContextGuard(context, fixture.baseURL);
+    assert.deepEqual(firstPage.result, {
+      status: 200,
+      outcome: "authenticated",
+      authenticated: true,
+    });
+    assert.equal(await firstPage.page.locator("h1").textContent(), "Authenticated Home");
+    const transferredCookie = (await context.cookies(fixture.baseURL)).find(
+      (cookie) => cookie.name === "worshipsync_sid",
+    );
+    assert.ok(transferredCookie);
+    assert.equal(transferredCookie.path, "/");
+    assert.equal(transferredCookie.domain, new URL(fixture.baseURL).hostname);
+
+    const secondPage = await context.newPage();
+    await secondPage.goto(fixture.baseURL);
+    assert.deepEqual(await requestRecovery(secondPage), { blocked: true });
+    assert.equal(guard.blockedRequests(), 1);
+  } finally {
+    await guard.dispose();
+    await context.close();
+  }
+
+  for (const mode of ["email-verification", "wrong-account", "wrong-tenant", "incomplete-session"] as const) {
+    fixture.state.mode = mode;
+    const rejectedContext = await makeContext();
+    const rejectedGuard = await installSavedSessionAuthRequestGuard(
+      rejectedContext,
+      fixture.baseURL,
+      { email: "e2e@example.invalid", churchId: "demo" },
+    );
     try {
-      await fetch("/api/auth/session", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          idToken: "fixture-id-token",
-          deviceId: "saved-test-device",
-          requestNewCode: false,
-        }),
-      });
-      return false;
-    } catch {
-      return true;
+      const firstPage = await runThroughContextGuard(rejectedContext, fixture.baseURL);
+      assert.equal(firstPage.result.authenticated, false, mode);
+      assert.equal(firstPage.result.outcome, mode === "email-verification"
+        ? "email_verification_required"
+        : mode === "wrong-account"
+          ? "wrong_account"
+          : mode === "wrong-tenant"
+            ? "wrong_tenant"
+            : "invalid_authenticated_session");
+      assert.equal((await rejectedContext.cookies(fixture.baseURL)).some(
+        (cookie) => cookie.name === "worshipsync_sid",
+      ), false, `${mode} must not install its response cookie`);
+
+      const secondPage = await rejectedContext.newPage();
+      await secondPage.goto(fixture.baseURL);
+      assert.deepEqual(await requestRecovery(secondPage), { blocked: true }, mode);
+      assert.equal(rejectedGuard.blockedRequests(), 1, mode);
+    } finally {
+      await rejectedGuard.dispose();
+      await rejectedContext.close();
     }
-  });
-  assert.equal(repeatedRecoveryWasBlocked, true);
-  assert.equal(successGuard.blockedRequests(), 1);
-  await successContext.close();
+  }
 
-  fixture.state.mode = "email-verification";
-  const verificationContext = await makeContext();
-  const verificationGuard = await installSavedSessionAuthRequestGuard(
-    verificationContext,
-    fixture.baseURL,
-    { email: "e2e@example.invalid", churchId: "demo" },
-  );
-  const verification = await runThroughPageAndContextGuards(verificationContext, fixture.baseURL);
-  assert.equal(verification.result.status, 409);
-  assert.equal(verification.result.outcome, "email_verification_required");
-  assert.equal(verification.result.authenticated, false);
-  assert.equal(await verificationContext.cookies(fixture.baseURL).then((cookies) => cookies.some(
-    (cookie) => cookie.name === "worshipsync_sid",
-  )), false);
-  assert.equal(verificationGuard.blockedRequests(), 0);
-  await verificationContext.close();
-
-  assert.equal(fixture.state.sessionRequests, 2);
+  assert.equal(fixture.state.sessionRequests, 5);
   assert.equal(fixture.state.emailRequests, 0);
-  assert.deepEqual(fixture.state.requestSummaries, [
-    { requestNewCode: false, hasIdToken: true, deviceMatches: true },
-    { requestNewCode: false, hasIdToken: true, deviceMatches: true },
-  ]);
+  assert.equal(fixture.state.requestSummaries.length, 5);
+  assert.ok(fixture.state.requestSummaries.every((summary) =>
+    summary.requestNewCode === false && summary.hasIdToken && summary.deviceMatches,
+  ));
 });

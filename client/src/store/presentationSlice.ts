@@ -75,18 +75,6 @@ const copyStreamSlide = (slide: ItemSlideType | null): ItemSlideType | null =>
     ? {
         ...slide,
         boxes: slide.boxes?.map(copySlideBox) ?? [],
-        ...(slide.monitorCurrentBandBoxes
-          ? {
-              monitorCurrentBandBoxes:
-                slide.monitorCurrentBandBoxes.map(copySlideBox),
-            }
-          : {}),
-        ...(slide.monitorNextBandBoxes
-          ? {
-              monitorNextBandBoxes:
-                slide.monitorNextBandBoxes.map(copySlideBox),
-            }
-          : {}),
       }
     : null;
 
@@ -335,11 +323,7 @@ const updateLocalImageMediaInPresentation = (
   let changed = false;
   for (const slide of [info.slide, info.nextSlide]) {
     if (!slide) continue;
-    for (const boxes of [
-      slide.boxes,
-      slide.monitorCurrentBandBoxes,
-      slide.monitorNextBandBoxes,
-    ]) {
+    for (const boxes of [slide.boxes]) {
       for (const box of boxes ?? []) {
         const media = box.mediaInfo;
         if (media?.localImage?.id !== assetId) continue;
@@ -357,11 +341,7 @@ const slideHasDifferentLocalImageRevision = (
   nextRevision: string,
 ) => {
   if (!slide) return false;
-  for (const boxes of [
-    slide.boxes,
-    slide.monitorCurrentBandBoxes,
-    slide.monitorNextBandBoxes,
-  ]) {
+  for (const boxes of [slide.boxes]) {
     for (const box of boxes ?? []) {
       const reference = box.mediaInfo?.localImage;
       if (

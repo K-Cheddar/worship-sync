@@ -98,6 +98,7 @@ const managerElement = (
   planTemplates: ServicePlanTemplate[] = [],
   planningCenterConnected = false,
   planningCenterAccountId = "org-a",
+  planningCenterConnectionRevision = "rev-1",
 ) => (
     <MemoryRouter>
       <ToastProvider>
@@ -111,6 +112,7 @@ const managerElement = (
                   connected: true,
                   accountLabel: "Example Church",
                   accountId: planningCenterAccountId,
+                  connectionRevision: planningCenterConnectionRevision,
                 },
               },
             } : {}),
@@ -183,6 +185,15 @@ describe("ServiceManager combined services", () => {
     await waitFor(() => expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledTimes(2));
     expect(mockListPlanningCenterServiceTypes).toHaveBeenNthCalledWith(1, "church-1");
     expect(mockListPlanningCenterServiceTypes).toHaveBeenNthCalledWith(2, "church-1");
+  });
+
+  it("reloads Planning Center service types when the same account reconnects", async () => {
+    mockListPlanningCenterServiceTypes.mockClear();
+    const view = render(managerElement([sundayMorning], [], [], [], true, "org-a", "rev-1"));
+    await waitFor(() => expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledTimes(1));
+
+    view.rerender(managerElement([sundayMorning], [], [], [], true, "org-a", "rev-2"));
+    await waitFor(() => expect(mockListPlanningCenterServiceTypes).toHaveBeenCalledTimes(2));
   });
 
   it("confirms before discarding unsaved service changes", async () => {

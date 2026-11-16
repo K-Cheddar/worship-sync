@@ -2,6 +2,7 @@ import generateRandomId from "./generateRandomId";
 import { cancelCloudinaryMediaUpload } from "../api/providerStorage";
 import {
   enqueueLocalImageUploadJobAtomically,
+  finishStagedLocalVideoThumbnailReferenceCheck,
   finishLocalImageUploadCancellationAtomically,
   getLocalImageUploadJob,
   requestLocalImageUploadCancellationAtomically,
@@ -12,6 +13,7 @@ import {
 import {
   cancelLocalImageUpload,
   consumeLocalImageUploadCancellation,
+  confirmStagedLocalVideoThumbnailReference,
   enqueueLocalImageUpload,
   registerLocalImageUploadRequest,
   retryLocalImageUpload,
@@ -21,6 +23,7 @@ import {
 jest.mock("./generateRandomId", () => jest.fn(() => "media-1"));
 jest.mock("./localImageAssets", () => ({
   enqueueLocalImageUploadJobAtomically: jest.fn(),
+  finishStagedLocalVideoThumbnailReferenceCheck: jest.fn(),
   retryLocalImageUploadJobAtomically: jest.fn(),
   finishLocalImageUploadCancellationAtomically: jest.fn(),
   getLocalImageUploadJob: jest.fn(),
@@ -33,6 +36,7 @@ jest.mock("../api/providerStorage", () => ({
 }));
 
 const mockEnqueueJob = jest.mocked(enqueueLocalImageUploadJobAtomically);
+const mockFinishStagedReference = jest.mocked(finishStagedLocalVideoThumbnailReferenceCheck);
 const mockRetryJob = jest.mocked(retryLocalImageUploadJobAtomically);
 const mockFinishCancellation = jest.mocked(finishLocalImageUploadCancellationAtomically);
 const mockGetJob = jest.mocked(getLocalImageUploadJob);
@@ -59,6 +63,7 @@ describe("localImageUploadQueue", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockEnqueueJob.mockImplementation(async (job) => job);
+    mockFinishStagedReference.mockResolvedValue(undefined);
     mockFinishCancellation.mockResolvedValue(undefined);
     mockRequestCancellation.mockResolvedValue(undefined);
     mockSubscribe.mockReturnValue(() => undefined);
@@ -103,6 +108,34 @@ describe("localImageUploadQueue", () => {
       }),
     );
     expect(mockRetryJob).toHaveBeenCalledWith("asset-1", expect.any(Number));
+  });
+
+  it("reactivates a staged job if recovery abandoned it before the Media write finished", async () => {
+    mockFinishStagedReference.mockResolvedValue({
+      ...existingJob(),
+      thumbnailReferenceState: "abandoned",
+      status: "complete",
+    });
+    mockRetryJob.mockResolvedValue({
+      ...existingJob(),
+      thumbnailReferenceState: "abandoned",
+      status: "pending",
+      nextAttemptAt: 0,
+    });
+
+    const result = await confirmStagedLocalVideoThumbnailReference("asset-1", "tab-a");
+
+    expect(mockFinishStagedReference).toHaveBeenCalledWith({
+      assetId: "asset-1",
+      ownerId: "tab-a",
+      result: "confirmed",
+      now: expect.any(Number),
+    });
+    expect(mockRetryJob).toHaveBeenCalledWith("asset-1", expect.any(Number));
+    expect(result).toEqual(expect.objectContaining({
+      status: "pending",
+      thumbnailReferenceState: "abandoned",
+    }));
   });
 
   it("aborts an active request and records durable cancellation", async () => {

@@ -253,6 +253,79 @@ describe("sweepMediaReferencesBeforeDelete", () => {
 });
 
 describe("replaceMediaReferencesForReplacement", () => {
+  it("persists song replacement without root slide or monitor clone fields", async () => {
+    const oldMedia = {
+      id: "old-song-image",
+      name: "Old",
+      type: "image",
+      background: "https://cdn.example/old-song.png",
+    } as MediaType;
+    const newMedia = {
+      ...oldMedia,
+      id: "new-song-image",
+      background: "https://cdn.example/new-song.png",
+    } as MediaType;
+    const song: DBItem = {
+      _id: "song-replacement",
+      _rev: "1-song",
+      name: "Song",
+      type: "song",
+      slides: [{
+        id: "legacy-root",
+        type: "Verse",
+        name: "Verse 1",
+        boxes: [],
+        monitorCurrentBandBoxes: [{ id: "root-clone" }],
+      }],
+      monitorLayout: { currentFontSizePx: 18, nextFontSizePx: 17 },
+      arrangements: [{
+        id: "arr-1",
+        name: "Master",
+        formattedLyrics: [],
+        songOrder: [],
+        monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 29 },
+        slides: [{
+          id: "song-slide",
+          type: "Verse",
+          name: "Verse 1",
+          boxes: [{ id: "background", background: oldMedia.background, mediaInfo: oldMedia }],
+          monitorCurrentBandBoxes: [{ id: "arr-clone" }],
+          monitorNextBandBoxes: [{ id: "arr-next-clone" }],
+        }],
+      }],
+    } as unknown as DBItem;
+    const preferences = {
+      _id: PREFERENCES_POUCH_ID,
+      _rev: "1-prefs",
+      preferences: {
+        defaultSongBackground: { background: "" },
+        defaultTimerBackground: { background: "" },
+        defaultBibleBackground: { background: "" },
+        defaultFreeFormBackground: { background: "" },
+      },
+    };
+    const docs = new Map<string, any>([[PREFERENCES_POUCH_ID, preferences], [song._id, song]]);
+    const db = {
+      get: jest.fn(async (id: string) => docs.get(id)),
+      put: jest.fn(async (doc: any) => {
+        docs.set(doc._id, doc);
+        return { ok: true, id: doc._id, rev: "2-saved" };
+      }),
+      allDocs: jest.fn(async () => ({ rows: [...docs.values()].map((doc) => ({ id: doc._id, doc })) })),
+    } as unknown as PouchDB.Database;
+
+    const result = await replaceMediaReferencesForReplacement(db, { oldMedia, newMedia });
+
+    expect(result.ok).toBe(true);
+    const saved = docs.get(song._id) as DBItem;
+    expect(saved).not.toHaveProperty("slides");
+    expect(saved).not.toHaveProperty("monitorLayout");
+    expect(saved.arrangements[0].monitorLayout).toEqual({ currentFontSizePx: 30, nextFontSizePx: 29 });
+    expect(saved.arrangements[0].slides[0].boxes[0].mediaInfo).toEqual(newMedia);
+    expect(saved.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(saved.arrangements[0].slides[0]).not.toHaveProperty("monitorNextBandBoxes");
+  });
+
   it("migrates saved item, arrangement, preference, quick-link, and overlay references", async () => {
     const oldMedia = {
       id: "canva-image-1",
@@ -468,6 +541,78 @@ describe("replaceMediaReferencesForReplacement", () => {
     expect(docs.get(PREFERENCES_POUCH_ID).preferences.defaultSongBackground.background).toBe(
       oldMedia.background,
     );
+  });
+
+  it("keeps song rollback documents in the canonical persisted shape", async () => {
+    const oldMedia = {
+      id: "old-song-rollback",
+      background: "https://cdn.example/old-song-rollback.png",
+    } as MediaType;
+    const newMedia = {
+      ...oldMedia,
+      background: "https://cdn.example/new-song-rollback.png",
+    } as MediaType;
+    const song = {
+      _id: "song-rollback",
+      _rev: "1-song",
+      name: "Legacy Song",
+      type: "song",
+      selectedArrangement: 0,
+      slides: [{
+        id: "legacy-slide",
+        type: "Verse",
+        name: "Verse 1",
+        boxes: [{ id: "background", background: oldMedia.background, mediaInfo: oldMedia }],
+        monitorCurrentBandBoxes: [{ id: "legacy-monitor" }],
+      }],
+      monitorLayout: { currentFontSizePx: 18, nextFontSizePx: 17 },
+      arrangements: [{ id: "arr-1", name: "Master", formattedLyrics: [], songOrder: [], slides: [] }],
+    };
+    const laterItem = {
+      _id: "free-after-song",
+      type: "free",
+      slides: [{ boxes: [{ background: oldMedia.background, mediaInfo: oldMedia }] }],
+      arrangements: [],
+    };
+    const docs = new Map<string, any>([[song._id, song], [laterItem._id, laterItem]]);
+    let putCount = 0;
+    const put = jest.fn(async (doc: any) => {
+      putCount += 1;
+      if (putCount === 2) throw new Error("later reference failed");
+      docs.set(doc._id, doc);
+      return { rev: "2-saved" };
+    });
+    const db = {
+      get: jest.fn(async (id: string) => {
+        if (id === PREFERENCES_POUCH_ID) {
+          return {
+            _id: PREFERENCES_POUCH_ID,
+            _rev: "1-prefs",
+            preferences: {
+              defaultSongBackground: { background: "" },
+              defaultTimerBackground: { background: "" },
+              defaultBibleBackground: { background: "" },
+              defaultFreeFormBackground: { background: "" },
+            },
+          };
+        }
+        throw Object.assign(new Error("not found"), { status: 404 });
+      }),
+      put,
+      allDocs: jest.fn(async () => ({
+        rows: [...docs.values()].map((doc) => ({ id: doc._id, doc })),
+      })),
+    } as unknown as PouchDB.Database;
+
+    const result = await replaceMediaReferencesForReplacement(db, { oldMedia, newMedia });
+
+    expect(result.ok).toBe(false);
+    expect(result.rollbackStatus).toBe("complete");
+    const rollbackSong = put.mock.calls[2][0] as DBItem;
+    expect(rollbackSong).not.toHaveProperty("slides");
+    expect(rollbackSong).not.toHaveProperty("monitorLayout");
+    expect(rollbackSong.arrangements[0].slides[0].boxes[0].background).toBe(oldMedia.background);
+    expect(rollbackSong.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
   });
 
   it("reports uncertain rollback when restoring a written document fails", async () => {

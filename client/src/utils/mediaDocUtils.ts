@@ -132,7 +132,7 @@ export async function updateMediaItem(
 async function updateMediaItemWithDocument(
   db: PouchDB.Database,
   id: string,
-  patch: Partial<MediaType> | ((current: MediaItemDoc | undefined) => Partial<MediaType>),
+  patch: Partial<MediaType> | ((current: MediaItemDoc | undefined) => Partial<MediaType> | Promise<Partial<MediaType>>),
   canCommit: () => boolean,
   allowCreate: boolean,
 ): Promise<{ response?: PouchDB.Core.Response; doc?: MediaItemDoc } | undefined> {
@@ -148,7 +148,7 @@ async function updateMediaItemWithDocument(
     }
     if (!canCommit()) return undefined;
     if (!current && !allowCreate) return undefined;
-    const patchForCurrent = typeof patch === "function" ? patch(current) : patch;
+    const patchForCurrent = typeof patch === "function" ? await patch(current) : patch;
     const doc = { ...current, ...patchForCurrent, _id, id, docType: "mediaItem" } as MediaItemDoc;
     for (const [key, value] of Object.entries(patchForCurrent)) {
       if (value === undefined) delete (doc as unknown as Record<string, unknown>)[key];
@@ -490,6 +490,7 @@ export async function persistMediaStateChanges(
   canCommit: () => boolean = () => true,
   rowCommitGuards: {
     canCommitItem?: (id: string) => boolean;
+    canUpdateItem?: (id: string, current: MediaType | undefined) => boolean | Promise<boolean>;
     canCommitFolders?: () => boolean;
   } = {},
   folderParentReconciliation?: FolderParentReconciliation,
@@ -508,7 +509,11 @@ export async function persistMediaStateChanges(
       if (!canCommitItem()) continue;
       const keys = new Set([...Object.keys(previous || {}), ...Object.keys(item)] as (keyof MediaType)[]);
       let hasUnresolvedFieldConflict = false;
-      const patch = (currentDoc?: MediaItemDoc): Partial<MediaType> => {
+      const patch = async (currentDoc?: MediaItemDoc): Promise<Partial<MediaType>> => {
+        const currentItem = currentDoc as unknown as MediaType | undefined;
+        if (rowCommitGuards.canUpdateItem && !(await rowCommitGuards.canUpdateItem(id, currentItem))) {
+          return {};
+        }
         if (!previous) return currentDoc ? {} : item;
         const current = currentDoc as unknown as Partial<MediaType> | undefined;
         const changes: Partial<MediaType> = {};
@@ -584,6 +589,7 @@ export async function persistMediaLibrarySnapshot(
   folders: MediaFolder[],
   getLatestState?: () => { list: MediaType[]; folders: MediaFolder[] },
   canCommit: () => boolean = () => true,
+  canUpdateMediaItem?: (id: string, current: MediaType | undefined) => boolean | Promise<boolean>,
 ) {
   if (!canCommit()) return [];
   await requireMediaLibraryV2(db);
@@ -593,7 +599,13 @@ export async function persistMediaLibrarySnapshot(
   ]);
   if (!canCommit()) return [];
   const latest = getLatestState?.() ?? { list, folders };
-  return persistMediaStateChanges(db, { list: existing, folders: existingFolders }, latest, canCommit);
+  return persistMediaStateChanges(
+    db,
+    { list: existing, folders: existingFolders },
+    latest,
+    canCommit,
+    { canUpdateItem: canUpdateMediaItem },
+  );
 }
 
 /** Apply an explicit local delta to the latest v2 snapshot, preserving rows that arrived after the UI snapshot. */
@@ -604,6 +616,7 @@ export async function persistMediaLibraryChanges(
   canCommit: () => boolean = () => true,
   automaticMediaRehomeIds: ReadonlySet<string> = new Set(),
   automaticFolderRehomeIds: ReadonlySet<string> = new Set(),
+  canUpdateMediaItem?: (id: string, current: MediaType | undefined) => boolean | Promise<boolean>,
 ) {
   if (!canCommit()) return [];
   const latest = await loadMediaLibrary(db);
@@ -789,7 +802,7 @@ export async function persistMediaLibraryChanges(
     latest,
     merged,
     canCommit,
-    {},
+    { canUpdateItem: canUpdateMediaItem },
     folderParentReconciliation,
     validateFolderDeletionMembership,
   );

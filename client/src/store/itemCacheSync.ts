@@ -1,6 +1,7 @@
 import type { Dispatch } from "@reduxjs/toolkit";
 import type { DBItem, DBHeading } from "../types";
-import { applyItemDocumentChange, hydrateItemCache, isItemDocument, resetItemCache, setItemCacheError } from "./allDocsSlice";
+import { applyItemDocumentChange, hydrateItemCache, isItemDocument, resetItemCache, setItemCacheError, updateSongLibraryDiagnostics } from "./allDocsSlice";
+import { discoverSongLibrary } from "../utils/songLibraryDiscovery";
 export { isItemDocument } from "./allDocsSlice";
 
 /** One owner per database session. Cleanup invalidates every pending continuation. */
@@ -27,11 +28,15 @@ export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => 
       if (sequence === undefined) {
         const snapshot = await db.allDocs<DBItem | DBHeading>({ include_docs: true, update_seq: true });
         if (!active) return;
-        // PouchDB's IndexedDB adapter omits update_seq for a brand-new empty
-        // database. Starting at zero safely replays any writes made during
-        // loading or before .changes is installed.
+        // An empty IndexedDB database can omit the sequence; replay from zero.
         sequence = snapshot.update_seq ?? 0;
-        dispatch(hydrateItemCache(snapshot.rows.map((row): unknown => row.doc).filter(isItemDocument)));
+        const snapshotDocs = snapshot.rows.map((row): unknown => row.doc);
+        const songLibrary = discoverSongLibrary(snapshotDocs);
+        const otherItems = snapshotDocs.filter((doc): doc is DBItem | DBHeading =>
+          isItemDocument(doc) && (doc as DBItem).type !== "song",
+        );
+        dispatch(hydrateItemCache([...otherItems, ...songLibrary.songs]));
+        dispatch(updateSongLibraryDiagnostics(songLibrary.diagnostics));
       }
       if (!active) return;
       dispatch(setItemCacheError(null));
@@ -40,6 +45,7 @@ export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => 
       nextFeed.on("change", (change) => {
         if (!active || feed !== nextFeed) return;
         sequence = change.seq;
+        if ((change.doc as { docType?: string } | undefined)?.docType?.startsWith("song-v2-")) return;
         const doc = isItemDocument(change.doc) ? change.doc : undefined;
         if (!doc && !change.deleted) return;
         dispatch(applyItemDocumentChange({

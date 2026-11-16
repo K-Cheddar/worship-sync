@@ -9,7 +9,14 @@ export type ItemMutationOwner = ItemContentOwner & {
 const pendingByOwner = new Map<string, Map<symbol, () => void>>();
 const contentDatabasesByScope = new Map<string, PouchDB.Database>();
 let activeContentDatabaseOwner: ItemContentOwner | null = null;
-const contentDatabaseFlushHandlers = new Set<(scopeId: string) => Promise<void>>();
+const contentDatabaseActivationHandlers = new Set<(
+  owner: ItemContentOwner,
+  database: PouchDB.Database,
+) => void>();
+const contentDatabaseFlushHandlers = new Set<(
+  owner: ItemContentOwner,
+  database: PouchDB.Database,
+) => Promise<void>>();
 
 const flushPendingByKey = (key: string) => {
   let attempts = 0;
@@ -32,7 +39,17 @@ export const setActiveContentDatabase = (
   database?: PouchDB.Database,
 ) => {
   activeContentDatabaseOwner = owner;
-  if (owner && database) contentDatabasesByScope.set(owner.scopeId, database);
+  if (owner && database) {
+    contentDatabasesByScope.set(owner.scopeId, database);
+    contentDatabaseActivationHandlers.forEach(handler => handler(owner, database));
+  }
+};
+
+export const registerContentDatabaseActivationHandler = (
+  handler: (owner: ItemContentOwner, database: PouchDB.Database) => void,
+) => {
+  contentDatabaseActivationHandlers.add(handler);
+  return () => contentDatabaseActivationHandlers.delete(handler);
 };
 
 export const getActiveContentDatabaseOwner = () => activeContentDatabaseOwner;
@@ -138,15 +155,18 @@ export const flushPendingItemMutationsForContentDatabase = (
 };
 
 export const registerContentDatabaseFlushHandler = (
-  handler: (scopeId: string) => Promise<void>,
+  handler: (owner: ItemContentOwner, database: PouchDB.Database) => Promise<void>,
 ) => {
   contentDatabaseFlushHandlers.add(handler);
   return () => contentDatabaseFlushHandlers.delete(handler);
 };
 
-export const flushContentDatabaseBeforeTeardown = async (scopeId: string) => {
-  flushPendingItemMutationsForContentDatabase(scopeId);
+export const flushContentDatabaseBeforeTeardown = async (
+  owner: ItemContentOwner,
+  database: PouchDB.Database,
+) => {
+  flushPendingItemMutationsForContentDatabase(owner.scopeId);
   await Promise.all(
-    [...contentDatabaseFlushHandlers].map((handler) => handler(scopeId)),
+    [...contentDatabaseFlushHandlers].map((handler) => handler(owner, database)),
   );
 };

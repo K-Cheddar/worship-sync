@@ -594,6 +594,47 @@ Line two</td><td>Mics:
     expect(parsed.sections[0].rows[0].startTime).toBe("13:01");
   });
 
+  it("keeps a first row just before the service anchor on that service day", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table class="service-info-table-printout">
+        <tr class="datetime"><td>Date:</td><th class="left">May 2, 2026 - 7:00 PM</th></tr>
+      </table>
+      <table>
+        <tr class="main-row"><td>6:55</td><td>5m</td><td>Event</td><td>Pre-service</td><td>Team</td><td></td></tr>
+        <tr class="main-row"><td>7:00 PM</td><td></td><td>Event</td><td>Service begins</td><td>Team</td><td></td></tr>
+      </table>
+    `);
+    expect(parsed.sections[0].rows.map((row) => row.startTime)).toEqual([
+      "18:55",
+      "19:00",
+    ]);
+  });
+
+  it("does not treat a date or trailing text as a service start-time suffix", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table class="service-info-table-printout">
+        <tr class="datetime"><td>Date:</td><th class="left">May 2, 2026 - 6 PM 2026</th></tr>
+      </table>
+      <table><tr class="main-row"><td>6:55</td><td></td><td>Event</td><td>First</td><td>Team</td><td></td></tr></table>
+    `);
+    expect(parsed.sections[0].rows[0].startTime).toBe("06:55");
+  });
+
+  it("resolves an ambiguous sequence against later explicit evidence across ambiguous rows", () => {
+    const parsed = parseServicePlanningImportFromHtml(`
+      <table>
+        <tr class="main-row"><td>12:56</td><td>5m</td><td>Event</td><td>First</td><td>Team</td><td></td></tr>
+        <tr class="main-row"><td>1:01</td><td>5m</td><td>Event</td><td>Second</td><td>Team</td><td></td></tr>
+        <tr class="main-row"><td>1:06 PM</td><td></td><td>Event</td><td>Known</td><td>Team</td><td></td></tr>
+      </table>
+    `);
+    expect(parsed.sections[0].rows.map((row) => row.startTime)).toEqual([
+      "12:56",
+      "13:01",
+      "13:06",
+    ]);
+  });
+
   it("keeps the default when the prior and following rows support opposite interpretations", () => {
     const parsed = parseServicePlanningImportFromHtml(`
       <table>

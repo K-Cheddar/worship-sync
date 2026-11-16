@@ -1,3 +1,4 @@
+import { getActiveItemSlides } from "../../utils/activeItemSlides";
 import { getActiveContentDatabaseOwner } from "../../store/deferredItemMutations";
 import { flushSync } from "react-dom";
 import { isControllerWorkspacePath } from "../../utils/controllerWorkspace";
@@ -26,7 +27,11 @@ import {
 import { mediaInfoType } from "./cloudinaryTypes";
 import type { MediaUploadInputRef } from "./MediaUploadInput";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
-import { deleteLocalImage, getLocalImageUploadJob } from "../../utils/localImageAssets";
+import {
+  deleteLocalImage,
+  enqueueLocalImageCloudCleanup,
+  getLocalImageUploadJob,
+} from "../../utils/localImageAssets";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import { removeDownloadedVideoAssetIfUnreferenced, removeDownloadedVideoMuxAssetIfUnreferenced } from "../../components/DesktopVideoDownloadManager/persistDownloadedVideoMedia";
 import {
@@ -387,10 +392,12 @@ export function useMediaLibraryController({
 
   const itemSlideContext = useMemo(() => {
     if (!isControllerWorkspacePath(location.pathname)) return undefined;
-    const arrangement = item.arrangements[item.selectedArrangement];
-    const slides = arrangement?.slides?.length
-      ? arrangement.slides
-      : item.slides;
+    const slides = getActiveItemSlides({
+      type: item.type,
+      arrangements: item.arrangements,
+      selectedArrangement: item.selectedArrangement,
+      slides: item.slides,
+    });
     return {
       itemType: item.type,
       slides,
@@ -1260,6 +1267,7 @@ export function useMediaLibraryController({
     ): Promise<MediaType[]> => {
       const failed: MediaType[] = [];
       let providerUsageChanged = false;
+      const deletedCloudinaryIds = new Set<string>();
       for (const row of rows) {
         if (!canContinue()) break;
         const provider = row.providerStorage?.provider ||
@@ -1286,10 +1294,17 @@ export function useMediaLibraryController({
           row.muxAssetId ||
           row.localVideoFile?.cloudMediaId;
         try {
-          const deletedCloudinaryIds = new Set<string>();
+          if (row.localVideoInput && !row.localImage && thumbnailCloudPublicId) {
+            if (!churchId) throw new Error("Church session is unavailable.");
+            await enqueueLocalImageCloudCleanup({
+              mediaId: row.id,
+              workspaceId: churchId,
+              cloudPublicId: thumbnailCloudPublicId,
+            });
+          }
           if (provider === "cloudinary") {
             const publicId = cloudinaryPublicId || extractPublicId(row.background) ||
-              thumbnailCloudPublicId || "";
+              (!row.localVideoInput ? thumbnailCloudPublicId : "") || "";
             if (publicId) {
               providerUsageChanged = await deleteCloudinaryAssetOnce(
                 churchId,

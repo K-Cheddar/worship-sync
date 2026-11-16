@@ -72,6 +72,22 @@ test("blocks continuation segments after the first segment identifies a write", 
   );
 });
 
+test("allows continuation segments after the first segment identifies a read or auth command", () => {
+  for (const action of ["q", "auth"]) {
+    const firewall = new ControllerFirebaseWriteFirewall();
+    const packet = encodePacket(action, "x".repeat(2_000));
+    const first = packet.slice(0, 100);
+    const continuation = packet.slice(100);
+
+    assert.equal(firewall.inspectRequest("GET", longPollUrl("", { packet: first, total: 2 })).action, "allow", action);
+    assert.equal(
+      firewall.inspectRequest("GET", longPollUrl("", { packet: continuation, sequence: 1, total: 2 })).action,
+      "allow",
+      action,
+    );
+  }
+});
+
 test("blocks unknown long-poll commands and ignores unrelated CouchDB traffic", () => {
   const firewall = new ControllerFirebaseWriteFirewall();
   assert.equal(isRealtimeDatabaseUrl("https://example.firebaseio.com/.lp?id=read"), true);

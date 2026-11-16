@@ -38,6 +38,19 @@ import {
   itemDocMatchesEditorState,
   itemSlice,
 } from "./itemSlice";
+import {
+  getActiveItemSlides,
+  normalizeItemSlides,
+} from "../utils/activeItemSlides";
+import {
+  loadItemWithSongHydration,
+  loadSongV2Snapshot,
+  loadSongV2LibraryProjection,
+  getSongV2RootDocId,
+  saveSong,
+  serializeSongToV2Documents,
+  songToLibraryProjection,
+} from "../utils/songPersistence";
 import { overlaysSlice } from "./overlaysSlice";
 import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
@@ -46,7 +59,7 @@ import { itemLibraryUiSlice } from "./itemLibraryUiSlice";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
-import { activateOutlineContent, getOutlineDatabaseKey, getOutlineOwnerKey, hasPendingOutlineDraftsForDatabase, setOutlineContentDatabase } from "./outlineContent";
+import { activateOutlineContent, getOutlineContentLifecycleLease, getOutlineDatabaseKey, getOutlineOwnerKey, hasPendingOutlineDraftsForDatabase, isOutlineContentLifecycleLeaseCurrent, setOutlineContentDatabase } from "./outlineContent";
 import { isMediaLoadSettled, mediaItemsSlice } from "./mediaSlice";
 import mediaCacheMapReducer, { setMediaCacheMap } from "./mediaCacheMapSlice";
 import { overlaySlice } from "./overlaySlice";
@@ -124,6 +137,15 @@ import {
   subscribeToContentActivity,
 } from "../utils/contentReplicationActivity";
 import {
+  deleteSongV2AutosaveRecovery,
+  createSongV2AutosaveRecoveryId,
+  listSongV2AutosaveRecoveries,
+  markSongV2AutosaveRecoveryDiscarded,
+  markSongV2AutosaveRecoveryNeedsReview,
+  putSongV2AutosaveRecovery,
+  withSongV2AutosaveLock,
+} from "../utils/songV2AutosaveRecovery";
+import {
   getControllerPresenceScope,
   isOnlyActiveController,
   subscribeToActiveControllerPresence,
@@ -131,7 +153,10 @@ import {
 import {
   persistServiceListItems,
   persistServiceListOverlays,
+  resolveServiceListRevisionConflict,
+  ServiceListConflictError,
 } from "../utils/persistServiceListField";
+import { ItemListsRegistryQueue } from "../utils/itemListsRegistryQueue";
 import _ from "lodash";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import {
@@ -146,17 +171,26 @@ import {
 } from "../utils/dbUtils";
 import { applyPouchAudit } from "@/utils/pouchAudit";
 import {
+  loadReconciledSongV2Snapshot, pruneResolvedSongV2Conflicts, SongV2ReplicationConflictError,
+} from "../utils/songV2ReplicationConflicts";
+import {
+  sameSongV2AuthoredContent,
+  SongV2MutationNotAuthorizedError,
+} from "../utils/songV2Writer";
+import {
   isFirebasePermissionDenied,
   logFirebaseOperationFailure,
 } from "../utils/firebaseListeners";
 import { notifyPresentationSyncError } from "../utils/presentationSyncErrorBus";
 import { serverDate } from "../utils/serverTime";
 import { sortServicesByScheduleOrder } from "../utils/serviceTimes";
+import type { ItemContentOwner } from "../types";
 import {
   flushPendingItemMutations,
   getActiveContentDatabaseOwner,
   getContentDatabaseForOwner,
   getItemMutationOwner,
+  registerContentDatabaseActivationHandler,
   registerContentDatabaseFlushHandler,
   sameItemMutationOwner,
 } from "./deferredItemMutations";
@@ -180,15 +214,58 @@ const safePostMessage = (message: any) => {
   }
 };
 
+const createSongV2MutationGuard = (
+  database: PouchDB.Database,
+  contentOwner: ItemContentOwner | null | undefined,
+  churchId: string | undefined,
+  sessionToken: symbol | null,
+  operationIsCurrent: () => boolean,
+  operationIsNotExplicitlyDiscarded: () => boolean = () => true,
+) => {
+  let hasCommittedWrite = false;
+  return Object.assign(
+    () => {
+      if (
+        globalFireDbInfo.canWriteSongContent !== true ||
+        globalFireDbInfo.churchId !== churchId ||
+        getContentDatabaseSessionToken(database.name) !== sessionToken
+      ) return false;
+
+      const currentOwner = getActiveContentDatabaseOwner();
+      const ownerIsCurrent = !contentOwner || contentOwner.scopeId === "unscoped"
+        ? !currentOwner
+        : currentOwner?.scopeId === contentOwner.scopeId &&
+          currentOwner.databaseKey === contentOwner.databaseKey &&
+          currentOwner.churchId === contentOwner.churchId &&
+          getContentDatabaseForOwner(contentOwner) === database;
+      // Supersession can stop a stale operation before it mutates. Once a
+      // physical write commits, finish the captured write plan while retaining
+      // authorization and database ownership checks at every boundary.
+      return ownerIsCurrent && (hasCommittedWrite || (
+        operationIsCurrent() && operationIsNotExplicitlyDiscarded()
+      ));
+    },
+    { onWriteCommitted: () => { hasCommittedWrite = true; } },
+  );
+};
+
+const isSongV2MutationNotAuthorizedError = (
+  error: unknown,
+): error is SongV2MutationNotAuthorizedError =>
+  error instanceof SongV2MutationNotAuthorizedError ||
+  (typeof error === "object" && error !== null &&
+    "name" in error && error.name === "SongV2MutationNotAuthorizedError");
+
 /** Broadcast credit doc(s) to other tabs. Components that persist credits directly call this after db.put. */
 export function broadcastCreditsUpdate(docs: (DBCredits | DBCredit)[]) {
   safePostMessage({ type: "update", data: { docs, hostId: globalHostId } });
 }
 
 export function broadcastItemUpdate(doc: DBItem) {
+  const payload = doc.docType === "song-v2-root" ? songToLibraryProjection(doc) : doc;
   safePostMessage({
     type: "update",
-    data: { docs: doc, hostId: globalHostId },
+    data: { docs: payload, hostId: globalHostId },
   });
 }
 
@@ -266,6 +343,18 @@ const sanitizeTransientItemState = (
     hasPendingUpdate: false,
     restoreFocusToBox: null,
   };
+};
+
+const sameItemMutationScope = (
+  expected: Pick<ItemState, "_id" | "type" | "contentOwner">,
+  current: Pick<ItemState, "_id" | "type" | "contentOwner">,
+) => {
+  if (!expected._id || expected._id !== current._id || expected.type !== current.type) return false;
+  const expectedOwner = getItemMutationOwner(expected);
+  const currentOwner = getItemMutationOwner(current);
+  return expectedOwner
+    ? sameItemMutationOwner(expectedOwner, currentOwner)
+    : !currentOwner;
 };
 
 const normalizeOverlayForPersistenceCompare = (overlay: OverlayInfo) => {
@@ -816,10 +905,12 @@ const excludedActions: string[] = [
   itemSlice.actions.setSelectedSlide.toString(),
   itemSlice.actions.setIsLyricsEditorOpen.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
+  itemSlice.actions.setRemoteUpdateReason.toString(),
   itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.markItemPersisted.toString(),
   itemSlice.actions.rebaseItemPersistence.toString(),
   itemSlice.actions.bufferRemoteItemUpdate.toString(),
+  itemSlice.actions.bufferSongV2RevisionConflict.toString(),
   itemSlice.actions.discardPendingRemoteItem.toString(),
   itemSlice.actions.applyPendingRemoteItem.toString(),
   itemSlice.actions.applyPersistedSongAudio.toString(),
@@ -867,11 +958,21 @@ const excludedActions: string[] = [
   setOutlineContentDatabase.toString(),
   itemListSlice.actions.forceUpdate.toString(),
   itemListSlice.actions.setActiveItemInList.toString(),
+  itemListSlice.actions.setItemListLoadError.toString(),
+  itemListSlice.actions.retryItemListLoad.toString(),
+  itemListSlice.actions.setItemListIsRetrying.toString(),
+  itemListSlice.actions.recordOutlineConflict.toString(),
+  itemListSlice.actions.markItemListPersisted.toString(),
+  itemListSlice.actions.failOutlineResolution.toString(),
   itemListsSlice.actions.initiateItemLists.toString(),
+  itemListsSlice.actions.restorePendingRegistryChanges.toString(),
   itemListsSlice.actions.updateItemListsFromRemote.toString(),
   itemListsSlice.actions.setInitialItemList.toString(),
   itemListsSlice.actions.selectItemList.toString(),
   itemListsSlice.actions.setOutlineScope.toString(),
+  itemListsSlice.actions.setRegistrySaveState.toString(),
+  itemListsSlice.actions.retryRegistrySave.toString(),
+  itemListsSlice.actions.keepRegistryChanges.toString(),
   preferencesSlice.actions.initiatePreferences.toString(),
   preferencesSlice.actions.setIsLoading.toString(),
   preferencesSlice.actions.setSelectedPreference.toString(),
@@ -973,12 +1074,80 @@ type PendingItemAutosave = {
   database: NonNullable<typeof db>;
   owner: ReturnType<typeof getItemMutationOwner>;
   mutationVersion: number;
+  resolveReplicationConflicts?: ItemState["pendingSongV2Conflicts"];
+  recoveryRecordId?: string;
+  recoveryState?: "interrupted" | "checkpoint-failed" | "needs-review" | "discard-failed" | "discarded";
+  recoveryCheckpointRetryCount?: number;
 };
-
 const itemAutosaveDebounces = new Map<string, ItemAutosaveDebounce>();
 const itemAutosaveWriteQueues = new Map<string, Promise<void>>();
 const pendingItemAutosaves = new Map<string, PendingItemAutosave>();
+// A partially committed V2 autosave must finish before a coalesced newer
+// autosave can use its original baseline. Keep that predecessor by owner/key.
+const pendingSongV2WriteRecoveries = new Map<string, PendingItemAutosave>();
+const queuedItemAutosaveRetries = new Set<string>();
 let itemAutosaveMutationVersion = 0;
+const explicitRemoteDecisionByItem = new Map<string, { version: number; discarding: boolean }>();
+const songRecoveryCheckpointRetryTimers = new Map<string, {
+  timer: ReturnType<typeof setTimeout>;
+  mutationVersion: number;
+  sessionToken: symbol;
+}>();
+const SONG_RECOVERY_CHECKPOINT_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000] as const;
+
+const clearSongRecoveryCheckpointRetry = (saveKey: string) => {
+  const scheduled = songRecoveryCheckpointRetryTimers.get(saveKey);
+  if (!scheduled) return;
+  clearTimeout(scheduled.timer);
+  songRecoveryCheckpointRetryTimers.delete(saveKey);
+};
+
+const retainInterruptedSongV2Autosave = (
+  saveKey: string,
+  pending: PendingItemAutosave,
+  error: SongV2MutationNotAuthorizedError,
+) => {
+  if (error.recovery || pending.recoveryRecordId) {
+    pendingSongV2WriteRecoveries.set(saveKey, pending);
+  }
+  const latestPending = pendingItemAutosaves.get(saveKey);
+  if (latestPending?.mutationVersion === pending.mutationVersion) {
+    pendingItemAutosaves.set(saveKey, {
+      ...latestPending,
+      recoveryState: "interrupted",
+    });
+  }
+};
+const retainSongV2AutosaveForReview = async (
+  saveKey: string,
+  pending: PendingItemAutosave,
+) => {
+  const wasRecovery = Boolean(
+    pending.recoveryRecordId ||
+    pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion === pending.mutationVersion,
+  );
+  if (!wasRecovery) return;
+  const reviewed = { ...pending, recoveryState: "needs-review" as const };
+  pendingSongV2WriteRecoveries.set(saveKey, reviewed);
+  if (reviewed.recoveryRecordId && reviewed.owner) {
+    await markSongV2AutosaveRecoveryNeedsReview(
+      reviewed.recoveryRecordId,
+      reviewed.owner,
+    ).catch(error => console.error("Could not retain the song recovery for review", error));
+  }
+};
+const pauseAuthorizationAutosaveRetry = (saveKey: string) => {
+  const pending = pendingItemAutosaves.get(saveKey);
+  if (pending?.recoveryState === "interrupted") {
+    pendingItemAutosaves.set(saveKey, { ...pending, recoveryState: undefined });
+  }
+};
+
+const retryPendingItemAutosave = createAction<{
+  saveKey: string;
+  mutationVersion: number;
+  recovery: boolean;
+}>("store/retryPendingItemAutosave");
 
 const itemAutosaveKey = (item: ItemState) =>
   JSON.stringify([
@@ -1070,6 +1239,7 @@ const flushItemAutosavesForContentDatabase = async (scopeId: string) => {
 // handle item updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    if (retryPendingItemAutosave.match(action)) return true;
     // Audio is already persisted. Reconcile pending content intent without
     // scheduling another audio write or accepting a stale owner's result.
     if (itemSlice.actions.applyPersistedSongAudio.match(action)) {
@@ -1090,24 +1260,44 @@ listenerMiddleware.startListening({
       itemSlice.actions.setItemIsLoading,
       itemSlice.actions.setSectionLoading,
       itemSlice.actions.setHasPendingUpdate,
+      itemSlice.actions.setRemoteUpdateReason,
       itemSlice.actions.setItemFormatting,
       itemSlice.actions.clearTransientState,
       itemSlice.actions.markItemPersisted,
       itemSlice.actions.bufferRemoteItemUpdate,
+      itemSlice.actions.bufferSongV2RevisionConflict,
       itemSlice.actions.discardPendingRemoteItem,
       itemSlice.actions.applyPendingRemoteItem,
     );
+    const currentItem = (currentState as RootState).undoable.present.item;
+    const previousItem = (previousState as RootState).undoable.present.item;
+    const isExplicitPendingRetry =
+      itemSlice.actions._updateSlides.match(action) &&
+      !!currentItem.hasPendingUpdate;
     return (
-      (currentState as RootState).undoable.present.item !==
-        (previousState as RootState).undoable.present.item &&
+      (currentItem !== previousItem || isExplicitPendingRetry) &&
       !excluded(action) &&
-      !!(currentState as RootState).undoable.present.item.hasPendingUpdate &&
+      !!currentItem.hasPendingUpdate &&
       !isStoreResetAction(action)
     );
   },
 
   effect: async (_action, listenerApi) => {
+    const retryRequest = retryPendingItemAutosave.match(_action) ? _action.payload : undefined;
+    const retryPending = retryRequest
+      ? retryRequest.recovery
+        ? pendingSongV2WriteRecoveries.get(retryRequest.saveKey)
+        : pendingItemAutosaves.get(retryRequest.saveKey)
+      : undefined;
+    const retryId = retryRequest
+      ? `${retryRequest.saveKey}:${retryRequest.mutationVersion}:${retryRequest.recovery ? "recovery" : "pending"}`
+      : undefined;
+    if (retryRequest && (!retryPending || retryPending.mutationVersion !== retryRequest.mutationVersion)) {
+      if (retryId) queuedItemAutosaveRetries.delete(retryId);
+      return;
+    }
     let state = listenerApi.getState() as RootState;
+    const previousItem = (listenerApi.getOriginalState() as RootState).undoable.present.item;
     let ownedSnapshot: ItemState | undefined;
     if (itemSlice.actions.setActiveItem.match(_action)) {
       state = listenerApi.getOriginalState() as RootState;
@@ -1118,21 +1308,62 @@ listenerMiddleware.startListening({
 
     const isPersistedAudioUpdate =
       itemSlice.actions.applyPersistedSongAudio.match(_action);
-    const item = isPersistedAudioUpdate
+    const item = retryPending?.desired ?? (isPersistedAudioUpdate
       ? (listenerApi.getState() as RootState).undoable.present.item
-      : ownedSnapshot ?? state.undoable.present.item;
+      : ownedSnapshot ?? state.undoable.present.item);
     const contentOwner = item.contentOwner;
-    const owner = getItemMutationOwner(item);
-    const dbAtStart = contentOwner
+    const owner = retryPending?.owner ?? getItemMutationOwner(item);
+    const dbAtStart = retryPending?.database ?? (contentOwner
       ? getContentDatabaseForOwner(contentOwner) ??
         (contentOwner.scopeId === "unscoped" ? db : undefined)
-      : db;
-    const saveKey = itemAutosaveKey(item);
-    const priorPending = pendingItemAutosaves.get(saveKey);
+      : db);
+    const saveKey = retryRequest?.saveKey ?? itemAutosaveKey(item);
+    const explicitRemoteDecisionVersionAtStart =
+      explicitRemoteDecisionByItem.get(saveKey)?.version ?? 0;
+    let priorPending = pendingItemAutosaves.get(saveKey);
+    const churchIdAtStart = globalFireDbInfo.churchId;
+    const sessionTokenAtStart = dbAtStart
+      ? getContentDatabaseSessionToken(dbAtStart.name)
+      : null;
+    const mutationGuard = dbAtStart
+      ? createSongV2MutationGuard(
+        dbAtStart,
+        contentOwner,
+        churchIdAtStart,
+        sessionTokenAtStart,
+        () => sameItemMutationScope(
+          item,
+          (listenerApi.getState() as RootState).undoable.present.item,
+        ),
+      )
+      : () => false;
     if (itemSlice.actions.applyPendingRemoteItem.match(_action)) {
-      cancelItemAutosaveDebounce(saveKey);
-      pendingItemAutosaves.delete(saveKey);
+      if (dbAtStart && item.docType === "song-v2-root" && previousItem.pendingSongV2Conflicts?.length) {
+        // The operator explicitly adopted the displayed revision. Retire only
+        // conflict leaves belonging to that still-current persisted content.
+        const resolved = await pruneResolvedSongV2Conflicts(dbAtStart, item, previousItem.pendingSongV2Conflicts, mutationGuard)
+          .catch(error => { console.error("Could not finish song conflict resolution", error); return undefined; });
+        const active = (listenerApi.getState() as RootState).undoable.present.item;
+        if (resolved && db === dbAtStart && !pendingItemAutosaves.has(saveKey) && sameItemMutationOwner(owner, getItemMutationOwner(active))) {
+          listenerApi.dispatch(itemSlice.actions.markItemPersisted(resolved, item));
+          const projection = songToLibraryProjection(resolved);
+          listenerApi.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: projection._id, doc: projection }));
+        }
+      }
       return;
+    }
+
+    if (itemSlice.actions.keepLocalItemChanges.match(_action)) {
+      // The operator explicitly chose the retained local draft after review.
+      // Its next authorized save replaces the durable recovery with the new
+      // remote baseline and the chosen local content.
+      const reviewedRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+      if (reviewedRecovery?.recoveryState === "needs-review" ||
+        reviewedRecovery?.recoveryState === "discard-failed" ||
+        reviewedRecovery?.recoveryState === "discarded") {
+        priorPending ??= reviewedRecovery;
+        pendingSongV2WriteRecoveries.delete(saveKey);
+      }
     }
 
     if (isPersistedAudioUpdate) {
@@ -1140,21 +1371,27 @@ listenerMiddleware.startListening({
       if (!priorPending) return;
     }
 
-    const baseline = itemSlice.actions.keepLocalItemChanges.match(_action)
+    const baseline = retryPending?.baseline ?? (itemSlice.actions.keepLocalItemChanges.match(_action)
       ? item.baseItem
       : isPersistedAudioUpdate
         ? item.baseItem ?? priorPending?.baseline
-      : priorPending?.baseline ?? item.baseItem;
-    const database = dbAtStart ?? priorPending?.database;
+      : priorPending?.baseline ?? item.baseItem);
+    const database = retryPending?.database ?? dbAtStart ?? priorPending?.database;
     if (!database || !baseline) return;
 
-    const mutationVersion = ++itemAutosaveMutationVersion;
-    const nextPending: PendingItemAutosave = {
+    const mutationVersion = retryPending?.mutationVersion ?? ++itemAutosaveMutationVersion;
+    const nextPending: PendingItemAutosave = retryPending ?? {
       desired: item,
       baseline,
       database,
       owner,
       mutationVersion,
+      resolveReplicationConflicts: itemSlice.actions.keepLocalItemChanges.match(_action)
+        ? previousItem.pendingSongV2Conflicts : priorPending?.resolveReplicationConflicts,
+      recoveryState: priorPending?.recoveryState === "interrupted"
+        ? "interrupted" : undefined,
+      recoveryRecordId: priorPending?.recoveryRecordId,
+      recoveryCheckpointRetryCount: 0,
     };
     if (
       isPersistedAudioUpdate &&
@@ -1166,9 +1403,14 @@ listenerMiddleware.startListening({
       );
       return;
     }
-    pendingItemAutosaves.set(saveKey, nextPending);
+    if (!retryRequest) {
+      clearSongRecoveryCheckpointRetry(saveKey);
+      pendingItemAutosaves.set(saveKey, nextPending);
+    }
 
-    if (itemSlice.actions.setActiveItem.match(_action)) {
+    if (retryRequest) {
+      cancelItemAutosaveDebounce(saveKey);
+    } else if (itemSlice.actions.setActiveItem.match(_action)) {
       cancelItemAutosaveDebounce(saveKey);
     } else {
       const debounce = scheduleItemAutosaveDebounce(saveKey);
@@ -1178,148 +1420,613 @@ listenerMiddleware.startListening({
     }
 
     await enqueueItemAutosaveWrite(saveKey, async () => {
-      const currentPending = pendingItemAutosaves.get(saveKey);
-      if (currentPending?.mutationVersion !== mutationVersion) return;
-      const desired = currentPending.desired;
-      const writeBaseline = currentPending.baseline;
-      const writeDatabase = currentPending.database;
-      let db_item: DBItem = await writeDatabase.get(desired._id);
-      if (pendingItemAutosaves.get(saveKey)?.mutationVersion !== mutationVersion) return;
-      const changedFields = getItemPersistenceChanges(desired, writeBaseline);
-      const conflicts = getItemPersistenceConflicts(
-        desired,
-        writeBaseline,
-        db_item,
-      );
-      if (conflicts.length > 0) {
-        const latestState = listenerApi.getState() as RootState;
-        const activeItem = latestState.undoable.present.item;
+      const pendingForLock = retryPending ?? pendingItemAutosaves.get(saveKey);
+      const performWrite = async () => {
+        let currentPending = retryPending ?? pendingItemAutosaves.get(saveKey);
+        if (currentPending?.mutationVersion !== mutationVersion) return;
+        if (!retryRequest && pendingSongV2WriteRecoveries.has(saveKey)) return;
+        if (retryRequest && !retryRequest.recovery &&
+          pendingItemAutosaves.get(saveKey)?.mutationVersion !== mutationVersion) return;
+        if (retryRequest?.recovery &&
+          pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion !== mutationVersion) return;
         if (
-          sameItemMutationOwner(
-            getItemMutationOwner(activeItem),
-            getItemMutationOwner(desired),
-          )
-        ) {
-          listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(db_item));
+          (retryRequest?.recovery || currentPending.recoveryState === "interrupted") &&
+          (!currentPending.owner || !songRecoveryIsReadyForOwner(currentPending.owner, currentPending.database))
+        ) return;
+        const operationIsRetained = () => retryRequest?.recovery
+          ? pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion === mutationVersion
+          : pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion;
+        const desired = currentPending.desired;
+        const writeBaseline = currentPending.baseline;
+        const writeDatabase = currentPending.database;
+        const writeChurchId = globalFireDbInfo.churchId;
+        const writeSessionToken = getContentDatabaseSessionToken(writeDatabase.name);
+        const writeContentOwner = desired.contentOwner;
+        const operationIsNotExplicitlyDiscarded = () => {
+          const decision = explicitRemoteDecisionByItem.get(saveKey);
+          return decision?.discarding !== true &&
+            (decision?.version ?? 0) === explicitRemoteDecisionVersionAtStart;
+        };
+        const writeMutationGuard = createSongV2MutationGuard(
+          writeDatabase,
+          writeContentOwner,
+          writeChurchId,
+          writeSessionToken,
+          operationIsRetained,
+          operationIsNotExplicitlyDiscarded,
+        );
+        let snapshot = writeBaseline.docType === "song-v2-root"
+          ? await loadSongV2Snapshot(writeDatabase, desired._id, true) : undefined;
+        if (snapshot?.conflicts?.length) {
+          const bufferRevisionConflict = (conflictSnapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>>) => {
+            pauseAuthorizationAutosaveRetry(saveKey);
+            const activeItem = (listenerApi.getState() as RootState).undoable.present.item;
+            if (
+              operationIsRetained() &&
+              sameItemMutationScope(desired, activeItem)
+            ) {
+              listenerApi.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+                item: conflictSnapshot.hydrated,
+                conflicts: conflictSnapshot.conflicts ?? [],
+              }));
+            }
+          };
+          if (!globalFireDbInfo.canWriteSongContent) {
+            bufferRevisionConflict(snapshot);
+            return;
+          }
+          try {
+            snapshot = await loadReconciledSongV2Snapshot(
+              writeDatabase,
+              desired._id,
+              snapshot,
+              writeMutationGuard,
+            );
+          } catch (error) {
+            if (error instanceof SongV2ReplicationConflictError) {
+              await retainSongV2AutosaveForReview(saveKey, currentPending);
+              pauseAuthorizationAutosaveRetry(saveKey);
+              bufferRevisionConflict(error.snapshot);
+              return;
+            }
+            if (isSongV2MutationNotAuthorizedError(error)) {
+              retainInterruptedSongV2Autosave(saveKey, currentPending, error);
+              const latest = await loadSongV2Snapshot(writeDatabase, desired._id, true).catch(() => null);
+              if (latest?.conflicts?.length) bufferRevisionConflict(latest);
+              return;
+            }
+            throw error;
+          }
         }
-        return;
-      }
-
-      if (changedFields.length === 0) {
-        const latestState = listenerApi.getState() as RootState;
-        const activeItem = latestState.undoable.present.item;
-        if (
-          sameItemMutationOwner(
-            getItemMutationOwner(activeItem),
-            getItemMutationOwner(desired),
-          )
-        ) {
-          listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
-        }
-        if (currentPending?.mutationVersion === mutationVersion) {
-          pendingItemAutosaves.delete(saveKey);
-        }
-        return;
-      }
-
-      const updatedAt = new Date().toISOString();
-      const nextItem: DBItem = {
-        ...db_item,
-        ...(Object.fromEntries(
-          changedFields.map((field) => [field, desired[field]]),
-        ) as Partial<DBItem>),
-        updatedAt,
-      };
-      db_item = applyPouchAudit(db_item, nextItem, {
-        // Doc came from db.get â€” always an update (legacy rows may lack createdAt).
-        isNew: false,
-      });
-      let result: { rev: string };
-      try {
-        result = await writeDatabase.put(db_item);
-      } catch (error) {
-        if ((error as { status?: number })?.status === 409) {
-          const latest = (await writeDatabase
-            .get(desired._id)
-            .catch(() => null)) as DBItem | null;
+        let db_item: DBItem = snapshot?.hydrated ?? await loadItemWithSongHydration(writeDatabase, desired._id);
+        if (!operationIsRetained()) return;
+        const changedFields = getItemPersistenceChanges(desired, writeBaseline);
+        const conflicts = getItemPersistenceConflicts(
+          desired,
+          writeBaseline,
+          db_item,
+        );
+        if (conflicts.length > 0) {
+          await retainSongV2AutosaveForReview(saveKey, currentPending);
+          pauseAuthorizationAutosaveRetry(saveKey);
           const latestState = listenerApi.getState() as RootState;
           const activeItem = latestState.undoable.present.item;
           if (
-            latest &&
             sameItemMutationOwner(
               getItemMutationOwner(activeItem),
               getItemMutationOwner(desired),
             )
           ) {
-            listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(latest));
+            listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(db_item));
+            if (writeBaseline.docType === "song-v2-root") {
+              listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+            }
+          }
+          return;
+        }
+
+        if (changedFields.length === 0) {
+          let conflictResolutionComplete = !currentPending.resolveReplicationConflicts?.length;
+          if (currentPending.resolveReplicationConflicts?.length) {
+            const resolved = await pruneResolvedSongV2Conflicts(
+              writeDatabase,
+              db_item,
+              currentPending.resolveReplicationConflicts,
+              writeMutationGuard,
+            );
+            if (resolved) {
+              db_item = resolved;
+              conflictResolutionComplete = true;
+            }
+            if (!operationIsRetained()) return;
+          }
+          const latestState = listenerApi.getState() as RootState;
+          const activeItem = latestState.undoable.present.item;
+          if (
+            sameItemMutationOwner(
+              getItemMutationOwner(activeItem),
+              getItemMutationOwner(desired),
+            )
+          ) {
+            listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item, desired));
+          }
+          if (pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion) {
+            pendingItemAutosaves.delete(saveKey);
+            clearSongRecoveryCheckpointRetry(saveKey);
+          }
+          const newerPending = pendingItemAutosaves.get(saveKey);
+          if (!newerPending || newerPending.mutationVersion <= mutationVersion) {
+            if (conflictResolutionComplete && currentPending.recoveryRecordId && currentPending.owner) {
+              await deleteSongV2AutosaveRecovery(
+                currentPending.recoveryRecordId,
+                currentPending.owner,
+              ).catch(error => console.error("Could not clear the completed song recovery", error));
+              if (
+                pendingSongV2WriteRecoveries.get(saveKey)?.recoveryRecordId === currentPending.recoveryRecordId
+              ) pendingSongV2WriteRecoveries.delete(saveKey);
+            }
+          }
+          return;
+        }
+
+        const updatedAt = new Date().toISOString();
+        const nextItem: DBItem = {
+          ...db_item,
+          ...(Object.fromEntries(
+            changedFields.map((field) => [field, desired[field]]),
+          ) as Partial<DBItem>),
+          updatedAt,
+        };
+        const isSongV2Write = nextItem.type === "song" && (
+          writeBaseline.docType === "song-v2-root" ||
+          db_item.docType === "song-v2-root"
+        );
+        const durableOwner = currentPending.owner;
+        if (
+          isSongV2Write &&
+          durableOwner &&
+          durableOwner.scopeId !== "unscoped" &&
+          durableOwner.accountId
+        ) {
+          const recoveryRecordId = currentPending.recoveryRecordId ??
+            createSongV2AutosaveRecoveryId(durableOwner, desired._id);
+          try {
+            // Durable intent is captured before the writer can commit its first
+            // slide, arrangement, or root document. The guard is checked at the
+            // local checkpoint boundary and again before the physical writer.
+            if (!writeMutationGuard()) {
+              if (!operationIsRetained()) return;
+              throw new SongV2MutationNotAuthorizedError();
+            }
+            const checkpointStored = await putSongV2AutosaveRecovery({
+              id: recoveryRecordId,
+              owner: durableOwner,
+              itemId: desired._id,
+              desired: currentPending.desired,
+              baseline: writeBaseline,
+              mutationVersion,
+              resolveReplicationConflicts: currentPending.resolveReplicationConflicts,
+              status: "pending",
+            });
+            if (!checkpointStored) {
+              const discarded = {
+                ...currentPending,
+                recoveryRecordId: undefined,
+                recoveryState: "discarded" as const,
+              };
+              if (
+                pendingSongV2WriteRecoveries.get(saveKey)?.recoveryRecordId === recoveryRecordId
+              ) pendingSongV2WriteRecoveries.delete(saveKey);
+              if (pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion) {
+                pendingItemAutosaves.set(saveKey, discarded);
+              }
+              return;
+            }
+            currentPending = {
+              ...currentPending,
+              recoveryRecordId,
+              recoveryState: undefined,
+              recoveryCheckpointRetryCount: 0,
+            };
+            if (retryRequest?.recovery) {
+              pendingSongV2WriteRecoveries.set(saveKey, currentPending);
+            } else if (pendingItemAutosaves.get(saveKey)?.mutationVersion === mutationVersion) {
+              pendingItemAutosaves.set(saveKey, currentPending);
+            }
+            if (!writeMutationGuard()) {
+              if (!operationIsRetained()) return;
+              throw new SongV2MutationNotAuthorizedError();
+            }
+          } catch (error) {
+            if (isSongV2MutationNotAuthorizedError(error)) {
+              if (operationIsNotExplicitlyDiscarded()) {
+                retainInterruptedSongV2Autosave(saveKey, currentPending, error);
+              }
+              return;
+            }
+            // Do not start a multi-document save if its restart recovery record
+            // could not be committed. The editor keeps the pending draft visible.
+            console.error("Could not persist Song V2 autosave recovery", error);
+            let failedPending: PendingItemAutosave | undefined;
+            const latestPending = pendingItemAutosaves.get(saveKey);
+            if (latestPending?.mutationVersion === mutationVersion) {
+              failedPending = { ...latestPending, recoveryState: "checkpoint-failed" };
+              pendingItemAutosaves.set(saveKey, failedPending);
+            }
+            const latestRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+            if (latestRecovery?.mutationVersion === mutationVersion) {
+              failedPending = { ...latestRecovery, recoveryState: "checkpoint-failed" };
+              pendingSongV2WriteRecoveries.set(saveKey, failedPending);
+            }
+            if (failedPending) scheduleSongRecoveryCheckpointRetry(saveKey, failedPending);
+            return;
           }
         }
-        throw error;
-      }
-      db_item = { ...db_item, _rev: result.rev };
+        let result: { rev: string };
+        try {
+          if (nextItem.type === "song") {
+            const authoredBaseline = writeBaseline;
+            const usesV2Baseline = authoredBaseline?.docType === "song-v2-root";
+            const saveArgs = [
+              writeDatabase,
+              nextItem,
+              usesV2Baseline
+                ? authoredBaseline
+                : db_item.docType === "song-v2-root" ? undefined : db_item,
+            ] as const;
+            db_item = snapshot
+              ? await saveSong(...saveArgs, undefined, snapshot, writeMutationGuard)
+              : await saveSong(...saveArgs, undefined, undefined, writeMutationGuard);
+            result = { rev: db_item._rev! };
+          } else {
+            db_item = applyPouchAudit(db_item, nextItem, {
+              // Doc came from db.get — always an update (legacy rows may lack createdAt).
+              isNew: false,
+            });
+            result = await writeDatabase.put(db_item);
+            db_item = { ...db_item, _rev: result.rev };
+          }
+        } catch (error) {
+          const errorName = error instanceof Error ? error.name : "";
+          const isSongV2ContentConflict = errorName === "SongV2ConcurrentEditError" ||
+            ((error as { status?: number })?.status === 409 && writeBaseline.docType === "song-v2-root");
+          const isSongV2VersionTransition = errorName === "SongV2VersionTransitionError";
+          const isSongV2Conflict = error instanceof Error && (
+            isSongV2ContentConflict || isSongV2VersionTransition
+          );
+          if ((error as { status?: number })?.status === 409 || isSongV2Conflict) {
+            if (currentPending.recoveryRecordId) {
+              await retainSongV2AutosaveForReview(saveKey, currentPending);
+            }
+            pauseAuthorizationAutosaveRetry(saveKey);
+            const latest = (await loadItemWithSongHydration(
+              writeDatabase,
+              desired._id,
+            )
+              .catch(() => null)) as DBItem | null;
+            const latestState = listenerApi.getState() as RootState;
+            const activeItem = latestState.undoable.present.item;
+            if (
+              latest &&
+              sameItemMutationOwner(
+                getItemMutationOwner(activeItem),
+                getItemMutationOwner(desired),
+              )
+            ) {
+              listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(latest));
+              if (isSongV2VersionTransition) {
+                listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-version-transition"));
+              } else if (isSongV2ContentConflict) {
+                listenerApi.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+              }
+            }
+            if (isSongV2Conflict || isSongV2ContentConflict) {
+              console.error("Could not save active song draft", error);
+              return;
+            }
+          }
+          if (isSongV2MutationNotAuthorizedError(error)) {
+            if (operationIsNotExplicitlyDiscarded()) {
+              retainInterruptedSongV2Autosave(saveKey, currentPending, error);
+            }
+            return;
+          }
+          throw error;
+        }
+        db_item = { ...db_item, _rev: result.rev };
+        let conflictResolutionComplete = !currentPending.resolveReplicationConflicts?.length;
+        if (currentPending.resolveReplicationConflicts && db_item.docType === "song-v2-root") {
+          const resolved = await pruneResolvedSongV2Conflicts(
+            writeDatabase,
+            db_item,
+            currentPending.resolveReplicationConflicts,
+            writeMutationGuard,
+          )
+            .catch(error => console.error("Could not finish song conflict resolution", error));
+          if (resolved) {
+            db_item = resolved;
+            conflictResolutionComplete = true;
+          }
+        }
 
-      const pendingAfterWrite = pendingItemAutosaves.get(saveKey);
-      if (pendingAfterWrite?.mutationVersion === mutationVersion) {
-        pendingItemAutosaves.delete(saveKey);
-      } else if (
-        pendingAfterWrite &&
-        pendingAfterWrite.mutationVersion > mutationVersion
-      ) {
-        pendingItemAutosaves.set(saveKey, {
-          ...pendingAfterWrite,
-          // Acknowledge only what this write changed. A newer edit may still
-          // compare unrelated fields against an older remote document.
-          baseline: {
-            ...pendingAfterWrite.baseline,
-            ...Object.fromEntries(changedFields.map((field) => [field, db_item[field]])),
+        // Accepted input can still be in the component formatting debounce.
+        // Materialize it before deciding whether this acknowledgment is current.
+        flushPendingItemMutations(currentPending.owner);
+        const pendingAfterWrite = pendingItemAutosaves.get(saveKey);
+        if (pendingAfterWrite?.mutationVersion === mutationVersion) {
+          pendingItemAutosaves.delete(saveKey);
+          clearSongRecoveryCheckpointRetry(saveKey);
+        } else if (
+          pendingAfterWrite &&
+          pendingAfterWrite.mutationVersion > mutationVersion
+        ) {
+          pendingItemAutosaves.set(saveKey, {
+            ...pendingAfterWrite,
+            // Acknowledge only what this write changed. A newer edit may still
+            // compare unrelated fields against an older remote document.
+            baseline: {
+              ...pendingAfterWrite.baseline,
+              ...Object.fromEntries(changedFields.map((field) => [field,
+                db_item.docType === "song-v2-root" ? desired[field] : db_item[field]])),
+            },
+          });
+          if (retryRequest?.recovery) {
+            requestPendingItemAutosaveRetry(saveKey, pendingItemAutosaves.get(saveKey)!, false);
+          }
+        }
+
+        if (
+          conflictResolutionComplete &&
+          pendingAfterWrite?.mutationVersion === mutationVersion &&
+          currentPending.recoveryRecordId &&
+          currentPending.owner
+        ) {
+          await deleteSongV2AutosaveRecovery(
+            currentPending.recoveryRecordId,
+            currentPending.owner,
+          ).catch(error => console.error("Could not clear the completed song recovery", error));
+          if (
+            pendingSongV2WriteRecoveries.get(saveKey)?.recoveryRecordId === currentPending.recoveryRecordId
+          ) pendingSongV2WriteRecoveries.delete(saveKey);
+        }
+
+        // A newer intent/remote decision owns publication too. Do not broadcast
+        // the older document after its acknowledgment has been superseded.
+        if (pendingAfterWrite?.mutationVersion !== mutationVersion) return;
+        const latestState = listenerApi.getState() as RootState;
+        const activeItem = latestState.undoable.present.item;
+        const isSameActiveOwner = sameItemMutationOwner(
+            getItemMutationOwner(activeItem),
+            getItemMutationOwner(desired),
+          );
+        if (isSameActiveOwner) {
+          listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item, desired));
+        }
+
+        const activeDatabaseOwner = getActiveContentDatabaseOwner();
+        const stillInOriginalDatabase = !contentOwner ||
+          contentOwner.scopeId === "unscoped"
+          ? db === writeDatabase
+          : activeDatabaseOwner?.scopeId === contentOwner.scopeId &&
+            activeDatabaseOwner.databaseKey === contentOwner.databaseKey &&
+            activeDatabaseOwner.churchId === contentOwner.churchId;
+        if (!stillInOriginalDatabase) return;
+
+        const cacheDoc = db_item.type === "song" ? songToLibraryProjection(db_item) : db_item;
+        listenerApi.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: cacheDoc._id, doc: cacheDoc }));
+        if (!isSameActiveOwner) return;
+        safePostMessage({
+          type: "update",
+          data: {
+            docs: db_item.type === "song" ? songToLibraryProjection(db_item) : db_item,
+            hostId: globalHostId,
           },
         });
+      };
+      if (pendingForLock?.owner && pendingForLock.desired.docType === "song-v2-root") {
+        let acquiredLock = false;
+        try {
+          await withSongV2AutosaveLock(
+            pendingForLock.desired._id,
+            pendingForLock.database.name,
+            () => {
+              acquiredLock = true;
+              return performWrite();
+            },
+          );
+        } catch (error) {
+          if (acquiredLock) throw error;
+          console.error("Could not acquire the Song V2 write lock", error);
+          const latestPending = pendingItemAutosaves.get(saveKey);
+          const latestRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+          const failed = latestRecovery?.mutationVersion === mutationVersion
+            ? { ...latestRecovery, recoveryState: "checkpoint-failed" as const }
+            : latestPending?.mutationVersion === mutationVersion
+              ? { ...latestPending, recoveryState: "checkpoint-failed" as const }
+              : undefined;
+          if (failed) {
+            if (latestRecovery?.mutationVersion === mutationVersion) {
+              pendingSongV2WriteRecoveries.set(saveKey, failed);
+            }
+            if (latestPending?.mutationVersion === mutationVersion) {
+              pendingItemAutosaves.set(saveKey, failed);
+            }
+            scheduleSongRecoveryCheckpointRetry(saveKey, failed);
+          }
+        }
+      } else {
+        await performWrite();
       }
-
-      // A newer intent/remote decision owns publication too. Do not broadcast
-      // the older document after its acknowledgment has been superseded.
-      if (pendingAfterWrite?.mutationVersion !== mutationVersion) return;
-      const latestState = listenerApi.getState() as RootState;
-      const activeItem = latestState.undoable.present.item;
-      const isSameActiveOwner = sameItemMutationOwner(
-          getItemMutationOwner(activeItem),
-          getItemMutationOwner(desired),
-        );
-      if (isSameActiveOwner) {
-        listenerApi.dispatch(itemSlice.actions.markItemPersisted(db_item));
-      }
-
-      const activeDatabaseOwner = getActiveContentDatabaseOwner();
-      const stillInOriginalDatabase = contentOwner
-        ? activeDatabaseOwner?.scopeId === contentOwner.scopeId &&
-          activeDatabaseOwner.databaseKey === contentOwner.databaseKey &&
-          activeDatabaseOwner.churchId === contentOwner.churchId
-        : db === writeDatabase;
-      if (!stillInOriginalDatabase) return;
-
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: db_item,
-          hostId: globalHostId,
-        },
-      });
     }).finally(() => {
+      if (retryId) queuedItemAutosaveRetries.delete(retryId);
       listenerApi.dispatch(bibleCleanupOpportunity({}));
     });
+  },
+});
+
+export type SongV2DocumentChange = {
+  songId: string;
+  libraryChanged: boolean;
+  /** Captured at the replication boundary so a delayed event cannot target a new DB. */
+  database?: PouchDB.Database;
+  owner?: ItemContentOwner | null;
+  sessionToken?: symbol | null;
+};
+export const songV2DocumentsChanged = createAction<SongV2DocumentChange[]>("songV2/documentsChanged");
+type SongRefreshRequest = SongV2DocumentChange & { database: PouchDB.Database; owner: ItemContentOwner | null };
+const songRefreshes = new Map<string, SongRefreshRequest>();
+listenerMiddleware.startListening({
+  actionCreator: songV2DocumentsChanged,
+  effect: async (action, api) => {
+    await Promise.all(action.payload.map(async (change) => {
+      const database = change.database ?? db;
+      if (!database || db !== database) return;
+      const ownerWasCaptured = change.owner !== undefined;
+      const sessionWasCaptured = change.sessionToken !== undefined;
+      const databaseOwner = ownerWasCaptured ? change.owner ?? null : getActiveContentDatabaseOwner();
+      if (databaseOwner && getContentDatabaseForOwner(databaseOwner) !== database) return;
+      const sessionToken = change.sessionToken !== undefined
+        ? change.sessionToken ?? null
+        : getContentDatabaseSessionToken(database.name);
+      const key = JSON.stringify([databaseOwner?.scopeId ?? "unscoped", change.songId]);
+      const request: SongRefreshRequest = {
+        ...change,
+        libraryChanged: change.libraryChanged || !!songRefreshes.get(key)?.libraryChanged,
+        database,
+        owner: databaseOwner,
+        ...(sessionWasCaptured ? { sessionToken } : {}),
+      };
+      songRefreshes.set(key, request);
+      await api.delay(50);
+      const ownerIsCurrent = () => {
+        if (db !== database) return false;
+        const currentOwner = getActiveContentDatabaseOwner();
+        if (databaseOwner) {
+          if (!currentOwner || currentOwner.scopeId !== databaseOwner.scopeId ||
+            currentOwner.databaseKey !== databaseOwner.databaseKey ||
+            currentOwner.churchId !== databaseOwner.churchId ||
+            getContentDatabaseForOwner(currentOwner) !== database ||
+            (databaseOwner.churchId && globalFireDbInfo?.churchId !== databaseOwner.churchId)) return false;
+        } else if (currentOwner) return false;
+        return getContentDatabaseSessionToken(database.name) === sessionToken;
+      };
+      const stillCurrent = () => ownerIsCurrent() && songRefreshes.get(key) === request;
+      if (!stillCurrent()) return;
+      const itemAtStart = (api.getState() as RootState).undoable.present.item;
+      const itemOwner = getItemMutationOwner(itemAtStart);
+      const churchIdAtStart = globalFireDbInfo.churchId;
+      const mutationGuard = createSongV2MutationGuard(
+        database,
+        itemAtStart.contentOwner ?? databaseOwner,
+        churchIdAtStart,
+        sessionToken,
+        () => {
+          const current = (api.getState() as RootState).undoable.present.item;
+          return stillCurrent() && current._id === change.songId &&
+            sameItemMutationScope(itemAtStart, current) &&
+            current.baseItem === itemAtStart.baseItem;
+        },
+      );
+      try {
+        const active = itemAtStart._id === change.songId && itemAtStart.type === "song";
+        let snapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>> | undefined;
+        if (active) {
+          snapshot = await loadSongV2Snapshot(database, change.songId, true);
+          if (snapshot.conflicts?.length) {
+            if (globalFireDbInfo.canWriteSongContent) {
+              snapshot = await loadReconciledSongV2Snapshot(
+                database,
+                change.songId,
+                snapshot,
+                mutationGuard,
+              );
+            }
+          }
+        }
+        if (!stillCurrent()) return;
+        if (active) {
+          const current = (api.getState() as RootState).undoable.present.item;
+          if (current.baseItem !== itemAtStart.baseItem) {
+            api.dispatch(songV2DocumentsChanged([{ ...change, libraryChanged: request.libraryChanged }]));
+            return;
+          }
+          if (current._id !== change.songId || !sameItemMutationOwner(itemOwner, getItemMutationOwner(current))) {
+            api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
+            return;
+          }
+        }
+        if (request.libraryChanged) {
+          const projection = snapshot ? songToLibraryProjection(snapshot.hydrated)
+            : await loadSongV2LibraryProjection(database, await database.get(getSongV2RootDocId(change.songId)));
+          if (!stillCurrent()) return;
+          api.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: projection._id, doc: projection }));
+        }
+        if (!request.libraryChanged) api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
+        if (!active) return;
+        if (!snapshot || !stillCurrent()) return;
+        const current = (api.getState() as RootState).undoable.present.item;
+        if (!sameItemMutationOwner(itemOwner, getItemMutationOwner(current)) ||
+          current.baseItem !== itemAtStart.baseItem) return;
+        if (snapshot.conflicts?.length) {
+          api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+            item: snapshot.hydrated,
+            conflicts: snapshot.conflicts,
+          }));
+          return;
+        }
+        if (itemDocMatchesEditorState(snapshot.hydrated, current) ||
+          (current.baseItem && itemDocMatchesEditorState(current.baseItem, snapshot.hydrated as ItemState))) return;
+        // The reducer/middleware protects pending component input as well as
+        // Redux drafts. Clean editors adopt through their existing UI handler.
+        api.dispatch(itemSlice.actions.bufferRemoteItemUpdate(snapshot.hydrated));
+      } catch (error) {
+        if (error instanceof SongV2ReplicationConflictError && stillCurrent()) {
+          const current = (api.getState() as RootState).undoable.present.item;
+          if (sameItemMutationOwner(itemOwner, getItemMutationOwner(current)) && current.baseItem === itemAtStart.baseItem) {
+            api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+              item: error.snapshot.hydrated, conflicts: error.snapshot.conflicts ?? [],
+            }));
+          } else if (ownerIsCurrent()) {
+            api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
+          }
+          return;
+        }
+        if (error instanceof SongV2MutationNotAuthorizedError && stillCurrent()) {
+          const latest = await loadSongV2Snapshot(database, change.songId, true).catch(() => null);
+          if (!stillCurrent()) return;
+          const current = (api.getState() as RootState).undoable.present.item;
+          if (latest?.conflicts?.length &&
+            sameItemMutationOwner(itemOwner, getItemMutationOwner(current)) &&
+            current.baseItem === itemAtStart.baseItem) {
+            api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+              item: latest.hydrated,
+              conflicts: latest.conflicts,
+            }));
+          }
+          return;
+        }
+        if (ownerIsCurrent() && (api.getState() as RootState).undoable.present.item._id !== change.songId) {
+          api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
+        }
+        console.error("Could not refresh changed v2 song", change.songId, error);
+      } finally {
+        if (songRefreshes.get(key) === request) songRefreshes.delete(key);
+      }
+    }));
   },
 });
 
 // Durable cache events update the editor through the existing draft/conflict checks.
 listenerMiddleware.startListening({
   predicate: isAnyOf(
+    allDocsSlice.actions.updateAllSongDocs,
     allDocsSlice.actions.hydrateItemCache,
     allDocsSlice.actions.applyItemDocumentChange,
   ),
-  effect: (action, listenerApi) => {
+  effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
-    const currentItem = state.undoable.present.item;
+    let currentItem = state.undoable.present.item;
     const { _id: activeId, listId } = currentItem;
     if (!activeId) return;
 
@@ -1332,7 +2039,7 @@ listenerMiddleware.startListening({
       allBibleDocs: previousBibleDocs,
       allServiceTimeDocs: previousServiceTimeDocs,
     } = previousState.allDocs;
-    const doc =
+    let doc =
       allSongDocs.find((d) => d._id === activeId) ??
       allFreeFormDocs.find((d) => d._id === activeId) ??
       allTimerDocs.find((d) => d._id === activeId) ??
@@ -1344,9 +2051,47 @@ listenerMiddleware.startListening({
       previousTimerDocs.find((d) => d._id === activeId) ??
       previousBibleDocs.find((d) => d._id === activeId) ??
       previousServiceTimeDocs.find((d) => d._id === activeId);
+    let songV2Conflicts: Awaited<ReturnType<typeof loadSongV2Snapshot>>["conflicts"];
 
     if (doc) {
-      if (_.isEqual(doc, previousDoc)) {
+      if (doc.docType !== "song-v2-root" && _.isEqual(doc, previousDoc)) {
+        return;
+      }
+
+      if (doc.docType === "song-v2-root") {
+        if (!db) return;
+        try {
+          const projection = doc;
+          const database = db;
+          const snapshot = await loadSongV2Snapshot(database, activeId, true);
+          doc = snapshot.hydrated;
+          songV2Conflicts = snapshot.conflicts;
+          const latest = listenerApi.getState() as RootState;
+          const latestItem = latest.undoable.present.item;
+          if (db !== database || latestItem._id !== activeId || latestItem.listId !== listId ||
+            latestItem.baseItem !== currentItem.baseItem ||
+            latest.allDocs.allSongDocs.find((song) => song._id === activeId) !== projection) return;
+          currentItem = latestItem;
+        } catch (error) {
+          console.error("Could not refresh active v2 song", error);
+          return;
+        }
+      }
+
+      const refreshOwner = getItemMutationOwner(currentItem);
+      flushPendingItemMutations(refreshOwner);
+      currentItem = (listenerApi.getState() as RootState).undoable.present.item;
+      if (!sameItemMutationOwner(refreshOwner, getItemMutationOwner(currentItem))) return;
+
+      if (songV2Conflicts?.length) {
+        // Replication owns authorized reconciliation. A read-only session must
+        // retain the leaves and surface them without adopting a partial winner.
+        if (!globalFireDbInfo.canWriteSongContent) {
+          listenerApi.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+            item: doc,
+            conflicts: songV2Conflicts,
+          }));
+        }
         return;
       }
 
@@ -1758,7 +2503,8 @@ listenerMiddleware.startListening({
     const previous = (previousState as RootState).undoable.present.itemList;
     const outlineOwnerChanged = state.outlineOwnerKey !== previous.outlineOwnerKey;
     const savingOutgoingOutline = !isStoreResetAction(action) &&
-      outlineOwnerChanged && previous.isInitialized && previous.hasPendingUpdate;
+      (outlineOwnerChanged || itemListsSlice.actions.selectItemList.match(action)) &&
+      previous.isInitialized && previous.hasPendingUpdate;
     // Don't save until initialization is complete
     if (!state.isInitialized && !savingOutgoingOutline) return false;
 
@@ -1766,15 +2512,35 @@ listenerMiddleware.startListening({
       itemListSlice.actions.initiateItemList,
       itemListSlice.actions.setItemListIsLoading,
       itemListSlice.actions.setActiveItemInList,
-      itemListSlice.actions.updateItemListFromRemote,
       itemListSlice.actions.setHasPendingUpdate,
       itemListSlice.actions.acknowledgeOutlineSave,
       itemListSlice.actions.addToInitialItems,
       itemListSlice.actions.setIsInitialized,
+      itemListSlice.actions.markItemListPersisted,
+      itemListSlice.actions.recordOutlineConflict,
+      itemListSlice.actions.retryItemListLoad,
+      itemListSlice.actions.setItemListLoadError,
+      itemListSlice.actions.setItemListIsRetrying,
     );
     const itemListChanged =
       (currentState as RootState).undoable.present.itemList !==
       (previousState as RootState).undoable.present.itemList;
+    const selectedId = (currentState as RootState).undoable.present.itemLists.selectedList?._id;
+    const hasOutlineConflict = Boolean(
+      selectedId && state.remoteConflicts?.[selectedId] &&
+      !state.remoteConflicts[selectedId].resolutionChoice,
+    );
+    const restoringResolution = itemListSlice.actions.initiateItemList.match(action) &&
+      Boolean(selectedId && state.remoteConflicts?.[selectedId]?.resolutionChoice);
+    const restoringDraft = itemListSlice.actions.initiateItemList.match(action) && state.hasPendingUpdate;
+    const outgoingHasConflict = Boolean(
+      (previousState as RootState).undoable.present.itemLists.selectedList?._id &&
+      (previousState as RootState).undoable.present.itemList.remoteConflicts?.[
+        (previousState as RootState).undoable.present.itemLists.selectedList!._id
+      ] && !(previousState as RootState).undoable.present.itemList.remoteConflicts[
+        (previousState as RootState).undoable.present.itemLists.selectedList!._id
+      ].resolutionChoice,
+    );
     if (
       itemListChanged &&
       !outlineOwnerChanged &&
@@ -1793,11 +2559,12 @@ listenerMiddleware.startListening({
     }
     return (
       ((itemListChanged || itemListSlice.actions.forceUpdate.match(action)) &&
-      !excluded(action) &&
+      (!excluded(action) || restoringResolution || restoringDraft) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
+      !hasOutlineConflict &&
       !isStoreResetAction(action)) ||
-      savingOutgoingOutline
+      (savingOutgoingOutline && !outgoingHasConflict)
     );
   },
 
@@ -1810,6 +2577,8 @@ listenerMiddleware.startListening({
       ? (action as OutlineDatabaseAction).meta?.outgoingOutlineDatabase ?? db
       : db;
     const churchAtStart = globalFireDbInfo?.churchId;
+    const sessionAtStart = outlineAccountSession;
+    const sessionIsCurrent = () => sessionAtStart === outlineAccountSession;
 
     listenerApi.cancelActiveListeners();
     if (!isSavingOutgoingOutline) {
@@ -1823,41 +2592,89 @@ listenerMiddleware.startListening({
       : (listenerApi.getState() as RootState).undoable.present);
     const { list, hasPendingUpdate, isInitialized } = present.itemList;
     const ownerKey = present.itemList.outlineOwnerKey;
+    const lifecycleLease = ownerKey ? getOutlineContentLifecycleLease(ownerKey) : undefined;
+    const lifecycleAllowsPublish = () => lifecycleLease === undefined ||
+      isOutlineContentLifecycleLeaseCurrent(ownerKey!, lifecycleLease);
     const { selectedList } = present.itemLists;
+    const baseline = present.itemList.syncBaseline ?? [];
+    const loadedOutlineId = present.itemList.loadedOutlineId;
+    const outgoingConflict = Boolean(
+      selectedList && present.itemList.remoteConflicts?.[selectedList._id] &&
+      !present.itemList.remoteConflicts[selectedList._id].resolutionChoice,
+    );
+    const submittedConflict = selectedList && present.itemList.remoteConflicts?.[selectedList._id];
+    const conflictReviewIsCurrent = () => {
+      const current = (listenerApi.getState() as RootState).undoable.present.itemList.remoteConflicts?.[selectedList!._id];
+      return !current || (_.isEqual(current.revisionConflict, submittedConflict?.revisionConflict) &&
+        _.isEqual(current.remoteItems, submittedConflict?.remoteItems) && current.resolutionChoice === submittedConflict?.resolutionChoice);
+    };
 
     if (
       !dbAtStart ||
+      !sessionIsCurrent() ||
       (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart)) ||
       !isInitialized ||
       !hasPendingUpdate ||
-      !selectedList
+      !selectedList ||
+      (loadedOutlineId && loadedOutlineId !== selectedList._id) ||
+      outgoingConflict
     ) {
       return;
     }
 
+    const revisionResolution = present.itemList.pendingRevisionResolutions?.[selectedList._id];
+    const submittedItems = revisionResolution?.items ?? list;
+    const submittedMoveIntents = present.itemList.pendingMoveIntents ?? [];
     const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
     let persistenceSucceeded = false;
     try {
-      const saving = persistServiceListItems(
-        dbAtStart,
-        selectedList._id,
-        [...list],
-      );
+      const persisted = revisionResolution?.conflict
+        ? await resolveServiceListRevisionConflict(
+            dbAtStart,
+            selectedList._id,
+            [...submittedItems],
+            revisionResolution.conflict,
+            revisionResolution.selection,
+            sessionIsCurrent,
+          )
+        : await persistServiceListItems(
+            dbAtStart,
+            selectedList._id,
+            [...submittedItems],
+            [...baseline],
+            sessionIsCurrent,
+            [...submittedMoveIntents],
+          );
+
+      persistenceSucceeded = true;
+      if (ownerKey) listenerApi.dispatch(itemListSlice.actions.acknowledgeOutlineSave({ ownerKey, list }));
+      if (!sessionIsCurrent() || (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart))) return;
+      const afterPutState = (listenerApi.getState() as RootState).undoable.present;
+      const afterPut = afterPutState.itemList;
+      if (conflictReviewIsCurrent() && (!afterPut.loadedOutlineId || afterPut.loadedOutlineId === selectedList._id || afterPut.remoteConflicts?.[selectedList._id]?.resolutionChoice)) {
+        listenerApi.dispatch(itemListSlice.actions.markItemListPersisted({
+          outlineId: selectedList._id,
+          ownerKey,
+          items: [...persisted.items],
+          submittedItems: [...(revisionResolution?.draftItems ?? submittedItems)],
+          submittedMoveIntents: [...submittedMoveIntents],
+        }));
+        const latest = (listenerApi.getState() as RootState).undoable.present;
+        if (revisionResolution && latest.itemList.loadedOutlineId === selectedList._id &&
+          latest.itemLists.selectedList?._id === selectedList._id && latest.itemList.hasPendingUpdate &&
+          !latest.itemList.remoteConflicts[selectedList._id]) {
+          // Save edits made after the preview as an ordinary mutation, once
+          // the reviewed choices have been acknowledged and retired safely.
+          listenerApi.dispatch(itemListSlice.actions.forceUpdate());
+        }
+      }
+      listenerApi.throwIfCancelled();
+      if (!lifecycleAllowsPublish()) return;
       // Returning to a retained draft can require a retry as well as the
       // outgoing save. Start both through the existing field save lane.
       if (isSavingOutgoingOutline && (listenerApi.getState() as RootState).undoable.present.itemList.hasPendingUpdate) {
         listenerApi.dispatch(itemListSlice.actions.forceUpdate());
       }
-      const persisted = await saving;
-      if (!persisted) return;
-      persistenceSucceeded = true;
-
-      if (ownerKey) listenerApi.dispatch(itemListSlice.actions.acknowledgeOutlineSave({ ownerKey, list }));
-      listenerApi.throwIfCancelled();
-      if (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart) return;
-      const afterPutState = (listenerApi.getState() as RootState).undoable.present;
-      const afterPut = afterPutState.itemList;
-      if (afterPut.outlineOwnerKey !== ownerKey || afterPut.list !== list) return;
 
       safePostMessage({
         type: "update",
@@ -1868,7 +2685,25 @@ listenerMiddleware.startListening({
       });
 
     } catch (error) {
+      if (!sessionIsCurrent()) return;
       if (isListenerCancelledTaskError(error)) return;
+      if (!conflictReviewIsCurrent()) return;
+      if (error instanceof ServiceListConflictError) {
+        if (db === dbAtStart && selectedList) {
+          listenerApi.dispatch(itemListSlice.actions.recordOutlineConflict({
+            outlineId: selectedList._id,
+            baselineItems: [...baseline],
+            localItems: [...list],
+            remoteItems: error.remoteItems,
+            ...(error.revisionConflict
+              ? { revisionConflict: error.revisionConflict }
+              : {}),
+            ...(submittedMoveIntents.length ? { moveIntents: [...submittedMoveIntents] } : {}),
+          }));
+        }
+      } else if (db === dbAtStart) {
+        listenerApi.dispatch(itemListSlice.actions.failOutlineResolution(selectedList._id));
+      }
       console.error("Failed to persist item list outline:", error);
     } finally {
       releaseOutlinePersistence();
@@ -1891,74 +2726,177 @@ listenerMiddleware.startListening({
   },
 });
 
-// handle itemLists updates
+// Registry runtimes outlive controller mounts. Failed intents remain bound to
+// their account/church/database owner and can be rebound to a fresh Pouch
+// handle for that same account after teardown.
+type RegistryQueueBinding = {
+  database: object;
+  sessionToken: symbol | null;
+  accountId?: string;
+  queue: ItemListsRegistryQueue;
+};
+const pendingRegistryQueuesByOwner = new Map<string, RegistryQueueBinding>();
+let pendingRegistryQueuesByDb = new WeakMap<object, ItemListsRegistryQueue>();
+const pendingRegistryQueues = new Set<ItemListsRegistryQueue>();
+const releaseIdleRegistryQueue = (
+  ownerKey: string | undefined,
+  database: object,
+  queue: ItemListsRegistryQueue,
+) => {
+  if (queue.hasPendingChanges) return;
+  if (ownerKey) {
+    if (pendingRegistryQueuesByOwner.get(ownerKey)?.queue === queue) {
+      pendingRegistryQueuesByOwner.delete(ownerKey);
+    }
+  } else {
+    pendingRegistryQueuesByDb.delete(database);
+  }
+  pendingRegistryQueues.delete(queue);
+};
+
+const retirePendingRegistryQueuesForOtherAccounts = (accountId: string) => {
+  for (const [ownerKey, binding] of pendingRegistryQueuesByOwner) {
+    if (binding.accountId === accountId) continue;
+    binding.queue.retire();
+    pendingRegistryQueues.delete(binding.queue);
+    pendingRegistryQueuesByOwner.delete(ownerKey);
+  }
+};
+
+const retireAllPendingRegistryQueues = () => {
+  pendingRegistryQueues.forEach((queue) => queue.retire());
+  pendingRegistryQueues.clear();
+  pendingRegistryQueuesByOwner.clear();
+  pendingRegistryQueuesByDb = new WeakMap<object, ItemListsRegistryQueue>();
+};
+
+listenerMiddleware.startListening({
+  predicate: (action) => action.type === "RESET",
+  effect: () => retireAllPendingRegistryQueues(),
+});
+
+const snapshotItemListsRegistry = (
+  state: RootState["undoable"]["present"]["itemLists"],
+) => ({
+  currentLists: state.currentLists.map((item) => ({ ...item })),
+  activeList: state.activeList ? { ...state.activeList } : undefined,
+});
+
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
+    if (isAnyOf(itemListsSlice.actions.retryRegistrySave, itemListsSlice.actions.keepRegistryChanges)(action)) return true;
+    if (itemListsSlice.actions.initiateItemLists.match(action)) {
+      return Boolean(db);
+    }
     const state = (currentState as RootState).undoable.present.itemLists;
+    if (!state.isInitialized || isStoreResetAction(action)) return false;
     const previous = (previousState as RootState).undoable.present.itemLists;
-    // Don't save until initialization is complete
-    if (!state.isInitialized) return false;
-
+    if (state === previous) return false;
     const excluded = isAnyOf(
-      itemListsSlice.actions.setInitialItemList,
-      itemListsSlice.actions.initiateItemLists,
+      itemListsSlice.actions.setInitialItemList, itemListsSlice.actions.initiateItemLists,
+      itemListsSlice.actions.restorePendingRegistryChanges,
       itemListsSlice.actions.updateItemListsFromRemote,
-      itemListsSlice.actions.setIsInitialized,
-      itemListsSlice.actions.setOutlineScope,
+      itemListsSlice.actions.setIsInitialized, itemListsSlice.actions.setOutlineScope,
+      itemListsSlice.actions.setRegistrySaveState,
     );
-    return (
-      (state.currentLists !== previous.currentLists || state.activeList !== previous.activeList || state.selectedIdByScope !== previous.selectedIdByScope) &&
-      !excluded(action) &&
-      !isStoreResetAction(action)
-    );
+    return !excluded(action) && !_.isEqual(snapshotItemListsRegistry(previous), snapshotItemListsRegistry(state));
   },
-
   effect: async (action, listenerApi) => {
-    // Snapshot before debounce: leaving a controller page resets itemLists to
-    // initial state, which would otherwise make the delayed write bail out and
-    // drop active outline / selection persistence.
-    const snapshot = (listenerApi.getState() as RootState).undoable.present
-      .itemLists;
-    const { currentLists, activeList, selectedIdByScope } = snapshot;
     const dbAtStart = db;
     if (!dbAtStart) return;
-    // Selection can still be worth persisting when activeList is momentarily
-    // empty; skip only when there is nothing at all to write.
-    if (!activeList && currentLists.length === 0) return;
-
-    listenerApi.dispatch(
-      autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
-        AUTOSAVE_DEBOUNCE_KEYS.itemLists,
-      ),
-    );
+    const ownerAtStart = getActiveContentDatabaseOwner();
+    if (ownerAtStart && getContentDatabaseForOwner(ownerAtStart) !== dbAtStart) return;
+    const sessionTokenAtStart = getContentDatabaseSessionToken(dbAtStart.name);
+    const ownerKey = ownerAtStart?.scopeId;
+    if (ownerAtStart?.accountId) {
+      retirePendingRegistryQueuesForOtherAccounts(ownerAtStart.accountId);
+    }
+    const isOwnerCurrent = () => {
+      if (db !== dbAtStart) return false;
+      if (ownerAtStart) {
+        const currentOwner = getActiveContentDatabaseOwner();
+        if (!currentOwner || currentOwner.scopeId !== ownerAtStart.scopeId ||
+          currentOwner.databaseKey !== ownerAtStart.databaseKey ||
+          currentOwner.churchId !== ownerAtStart.churchId ||
+          getContentDatabaseForOwner(currentOwner) !== dbAtStart ||
+          (ownerAtStart.churchId && globalFireDbInfo?.churchId !== ownerAtStart.churchId)) return false;
+      } else if (getActiveContentDatabaseOwner()) {
+        return false;
+      }
+      return !sessionTokenAtStart ||
+        getContentDatabaseSessionToken(dbAtStart.name) === sessionTokenAtStart;
+    };
+    const saved = (document: DBItemLists) => {
+      if (!isOwnerCurrent()) return;
+      listenerApi.dispatch(itemListsSlice.actions.updateItemListsFromRemote({
+        itemLists: document.itemLists ?? [],
+        activeListId: document.activeList?._id,
+      }));
+      safePostMessage({ type: "update", data: { docs: document, hostId: globalHostId } });
+    };
+    const publishStatus = (status: Parameters<typeof itemListsSlice.actions.setRegistrySaveState>[0]) => {
+      if (isOwnerCurrent()) listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(status));
+    };
+    const binding = ownerKey ? pendingRegistryQueuesByOwner.get(ownerKey) : undefined;
+    let queue = ownerKey ? binding?.queue : pendingRegistryQueuesByDb.get(dbAtStart);
+    if (!queue) {
+      queue = new ItemListsRegistryQueue(dbAtStart, saved, publishStatus);
+      pendingRegistryQueues.add(queue);
+    } else if (ownerKey && binding &&
+      (binding.database !== dbAtStart || binding.sessionToken !== sessionTokenAtStart)) {
+      queue.rebind(dbAtStart, saved, publishStatus);
+    }
+    if (ownerKey) {
+      pendingRegistryQueuesByOwner.set(ownerKey, {
+        database: dbAtStart,
+        sessionToken: sessionTokenAtStart,
+        accountId: ownerAtStart?.accountId,
+        queue,
+      });
+    } else {
+      pendingRegistryQueuesByDb.set(dbAtStart, queue);
+    }
+    if (itemListsSlice.actions.initiateItemLists.match(action)) {
+      const pending = queue.pendingIntents;
+      if (pending.length) {
+        listenerApi.dispatch(itemListsSlice.actions.restorePendingRegistryChanges(pending));
+      }
+      if (db === dbAtStart) listenerApi.dispatch(itemListsSlice.actions.setRegistrySaveState(queue.state));
+      if (pending.length && queue.state.status !== "error") {
+        void queue.flush().finally(() => releaseIdleRegistryQueue(ownerKey, dbAtStart, queue));
+      } else if (!pending.length) {
+        releaseIdleRegistryQueue(ownerKey, dbAtStart, queue);
+      }
+      return;
+    }
+    if (itemListsSlice.actions.retryRegistrySave.match(action)) {
+      await queue.flush(true);
+      releaseIdleRegistryQueue(ownerKey, dbAtStart, queue);
+      return;
+    }
+    if (itemListsSlice.actions.keepRegistryChanges.match(action)) {
+      await queue.flush(true, true);
+      releaseIdleRegistryQueue(ownerKey, dbAtStart, queue);
+      return;
+    }
+    const rootBefore = listenerApi.getOriginalState() as RootState;
+    const rootAfter = listenerApi.getState() as RootState;
+    const debounceGeneration = queue.enqueue({
+      before: snapshotItemListsRegistry(rootBefore.undoable.present.itemLists),
+      after: snapshotItemListsRegistry(rootAfter.undoable.present.itemLists),
+    });
+    listenerApi.dispatch(autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(AUTOSAVE_DEBOUNCE_KEYS.itemLists));
     try {
+      // Cancellation owns only this debounce; a started database queue runs to
+      // completion independently and never submits the same entry twice.
       listenerApi.cancelActiveListeners();
       await listenerApi.delay(1500);
-
-      const db_itemLists: DBItemLists = await dbAtStart.get("ItemLists");
-      db_itemLists.itemLists = [...currentLists];
-      if (activeList) {
-        db_itemLists.activeList = activeList;
-      }
-      db_itemLists.selectedIdByScope = { ...selectedIdByScope };
-      db_itemLists.updatedAt = new Date().toISOString();
-      await dbAtStart.put(db_itemLists);
-
-      // Local machine updates
-      if (db !== dbAtStart) return;
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: db_itemLists,
-          hostId: globalHostId,
-        },
-      });
+      if (queue.currentGeneration === debounceGeneration) await queue.flush();
+    } catch (error) {
+      if (!isListenerCancelledTaskError(error)) console.error("Outline list save failed:", error);
     } finally {
-      listenerApi.dispatch(
-        autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
-          AUTOSAVE_DEBOUNCE_KEYS.itemLists,
-        ),
-      );
+      listenerApi.dispatch(autosaveIndicatorSlice.actions.endKeyedDebouncedSave(AUTOSAVE_DEBOUNCE_KEYS.itemLists));
+      releaseIdleRegistryQueue(ownerKey, dbAtStart, queue);
     }
   },
 });
@@ -2097,13 +3035,15 @@ listenerMiddleware.startListening({
       ? (action as OutlineDatabaseAction).meta?.outgoingOutlineDatabase ?? db
       : db;
     if (!dbAtStart) return;
+    const sessionAtStart = outlineAccountSession;
+    const sessionIsCurrent = () => sessionAtStart === outlineAccountSession;
     const churchAtStart = globalFireDbInfo?.churchId;
     listenerApi.cancelActiveListeners();
     if (!isSavingOutgoingOutline) {
       await listenerApi.delay(1500);
     }
 
-    if (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart)) return;
+    if (!sessionIsCurrent() || (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart))) return;
     const state = isSavingOutgoingOutline
       ? originalState
       : (listenerApi.getState() as RootState);
@@ -2115,15 +3055,20 @@ listenerMiddleware.startListening({
     }
     const { list } = state.undoable.present.overlays;
     const ownerKey = state.undoable.present.overlays.outlineOwnerKey;
+    const lifecycleLease = ownerKey ? getOutlineContentLifecycleLease(ownerKey) : undefined;
+    const lifecycleAllowsPublish = () => lifecycleLease === undefined ||
+      isOutlineContentLifecycleLeaseCurrent(ownerKey!, lifecycleLease);
     const { selectedList } = state.undoable.present.itemLists;
 
     if (!selectedList) return;
     const listId = selectedList._id;
+    const releaseOutlinePersistence = beginOutlinePersistence(dbAtStart);
     try {
       const saving = persistServiceListOverlays(
         dbAtStart,
         listId,
         list.map((overlay) => overlay.id),
+        sessionIsCurrent,
       );
       if (isSavingOutgoingOutline && (listenerApi.getState() as RootState).undoable.present.overlays.hasPendingUpdate) {
         listenerApi.dispatch(overlaysSlice.actions.forceUpdate());
@@ -2132,17 +3077,28 @@ listenerMiddleware.startListening({
       if (!persisted) return;
 
       if (ownerKey) listenerApi.dispatch(overlaysSlice.actions.acknowledgeOutlineSave({ ownerKey, list }));
-      listenerApi.throwIfCancelled();
-      if (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart) return;
+      if (!sessionIsCurrent() || (!isSavingOutgoingOutline && (db !== dbAtStart || globalFireDbInfo?.churchId !== churchAtStart))) return;
       const latest = (listenerApi.getState() as RootState).undoable.present;
       if (latest.overlays.outlineOwnerKey !== ownerKey || latest.overlays.list !== list) return;
+      listenerApi.throwIfCancelled();
+      if (!lifecycleAllowsPublish()) return;
       safePostMessage({
         type: "update",
         data: { docs: persisted, hostId: globalHostId },
       });
     } catch (error) {
+      if (!sessionIsCurrent()) return;
       if (isListenerCancelledTaskError(error)) return;
       console.error("Failed to persist overlay order:", error);
+      const message = error instanceof ServiceListConflictError
+        ? "Another saved outline version has a different overlay order. Your current order is still here and has not been saved."
+        : "Could not save the overlay order. Your current order is still here. Check the connection and try again.";
+      notifyPresentationSyncError(message);
+    } finally {
+      releaseOutlinePersistence();
+      if (db === dbAtStart && globalFireDbInfo?.churchId === churchAtStart) {
+        listenerApi.dispatch(bibleCleanupOpportunity({}));
+      }
     }
   },
 });
@@ -2224,11 +3180,11 @@ listenerMiddleware.startListening({
     const churchIdAtStart = globalFireDbInfo.churchId;
     const currentItem = state.undoable.present.item;
     let item: DBItem | null = null;
-    if (currentItem._id === itemId && currentItem.slides?.length > 1) {
+    if (currentItem._id === itemId && getActiveItemSlides(currentItem).length > 1) {
       item = currentItem as unknown as DBItem;
     } else if (dbAtStart) {
       try {
-        item = (await dbAtStart.get(itemId)) as DBItem;
+        item = await loadItemWithSongHydration(dbAtStart, itemId);
       } catch {
         return;
       }
@@ -2238,8 +3194,11 @@ listenerMiddleware.startListening({
       globalFireDbInfo.db !== fireDbAtStart ||
       globalFireDbInfo.churchId !== churchIdAtStart
     ) return;
-    if (!item?.slides?.length || item.slides.length < 2) return;
-    const wrapUpSlide = item.slides[1];
+    if (!item) return;
+    if (item.type !== "song") item = normalizeItemSlides(item);
+    const slides = getActiveItemSlides(item);
+    if (slides.length < 2) return;
+    const wrapUpSlide = slides[1];
     const presentationType = item.type === "timer" ? "timer" : monitorInfo.type;
     listenerApi.dispatch(
       updateMonitor({
@@ -4041,6 +5000,9 @@ listenerMiddleware.startListening({
 
     reconcileItemSelectionAfterUndoRedo(listenerApi, preservedItemSelection);
 
+    const itemBeforePendingFlush =
+      (listenerApi.getState() as RootState).undoable.present.item;
+    flushPendingItemMutations(getItemMutationOwner(itemBeforePendingFlush));
     const itemAfterUndoRedo =
       (listenerApi.getState() as RootState).undoable.present.item;
     const itemPersistenceChanged = !_.isEqual(
@@ -4055,14 +5017,37 @@ listenerMiddleware.startListening({
           (contentOwner.scopeId === "unscoped" ? dbAtStart : undefined)
         : dbAtStart;
       if (itemDatabase) {
-        const latestPersistedItem = (await itemDatabase
-          .get(itemAfterUndoRedo._id)
-          .catch(() => null)) as DBItem | null;
+        const targetId = itemAfterUndoRedo._id;
+        const expectedState = sanitizeTransientItemState(itemAfterUndoRedo);
+        const churchIdAtReadStart = globalFireDbInfo.churchId;
+        const sessionTokenAtReadStart = getContentDatabaseSessionToken(itemDatabase.name);
+        const latestPersistedItem = await loadItemWithSongHydration(itemDatabase, targetId)
+          .catch(() => null);
+        // A component may still have accepted text queued outside Redux while
+        // the authoritative read was pending. Materialize it before deciding
+        // whether this response still owns the baseline rebase.
+        flushPendingItemMutations(owner);
         const activeItem =
           (listenerApi.getState() as RootState).undoable.present.item;
+        const activeContentOwner = getActiveContentDatabaseOwner();
+        const databaseIsStillOwned = contentOwner && contentOwner.scopeId !== "unscoped"
+          ? activeContentOwner?.scopeId === contentOwner.scopeId &&
+            activeContentOwner.databaseKey === contentOwner.databaseKey &&
+            activeContentOwner.churchId === contentOwner.churchId &&
+            getContentDatabaseForOwner(contentOwner) === itemDatabase
+          : db === itemDatabase && !activeContentOwner;
+        const noNewerAutosave = !pendingItemAutosaves.has(itemAutosaveKey(itemAfterUndoRedo)) &&
+          !itemAutosaveDebounces.has(itemAutosaveKey(itemAfterUndoRedo)) &&
+          !itemAutosaveWriteQueues.has(itemAutosaveKey(itemAfterUndoRedo));
         if (
           latestPersistedItem &&
-          sameItemMutationOwner(getItemMutationOwner(activeItem), owner)
+          latestPersistedItem._id === targetId &&
+          sameItemMutationScope(itemAfterUndoRedo, activeItem) &&
+          databaseIsStillOwned &&
+          globalFireDbInfo.churchId === churchIdAtReadStart &&
+          getContentDatabaseSessionToken(itemDatabase.name) === sessionTokenAtReadStart &&
+          _.isEqual(sanitizeTransientItemState(activeItem), expectedState) &&
+          noNewerAutosave
         ) {
           listenerApi.dispatch(
             itemSlice.actions.rebaseItemPersistence(latestPersistedItem),
@@ -4261,11 +5246,32 @@ const combinedReducers = combineReducers({
   controllerProfiles: controllerProfilesSlice.reducer,
 });
 
+type RetainedOutlineState = Pick<RootState["undoable"]["present"]["itemList"], "remoteConflicts" | "pendingRevisionResolutions">;
+const outlineDraftsByDb = new Map<object | string, RetainedOutlineState>();
+const outlineDraftDatabaseKey = (database: NonNullable<typeof db>) => database.name || database;
+let outlineStateDatabase = db;
+let outlineAccountSession = 0;
+
 type OutlineDatabaseAction = Action & {
   meta?: { outlineDatabaseKey?: string; outgoingOutlineDatabase?: typeof db; outlineOwnerKey?: string };
 };
 
 const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) => {
+  const historyOutline = action.type === "@@redux-undo/UNDO" || action.type === "@@redux-undo/REDO"
+    ? state?.undoable.present.itemList : undefined;
+  const databaseChanged = outlineStateDatabase !== db;
+  if (action.type === "RESET") {
+    // Clear before caching/reducing: logout must never save or rehydrate the
+    // previous account's unsaved drafts, even with the same database handle.
+    outlineDraftsByDb.clear();
+    outlineAccountSession += 1;
+  } else if (outlineStateDatabase && state?.undoable?.present.itemList) {
+    const { remoteConflicts, pendingRevisionResolutions } = state.undoable.present.itemList;
+    const key = outlineDraftDatabaseKey(outlineStateDatabase);
+    if (Object.keys(remoteConflicts).length) outlineDraftsByDb.set(key, { remoteConflicts, pendingRevisionResolutions });
+    else outlineDraftsByDb.delete(key);
+  }
+  outlineStateDatabase = db;
   if (action.type === "RESET") {
     state = {} as RootState;
   } else if (action.type === "RESET_CONTROLLER_SESSION") {
@@ -4279,11 +5285,35 @@ const rootReducer: Reducer = (state: RootState, action: OutlineDatabaseAction) =
       itemLibraryUi: state?.itemLibraryUi,
     } as RootState;
   }
-  const next = combinedReducers(state, action);
+  const reduced = combinedReducers(state, action);
+  const retained = action.type === "RESET" ? undefined : historyOutline ? {
+    remoteConflicts: historyOutline.remoteConflicts,
+    pendingRevisionResolutions: historyOutline.pendingRevisionResolutions,
+  } : db && (isStoreResetAction(action) || databaseChanged)
+    ? outlineDraftsByDb.get(outlineDraftDatabaseKey(db)) ?? (databaseChanged ? { remoteConflicts: {}, pendingRevisionResolutions: {} } : undefined)
+    : undefined;
+  let next = reduced;
+  if (retained) {
+    const itemList = { ...reduced.undoable.present.itemList, ...retained };
+    const outlineId = itemList.loadedOutlineId;
+    if (historyOutline && outlineId && retained.remoteConflicts[outlineId]) {
+      const conflict = retained.remoteConflicts[outlineId];
+      itemList.remoteConflicts = { ...retained.remoteConflicts, [outlineId]: { ...conflict, localItems: itemList.list } };
+      itemList.syncBaseline = conflict.remoteItems;
+      itemList.hasPendingUpdate = true;
+    }
+    next = {
+      ...reduced,
+      undoable: {
+        ...reduced.undoable,
+        present: { ...reduced.undoable.present, itemList },
+      },
+    };
+  }
   const present = next.undoable.present;
   const databaseKey = action.meta?.outlineDatabaseKey ?? present.itemLists.contentDatabaseKey ?? "";
   const ownerKey = getOutlineOwnerKey(databaseKey, present.itemLists.selectedList?._id);
-  if (present.itemList.outlineOwnerKey === ownerKey) return next;
+  if (present.itemList.outlineOwnerKey === ownerKey && present.itemLists.contentDatabaseKey === databaseKey) return next;
 
   // Selection and content retirement must be one observable Redux transition,
   // including scope changes and registry-driven fallback selection.
@@ -4337,10 +5367,21 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
       currentItem.contentOwner.scopeId === "unscoped";
 
   if (
-    itemSlice.actions.bufferRemoteItemUpdate.match(action) &&
+    (itemSlice.actions.bufferRemoteItemUpdate.match(action) || itemSlice.actions.bufferSongV2RevisionConflict.match(action)) &&
     !itemBelongsToActiveDatabase
   ) {
     return action;
+  }
+
+  if (itemSlice.actions.bufferRemoteItemUpdate.match(action) || itemSlice.actions.bufferSongV2RevisionConflict.match(action) ||
+    itemSlice.actions.markItemPersisted.match(action)) {
+    flushPendingItemMutations(currentOwner);
+  }
+  if (itemSlice.actions.bufferSongV2RevisionConflict.match(action)) {
+    const pending = pendingItemAutosaves.get(itemAutosaveKey(currentItem));
+    if (pending) pendingItemAutosaves.set(itemAutosaveKey(currentItem), {
+      ...pending, mutationVersion: ++itemAutosaveMutationVersion,
+    });
   }
 
   if (itemSlice.actions.applyPendingRemoteItem.match(action)) {
@@ -4351,8 +5392,217 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
       api.dispatch(itemSlice.actions.discardPendingRemoteItem());
       return action;
     }
-    pendingItemAutosaves.delete(itemAutosaveKey(currentItem));
-    return next(action);
+    flushPendingItemMutations(currentOwner);
+    const latestItem = (api.getState() as RootState).undoable.present.item;
+    if (action.payload && (latestItem.hasPendingUpdate || (latestItem.isLyricsEditorOpen && !action.meta?.allowLyricsEditorOpen))) return action;
+
+    const saveKey = itemAutosaveKey(latestItem);
+    const recovery = pendingSongV2WriteRecoveries.get(saveKey) ?? pendingItemAutosaves.get(saveKey);
+    const recoveryRecordId = recovery?.recoveryRecordId;
+    const recoveryOwner = recovery?.owner;
+    const requestedRecoveryMutationVersion = recovery?.mutationVersion;
+    const requestedRemoteItem = latestItem.pendingRemoteItem;
+    const requestedRemoteRevision = requestedRemoteItem?._rev;
+    const songV2ConflictFingerprint = (
+      conflicts: ItemState["pendingSongV2Conflicts"],
+    ) => JSON.stringify(
+      (conflicts ?? [])
+        .map(conflict => ({
+          documentId: conflict.documentId,
+          winningRevision: conflict.winningRevision,
+          revisions: [...conflict.revisions].sort(),
+        }))
+        .sort((left, right) => left.documentId.localeCompare(right.documentId)),
+    );
+    const requestedConflicts = songV2ConflictFingerprint(latestItem.pendingSongV2Conflicts);
+    const requestedMutationVersion = pendingItemAutosaves.get(saveKey)?.mutationVersion ??
+      recovery?.mutationVersion;
+    const beginExplicitRemoteDecision = (discarding: boolean) => {
+      const previous = explicitRemoteDecisionByItem.get(saveKey);
+      const nextDecision = { version: (previous?.version ?? 0) + 1, discarding };
+      explicitRemoteDecisionByItem.set(saveKey, nextDecision);
+      return nextDecision.version;
+    };
+
+    if (!recoveryRecordId || !recoveryOwner) {
+      beginExplicitRemoteDecision(false);
+      clearSongRecoveryCheckpointRetry(saveKey);
+      cancelItemAutosaveDebounce(saveKey);
+      pendingItemAutosaves.delete(saveKey);
+      pendingSongV2WriteRecoveries.delete(saveKey);
+      return next(action);
+    }
+
+    // Stop any in-flight writer before yielding to IndexedDB. If the durable
+    // discard fails, its checkpoint remains and the operator can retry or keep
+    // the draft; the stale writer does not continue in the meantime.
+    const decisionVersion = beginExplicitRemoteDecision(true);
+    const finishExplicitRemoteDecision = () => {
+      const decision = explicitRemoteDecisionByItem.get(saveKey);
+      if (decision?.version === decisionVersion) {
+        explicitRemoteDecisionByItem.set(saveKey, { ...decision, discarding: false });
+      }
+    };
+    const decisionSessionToken = getContentDatabaseSessionToken(recovery.database.name);
+    const decisionOwnerIsCurrent = () => {
+      const active = (api.getState() as RootState).undoable.present.item;
+      return db === recovery.database &&
+        getContentDatabaseSessionToken(recovery.database.name) === decisionSessionToken &&
+        active._id === latestItem._id &&
+        sameItemMutationOwner(getItemMutationOwner(active), currentOwner) &&
+        sameItemMutationOwner(getItemMutationOwner(active), recoveryOwner) &&
+        getContentDatabaseForOwner(recoveryOwner) === recovery.database &&
+        globalFireDbInfo.churchId === recoveryOwner.churchId &&
+        explicitRemoteDecisionByItem.get(saveKey)?.version === decisionVersion;
+    };
+    const sameRequestedRemoteDecision = () => {
+      const active = (api.getState() as RootState).undoable.present.item;
+      const currentPending = pendingItemAutosaves.get(saveKey);
+      return decisionOwnerIsCurrent() &&
+        active.pendingRemoteItem?._id === requestedRemoteItem?._id &&
+        active.pendingRemoteItem?._rev === requestedRemoteRevision &&
+        songV2ConflictFingerprint(active.pendingSongV2Conflicts) === requestedConflicts &&
+        (!currentPending || currentPending.mutationVersion === requestedMutationVersion);
+    };
+    let acquiredLock = false;
+    return withSongV2AutosaveLock(
+      latestItem._id,
+      recovery.database.name,
+      async () => {
+        acquiredLock = true;
+        if (!decisionOwnerIsCurrent()) {
+          finishExplicitRemoteDecision();
+          return action;
+        }
+        if (latestItem.docType === "song-v2-root" && requestedRemoteItem) {
+          let currentSnapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>>;
+          try {
+            currentSnapshot = await loadSongV2Snapshot(
+              recovery.database,
+              latestItem._id,
+              true,
+            );
+          } catch (error) {
+            console.error("Could not verify the current song before applying the remote snapshot", error);
+            finishExplicitRemoteDecision();
+            if (!decisionOwnerIsCurrent()) return action;
+            api.dispatch(itemSlice.actions.setRemoteUpdateReason("song-recovery-discard-failed"));
+            return action;
+          }
+          if (!decisionOwnerIsCurrent()) {
+            finishExplicitRemoteDecision();
+            return action;
+          }
+          const remoteSnapshotIsCurrent =
+            requestedRemoteItem._rev === currentSnapshot.root._rev &&
+            sameSongV2AuthoredContent(
+              serializeSongToV2Documents(requestedRemoteItem),
+              currentSnapshot,
+            ) &&
+            requestedConflicts === songV2ConflictFingerprint(currentSnapshot.conflicts);
+          if (!remoteSnapshotIsCurrent) {
+            // A successful save may have advanced this song after the UI
+            // offered its choice. Refresh the offer and let the editor apply
+            // the current snapshot after the usual clean-state checks.
+            if (currentSnapshot.conflicts?.length) {
+              api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+                item: currentSnapshot.hydrated,
+                conflicts: currentSnapshot.conflicts,
+              }));
+            } else {
+              api.dispatch(itemSlice.actions.bufferRemoteItemUpdate(currentSnapshot.hydrated));
+              api.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+            }
+            finishExplicitRemoteDecision();
+            return action;
+          }
+        }
+        if (!sameRequestedRemoteDecision()) {
+          finishExplicitRemoteDecision();
+          return action;
+        }
+        try {
+          await markSongV2AutosaveRecoveryDiscarded(
+            recoveryRecordId,
+            recoveryOwner,
+            latestItem._id,
+          );
+        } catch (error) {
+          console.error("Could not durably discard the saved song recovery", error);
+          const currentRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+          if (currentRecovery?.recoveryRecordId === recoveryRecordId) {
+            pendingSongV2WriteRecoveries.set(saveKey, {
+              ...currentRecovery,
+              recoveryState: "discard-failed",
+            });
+          }
+          const currentPending = pendingItemAutosaves.get(saveKey);
+          if (currentPending?.recoveryRecordId === recoveryRecordId) {
+            pendingItemAutosaves.set(saveKey, {
+              ...currentPending,
+              recoveryState: "discard-failed",
+            });
+          }
+          finishExplicitRemoteDecision();
+          api.dispatch(itemSlice.actions.setRemoteUpdateReason("song-recovery-discard-failed"));
+          return action;
+        }
+
+        const currentRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+        const currentPending = pendingItemAutosaves.get(saveKey);
+        const recoveryVersionMatches = requestedRecoveryMutationVersion === undefined ||
+          !currentRecovery || currentRecovery.mutationVersion === requestedRecoveryMutationVersion;
+        const pendingVersionMatches = !currentPending ||
+          currentPending.mutationVersion === requestedMutationVersion;
+        const recoveryStillCurrent =
+          (!currentRecovery || currentRecovery.recoveryRecordId === recoveryRecordId) &&
+          (!currentPending || currentPending.recoveryRecordId === recoveryRecordId) &&
+          recoveryVersionMatches && pendingVersionMatches;
+        if (currentRecovery?.recoveryRecordId === recoveryRecordId) {
+          pendingSongV2WriteRecoveries.delete(saveKey);
+        }
+        if (currentPending?.recoveryRecordId === recoveryRecordId && pendingVersionMatches) {
+          pendingItemAutosaves.delete(saveKey);
+        } else if (currentPending?.recoveryRecordId === recoveryRecordId) {
+          pendingItemAutosaves.set(saveKey, {
+            ...currentPending,
+            recoveryRecordId: undefined,
+            recoveryState: undefined,
+          });
+        }
+        if (recoveryVersionMatches && pendingVersionMatches) {
+          clearSongRecoveryCheckpointRetry(saveKey);
+          cancelItemAutosaveDebounce(saveKey);
+        }
+        // Keep a small durable tombstone so a stale operation in another window
+        // cannot recreate the rejected checkpoint after this lock is released.
+        finishExplicitRemoteDecision();
+
+        const sameRemoteDecision = sameRequestedRemoteDecision() && pendingVersionMatches;
+        if (!recoveryStillCurrent || !sameRemoteDecision) return action;
+        return next(action);
+      },
+    ).catch(error => {
+      if (acquiredLock) throw error;
+      console.error("Could not acquire the Song V2 recovery lock", error);
+      const currentRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+      if (currentRecovery?.recoveryRecordId === recoveryRecordId) {
+        pendingSongV2WriteRecoveries.set(saveKey, {
+          ...currentRecovery,
+          recoveryState: "discard-failed",
+        });
+      }
+      const currentPending = pendingItemAutosaves.get(saveKey);
+      if (currentPending?.recoveryRecordId === recoveryRecordId) {
+        pendingItemAutosaves.set(saveKey, {
+          ...currentPending,
+          recoveryState: "discard-failed",
+        });
+      }
+      finishExplicitRemoteDecision();
+      api.dispatch(itemSlice.actions.setRemoteUpdateReason("song-recovery-discard-failed"));
+      return action;
+    });
   }
 
   if (
@@ -4388,19 +5638,11 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
     payload: { ...action.payload, contentOwner },
   });
   const activatedItem = (api.getState() as RootState).undoable.present.item;
-  const pending = pendingItemAutosaves.get(itemAutosaveKey(activatedItem));
-  if (
-    pending &&
-    sameItemMutationOwner(pending.owner, getItemMutationOwner(activatedItem))
-  ) {
-    api.dispatch(
-      itemSlice.actions.restorePendingItemEdits({
-        owner: pending.owner!,
-        desired: pending.desired,
-        baseline: pending.baseline,
-      }),
-    );
-  }
+  const saveKey = itemAutosaveKey(activatedItem);
+  const pending = pendingItemAutosaves.get(saveKey);
+  const recovery = pendingSongV2WriteRecoveries.get(saveKey);
+  if (pending) restoreSongV2RecoveryDraftInEditor(pending);
+  if (recovery) restoreSongV2RecoveryDraftInEditor(recovery);
   return result;
 };
 
@@ -4416,14 +5658,299 @@ const store = configureStore({
     ),
 });
 
+const requestPendingItemAutosaveRetry = (
+  saveKey: string,
+  pending: PendingItemAutosave,
+  recovery: boolean,
+) => {
+  const retryId = `${saveKey}:${pending.mutationVersion}:${recovery ? "recovery" : "pending"}`;
+  if (queuedItemAutosaveRetries.has(retryId)) return;
+  queuedItemAutosaveRetries.add(retryId);
+  store.dispatch(retryPendingItemAutosave({
+    saveKey,
+    mutationVersion: pending.mutationVersion,
+    recovery,
+  }));
+};
+
+const queuedSongV2RecoveryReviewLoads = new Set<string>();
+const restoreSongV2RecoveryDraftInEditor = (pending: PendingItemAutosave) => {
+  if (pending.recoveryState === "discarded" || pending.recoveryState === "discard-failed") return;
+  const activeItem = store.getState().undoable.present.item;
+  const owner = pending.owner;
+  if (!owner || !sameItemMutationOwner(owner, getItemMutationOwner(activeItem))) return;
+  const saveKey = itemAutosaveKey(pending.desired);
+  const currentPending = pendingItemAutosaves.get(saveKey);
+  if (!currentPending || currentPending.mutationVersion <= pending.mutationVersion) {
+    store.dispatch(itemSlice.actions.restorePendingItemEdits({
+      owner,
+      desired: pending.desired,
+      baseline: pending.baseline,
+    }));
+  }
+  if (pending.recoveryState !== "needs-review" || !songRecoveryIsReadyForOwner(owner, pending.database)) return;
+  const loadKey = `${saveKey}:${pending.recoveryRecordId ?? pending.mutationVersion}`;
+  if (queuedSongV2RecoveryReviewLoads.has(loadKey)) return;
+  queuedSongV2RecoveryReviewLoads.add(loadKey);
+  void loadSongV2Snapshot(pending.database, pending.desired._id, true)
+    .then(snapshot => {
+      const latestItem = store.getState().undoable.present.item;
+      const currentRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+      if (
+        currentRecovery?.recoveryState !== "needs-review" ||
+        currentRecovery.recoveryRecordId !== pending.recoveryRecordId ||
+        !songRecoveryIsReadyForOwner(owner, pending.database) ||
+        !sameItemMutationOwner(getItemMutationOwner(latestItem), owner)
+      ) return;
+      if (snapshot.conflicts?.length) {
+        store.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
+          item: snapshot.hydrated,
+          conflicts: snapshot.conflicts,
+        }));
+      } else {
+        store.dispatch(itemSlice.actions.bufferRemoteItemUpdate(snapshot.hydrated));
+        store.dispatch(itemSlice.actions.setRemoteUpdateReason("song-content-conflict"));
+      }
+    })
+    .catch(error => console.error("Could not restore the interrupted song conflict", error))
+    .finally(() => queuedSongV2RecoveryReviewLoads.delete(loadKey));
+};
+
+const pendingAutosaveMatchesContentOwner = (
+  pending: PendingItemAutosave,
+  owner: ItemContentOwner,
+  database: PouchDB.Database,
+) => Boolean(
+  pending.owner &&
+  pending.owner.scopeId === owner.scopeId &&
+  pending.owner.databaseKey === owner.databaseKey &&
+  pending.owner.churchId === owner.churchId &&
+  pending.owner.accountId === owner.accountId &&
+  pending.database.name === database.name,
+);
+
+const songRecoveryIsReadyForOwner = (
+  owner: ItemContentOwner,
+  database: PouchDB.Database,
+) => {
+  const sessionToken = getContentDatabaseSessionToken(database.name);
+  return Boolean(
+    sessionToken &&
+    hasSuccessfulInitialContentReplication(database.name, sessionToken) &&
+    getActiveContentDatabaseOwner()?.scopeId === owner.scopeId &&
+    getActiveContentDatabaseOwner()?.accountId === owner.accountId &&
+    getActiveContentDatabaseOwner()?.churchId === owner.churchId &&
+    getContentDatabaseForOwner(owner) === database,
+  );
+};
+
+const scheduleSongRecoveryCheckpointRetry = (
+  saveKey: string,
+  failed: PendingItemAutosave,
+) => {
+  const owner = failed.owner;
+  const database = failed.database;
+  if (
+    failed.recoveryState !== "checkpoint-failed" ||
+    !owner ||
+    !songRecoveryIsReadyForOwner(owner, database) ||
+    globalFireDbInfo.canWriteSongContent !== true ||
+    globalFireDbInfo.churchId !== owner.churchId
+  ) return;
+
+  clearSongRecoveryCheckpointRetry(saveKey);
+  const retryCount = failed.recoveryCheckpointRetryCount ?? 0;
+  const delayMs = SONG_RECOVERY_CHECKPOINT_RETRY_DELAYS_MS[retryCount];
+  if (delayMs === undefined) return;
+  const sessionToken = getContentDatabaseSessionToken(database.name);
+  if (!sessionToken) return;
+
+  const retryVersion = retryCount + 1;
+  const withRetryCount = { ...failed, recoveryCheckpointRetryCount: retryVersion };
+  if (pendingItemAutosaves.get(saveKey)?.mutationVersion === failed.mutationVersion) {
+    pendingItemAutosaves.set(saveKey, withRetryCount);
+  }
+  if (pendingSongV2WriteRecoveries.get(saveKey)?.mutationVersion === failed.mutationVersion) {
+    pendingSongV2WriteRecoveries.set(saveKey, withRetryCount);
+  }
+
+  const timer = setTimeout(() => {
+    const scheduled = songRecoveryCheckpointRetryTimers.get(saveKey);
+    if (scheduled?.timer === timer) songRecoveryCheckpointRetryTimers.delete(saveKey);
+    const pendingRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+    const pendingAutosave = pendingItemAutosaves.get(saveKey);
+    const current = pendingRecovery?.mutationVersion === failed.mutationVersion
+      ? pendingRecovery : pendingAutosave;
+    if (
+      !current ||
+      current.mutationVersion !== failed.mutationVersion ||
+      current.recoveryState !== "checkpoint-failed" ||
+      getContentDatabaseSessionToken(database.name) !== sessionToken ||
+      !pendingAutosaveMatchesContentOwner(current, owner, database)
+    ) return;
+    retryInterruptedAutosaveForOwner(saveKey, owner, database);
+  }, delayMs);
+  songRecoveryCheckpointRetryTimers.set(saveKey, {
+    timer,
+    mutationVersion: failed.mutationVersion,
+    sessionToken,
+  });
+};
+
+const retryInterruptedAutosaveForOwner = (
+  saveKey: string,
+  owner: ItemContentOwner,
+  database: PouchDB.Database,
+) => {
+  if (globalFireDbInfo.canWriteSongContent !== true ||
+    globalFireDbInfo.churchId !== owner.churchId ||
+    !autosaveBelongsToContentDatabase(saveKey, owner.scopeId) ||
+    !songRecoveryIsReadyForOwner(owner, database)) return;
+  const recovery = pendingSongV2WriteRecoveries.get(saveKey);
+  if (recovery) {
+    if (recovery.recoveryState === "needs-review" || recovery.recoveryState === "discard-failed" ||
+      recovery.recoveryState === "discarded" ||
+      !pendingAutosaveMatchesContentOwner(recovery, owner, database)) return;
+    clearSongRecoveryCheckpointRetry(saveKey);
+    const rebound = { ...recovery, database };
+    pendingSongV2WriteRecoveries.set(saveKey, rebound);
+    requestPendingItemAutosaveRetry(saveKey, rebound, true);
+    return;
+  }
+  const pending = pendingItemAutosaves.get(saveKey);
+  if (
+    (pending?.recoveryState !== "interrupted" && pending?.recoveryState !== "checkpoint-failed") ||
+    !pendingAutosaveMatchesContentOwner(pending, owner, database)
+  ) return;
+  clearSongRecoveryCheckpointRetry(saveKey);
+  const rebound = {
+    ...pending,
+    database,
+    recoveryState: undefined,
+  };
+  pendingItemAutosaves.set(saveKey, rebound);
+  requestPendingItemAutosaveRetry(saveKey, rebound, false);
+};
+
+const recoveryLoadsInProgress = new Set<string>();
+const loadPersistedSongV2RecoveriesForOwner = async (
+  owner: ItemContentOwner,
+  database: PouchDB.Database,
+) => {
+  if (
+    globalFireDbInfo.canWriteSongContent !== true ||
+    globalFireDbInfo.churchId !== owner.churchId ||
+    !songRecoveryIsReadyForOwner(owner, database)
+  ) return;
+  const sessionToken = getContentDatabaseSessionToken(database.name);
+  const loadingKey = JSON.stringify([owner.scopeId, owner.accountId, database.name]);
+  if (recoveryLoadsInProgress.has(loadingKey)) return;
+  recoveryLoadsInProgress.add(loadingKey);
+  try {
+    const records = await listSongV2AutosaveRecoveries(owner);
+    if (
+      !sessionToken ||
+      getContentDatabaseSessionToken(database.name) !== sessionToken ||
+      !songRecoveryIsReadyForOwner(owner, database) ||
+      globalFireDbInfo.canWriteSongContent !== true ||
+      globalFireDbInfo.churchId !== owner.churchId
+    ) return;
+
+    for (const record of records) {
+      if (
+        getContentDatabaseSessionToken(database.name) !== sessionToken ||
+        !songRecoveryIsReadyForOwner(owner, database) ||
+        globalFireDbInfo.canWriteSongContent !== true ||
+        globalFireDbInfo.churchId !== owner.churchId
+      ) break;
+      if (record.status === "discarded") {
+        continue;
+      }
+      if (record.itemId !== record.desired._id || record.desired.type !== "song") continue;
+      const desired = { ...record.desired, contentOwner: owner };
+      const saveKey = itemAutosaveKey(desired);
+      const ownerWithItem = getItemMutationOwner(desired);
+      if (!ownerWithItem) continue;
+      const existingRecovery = pendingSongV2WriteRecoveries.get(saveKey);
+      if (existingRecovery) {
+        retryInterruptedAutosaveForOwner(saveKey, owner, database);
+        continue;
+      }
+      const recovered: PendingItemAutosave = {
+        desired,
+        baseline: record.baseline,
+        database,
+        owner: ownerWithItem,
+        // Mutation versions are process-local. Zero makes any new edit in this
+        // renderer newer while keeping this persisted predecessor first.
+        mutationVersion: 0,
+        resolveReplicationConflicts: record.resolveReplicationConflicts,
+        recoveryRecordId: record.id,
+        recoveryState: record.status === "needs-review" ? "needs-review" : undefined,
+      };
+      pendingSongV2WriteRecoveries.set(saveKey, recovered);
+      if (!pendingItemAutosaves.has(saveKey)) {
+        pendingItemAutosaves.set(saveKey, recovered);
+      }
+
+      const activeItem = store.getState().undoable.present.item;
+      if (sameItemMutationOwner(getItemMutationOwner(activeItem), ownerWithItem)) {
+        restoreSongV2RecoveryDraftInEditor(recovered);
+      }
+      retryInterruptedAutosaveForOwner(saveKey, owner, database);
+    }
+  } catch (error) {
+    // Leave the durable record untouched. A later replication activity or
+    // database activation will retry the owner-scoped scan.
+    console.error("Could not load interrupted Song V2 autosaves", error);
+  } finally {
+    recoveryLoadsInProgress.delete(loadingKey);
+  }
+};
+
+registerContentDatabaseActivationHandler((owner, database) => {
+  if (globalFireDbInfo.canWriteSongContent !== true || globalFireDbInfo.churchId !== owner.churchId) return;
+  const saveKeys = new Set([
+    ...pendingSongV2WriteRecoveries.keys(),
+    ...[...pendingItemAutosaves.entries()]
+      .filter(([, pending]) => pending.recoveryState === "interrupted" || pending.recoveryState === "checkpoint-failed")
+      .map(([saveKey]) => saveKey),
+  ]);
+  saveKeys.forEach(saveKey => retryInterruptedAutosaveForOwner(saveKey, owner, database));
+  void loadPersistedSongV2RecoveriesForOwner(owner, database);
+});
+
 subscribeToContentActivity(() => {
   store.dispatch(bibleCleanupOpportunity({}));
+  const owner = getActiveContentDatabaseOwner();
+  const activeDatabase = owner && getContentDatabaseForOwner(owner);
+  if (owner && activeDatabase) {
+    const saveKeys = new Set([
+      ...pendingSongV2WriteRecoveries.keys(),
+      ...[...pendingItemAutosaves.entries()]
+        .filter(([, pending]) => pending.recoveryState === "interrupted" || pending.recoveryState === "checkpoint-failed")
+        .map(([saveKey]) => saveKey),
+    ]);
+    saveKeys.forEach(saveKey => retryInterruptedAutosaveForOwner(saveKey, owner, activeDatabase));
+    void loadPersistedSongV2RecoveriesForOwner(owner, activeDatabase);
+  }
 });
 subscribeToActiveControllerPresence(() => {
   store.dispatch(bibleCleanupOpportunity({}));
 });
 
-registerContentDatabaseFlushHandler(flushItemAutosavesForContentDatabase);
+registerContentDatabaseFlushHandler((owner) =>
+  flushItemAutosavesForContentDatabase(owner.scopeId),
+);
+registerContentDatabaseFlushHandler(async (owner, database) => {
+  const binding = pendingRegistryQueuesByOwner.get(owner.scopeId);
+  if (!binding || binding.database !== database) return;
+  // flush() waits for an existing write or drains the current debounce queue.
+  // Failed/conflicting entries remain in the owner-bound queue and publish the
+  // existing Retry save / Keep my changes state instead of blocking teardown.
+  await binding.queue.flush();
+  releaseIdleRegistryQueue(owner.scopeId, database, binding.queue);
+});
 
 const refreshServicePlanningPreviewSongMatches = (listenerApi: {
   getState: () => unknown;

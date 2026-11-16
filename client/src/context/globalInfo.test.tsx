@@ -913,6 +913,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       serviceRuntime: false,
       serviceManagement: true,
     });
+    expect(globalFireDbInfo.canWriteSongContent).toBe(false);
   });
 
   it("replaces the login history entry when email-code sign-in completes", async () => {
@@ -1189,6 +1190,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
       serviceRuntime: false,
       serviceManagement: false,
     });
+    expect(globalFireDbInfo.canWriteSongContent).toBe(false);
     expect(
       onValueCallbacks.has("churches/church-1/data/currentServiceWorkspace"),
     ).toBe(false);
@@ -1217,6 +1219,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
         serviceRuntime: true,
         serviceManagement: false,
       });
+      expect(globalFireDbInfo.canWriteSongContent).toBe(true);
     },
   );
 
@@ -1242,6 +1245,7 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
         serviceRuntime: false,
         serviceManagement: false,
       });
+      expect(globalFireDbInfo.canWriteSongContent).toBe(false);
     },
   );
 

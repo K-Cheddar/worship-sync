@@ -2,6 +2,7 @@ import { test as base, type Page } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 import {
   allowedE2EAuthOrigins,
+  firebaseAuthRequestMatchers,
   isObservedSharedDataSignIn,
   isTrustedFirebaseAuthOrigin,
 } from "./authOrigins";
@@ -195,7 +196,7 @@ export const test = base.extend({
         await route.abort("blockedbyclient");
       });
 
-      await page.route("**/identitytoolkit.googleapis.com/**", async (route) => {
+      await page.route(firebaseAuthRequestMatchers.identitytoolkit, async (route) => {
         const request = route.request();
         const requestURL = new URL(request.url());
         const pathname = requestURL.pathname;
@@ -225,7 +226,7 @@ export const test = base.extend({
         await route.abort("blockedbyclient");
       });
 
-      await page.route("**/securetoken.googleapis.com/**", async (route) => {
+      await page.route(firebaseAuthRequestMatchers.securetoken, async (route) => {
         const requestURL = new URL(route.request().url());
         const requestBody = route.request().postData() || "";
         if (

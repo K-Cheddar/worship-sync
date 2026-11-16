@@ -2,6 +2,10 @@ import { expect, type Page, type Response } from "@playwright/test";
 import { allowedE2EAuthOrigins } from "./authOrigins";
 import { redactControllerDiagnosticText } from "./controllerRuntime";
 import { E2E_CHURCH_ID } from "./testChurch";
+import {
+  smokePrerequisiteFailure,
+  type SmokeAuthSnapshot,
+} from "./smokePrerequisites";
 
 type AuthRequestDiagnostic = {
   method: string;
@@ -10,19 +14,7 @@ type AuthRequestDiagnostic = {
   outcome: string;
 };
 
-export type E2EAuthFlags = {
-  bootstrapStatus: number | null;
-  authenticated: boolean | null;
-  sessionKind: string | null;
-  churchId: string | null;
-  role: string | null;
-  controllerAccess: string | null;
-  teamsPermission: string | null;
-  servicesPermission: string | null;
-  teamScopeCount: number | null;
-  canViewTeams: boolean | null;
-  canViewServices: boolean | null;
-  matchesConfiguredAccount: boolean | null;
+export type E2EAuthFlags = SmokeAuthSnapshot & {
   recoveryOutcome: string | null;
   authenticatedHomeReached: boolean;
   authRequests: AuthRequestDiagnostic[];
@@ -38,8 +30,11 @@ const unavailableAuthFlags: E2EAuthFlags = {
   teamsPermission: null,
   servicesPermission: null,
   teamScopeCount: null,
+  editableTeamScopeCount: null,
   canViewTeams: null,
   canViewServices: null,
+  canEditAnyTeam: null,
+  hasGlobalTeamsEdit: null,
   matchesConfiguredAccount: null,
   recoveryOutcome: null,
   authenticatedHomeReached: false,
@@ -52,6 +47,10 @@ const summarizeAuthBootstrap = (bootstrap: any, status: number): E2EAuthFlags =>
   const isAdmin = bootstrap?.role === "admin";
   const teamsPermission = permissions.teams ?? "none";
   const servicesPermission = permissions.services ?? "none";
+  const hasGlobalTeamsEdit = isAdmin || teamsPermission === "edit";
+  const editableTeamScopeCount = Object.values(teamScopes).filter(
+    (permission) => permission === "edit",
+  ).length;
   return {
     bootstrapStatus: status,
     authenticated: bootstrap?.authenticated === true,
@@ -62,6 +61,7 @@ const summarizeAuthBootstrap = (bootstrap: any, status: number): E2EAuthFlags =>
     teamsPermission,
     servicesPermission,
     teamScopeCount: Object.keys(teamScopes).length,
+    editableTeamScopeCount,
     canViewTeams:
       isAdmin ||
       teamsPermission === "view" ||
@@ -71,6 +71,8 @@ const summarizeAuthBootstrap = (bootstrap: any, status: number): E2EAuthFlags =>
       isAdmin ||
       servicesPermission === "view" ||
       servicesPermission === "edit",
+    canEditAnyTeam: hasGlobalTeamsEdit || editableTeamScopeCount > 0,
+    hasGlobalTeamsEdit,
     matchesConfiguredAccount: (() => {
       const user = bootstrap?.user ?? {};
       const authenticatedEmail = String(user.primaryEmail || user.email || "").trim();
@@ -104,14 +106,16 @@ export async function homeNavigationDiagnostics(
   const runtime = await page.evaluate(async () => {
     const safeStatus = (window as any).__controllerE2EFirebaseStatus?.();
     if (safeStatus) delete safeStatus.churchId;
+    const controllerData = (window as any).__controllerE2EControllerDataState?.() ?? null;
     return {
       firebase: safeStatus ?? null,
       startup: (window as any).__controllerE2EStartupSnapshot?.() ?? null,
+      controllerData,
       isolation: (window as any).__controllerE2EIsolation ?? null,
       isolationMetrics: await (window as any).__controllerE2EIsolationMetrics?.() ?? null,
       events: ((window as any).__controllerE2ESafeDiagnostics ?? []).slice(-20),
     };
-  }).catch(() => ({ firebase: null, startup: null, isolation: null, isolationMetrics: null, events: [] as any[] }));
+  }).catch(() => ({ firebase: null, startup: null, controllerData: null, isolation: null, isolationMetrics: null, events: [] as any[] }));
   const sanitize = redactControllerDiagnosticText;
   const safeEvents = runtime.events.map((event: any) => ({
     kind: event.kind,
@@ -120,6 +124,17 @@ export async function homeNavigationDiagnostics(
     ...(typeof event.status === "number" ? { status: event.status } : {}),
     ...(typeof event.message === "string" ? { message: sanitize(event.message) } : {}),
   }));
+  const controllerData = runtime.controllerData
+    ? {
+        ...runtime.controllerData,
+        connectionStatus: {
+          ...runtime.controllerData.connectionStatus,
+          ...(typeof runtime.controllerData.connectionStatus?.message === "string"
+            ? { message: sanitize(runtime.controllerData.connectionStatus.message) }
+            : {}),
+        },
+      }
+    : null;
   const tokenEvents = safeEvents.filter((event: any) => event.category === "shared_data_token");
   const firebaseErrors = safeEvents
     .filter((event: any) => ["console_error", "page_error", "request_failed"].includes(event.kind))
@@ -162,7 +177,7 @@ export async function homeNavigationDiagnostics(
     `Authentication state: ${JSON.stringify({ authenticatedHomeReached: auth.authenticatedHomeReached, recoveryOutcome: auth.recoveryOutcome, requests: auth.authRequests })}`,
     `Startup diagnosis: ${startupDiagnosis}`,
     `Application auth flags: ${JSON.stringify(safeAuth)}`,
-    `Safe controller startup state: ${JSON.stringify({ isolation: runtime.isolation, isolationMetrics: runtime.isolationMetrics, firebase, startup })}`,
+    `Safe controller startup state: ${JSON.stringify({ isolation: runtime.isolation, isolationMetrics: runtime.isolationMetrics, firebase, startup, controllerData })}`,
     `Sanitized browser diagnostics: ${JSON.stringify(safeEvents)}`,
     `Pending Home UI: ${JSON.stringify(pendingStates.map(sanitize))}`,
     "Sanitized Home accessibility snapshot:",
@@ -357,16 +372,12 @@ export async function openHome(page: Page): Promise<E2EAuthFlags> {
     throw new Error(await homeNavigationDiagnostics(page, auth, reason));
   }
 
-  if (
-    auth.authenticated !== true ||
-    auth.sessionKind !== "human" ||
-    auth.churchId !== E2E_CHURCH_ID ||
-    auth.matchesConfiguredAccount === false
-  ) {
+  const savedSessionFailure = smokePrerequisiteFailure({ kind: "saved-session", auth });
+  if (savedSessionFailure) {
     throw new Error(await homeNavigationDiagnostics(
       page,
       auth,
-      "Home loaded, but the authenticated session did not match the configured E2E human account for the demo tenant.",
+      savedSessionFailure,
     ));
   }
   auth.authenticatedHomeReached = true;
@@ -378,6 +389,27 @@ export const teamsAndServicesHomeLink = (page: Page) =>
   page
     .getByRole("link")
     .and(page.locator('main a[href="#/teams-and-services"]'));
+
+export function beginSmokeTemplateNavigation(
+  page: Pick<Page, "waitForResponse">,
+  clickTemplates: () => Promise<void>,
+  baseURL = process.env.E2E_BASE_URL?.trim(),
+) {
+  const allowedOrigins = baseURL ? allowedE2EAuthOrigins(baseURL) : new Set<string>();
+  const expectedPath = `/api/churches/${encodeURIComponent(E2E_CHURCH_ID)}/service-plan-templates`;
+  const templateResponse = page.waitForResponse((response) => {
+    try {
+      const url = new URL(response.url());
+      return response.request().method() === "GET" &&
+        allowedOrigins.has(url.origin) &&
+        url.pathname.endsWith(expectedPath);
+    } catch {
+      return false;
+    }
+  });
+  const navigation = clickTemplates();
+  return { templateResponse, navigation };
+}
 
 export async function openEditableTeam(
   page: Page,

@@ -88,6 +88,7 @@ type LyricsEditorPanelProps = {
   song?: DBItem | null;
   onClose?: () => void;
   onSaveLyrics?: (payload: {
+    baselineSong: DBItem;
     arrangements: Arrangment[];
     selectedArrangement: number;
     songMetadata?: SongMetadata;
@@ -182,7 +183,9 @@ const LyricsEditorPanel = ({
   });
   const currentItemIdRef = useRef(item._id);
   const pendingRemoteItemRef = useRef(pendingRemoteItem);
+  const pendingRemoteAdoptionRef = useRef<{ itemId: string; revision?: string } | null>(null);
   const remoteUpdateToastIdRef = useRef<string | null>(null);
+  const acceptedLocalDraftRef = useRef(false);
   const syncedItemIdRef = useRef(item._id);
   const wasLyricsEditorOpenRef = useRef(false);
   const baselineSelectedArrangementIdRef = useRef(localSelectedArrangementId);
@@ -256,6 +259,8 @@ const LyricsEditorPanel = ({
     hasArrangementChanges ||
     hasSongMetadataChanges ||
     localSelectedArrangementId !== baselineSelectedArrangementIdRef.current;
+  const itemRevision = ("baseItem" in item ? item.baseItem?._rev : undefined) ??
+    ("_rev" in item ? item._rev : undefined);
 
   const resetLocalEditorState = useCallback(
     (
@@ -276,6 +281,7 @@ const LyricsEditorPanel = ({
       setSelectedSectionId(null);
       setRecentlyMovedSectionId(null);
       setHasArrangementChanges(false);
+      acceptedLocalDraftRef.current = false;
       baselineSelectedArrangementIdRef.current = nextSelectedArrangementId;
     },
     []
@@ -283,6 +289,7 @@ const LyricsEditorPanel = ({
 
   const updateLocalArrangements = useCallback(
     (value: SetStateAction<Arrangment[]>) => {
+      acceptedLocalDraftRef.current = true;
       setHasArrangementChanges(true);
       setLocalArrangements((currentArrangements) => {
         const nextArrangements =
@@ -325,7 +332,19 @@ const LyricsEditorPanel = ({
   useEffect(() => {
     const itemChanged = syncedItemIdRef.current !== item._id;
     const openedEditor = Boolean(isLyricsEditorOpen) && !wasLyricsEditorOpenRef.current;
-    const shouldForceSync = itemChanged || openedEditor;
+    const requestedAdoption = pendingRemoteAdoptionRef.current;
+    const adoptionCompleted = Boolean(
+      requestedAdoption &&
+      !hasRemoteUpdate &&
+      item._id === requestedAdoption.itemId &&
+      itemRevision === requestedAdoption.revision,
+    );
+    if (adoptionCompleted) pendingRemoteAdoptionRef.current = null;
+    if (
+      requestedAdoption && hasRemoteUpdate &&
+      pendingRemoteItem?._rev !== requestedAdoption.revision
+    ) pendingRemoteAdoptionRef.current = null;
+    const shouldForceSync = itemChanged || openedEditor || adoptionCompleted;
 
     if (!shouldForceSync && hasPendingChanges) {
       wasLyricsEditorOpenRef.current = Boolean(isLyricsEditorOpen);
@@ -340,9 +359,12 @@ const LyricsEditorPanel = ({
     selectedArrangement,
     songMetadata,
     hasPendingChanges,
+    hasRemoteUpdate,
     item._id,
+    itemRevision,
     item.name,
     isLyricsEditorOpen,
+    pendingRemoteItem,
     resetLocalEditorState,
   ]);
 
@@ -817,28 +839,20 @@ const LyricsEditorPanel = ({
     dispatch(keepLocalItemChanges());
   }, [dispatch]);
 
-  const handleReloadRemote = useCallback(() => {
+  const handleReloadRemote = useCallback((onlyIfClean = false) => {
+    if (onlyIfClean && acceptedLocalDraftRef.current) return;
     const remoteItem = pendingRemoteItemRef.current;
     const activeItemId = currentItemIdRef.current;
     if (!remoteItem || remoteItem._id !== activeItemId) return;
-
-    const nextArrangementIndex = Math.min(
-      localSelectedArrangement,
-      Math.max(0, (remoteItem.arrangements?.length ?? 1) - 1)
-    );
-
-    resetLocalEditorState(
-      remoteItem.arrangements || [],
-      nextArrangementIndex,
-      remoteItem.songMetadata,
-    );
-    dispatch(applyPendingRemoteItem());
-  }, [dispatch, localSelectedArrangement, resetLocalEditorState]);
+    pendingRemoteAdoptionRef.current = { itemId: remoteItem._id, revision: remoteItem._rev };
+    dispatch(applyPendingRemoteItem(onlyIfClean || undefined, true));
+  }, [dispatch]);
 
   useEffect(() => {
     if (isLibraryEditor) return;
-    if (isLyricsEditorOpen && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges) {
-      handleReloadRemote();
+    if (isLyricsEditorOpen && hasRemoteUpdate && !hasPendingUpdate && !hasPendingChanges &&
+      controllerItem.remoteUpdateReason !== "song-recovery-discard-failed") {
+      handleReloadRemote(true);
       return;
     }
 
@@ -852,9 +866,15 @@ const LyricsEditorPanel = ({
 
     if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
 
+    let conflictMessage = `Someone else updated this ${itemTypeLabel}.`;
+    if (controllerItem.remoteUpdateReason === "song-version-transition") {
+      conflictMessage = "This song was migrated while it was open. Copy any draft changes before reloading the current version.";
+    } else if (controllerItem.remoteUpdateReason === "song-recovery-discard-failed") {
+      conflictMessage = "We couldn't save that choice. Your song draft is still safe; try again.";
+    }
     remoteUpdateToastIdRef.current = showToast({
-      message: `Someone else updated this ${itemTypeLabel}.`,
-      variant: "info",
+      message: conflictMessage,
+      variant: controllerItem.remoteUpdateReason === "song-recovery-discard-failed" ? "error" : "info",
       persist: true,
       showCloseButton: false,
       children: (toastId) => (
@@ -868,7 +888,7 @@ const LyricsEditorPanel = ({
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Keep Editing Mine
+            {controllerItem.remoteUpdateReason === "song-version-transition" ? "Keep Draft Open" : "Keep Editing Mine"}
           </Button>
           <Button
             variant="cta"
@@ -879,7 +899,7 @@ const LyricsEditorPanel = ({
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Use Their Changes
+            {controllerItem.remoteUpdateReason === "song-version-transition" ? "Reload Migrated Song" : "Use Their Changes"}
           </Button>
         </div>
       ),
@@ -888,6 +908,7 @@ const LyricsEditorPanel = ({
     handleKeepLocalEdits,
     handleReloadRemote,
     hasRemoteUpdate,
+    controllerItem.remoteUpdateReason,
     hasPendingChanges,
     hasPendingUpdate,
     itemTypeLabel,
@@ -964,6 +985,7 @@ const LyricsEditorPanel = ({
       setIsSaving(true);
       try {
         await onSaveLyrics({
+          baselineSong: item,
           arrangements: formattedItem.arrangements,
           selectedArrangement: localSelectedArrangement,
           songMetadata: localSongMetadata,

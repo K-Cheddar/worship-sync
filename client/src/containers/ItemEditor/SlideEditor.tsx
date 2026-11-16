@@ -41,6 +41,7 @@ import {
   updateSlides,
   applyOwnedContentMutation,
   setRestoreFocusToBox,
+  setHasPendingUpdate,
 } from "../../store/itemSlice";
 import {
   flushPendingItemMutations,
@@ -68,10 +69,12 @@ import {
   uploadSongAudio,
 } from "../../api/auth";
 import { broadcastItemUpdate, RootState } from "../../store/store";
+import { applyItemDocumentChange } from "../../store/allDocsSlice";
 import {
   deleteSongAudioBeforeClearingMetadata,
   persistSongAudioAttachment,
 } from "../../utils/persistSongAudioAttachment";
+import { loadSong, songToLibraryProjection } from "../../utils/songPersistence";
 import { getSlideVideoBackgroundLoop, resolveEditorPreviewVideoPlayback } from "../../utils/videoBackgroundPlayback";
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { AccessType } from "../../context/globalInfo";
@@ -117,6 +120,8 @@ import { resolveOutlineForScope } from "../../utils/outlineScope";
 import type { PreparedMediaContext } from "../../utils/preparedMediaContext";
 import { getFreeSectionNumber } from "../../utils/freeSectionNames";
 import type { OwnedItemContentMutation } from "../../utils/ownedItemContentMutation";
+import { getActiveItemSlides } from "../../utils/activeItemSlides";
+import { canEditSongContent } from "../../utils/accessTiers";
 
 /** Match slide name to lyric name so "Bridge 11" does not match lyric "Bridge 1". */
 const slideNameMatchesLyric = (slideName: string, lyricName: string) =>
@@ -167,12 +172,13 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     selectedArrangement,
     selectedSlide,
     selectedBox,
-    slides: __slides,
     isLyricsEditorOpen,
     isLoading,
     isSectionLoading,
     restoreFocusToBox,
     hasRemoteUpdate,
+    remoteUpdateReason,
+    pendingSongV2Conflicts,
     hasPendingUpdate,
     songMetadata,
     songLinks,
@@ -188,10 +194,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
   const arrangement = arrangements[selectedArrangement];
 
-  const slides = useMemo(() => {
-    const _slides = arrangement?.slides || __slides || [];
-    return isLoading ? [] : _slides;
-  }, [isLoading, __slides, arrangement?.slides]);
+  const slides = useMemo(
+    () => (isLoading ? [] : getActiveItemSlides(item)),
+    [isLoading, item],
+  );
 
   const outputSlots = useSelector(
     (state: RootState) => state.presentation.outputs,
@@ -201,9 +207,11 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     [outputSlots, slides, selectedSlide],
   );
 
-  const canEdit =
+  const canEdit = (
     access === "full" ||
-    (access === "music" && (type === "song" || type === "free"));
+    (type === "song" && canEditSongContent(access)) ||
+    (access === "music" && type === "free")
+  );
 
   const { shouldShowItemEditor } = useSelector(
     (state: RootState) => state.undoable.present.preferences
@@ -323,12 +331,24 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   }, [dispatch]);
 
   useEffect(() => {
-    if (hasRemoteUpdate && !isLyricsEditorOpen && !hasPendingUpdate) {
-      handleReloadRemote();
+    const isSongV2 = type === "song" && item.docType === "song-v2-root";
+    const hasActionableSongV2Update = remoteUpdateReason === "song-content-conflict" ||
+      remoteUpdateReason === "song-version-transition" ||
+      remoteUpdateReason === "song-recovery-discard-failed";
+    if (pendingSongV2Conflicts?.length) {
+      if (remoteUpdateToastIdRef.current && removeToast) {
+        removeToast(remoteUpdateToastIdRef.current);
+        remoteUpdateToastIdRef.current = null;
+      }
+      return;
+    }
+    if (hasRemoteUpdate && !isLyricsEditorOpen && !hasPendingUpdate &&
+      remoteUpdateReason !== "song-recovery-discard-failed") {
+      dispatch(applyPendingRemoteItem(true));
       return;
     }
 
-    if (!hasRemoteUpdate || isLyricsEditorOpen) {
+    if (!hasRemoteUpdate || isLyricsEditorOpen || (isSongV2 && !hasActionableSongV2Update)) {
       if (remoteUpdateToastIdRef.current && removeToast) {
         removeToast(remoteUpdateToastIdRef.current);
         remoteUpdateToastIdRef.current = null;
@@ -338,9 +358,15 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
 
     if (remoteUpdateToastIdRef.current || !showToast || !removeToast) return;
 
+    let conflictMessage = `Someone else updated this ${itemTypeLabel}.`;
+    if (remoteUpdateReason === "song-recovery-discard-failed") {
+      conflictMessage = "We couldn't save that choice. Your song draft is still safe; try again.";
+    } else if (remoteUpdateReason === "song-version-transition") {
+      conflictMessage = "This song was migrated while it was open. Copy any draft changes before reloading the current version.";
+    }
     remoteUpdateToastIdRef.current = showToast({
-      message: `Someone else updated this ${itemTypeLabel}.`,
-      variant: "info",
+      message: conflictMessage,
+      variant: remoteUpdateReason === "song-recovery-discard-failed" ? "error" : "info",
       persist: true,
       showCloseButton: false,
       children: (toastId) => (
@@ -354,7 +380,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Keep Editing Mine
+            {remoteUpdateReason === "song-version-transition" ? "Keep Draft Open" : "Keep Editing Mine"}
           </Button>
           <Button
             variant="cta"
@@ -365,7 +391,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               remoteUpdateToastIdRef.current = null;
             }}
           >
-            Use Their Changes
+            {remoteUpdateReason === "song-version-transition" ? "Reload Migrated Song" : "Use Their Changes"}
           </Button>
         </div>
       ),
@@ -373,7 +399,12 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   }, [
     handleKeepLocalEdits,
     handleReloadRemote,
+    dispatch,
     hasRemoteUpdate,
+    item.docType,
+    type,
+    remoteUpdateReason,
+    pendingSongV2Conflicts,
     hasPendingUpdate,
     itemTypeLabel,
     isLyricsEditorOpen,
@@ -461,8 +492,10 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       if (!churchId || !db) {
         throw new Error("Sign in to attach an MP3.");
       }
-      const previousAudio = songAudio;
       const owner = itemOwnerRef.current;
+      const loadedSong = baseItem?.docType === "song-v2-root" ? baseItem : await loadSong(db, _id);
+      const baselineSong = loadedSong.docType === "song-v2-root" ? loadedSong : undefined;
+      const previousAudio = baselineSong?.songAudio ?? songAudio;
       const audio = await uploadSongAudio({
         churchId,
         songId: _id,
@@ -475,6 +508,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           db,
           songId: _id,
           audio,
+          baselineSong,
         });
       } catch (error) {
         // A replacement overwrites the existing final key. Deleting it here
@@ -496,6 +530,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         if (currentScope.itemId === _id) {
           dispatch(applyPersistedSongAudio({ songAudio: audio, persistedDoc: saved, owner }));
         }
+        dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
         broadcastItemUpdate(saved);
       }
 
@@ -515,7 +550,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         showToast?.({ message: "MP3 attached.", variant: "success" });
       }
     },
-    [_id, churchId, db, dispatch, showToast, songAudio],
+    [_id, baseItem, churchId, db, dispatch, showToast, songAudio],
   );
 
   const resolveSongAudioUrl = useCallback(
@@ -537,14 +572,38 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   const removeSongAudio = useCallback(async () => {
     if (!churchId || !db || !songAudio) return;
     const owner = itemOwnerRef.current;
+    const baselineSong = baseItem ?? await loadSong(db, _id);
+    const audioToRemove = baselineSong.docType === "song-v2-root"
+      ? baselineSong.songAudio ?? songAudio
+      : songAudio;
+    if (baselineSong.docType === "song-v2-root") {
+      const saved = await persistSongAudioAttachment({ db, songId: _id, audio: null, baselineSong });
+      const currentScope = audioScopeRef.current;
+      if (!isEditorMountedRef.current || currentScope.churchId !== churchId || currentScope.db !== db) return;
+      if (currentScope.itemId === _id) {
+        dispatch(applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved, owner }));
+      }
+      dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
+      broadcastItemUpdate(saved);
+      try {
+        await deleteSongAudioWithRetry({ churchId, songId: _id, audio: audioToRemove });
+      } catch (error) {
+        console.error("Error cleaning removed song audio:", error);
+      }
+      if (currentScope.itemId === _id) {
+        showToast?.({ message: "MP3 removed.", variant: "success" });
+      }
+      return;
+    }
     const saved = await deleteSongAudioBeforeClearingMetadata({
       deleteAudio: () =>
-        deleteSongAudioWithRetry({ churchId, songId: _id, audio: songAudio }),
+        deleteSongAudioWithRetry({ churchId, songId: _id, audio: audioToRemove }),
       clearMetadata: () =>
         persistSongAudioAttachment({
           db,
           songId: _id,
           audio: null,
+          baselineSong: baselineSong.docType === "song-v2-root" ? baselineSong : undefined,
         }),
     });
     const currentScope = audioScopeRef.current;
@@ -552,11 +611,12 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     if (currentScope.itemId === _id) {
       dispatch(applyPersistedSongAudio({ songAudio: undefined, persistedDoc: saved, owner }));
     }
+    dispatch(applyItemDocumentChange({ id: saved._id, doc: songToLibraryProjection(saved) }));
     broadcastItemUpdate(saved);
     if (currentScope.itemId === _id) {
       showToast?.({ message: "MP3 removed.", variant: "success" });
     }
-  }, [_id, churchId, db, dispatch, showToast, songAudio]);
+  }, [_id, baseItem, churchId, db, dispatch, showToast, songAudio]);
 
   const onNameEditButtonClick = () => {
     if (!canEdit) return;
@@ -574,15 +634,13 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       name,
       type: "song" as const,
       arrangements,
-      slides: __slides,
-      selectedArrangement,
+        selectedArrangement,
       songMetadata,
       songLinks,
       songAudio,
     }) as DBItem,
     [
       _id,
-      __slides,
       arrangements,
       baseItem,
       name,
@@ -642,7 +700,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       dispatch(updateBoxes({ boxes: newBoxes, expectedOwner }));
     }
 
-    const updatedSlides = currentItem.slides.map((slide, slideIndex) => {
+    const updatedSlides = slides.map((slide, slideIndex) => {
       if (slideIndex === selectedSlide) {
         return { ...slide, boxes: newBoxes };
       }
@@ -902,6 +960,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     dispatch,
     item,
     selectedSlide,
+    slides,
     arrangements,
     selectedArrangement,
   ]);
@@ -942,6 +1001,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       const owner = itemOwnerRef.current;
       if (!owner) return;
       pendingBoxEditRef.current = { changeInfo, owner };
+      dispatch(setHasPendingUpdate(true));
       setIsReformatting(true);
       boxEditTimeoutRef.current = scheduleOwnedItemMutation(owner, BOX_EDIT_DEBOUNCE_MS, () => {
         const pending = pendingBoxEditRef.current;
@@ -963,7 +1023,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
         setIsReformatting(false);
       });
     },
-    [applyBoxChange, clearPendingBoxEdit]
+    [applyBoxChange, clearPendingBoxEdit, dispatch]
   );
 
   const onChange = useCallback((changeInfo: DisplayEditorChangeInfo) => {
@@ -1219,6 +1279,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       reformatTimeoutRef.current?.cancel();
 
       setIsReformatting(true);
+      dispatch(setHasPendingUpdate(true));
       reformatTimeoutRef.current = scheduleOwnedItemMutation(owner, 300, () => {
         void dispatch(applyOwnedContentMutation({ owner, mutation }))
           .unwrap()
@@ -1269,34 +1330,79 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     removeVideoInputThumbnail,
   } = useLocalVideoInputThumbnailPersistence();
   const pendingInitialVideoRowsRef = useRef(new Map<string, MediaType>());
+  const videoInputRelinkTargetRef = useRef<{
+    itemId: string;
+    itemType: DBItem["type"];
+    expectedOwner: ItemMutationOwner | null;
+    arrangementId?: string;
+    slideId: string;
+    mediaSource: LocalVideoInputMediaSource;
+    expectedSlideSource: string;
+  } | undefined>(undefined);
+  const openVideoInputRelink = useCallback(() => {
+    const currentItem = reduxStore.getState().undoable.present.item;
+    const arrangementId = currentItem.type === "song"
+      ? currentItem.arrangements[currentItem.selectedArrangement]?.id
+      : undefined;
+    const currentArrangement = arrangementId
+      ? currentItem.arrangements.find((candidate) => candidate.id === arrangementId)
+      : undefined;
+    const currentSlides = currentArrangement?.slides ?? currentItem.slides;
+    const targetSlide = currentSlides[currentItem.selectedSlide];
+    if (targetSlide?.mediaSource?.kind !== "local-video-input") return;
+    videoInputRelinkTargetRef.current = {
+      itemId: currentItem._id,
+      itemType: currentItem.type,
+      expectedOwner: getItemMutationOwner(currentItem),
+      ...(arrangementId ? { arrangementId } : {}),
+      slideId: targetSlide.id,
+      mediaSource: targetSlide.mediaSource,
+      expectedSlideSource: JSON.stringify(targetSlide.mediaSource),
+    };
+    setIsVideoInputRelinkOpen(true);
+  }, [reduxStore]);
 
   const handleVideoInputRelinked = useCallback(
     async (
       source: LocalVideoInputMediaSource,
       initialThumbnail?: LocalVideoThumbnailFrame,
     ) => {
+      const relinkTarget = videoInputRelinkTargetRef.current;
+      if (!relinkTarget) {
+        throw new Error("The target slide changed. Reopen it and try again.");
+      }
       const startState = reduxStore.getState();
       const startItem = startState.undoable.present.item;
-      const expectedOwner = getItemMutationOwner(startItem);
-      const targetArrangementId = startItem.type === "song"
-        ? startItem.arrangements[startItem.selectedArrangement]?.id
-        : undefined;
+      const expectedOwner = relinkTarget.expectedOwner;
+      const targetArrangementId = relinkTarget.arrangementId;
+      const currentOwner = getItemMutationOwner(startItem);
+      const sameOwnerAtStart = expectedOwner
+        ? sameItemMutationOwner(currentOwner, expectedOwner)
+        : currentOwner === null;
+      if (
+        startItem._id !== relinkTarget.itemId ||
+        startItem.type !== relinkTarget.itemType ||
+        !sameOwnerAtStart
+      ) {
+        throw new Error("The active item changed while the video input was opening. Reopen it and try again.");
+      }
       const startArrangement = targetArrangementId
         ? startItem.arrangements.find(
             (candidate) => candidate.id === targetArrangementId,
           )
         : undefined;
       const startSlides = startArrangement?.slides ?? startItem.slides;
-      const targetSlide = startSlides[startItem.selectedSlide];
+      const targetSlide = startSlides.find((slide) => slide.id === relinkTarget.slideId);
       if (
         !targetSlide?.mediaSource ||
-        targetSlide.mediaSource.kind !== "local-video-input"
+        targetSlide.mediaSource.kind !== "local-video-input" ||
+        JSON.stringify(targetSlide.mediaSource) !== relinkTarget.expectedSlideSource
       ) {
         throw new Error("The selected slide changed. Reopen it and try again.");
       }
-      const targetSlideId = targetSlide.id;
-      const expectedSlideSource = JSON.stringify(targetSlide.mediaSource);
-      const previous = targetSlide.mediaSource;
+      const targetSlideId = relinkTarget.slideId;
+      const expectedSlideSource = relinkTarget.expectedSlideSource;
+      const previous = relinkTarget.mediaSource;
       const ownedSource: LocalVideoInputMediaSource = {
         ...source,
         ownerDeviceId: getOrCreateDeviceId(),
@@ -1487,7 +1593,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
             className="w-full"
             source={selectedSlideMediaSource}
             canEdit={canRelinkVideoInputInPresentMode}
-            onEdit={() => setIsVideoInputRelinkOpen(true)}
+            onEdit={openVideoInputRelink}
           />
         );
       }
@@ -1509,7 +1615,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
           className="lg:flex-[0_0_30%] w-full"
           source={selectedSlideMediaSource}
           canEdit={canEdit}
-          onEdit={() => setIsVideoInputRelinkOpen(true)}
+          onEdit={openVideoInputRelink}
         />
       );
     }
@@ -1536,6 +1642,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   }, [
     type,
     item,
+    openVideoInputRelink,
     canEdit,
     sectionText,
     handleSectionTextChange,

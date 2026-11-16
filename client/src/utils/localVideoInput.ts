@@ -313,6 +313,28 @@ export const bindLocalVideoInput = (
   return binding;
 };
 
+/** Restore a provisional picker binding only while it still owns this source. */
+export const restoreLocalVideoInputBinding = (
+  sourceId: string,
+  expectedCurrent: LocalVideoInputBinding,
+  previous?: LocalVideoInputBinding,
+) => {
+  const bindings = readLocalBindings();
+  const current = bindings.find((binding) => binding.sourceId === sourceId);
+  if (!current || JSON.stringify(current) !== JSON.stringify(expectedCurrent)) {
+    return false;
+  }
+  const nextBindings = previous
+    ? bindings.map((binding) => binding.sourceId === sourceId ? previous : binding)
+    : bindings.filter((binding) => binding.sourceId !== sourceId);
+  try {
+    localStorage.setItem(LOCAL_VIDEO_INPUTS_KEY, JSON.stringify(nextBindings));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export const buildLocalVideoInputPresentation = (
   source: LocalVideoInputMediaSource,
   ownerDeviceId: string,

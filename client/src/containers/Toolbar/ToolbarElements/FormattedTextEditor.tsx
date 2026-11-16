@@ -3,6 +3,7 @@ import Input from "../../../components/Input/Input";
 import { createPortal } from "react-dom";
 import { useDispatch, useSelector } from "../../../hooks";
 import { applyOwnedContentMutation } from "../../../store/itemSlice";
+import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import {
   flushPendingItemMutations,
   getItemMutationOwner,
@@ -74,7 +75,8 @@ const FormattedTextEditor = ({
 }) => {
   const item = useSelector((state) => state.undoable.present.item);
 
-  const { slides, selectedSlide, type } = item;
+  const { selectedSlide, type } = item;
+  const slides = getActiveItemSlides(item);
 
   const formattedTextDisplayInfo = useMemo(() => {
     return slides[selectedSlide]?.formattedTextDisplayInfo;

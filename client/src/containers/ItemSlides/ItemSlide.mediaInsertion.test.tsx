@@ -191,6 +191,51 @@ describe("ItemSlide media insertion zones", () => {
     expect(screen.getAllByText("Live input · Main camera")).toHaveLength(2);
   });
 
+  it.each([
+    { status: "Live", isLive: true, isStaged: false, hasThumbnail: true },
+    { status: "Staged", isLive: false, isStaged: true, hasThumbnail: true },
+    { status: "Live", isLive: true, isStaged: false, hasThumbnail: false },
+    { status: "Staged", isLive: false, isStaged: true, hasThumbnail: false },
+  ])("keeps $status status readable beside the local input marker", ({ status, isLive, isStaged, hasThumbnail }) => {
+    const localInputSlide: ItemSlideType = {
+      ...slide,
+      mediaSource: {
+        kind: "local-video-input",
+        sourceId: "camera-1",
+        label: "Main camera",
+      },
+    };
+    render(
+      <ul>
+        <ItemSlide
+          slide={localInputSlide}
+          localVideoInputThumbnail={hasThumbnail ? { thumbnail: "https://res.cloudinary.com/demo/image/upload/v1/camera.jpg" } : undefined}
+          index={0}
+          selectSlide={jest.fn()}
+          isSelected={false}
+          size={3}
+          itemType="song"
+          isMobile={false}
+          draggedSection={null}
+          isLive={isLive}
+          isStaged={isStaged}
+          previewMode="projector"
+          getBibleInfo={() => ({ title: "", text: "" })}
+          borderWidth="1px"
+          hSize="text-sm"
+          onSlideGridClick={jest.fn()}
+        />
+      </ul>,
+    );
+
+    expect(screen.getByText(status, { exact: true })).toBeVisible();
+    const inputBadge = screen.getByTestId("local-video-input-slide-badge");
+    expect(inputBadge).toBeVisible();
+    expect(inputBadge).toHaveClass(
+      ...(hasThumbnail ? ["!left-2", "!right-auto"] : ["inset-x-0"]),
+    );
+  });
+
   it("keeps auxiliary insertion targets positioned inside the existing slide grid item", () => {
     render(
       <ul>

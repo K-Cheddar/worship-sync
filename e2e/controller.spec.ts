@@ -34,6 +34,7 @@ import {
 // is therefore reported as one preflight failure, instead of restarting the
 // worker and repeating the same setup error for every workflow.
 test.beforeAll(async ({ browser }) => {
+  test.setTimeout(120_000);
   const baseURL = process.env.E2E_BASE_URL?.trim();
   if (!baseURL) throw new Error("E2E_BASE_URL is required for controller startup preflight.");
   const hostname = new URL(baseURL).hostname.toLowerCase();
@@ -60,7 +61,7 @@ test.beforeAll(async ({ browser }) => {
   } finally {
     await context.close();
   }
-}, 120_000);
+});
 
 async function readFirebaseConfigurationFingerprint(page: import("@playwright/test").Page) {
   const configuration = await page.evaluate(async () => {

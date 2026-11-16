@@ -109,7 +109,11 @@ const ServiceManager = ({
       globalInfo?.churchIntegrations?.planningCenter?.connected,
   );
   const planningCenterAccount = globalInfo?.churchIntegrations?.planningCenter;
-  const planningCenterAccountKey = planningCenterAccount?.accountId || planningCenterAccount?.connectionRevision || planningCenterAccount?.accountLabel || "";
+  const planningCenterAccountKey = JSON.stringify([
+    planningCenterAccount?.accountId ?? "",
+    planningCenterAccount?.connectionRevision ?? "",
+    planningCenterAccount?.accountLabel ?? "",
+  ]);
   const churchTimeZone = useChurchServiceTimeZone();
   const formatServiceTimingForChurch = (service: TeamService | ServiceTime) => {
     if (service.reccurence === "one_time" && !churchTimeZone.timeZone) {
