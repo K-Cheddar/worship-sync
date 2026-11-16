@@ -1,5 +1,7 @@
 import { useContext, useEffect, useRef, useState } from "react";
+import { Download } from "lucide-react";
 import Button from "../../components/Button/Button";
+import Checkbox from "../../components/Checkbox/Checkbox";
 import Input from "../../components/Input/Input";
 import Modal from "../../components/Modal/Modal";
 import Select from "../../components/Select/Select";
@@ -342,51 +344,47 @@ const DownloadVideoDialog = ({
           />
           <p className="mt-1 text-xs text-gray-400">Resolution · H.264 video and AAC audio in MP4</p>
         </div>
-        <fieldset className="space-y-3">
+        <fieldset className="space-y-2">
           <legend className="mb-2 text-sm font-medium">Save options</legend>
           <div>
-            <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={saveOutsideWorshipSync}
-                onChange={(event) => void updateDownloadPreference("saveOutsideWorshipSync", event.currentTarget.checked)}
-                disabled={isStarting || isSelectingFolder || isSavingPreferences || !preferencesLoaded}
-              />
-              <span>Save outside WorshipSync</span>
-            </label>
-            {saveOutsideWorshipSync ? (
-              <div className="ml-6 mt-1 space-y-1">
-                {destinationDirectoryDisplay ? (
+            <Checkbox
+              label="Save outside WorshipSync"
+              checked={saveOutsideWorshipSync}
+              onCheckedChange={(checked) => void updateDownloadPreference("saveOutsideWorshipSync", checked)}
+              disabled={isStarting || isSelectingFolder || isSavingPreferences || !preferencesLoaded}
+            />
+            <div className={`ml-6 mt-1 space-y-1 ${saveOutsideWorshipSync ? "" : "opacity-50"}`}>
+              {destinationDirectoryDisplay ? (
+                saveOutsideWorshipSync ? (
                   <details className="min-w-0 text-xs text-gray-300">
                     <summary className="cursor-pointer truncate" title={destinationDirectoryDisplay} aria-label={`Save folder: ${destinationDirectoryDisplay}`}>
                       {destinationDirectoryDisplay}
                     </summary>
                     <p className="break-all">{destinationDirectoryDisplay}</p>
                   </details>
-                ) : null}
-                {!destinationDirectoryAvailable ? (
-                  <p className="text-xs text-gray-400">{destinationDirectoryDisplay ? "This folder is unavailable. Reconnect the drive or choose another folder." : "Choose a folder on this computer."}</p>
-                ) : null}
-                <Button
-                  variant="secondary"
-                  onClick={() => void chooseDestinationDirectory()}
-                  disabled={isSelectingFolder || isStarting || isSavingPreferences}
-                >
-                  {isSelectingFolder ? "Choosing folder…" : destinationDirectoryAvailable ? "Change folder" : "Choose folder"}
-                </Button>
-              </div>
-            ) : null}
+                ) : (
+                  <p className="truncate text-xs text-gray-300" title={destinationDirectoryDisplay} aria-label={`Save folder: ${destinationDirectoryDisplay}`}>{destinationDirectoryDisplay}</p>
+                )
+              ) : null}
+              {!destinationDirectoryAvailable ? (
+                <p className="text-xs text-gray-400">{destinationDirectoryDisplay ? "This folder is unavailable. Reconnect the drive or choose another folder." : "Choose a folder on this computer."}</p>
+              ) : null}
+              <Button
+                variant="secondary"
+                onClick={() => void chooseDestinationDirectory()}
+                disabled={!saveOutsideWorshipSync || isSelectingFolder || isStarting || isSavingPreferences}
+              >
+                {isSelectingFolder ? "Choosing folder…" : destinationDirectoryAvailable ? "Change folder" : "Choose folder"}
+              </Button>
+            </div>
           </div>
           {!isGuestSession ? (
-            <label className="flex cursor-pointer items-start gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={uploadToCloud}
-                onChange={(event) => void updateDownloadPreference("uploadToCloud", event.currentTarget.checked)}
-                disabled={isStarting || isSavingPreferences || !preferencesLoaded}
-              />
-              <span>Upload to WorshipSync cloud</span>
-            </label>
+            <Checkbox
+              label="Upload to WorshipSync cloud"
+              checked={uploadToCloud}
+              onCheckedChange={(checked) => void updateDownloadPreference("uploadToCloud", checked)}
+              disabled={isStarting || isSavingPreferences || !preferencesLoaded}
+            />
           ) : null}
         </fieldset>
         {error ? (
@@ -409,7 +407,7 @@ const DownloadVideoDialog = ({
         ) : null}
         <div className="flex justify-end gap-2 border-t border-gray-700 pt-3">
           <Button variant="secondary" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button onClick={() => void handleDownload()} disabled={!canDownload}>Download</Button>
+          <Button variant="cta" svg={Download} onClick={() => void handleDownload()} disabled={!canDownload}>Download</Button>
         </div>
       </div>
     </Modal>

@@ -206,6 +206,7 @@ describe("DownloadVideoDialog inspection lifecycle", () => {
     const cloudUpload = screen.getByRole("checkbox", { name: "Upload to WorshipSync cloud" });
     expect(externalSave).not.toBeChecked();
     expect(cloudUpload).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Choose folder" })).toBeDisabled();
 
     fireEvent.change(screen.getByRole("textbox", { name: /video url/i }), {
       target: { value: "https://www.youtube.com/watch?v=S9EUEdnJQDA" },
@@ -220,6 +221,13 @@ describe("DownloadVideoDialog inspection lifecycle", () => {
     expect(cloudUpload).toBeChecked();
     expect(chooseVideoDownloadDirectory).toHaveBeenCalledTimes(1);
     expect(screen.getByLabelText("Save folder: D:\\Church Media\\Videos")).toBeInTheDocument();
+
+    fireEvent.click(externalSave);
+    await settlePromises();
+    expect(screen.getByLabelText("Save folder: D:\\Church Media\\Videos")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Change folder" })).toBeDisabled();
+    fireEvent.click(externalSave);
+    await settlePromises();
 
     fireEvent.click(screen.getByRole("button", { name: "Download" }));
     await settlePromises();
