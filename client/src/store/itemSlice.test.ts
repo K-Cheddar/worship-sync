@@ -2,6 +2,7 @@ import { configureStore } from "@reduxjs/toolkit";
 import {
   itemDocMatchesEditorState,
   getItemPersistenceChanges,
+  getItemPersistenceConflicts,
   updateSlideVideoBackgroundLoop,
   updateSlideVideoBackgroundSendMode,
   itemSlice,
@@ -23,6 +24,86 @@ const createStore = (preloadedState?: Partial<ItemSliceState>) =>
   });
 
 describe("itemSlice", () => {
+  it.each(["free", "bible"] as const)("tracks layout-only %s edits and reports conflicting monitor layouts", (type) => {
+    const base = {
+      _id: `${type}-layout`,
+      type,
+      name: `${type} item`,
+      selectedArrangement: 0,
+      slides: [],
+      monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 24 },
+    } as any;
+    const local = {
+      ...itemSlice.getInitialState(),
+      ...base,
+      monitorLayout: { currentFontSizePx: 28, nextFontSizePx: 22 },
+      baseItem: base,
+    } as ItemState;
+    const remoteOtherField = { ...base, name: "Remote name" };
+    const remoteLayout = { ...base, monitorLayout: { currentFontSizePx: 27, nextFontSizePx: 20 } };
+
+    expect(getItemPersistenceChanges(local, base)).toEqual(["monitorLayout"]);
+    expect(getItemPersistenceConflicts(local, base, remoteOtherField)).toEqual([]);
+    expect(getItemPersistenceConflicts(local, base, remoteLayout)).toEqual(["monitorLayout"]);
+  });
+
+  it("keeps monitor layouts in persisted baselines and markItemPersisted updates", () => {
+    const baseline = {
+      _id: "free-layout-save",
+      type: "free" as const,
+      name: "Free item",
+      selectedArrangement: 0,
+      slides: [],
+      monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 24 },
+    } as any;
+    const persisted = { ...baseline, monitorLayout: { currentFontSizePx: 28, nextFontSizePx: 22 } };
+    const store = createStore({ item: {
+      ...itemSlice.getInitialState(),
+      ...baseline,
+      baseItem: baseline,
+      monitorLayout: persisted.monitorLayout,
+      hasPendingUpdate: true,
+    } as ItemState });
+
+    store.dispatch(itemSlice.actions.markItemPersisted(persisted, persisted));
+    expect(store.getState().item.monitorLayout).toEqual(persisted.monitorLayout);
+    expect(store.getState().item.baseItem?.monitorLayout).toEqual(persisted.monitorLayout);
+    expect(getItemPersistenceChanges(store.getState().item, persisted)).toEqual([]);
+
+    const newerRemote = { ...persisted, monitorLayout: { currentFontSizePx: 26, nextFontSizePx: 18 } };
+    store.dispatch(itemSlice.actions.rebaseItemPersistence(newerRemote));
+    expect(store.getState().item.baseItem?.monitorLayout).toEqual(newerRemote.monitorLayout);
+    expect(getItemPersistenceChanges(store.getState().item, newerRemote)).toEqual(["monitorLayout"]);
+  });
+
+  it("keeps Song V2 arrangement layouts scoped to their arrangement", () => {
+    const baseline = {
+      _id: "song-layout-v2",
+      type: "song" as const,
+      docType: "song-v2-root",
+      name: "Song",
+      slides: [],
+      selectedArrangement: 0,
+      arrangements: [{
+        id: "master", name: "Master", slides: [], formattedLyrics: [], songOrder: [],
+        monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 24 },
+      }],
+    } as any;
+    const current = {
+      ...itemSlice.getInitialState(), ...baseline, baseItem: baseline,
+      monitorLayout: undefined,
+      arrangements: [{ ...baseline.arrangements[0], monitorLayout: { currentFontSizePx: 28, nextFontSizePx: 22 } }],
+    } as ItemState;
+    const latest = {
+      ...baseline,
+      arrangements: [{ ...baseline.arrangements[0], monitorLayout: { currentFontSizePx: 27, nextFontSizePx: 20 } }],
+    };
+
+    expect(getItemPersistenceChanges(current, baseline)).toContain("arrangements");
+    expect(getItemPersistenceChanges(current, baseline)).not.toContain("monitorLayout");
+    expect(getItemPersistenceConflicts(current, baseline, latest)).not.toContain("monitorLayout");
+  });
+
   it("rejects audio results for another song or church with the same song ID", () => {
     const store = createStore();
     const owner = { scopeId: "a", databaseKey: "a", churchId: "a", itemId: "song-A", itemType: "song" as const };

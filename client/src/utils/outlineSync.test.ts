@@ -81,6 +81,45 @@ describe("reconcileOutlineItems", () => {
       .toEqual(["b", "a", "c", "e", "d"]);
   });
 
+  it("does not resurrect a locally deleted row as a move anchor", () => {
+    const base = ["a", "b", "c", "d"].map(id => row(id, id.toUpperCase()));
+    const local = [base[2], base[0], base[3]];
+    const intent = createOutlineMoveIntent({ outlineId: "outline", ownerKey: "owner",
+      resultingItems: local, movedIds: ["c"] })!;
+
+    const result = reconcileOutlineItems(base, local, base, undefined, [intent]);
+
+    expect(result.kind).toBe("merged");
+    expect(result.items.map(item => item.listId)).toEqual(["c", "a", "d"]);
+  });
+
+  it("keeps remote additions while excluding locally deleted move anchors", () => {
+    const base = ["a", "b", "c", "d", "e"].map(id => row(id, id.toUpperCase()));
+    const added = row("remote", "Remote addition");
+    const remote = [base[0], base[1], added, base[2], base[3], base[4]];
+    const local = [base[4], base[0], base[2]];
+    const intent = createOutlineMoveIntent({ outlineId: "outline", ownerKey: "owner",
+      resultingItems: local, movedIds: ["e"] })!;
+
+    const result = reconcileOutlineItems(base, local, remote, undefined, [intent]);
+
+    expect(result.kind).toBe("merged");
+    expect(result.items.map(item => item.listId)).toEqual(["e", "a", "remote", "c"]);
+    expect(result.items.map(item => item.listId)).not.toContain("b");
+  });
+
+  it("combines multiple local deletions and a survivor reorder", () => {
+    const base = ["a", "b", "c", "d", "e", "f"].map(id => row(id, id.toUpperCase()));
+    const local = [base[4], base[0], base[2]];
+    const intent = createOutlineMoveIntent({ outlineId: "outline", ownerKey: "owner",
+      resultingItems: local, movedIds: ["e"] })!;
+
+    const result = reconcileOutlineItems(base, local, base, undefined, [intent]);
+
+    expect(result.kind).toBe("merged");
+    expect(result.items.map(item => item.listId)).toEqual(["e", "a", "c"]);
+  });
+
   it("asks for an order choice when a legacy multi-row reorder has no safe move inference", () => {
     const base = ["a", "b", "c", "d", "e"].map(id => row(id, id.toUpperCase()));
     const local = [base[2], base[3], base[0], base[1], base[4]];

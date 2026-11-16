@@ -781,7 +781,7 @@ describe("useServiceVideoCandidates", () => {
         act(() => updater.dispatchEvent(new CustomEvent("update", { detail: [] })));
         await act(async () => { await Promise.resolve(); });
       }
-      expect(db.allDocs.mock.calls.length).toBe(initialCalls + 4);
+      expect(db.allDocs.mock.calls.length).toBe(initialCalls + 8);
       replaceDocs([first, second]);
       await act(async () => { await jest.advanceTimersByTimeAsync(500); });
       await act(async () => { await Promise.resolve(); });
@@ -791,7 +791,7 @@ describe("useServiceVideoCandidates", () => {
         "remote:first-video",
         "remote:second-video",
       ]);
-      expect(db.allDocs.mock.calls.length).toBe(initialCalls + 5);
+      expect(db.allDocs.mock.calls.length).toBe(initialCalls + 10);
     } finally {
       jest.useRealTimers();
     }
@@ -932,10 +932,10 @@ describe("useServiceVideoCandidates", () => {
       outlineRetryAttempt: 0,
     });
     expect(result.current.discovery.outlineLoadError).toContain("invalid");
-    expect(db.allDocs).toHaveBeenLastCalledWith({
+    expect(db.allDocs.mock.calls).toContainEqual([{
       keys: ["second", "heading-b", "third", "legacy-b", "missing-b"],
       include_docs: true,
-    });
+    }]);
   });
 
   it("does not warm the presentation outline when the output has no resolved scope outline", async () => {

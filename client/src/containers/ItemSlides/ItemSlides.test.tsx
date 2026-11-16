@@ -33,6 +33,8 @@ let mockState: any;
 const mockItemSlideProps: Array<{
   slideId?: string;
   previewMode?: string;
+  monitorSlide?: unknown;
+  nextSlide?: unknown;
   isLive?: boolean;
   isStaged?: boolean;
   onRenameSection?: unknown;
@@ -41,7 +43,7 @@ const mockAcquireWarmLocalVideoCaptureWithBusyRetry = jest.fn();
 const mockReleaseWarmLocalVideoCapture = jest.fn().mockResolvedValue(undefined);
 
 
-const mockEnsureSlidesHaveMonitorBandFormatting = jest.fn((slides: any[]) =>
+const mockEnsureSlidesHaveMonitorBandFormatting = jest.fn((slides: any[], _layout?: unknown) =>
   slides.map((slide, index) => ({
     ...slide,
     monitorCurrentBandBoxes: [
@@ -74,8 +76,8 @@ jest.mock("../../utils/overflow", () => {
   return {
     __esModule: true,
     ...actual,
-    ensureSlidesHaveMonitorBandFormatting: (slides: any[]) =>
-      mockEnsureSlidesHaveMonitorBandFormatting(slides),
+    ensureSlidesHaveMonitorBandFormatting: (slides: any[], layout?: unknown) =>
+      mockEnsureSlidesHaveMonitorBandFormatting(slides, layout),
   };
 });
 
@@ -183,6 +185,8 @@ jest.mock("./ItemSlide", () => ({
     slide,
     selectSlide,
     previewMode,
+    monitorSlide,
+    nextSlide,
     onRenameSection,
     thumbnailScaleFactor,
     isLive,
@@ -192,6 +196,8 @@ jest.mock("./ItemSlide", () => ({
     slide: { id: string; name: string };
     selectSlide: (index: number) => void;
     previewMode?: string;
+    monitorSlide?: unknown;
+    nextSlide?: unknown;
     isLive?: boolean;
     isStaged?: boolean;
     onRenameSection?: unknown;
@@ -200,6 +206,8 @@ jest.mock("./ItemSlide", () => ({
     mockItemSlideProps.push({
       slideId: slide.id,
       previewMode,
+      monitorSlide,
+      nextSlide,
       isLive,
       isStaged,
       onRenameSection,
@@ -303,6 +311,7 @@ describe("ItemSlides", () => {
             type: "free",
             name: "Custom Item",
             slides: baseSlides,
+            monitorLayout: { currentFontSizePx: 31, nextFontSizePx: 21 },
             isLoading: false,
             _id: "free-1",
             listId: "list-1",
@@ -435,6 +444,14 @@ describe("ItemSlides", () => {
     ).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("group", { name: "Thumbnail view" })).toHaveClass("bg-gray-900", "p-0.5");
     expect(screen.getByRole("button", { name: "Projector" })).toHaveClass("bg-cyan-600");
+    expect(mockItemSlideProps.find((props) => props.slideId === baseSlides[0].id)).toMatchObject({
+      monitorSlide: baseSlides[0],
+      nextSlide: baseSlides[1],
+    });
+    const monitorLayout = mockState.undoable.present.item.monitorLayout;
+    fireEvent.click(screen.getByRole("button", { name: "Monitor" }));
+    expect(mockEnsureSlidesHaveMonitorBandFormatting).toHaveBeenCalledWith(baseSlides, monitorLayout);
+    expect(mockItemSlideProps[mockItemSlideProps.length - 1]?.previewMode).toBe("monitor");
     mockDispatch.mockClear();
     fireEvent.click(screen.getByRole("button", { name: "Stream" }));
     expect(screen.getByRole("button", { name: "Stream" })).toHaveClass("bg-cyan-600");
@@ -1313,6 +1330,7 @@ describe("ItemSlides", () => {
 
     expect(mockEnsureSlidesHaveMonitorBandFormatting).toHaveBeenCalledWith(
       baseSlides,
+      mockState.undoable.present.item.monitorLayout,
     );
     expect(updateMonitorAction).toBeDefined();
     expect(updateMonitorAction.payload.nextSlide.boxes).toEqual([

@@ -220,6 +220,7 @@ export const ITEM_PERSISTED_FIELDS = [
   "shouldSkipTitle",
   "background",
   "slides",
+  "monitorLayout",
   "arrangements",
   "selectedArrangement",
   "bibleInfo",

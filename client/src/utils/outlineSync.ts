@@ -278,13 +278,17 @@ const mergeBaseOrder = (
 const rebaseMovesOntoRemote = (
   local: ServiceItem[],
   remote: ServiceItem[],
+  baseline: ServiceItem[],
   moveIntents: OutlineMoveIntent[],
 ): ServiceItem[] => {
   if (!moveIntents.length) return local;
   const localById = new Map(local.map(row => [row.listId, row]));
   const remoteById = new Map(remote.map(row => [row.listId, row]));
   const localAdded = new Set(local.filter(row => !remoteById.has(row.listId)).map(row => row.listId));
-  const order = remote.map(row => row.listId);
+  const locallyDeletedBaselineIds = new Set(
+    baseline.filter(row => !localById.has(row.listId)).map(row => row.listId),
+  );
+  const order = remote.filter(row => !locallyDeletedBaselineIds.has(row.listId)).map(row => row.listId);
   insertAddedRows(order, local, localAdded);
 
   moveIntents.forEach(intent => {
@@ -360,7 +364,7 @@ export const reconcileOutlineItems = (
   const base = stableRows(baseline, knownRows);
   const normalizedLocal = stableRows(localItems, [...base, ...localItems]);
   const remote = stableRows(remoteItems, [...base, ...normalizedLocal]);
-  const local = rebaseMovesOntoRemote(normalizedLocal, remote, moveIntents);
+  const local = rebaseMovesOntoRemote(normalizedLocal, remote, base, moveIntents);
   const baseById = new Map(base.map((row) => [row.listId, row]));
   const localById = new Map(local.map((row) => [row.listId, row]));
   const remoteById = new Map(remote.map((row) => [row.listId, row]));
@@ -374,9 +378,6 @@ export const reconcileOutlineItems = (
   const overlappingReplacements = [...localRemovedIds].some((id) =>
     remoteRemovedIds.has(id),
   ) && localAddedIds.size > 0 && remoteAddedIds.size > 0;
-  const finalBaseIds = base.map(row => row.listId).filter(id =>
-    localById.has(id) || remoteById.has(id));
-  const initialOrder = mergeBaseOrder(base.map(row => row.listId), localBaseOrder, remoteBaseOrder, finalBaseIds);
   const baseOrder = base.map(row => row.listId);
   const exactLocalOrder = orderedBaseIds(normalizedLocal, baseIds);
   const localPresentBaseOrder = baseOrder.filter(id => localById.has(id));
@@ -386,6 +387,19 @@ export const reconcileOutlineItems = (
   const remoteMoveCandidates = remoteOrderChanged
     ? movedRowCandidates(remotePresentBaseOrder, remoteBaseOrder)
     : new Set<string>();
+  const remoteMoveMayOverlap = (id: string) => remoteMoveCandidates === undefined
+    ? remoteOrderChanged
+    : remoteMoveCandidates.has(id);
+  const unchangedLocallyDeletedRemoteIds = new Set(base
+    .filter(row => !localById.has(row.listId))
+    .filter(row => {
+      const remoteRow = remoteById.get(row.listId);
+      return !!remoteRow && rowEqual(remoteRow, row) && !remoteMoveMayOverlap(row.listId);
+    })
+    .map(row => row.listId));
+  const finalBaseIds = base.map(row => row.listId).filter(id =>
+    (localById.has(id) || remoteById.has(id)) && !unchangedLocallyDeletedRemoteIds.has(id));
+  const initialOrder = mergeBaseOrder(baseOrder, localBaseOrder, remoteBaseOrder, finalBaseIds);
   const remoteMovedId = remoteMoveCandidates?.size === 1 ? [...remoteMoveCandidates][0] : undefined;
   const localOrderKnown = moveIntents.length > 0 || !localOrderChanged ||
     hasSingleUnambiguousMovedRow(localPresentBaseOrder, exactLocalOrder);
@@ -407,7 +421,7 @@ export const reconcileOutlineItems = (
   // Keep the existing whole-version review for that case.
   if (overlappingReplacements) choose?.({ key: "replacement", reason: "replacement" });
   const orderMerge = orderConflict
-    ? mergeBaseOrder(base.map(row => row.listId), localBaseOrder, remoteBaseOrder, finalBaseIds,
+    ? mergeBaseOrder(baseOrder, localBaseOrder, remoteBaseOrder, finalBaseIds,
       orderChoice, orderChoiceIds)
     : initialOrder;
   let conflict = (orderConflict && (orderMerge.unresolvedCycle || !orderChoice)) || overlappingReplacements;
@@ -444,11 +458,9 @@ export const reconcileOutlineItems = (
 
     if (!localRow && !remoteRow) return;
     if (!localRow) {
-      const remoteMoveMayOverlap = remoteRow && (remoteMoveCandidates === undefined
-        ? remoteOrderChanged
-        : remoteMoveCandidates.has(id));
-      if (remoteRow && (!rowEqual(remoteRow, baseRow) || remoteMoveMayOverlap)) {
-        const item = chooseRow(id, localRow, remoteRow, "delete-edit", remoteMoveMayOverlap
+      const remoteMovedOverlap = remoteRow && remoteMoveMayOverlap(id);
+      if (remoteRow && (!rowEqual(remoteRow, baseRow) || remoteMovedOverlap)) {
+        const item = chooseRow(id, localRow, remoteRow, "delete-edit", remoteMovedOverlap
           ? { movedIds: [id], remoteMoved: true }
           : undefined);
         if (item) rowsById.set(id, item);

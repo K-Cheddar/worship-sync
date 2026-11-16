@@ -3,6 +3,9 @@ import allDocsReducer, {
   allDocsSlice,
   upsertItemInAllDocs,
   upsertItemsInAllDocs,
+  applySongLibraryRefresh,
+  invalidateSongContent,
+  markSongV2Activated,
 } from "./allDocsSlice";
 import { hydrateItemCache, applyItemDocumentChange } from "./allDocsSlice";
 import type { DBItem } from "../types";
@@ -207,6 +210,51 @@ describe("allDocsSlice song normalization boundary", () => {
       expect(normalized.arrangements[0].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
       expect(normalized.arrangements[0].slides[0].id).toBe("legacy");
     }
+  });
+});
+
+describe("allDocsSlice live Song V2 projections", () => {
+  it("keeps an activated root authoritative over later legacy echoes", () => {
+    const store = createStore();
+    const stale = { ...makeDoc("song-1", "song"), name: "Stale legacy" };
+    store.dispatch(hydrateItemCache([stale]));
+    store.dispatch(markSongV2Activated(["song-1"]));
+    const projection = { ...makeDoc("song-1", "song"), docType: "song-v2-root" as const, name: "V2 projection" };
+    store.dispatch(applySongLibraryRefresh({ songId: "song-1", projection }));
+    store.dispatch(applyDoc(stale));
+
+    expect(store.getState().allDocs.allSongDocs).toEqual([expect.objectContaining({ name: "V2 projection", docType: "song-v2-root" })]);
+  });
+
+  it("removes stale projections for incomplete or deleted activated roots and avoids duplicate refreshes", () => {
+    const store = createStore();
+    const stale = { ...makeDoc("song-1", "song"), name: "Stale legacy" };
+    store.dispatch(hydrateItemCache([stale]));
+    store.dispatch(applySongLibraryRefresh({
+      songId: "song-1",
+      diagnostic: { songId: "song-1", rootId: "song-v2:root:song-1", code: "incomplete-v2", message: "missing arrangement" },
+    }));
+    expect(store.getState().allDocs.allSongDocs).toEqual([]);
+    expect(store.getState().allDocs.songLibraryDiagnostics).toHaveLength(1);
+    const version = store.getState().allDocs.changeVersion;
+    store.dispatch(applySongLibraryRefresh({
+      songId: "song-1",
+      diagnostic: { songId: "song-1", rootId: "song-v2:root:song-1", code: "incomplete-v2", message: "missing arrangement" },
+    }));
+    expect(store.getState().allDocs.changeVersion).toBe(version);
+    store.dispatch(applySongLibraryRefresh({ songId: "song-1" }));
+    expect(store.getState().allDocs.songLibraryDiagnostics).toEqual([]);
+    expect(store.getState().allDocs.activatedSongIds["song-1"]).toBe(true);
+  });
+
+  it("invalidates slide content without touching the library projection", () => {
+    const store = createStore();
+    const projection = { ...makeDoc("song-1", "song"), docType: "song-v2-root" as const };
+    store.dispatch(applySongLibraryRefresh({ songId: "song-1", projection }));
+    const songs = store.getState().allDocs.allSongDocs;
+    store.dispatch(invalidateSongContent("song-1"));
+    expect(store.getState().allDocs.allSongDocs).toBe(songs);
+    expect(store.getState().allDocs.songContentVersions["song-1"]).toBe(1);
   });
 });
 

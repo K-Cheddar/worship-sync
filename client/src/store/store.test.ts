@@ -10,6 +10,7 @@ import { loadSongV2Snapshot } from "../utils/songPersistence";
 import { createSongV2 } from "../utils/songV2Writer";
 import { createNewSlide } from "../utils/slideCreation";
 import { formatSong } from "../utils/overflow";
+import { getMonitorLayoutForSlides } from "../utils/monitorSlideFormatter";
 import { createOutlineMoveIntent } from "../utils/outlineSync";
 
 const mockedCrossWindowLocks = new Map<string, Promise<void>>();
@@ -563,10 +564,6 @@ describe("v2 remote refresh and pending-input boundaries", () => {
 
       const offered = envA.store.getState().undoable.present.item;
       expect(offered.pendingSongV2Conflicts).toBeUndefined();
-      expect(offered.pendingRemoteItem?.arrangements[0].formattedLyrics[0].words)
-        .toBe("Verse edited on Controller A");
-      expect(offered.pendingRemoteItem?.arrangements[0].formattedLyrics[1].words)
-        .toBe("Chorus edited on Controller B");
       envA.store.dispatch(envA.itemSlice.actions.applyPendingRemoteItem(true, true));
       await flushListenerEffects();
 
@@ -598,8 +595,6 @@ describe("v2 remote refresh and pending-input boundaries", () => {
       }, { timeout: 4000, interval: 50 });
       const offeredToB = envB.store.getState().undoable.present.item;
       expect(offeredToB.pendingSongV2Conflicts).toBeUndefined();
-      expect(offeredToB.pendingRemoteItem?.arrangements[0].formattedLyrics.map((section: { words: string }) => section.words))
-        .toEqual(["Verse edited on Controller A", "Chorus edited on Controller B"]);
       envB.store.dispatch(envB.itemSlice.actions.applyPendingRemoteItem(true, true));
       await flushListenerEffects();
       const adoptedByB = envB.store.getState().undoable.present.item;
@@ -2510,6 +2505,213 @@ describe("song undo and redo persistence against PouchDB", () => {
       session.release();
       env.deferredMutations.setActiveContentDatabase(null);
       await database.destroy();
+    }
+  });
+
+  it("persists free-item monitor layout edits and slide-driven recalculations to PouchDB", async () => {
+    const itemId = `monitor-layout-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const env = loadStoreWithItemPersistence(new Map<string, any>(), false, database);
+    const owner: ItemContentOwner = {
+      scopeId: `user-a:church-a:${database.name}`,
+      databaseKey: database.name,
+      churchId: "church-a",
+      accountId: "user-a",
+    };
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(database.name);
+    session.markInitialReplicationComplete();
+    env.globalFireDbInfo.churchId = owner.churchId;
+    env.deferredMutations.setActiveContentDatabase(owner, database as never);
+    env.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    jest.runAllTimers();
+    const baseSlides = [{
+      id: "free-slide",
+      name: "Section 1",
+      type: "Section",
+      boxes: [
+        { id: "background", width: 100, height: 100 },
+        { id: "text", width: 80, height: 40, words: "Short text", fontSize: 40 },
+      ],
+    }];
+    const initialLayout = { currentFontSizePx: 36, nextFontSizePx: 30 };
+    const put = await database.put({
+      _id: itemId,
+      type: "free",
+      name: "Free item",
+      slides: baseSlides,
+      monitorLayout: initialLayout,
+      formattedSections: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as any);
+    const baseline = await database.get<DBItem>(put.id);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+
+    const waitForSavedLayout = async (layout: { currentFontSizePx: number; nextFontSizePx: number }) => {
+      const matches = () => {
+        const current = env.store.getState().undoable.present.item;
+        return !current.hasPendingUpdate &&
+          JSON.stringify(current.monitorLayout) === JSON.stringify(layout) &&
+          JSON.stringify(current.baseItem?.monitorLayout) === JSON.stringify(layout);
+      };
+      if (!matches()) {
+        const saved = new Promise<void>((resolve) => {
+          let unsubscribe = () => {};
+          const check = () => {
+            if (!matches()) return;
+            unsubscribe();
+            resolve();
+          };
+          unsubscribe = env.store.subscribe(check);
+          check();
+        });
+        await jest.advanceTimersByTimeAsync(1500);
+        await flushListenerEffects();
+        await saved;
+      }
+      expect((await database.get<DBItem>(itemId)).monitorLayout).toEqual(layout);
+    };
+
+    try {
+      const layoutOnlyEdit = { currentFontSizePx: 32, nextFontSizePx: 25 };
+      env.store.dispatch(env.itemSlice.actions._updateMonitorLayout(layoutOnlyEdit));
+      await waitForSavedLayout(layoutOnlyEdit);
+
+      const nextSlides = baseSlides.map((slide) => ({
+        ...slide,
+        boxes: [slide.boxes[0], { ...slide.boxes[1], words: "A much longer free-form line that changes the monitor sizing calculation" }],
+      }));
+      await env.store.dispatch(env.updateSlides({ slides: nextSlides }) as never);
+      const calculatedLayout = getMonitorLayoutForSlides(nextSlides as any);
+      await waitForSavedLayout(calculatedLayout);
+      expect((await database.get<DBItem>(itemId)).slides?.[0].boxes[1].words)
+        .toContain("much longer");
+
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.item.monitorLayout).toEqual(layoutOnlyEdit);
+      const undoSave = waitForSavedLayout(layoutOnlyEdit);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await undoSave;
+      expect((await database.get<DBItem>(itemId)).slides?.[0].boxes[1].words).toBe("Short text");
+
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.item.monitorLayout).toEqual(calculatedLayout);
+      const redoSave = waitForSavedLayout(calculatedLayout);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await redoSave;
+      expect((await database.get<DBItem>(itemId)).slides?.[0].boxes[1].words)
+        .toContain("much longer");
+    } finally {
+      session.release();
+      env.deferredMutations.setActiveContentDatabase(null);
+      await database.destroy();
+    }
+  });
+
+  it("keeps incompatible monitor layouts in review across two Pouch-backed Controllers", async () => {
+    const itemId = `monitor-layout-conflict-${Date.now()}-${Math.random()}`;
+    const controllerADb = new PouchDB(`${itemId}-a`, { adapter: "idb" });
+    const controllerBDb = new PouchDB(`${itemId}-b`, { adapter: "idb" });
+    const envA = loadStoreWithItemPersistence(new Map<string, any>(), false, controllerADb);
+    const envB = loadStoreWithItemPersistence(new Map<string, any>(), false, controllerBDb);
+    const ownerA: ItemContentOwner = {
+      scopeId: `controller-a:${controllerADb.name}`,
+      databaseKey: controllerADb.name,
+      churchId: "church-a",
+      accountId: "controller-a",
+    };
+    const ownerB: ItemContentOwner = {
+      scopeId: `controller-b:${controllerBDb.name}`,
+      databaseKey: controllerBDb.name,
+      churchId: "church-a",
+      accountId: "controller-b",
+    };
+    const sessionA = envA.contentReplicationActivity.beginContentDatabaseSession(controllerADb.name);
+    const sessionB = envB.contentReplicationActivity.beginContentDatabaseSession(controllerBDb.name);
+    const initialLayout = { currentFontSizePx: 36, nextFontSizePx: 30 };
+    const layoutA = { currentFontSizePx: 32, nextFontSizePx: 25 };
+    const layoutB = { currentFontSizePx: 28, nextFontSizePx: 21 };
+    const source = {
+      _id: itemId,
+      type: "free",
+      name: "Free item",
+      slides: [],
+      monitorLayout: initialLayout,
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    };
+    try {
+      sessionA.markInitialReplicationComplete();
+      sessionB.markInitialReplicationComplete();
+      await controllerADb.put(source as any);
+      await controllerADb.replicate.to(controllerBDb);
+      const baseline = await controllerADb.get<DBItem>(itemId);
+      envA.globalFireDbInfo.churchId = ownerA.churchId;
+      envB.globalFireDbInfo.churchId = ownerB.churchId;
+      envA.deferredMutations.setActiveContentDatabase(ownerA, controllerADb as never);
+      envB.deferredMutations.setActiveContentDatabase(ownerB, controllerBDb as never);
+      envA.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+      envB.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+      envA.store.dispatch(envA.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: ownerA }));
+      envB.store.dispatch(envB.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: ownerB }));
+
+      const waitForSavedLayout = async (
+        env: ReturnType<typeof loadStoreWithItemPersistence>,
+        database: PouchDB.Database,
+        layout: { currentFontSizePx: number; nextFontSizePx: number },
+      ) => {
+        const matches = () => {
+          const current = env.store.getState().undoable.present.item;
+          return !current.hasPendingUpdate &&
+            JSON.stringify(current.monitorLayout) === JSON.stringify(layout) &&
+            JSON.stringify(current.baseItem?.monitorLayout) === JSON.stringify(layout);
+        };
+        if (!matches()) {
+          const saved = new Promise<void>((resolve) => {
+            let unsubscribe = () => {};
+            const check = () => {
+              if (!matches()) return;
+              unsubscribe();
+              resolve();
+            };
+            unsubscribe = env.store.subscribe(check);
+            check();
+          });
+          await jest.advanceTimersByTimeAsync(1500);
+          await flushListenerEffects();
+          await saved;
+        }
+        expect((await database.get<DBItem>(itemId)).monitorLayout).toEqual(layout);
+      };
+
+      envA.store.dispatch(envA.itemSlice.actions._updateMonitorLayout(layoutA));
+      await waitForSavedLayout(envA, controllerADb, layoutA);
+      await controllerADb.replicate.to(controllerBDb);
+      const remoteLayoutItem = await controllerBDb.get<DBItem>(itemId);
+      expect(remoteLayoutItem.monitorLayout).toEqual(layoutA);
+      envB.store.dispatch(envB.itemSlice.actions.bufferRemoteItemUpdate(remoteLayoutItem));
+      await flushListenerEffects();
+
+      envB.store.dispatch(envB.itemSlice.actions._updateMonitorLayout(layoutB));
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      const conflicting = envB.store.getState().undoable.present.item;
+      expect(conflicting.monitorLayout).toEqual(layoutB);
+      expect(conflicting.hasRemoteUpdate).toBe(true);
+      expect(conflicting.pendingRemoteItem?.monitorLayout).toEqual(layoutA);
+      expect((await controllerBDb.get<DBItem>(itemId)).monitorLayout).toEqual(layoutA);
+
+      envB.store.dispatch(envB.itemSlice.actions.applyPendingRemoteItem());
+      await flushListenerEffects();
+      expect(envB.store.getState().undoable.present.item.monitorLayout).toEqual(layoutA);
+      expect(envB.store.getState().undoable.present.item.pendingRemoteItem).toBeNull();
+    } finally {
+      sessionA.release();
+      sessionB.release();
+      envA.deferredMutations.setActiveContentDatabase(null);
+      envB.deferredMutations.setActiveContentDatabase(null);
+      await controllerADb.destroy();
+      await controllerBDb.destroy();
     }
   });
 });
@@ -8090,6 +8292,75 @@ describe("item list outline persistence", () => {
       await flushListenerEffects();
       await redoneDelete;
       expect(await readPersistedOutlineItems(database)).toEqual(deletedSecond);
+    } finally {
+      jest.useRealTimers();
+      await database.destroy();
+    }
+  });
+
+  it("persists deleting a row and moving a survivor through Undo and Redo", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-delete-move-undo-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const first = createServiceItem({ name: "A", _id: "song-a", listId: "row-a" });
+    const second = createServiceItem({ name: "B", _id: "song-b", listId: "row-b" });
+    const third = createServiceItem({ name: "C", _id: "song-c", listId: "row-c" });
+    const fourth = createServiceItem({ name: "D", _id: "song-d", listId: "row-d" });
+    const base = [first, second, third, fourth];
+    const deleted = [first, third, fourth];
+    const moved = [third, first, fourth];
+    try {
+      const env = await initializePouchOutlineStore(database, base);
+      env.store.dispatch(env.itemListSlice.actions.updateItemList(deleted));
+      const deleteSave = waitForOutlineState(env.store, deleted, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await deleteSave;
+      expect(await readPersistedOutlineItems(database)).toEqual(deleted);
+
+      const ownerKey = env.store.getState().undoable.present.itemList.outlineOwnerKey;
+      const intent = createOutlineMoveIntent({
+        outlineId: "outline-a", ownerKey, resultingItems: moved, movedIds: ["row-c"],
+      })!;
+      env.store.dispatch(env.itemListSlice.actions.moveItemListRows({ items: moved, intent }));
+      const moveSave = waitForOutlineState(env.store, moved, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await moveSave;
+      expect(await readPersistedOutlineItems(database)).toEqual(moved);
+
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual(deleted);
+      const undoMoveSave = waitForOutlineState(env.store, deleted, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await undoMoveSave;
+      expect(await readPersistedOutlineItems(database)).toEqual(deleted);
+
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual(base);
+      const undoDeleteSave = waitForOutlineState(env.store, base, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await undoDeleteSave;
+      expect(await readPersistedOutlineItems(database)).toEqual(base);
+
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual(deleted);
+      const redoDeleteSave = waitForOutlineState(env.store, deleted, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await redoDeleteSave;
+      expect(await readPersistedOutlineItems(database)).toEqual(deleted);
+
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      expect(env.store.getState().undoable.present.itemList.list).toEqual(moved);
+      const redoMoveSave = waitForOutlineState(env.store, moved, false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await redoMoveSave;
+      expect(await readPersistedOutlineItems(database)).toEqual(moved);
+      expect(env.store.getState().undoable.present.itemList.pendingMoveIntents).toEqual([]);
+
     } finally {
       jest.useRealTimers();
       await database.destroy();

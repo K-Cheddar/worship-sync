@@ -33,6 +33,67 @@ const savedMoveMarker = (
 });
 
 describe("two-client outline synchronization with replicated PouchDB state", () => {
+  it("combines local deletions and a survivor move with a remote insertion across replication", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-delete-move-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-delete-move-a-${suffix}`);
+    const clientB = new PouchDB(`outline-delete-move-b-${suffix}`);
+    const baseline = ["a", "b", "c", "d", "e"].map(id => row(id, id.toUpperCase()));
+    const local = [baseline[4], baseline[0], baseline[2]];
+    const remote = [baseline[0], baseline[1], row("remote", "Remote addition"), baseline[2], baseline[3], baseline[4]];
+    const outlineId = "outline-delete-move";
+    const intent = createOutlineMoveIntent({ outlineId, ownerKey: "controller-a",
+      resultingItems: local, movedIds: ["e"] })!;
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await persistServiceListItems(clientB as never, outlineId, remote, baseline);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+
+      const merged = await persistServiceListItems(clientA as never, outlineId, local, baseline, undefined, [intent]);
+      expect(merged.items.map(item => item.listId)).toEqual(["e", "a", "remote", "c"]);
+      await clientA.replicate.to(shared);
+      await clientB.replicate.from(shared);
+      expect((await clientA.get<{ items: ServiceItem[] }>(outlineId)).items).toEqual(merged.items);
+      const repeated = await persistServiceListItems(clientA as never, outlineId, merged.items, merged.items);
+      expect(repeated.items).toEqual(merged.items);
+      expect(repeated.items.map(item => item.listId)).not.toContain("b");
+      expect(repeated.items.map(item => item.listId)).not.toContain("d");
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("retains delete-versus-edit review when a remote row changes during a local delete", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-delete-edit-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-delete-edit-a-${suffix}`);
+    const clientB = new PouchDB(`outline-delete-edit-b-${suffix}`);
+    const baseline = [row("a", "A"), row("b", "B"), row("c", "C")];
+    const local = [baseline[0], baseline[2]];
+    const remote = [baseline[0], { ...baseline[1], name: "B edited remotely" }, baseline[2]];
+    try {
+      await shared.put({ _id: "outline-delete-edit", docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await persistServiceListItems(clientB as never, "outline-delete-edit", remote, baseline);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+
+      const writes = jest.spyOn(clientA, "put");
+      const conflict = await persistServiceListItems(clientA as never, "outline-delete-edit", local, baseline)
+        .then(() => undefined, error => error as ServiceListConflictError);
+      expect(conflict).toBeInstanceOf(ServiceListConflictError);
+      expect(conflict?.remoteItems).toContainEqual(expect.objectContaining({ listId: "b", name: "B edited remotely" }));
+      expect(getOutlineItemConflicts(baseline, local, conflict!.remoteItems))
+        .toEqual([expect.objectContaining({ reason: "delete-edit", listId: "b" })]);
+      expect(writes).not.toHaveBeenCalled();
+      expect((await clientA.get<DBItemListDetails>("outline-delete-edit")).items).toEqual(remote);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
   it("merges different row moves saved on independent replicas before either side replicates", async () => {
     const suffix = Date.now();
     const shared = new PouchDB(`outline-move-shared-${suffix}`);

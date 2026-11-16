@@ -4,6 +4,8 @@ import OutlineItemSlidesScroller from "./OutlineItemSlidesScroller";
 import { setActiveItem } from "../../store/itemSlice";
 import { setActiveItemInList } from "../../store/itemListSlice";
 import { keepElementInView } from "../../utils/generalUtils";
+import * as monitorFormatting from "../../utils/overflow";
+import { resolveDisplaySettings } from "../../utils/displaySettings";
 import { requestOutlineSelectionScroll } from "../../utils/outlineSelectionScroll";
 import type { DBItem, ItemSlideType, MediaType, ServiceItem } from "../../types";
 
@@ -37,6 +39,11 @@ jest.mock("../../hooks/useLocalImageUrl", () => ({
   useLocalImageUrl: (reference?: { id?: string }) => ({
     url: reference?.id ? `blob:${reference.id}` : undefined,
   }),
+}));
+
+jest.mock("../../hooks/useCachedMediaUrl", () => ({
+  useCachedMediaUrl: (url?: string) => url,
+  useResolvedCachedMediaUrl: (url?: string) => url,
 }));
 
 jest.mock("react-router-dom", () => ({
@@ -216,6 +223,7 @@ const renderScroller = (
         sizeConfig={sizeConfig}
         isMobile={false}
         previewMode={previewMode}
+        monitorSettings={resolveDisplaySettings(undefined, { showNextSlide: true }, "monitor")}
         canEdit
         selectedSlide={selectedSlide}
         liveSlideIds={new Set()}
@@ -245,6 +253,7 @@ const renderScroller = (
             sizeConfig={sizeConfig}
             isMobile={false}
             previewMode={previewMode}
+            monitorSettings={resolveDisplaySettings(undefined, { showNextSlide: true }, "monitor")}
             canEdit
             selectedSlide={nextSlide}
             liveSlideIds={new Set()}
@@ -450,6 +459,75 @@ describe("OutlineItemSlidesScroller", () => {
         thumbnail.getAttribute("data-preview-mode") === "monitor",
       ),
     ).toBe(true);
+  });
+
+  it("formats free item monitor thumbnails with that item's persisted layout", () => {
+    const freeSlides = [
+      {
+        ...slide("free-current", "Free Current"),
+        boxes: [
+          { id: "free-bg-1", width: 100, height: 100 },
+          { id: "free-text-1", words: "Current free words", width: 100, height: 40, fontSize: 42 },
+        ],
+      },
+      {
+        ...slide("free-next", "Free Next"),
+        boxes: [
+          { id: "free-bg-2", width: 100, height: 100 },
+          { id: "free-text-2", words: "Next free words", width: 100, height: 40, fontSize: 42 },
+        ],
+      },
+    ] as ItemSlideType[];
+    const layout = { currentFontSizePx: 31, nextFontSizePx: 19 };
+    mockDocsById.set("song-2", {
+      _id: "song-2",
+      name: "Free item",
+      type: "free",
+      slides: freeSlides,
+      monitorLayout: layout,
+    } as DBItem);
+    mockState.undoable.present.itemList.list[2] = {
+      ...mockState.undoable.present.itemList.list[2],
+      type: "free",
+    };
+
+    const formatter = jest.spyOn(monitorFormatting, "ensureSlidesHaveMonitorBandFormatting");
+    renderScroller(0, 2, "monitor");
+
+    expect(formatter).toHaveBeenCalledWith(freeSlides, layout);
+    const formatted = monitorFormatting.ensureSlidesHaveMonitorBandFormatting(freeSlides, layout);
+    expect(formatted[0].monitorCurrentBandBoxes?.[0]).toMatchObject({
+      words: "Current free words",
+      monitorFontSizePx: 31,
+    });
+    expect(formatted[1].monitorNextBandBoxes?.[0]).toMatchObject({
+      words: "Next free words",
+      monitorFontSizePx: 19,
+    });
+  });
+
+  it("keeps free item monitor thumbnails safe when no layout is available", () => {
+    const freeSlides = [slide("free-no-layout", "Free without monitor layout")];
+    mockDocsById.set("song-2", {
+      _id: "song-2",
+      name: "Free item",
+      type: "free",
+      slides: freeSlides,
+      monitorLayout: undefined,
+    } as DBItem);
+    mockState.undoable.present.itemList.list[2] = {
+      ...mockState.undoable.present.itemList.list[2],
+      type: "free",
+    };
+
+    const formatter = jest.spyOn(monitorFormatting, "ensureSlidesHaveMonitorBandFormatting");
+    renderScroller(0, 2, "monitor");
+
+    expect(formatter).toHaveBeenCalledWith(freeSlides, undefined);
+    const formatted = monitorFormatting.ensureSlidesHaveMonitorBandFormatting(freeSlides, undefined);
+    expect(formatted).toBe(freeSlides);
+    expect(formatted[0]).not.toHaveProperty("monitorCurrentBandBoxes");
+    expect(formatted[0]).not.toHaveProperty("monitorNextBandBoxes");
   });
 
   it("matches saved stills by source for active and inactive outline tiles", () => {
