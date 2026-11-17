@@ -11,7 +11,9 @@ export const selectSongLibrary = createSelector(
     (state: RootState) => state.allDocs.songLibraryDiagnostics,
   ],
   (documents, isInitialized, diagnostics) => {
-    const unavailableIds = new Set(diagnostics.map((diagnostic) => diagnostic.songId));
+    const unavailableIds = new Set(diagnostics
+      .filter((diagnostic) => diagnostic.code === "incomplete-v2")
+      .map((diagnostic) => diagnostic.songId));
     const songs = sortNamesInList(documents.map(itemDocumentToLibraryEntry))
       .filter((song) => !unavailableIds.has(song._id));
     return {

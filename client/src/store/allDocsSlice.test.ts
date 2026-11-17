@@ -4,8 +4,8 @@ import allDocsReducer, {
   upsertItemInAllDocs,
   upsertItemsInAllDocs,
   applySongLibraryRefresh,
+  activateSongV2Root,
   invalidateSongContent,
-  markSongV2Activated,
 } from "./allDocsSlice";
 import { hydrateItemCache, applyItemDocumentChange } from "./allDocsSlice";
 import type { DBItem } from "../types";
@@ -218,7 +218,7 @@ describe("allDocsSlice live Song V2 projections", () => {
     const store = createStore();
     const stale = { ...makeDoc("song-1", "song"), name: "Stale legacy" };
     store.dispatch(hydrateItemCache([stale]));
-    store.dispatch(markSongV2Activated(["song-1"]));
+    store.dispatch(activateSongV2Root("song-1"));
     const projection = { ...makeDoc("song-1", "song"), docType: "song-v2-root" as const, name: "V2 projection" };
     store.dispatch(applySongLibraryRefresh({ songId: "song-1", projection }));
     store.dispatch(applyDoc(stale));
@@ -255,6 +255,70 @@ describe("allDocsSlice live Song V2 projections", () => {
     store.dispatch(invalidateSongContent("song-1"));
     expect(store.getState().allDocs.allSongDocs).toBe(songs);
     expect(store.getState().allDocs.songContentVersions["song-1"]).toBe(1);
+  });
+
+  it("atomically restores legacy authority after a confirmed physical root deletion", () => {
+    const store = createStore();
+    const legacy = { ...makeDoc("song-1", "song"), name: "Preserved legacy" };
+    store.dispatch(hydrateItemCache([legacy]));
+    store.dispatch(activateSongV2Root("song-1"));
+    expect(store.getState().allDocs.allSongDocs).toEqual([]);
+
+    const projection = { ...makeDoc("song-1", "song"), docType: "song-v2-root" as const, name: "V2" };
+    store.dispatch(applySongLibraryRefresh({ songId: "song-1", projection }));
+    store.dispatch(applySongLibraryRefresh({
+      songId: "song-1",
+      authority: "legacy",
+      projection: legacy,
+    }));
+
+    expect(store.getState().allDocs).toMatchObject({
+      activatedSongIds: {},
+      songLibraryDiagnostics: [],
+      allSongDocs: [expect.objectContaining({ _id: "song-1", name: "Preserved legacy" })],
+    });
+
+    store.dispatch(activateSongV2Root("song-1"));
+    expect(store.getState().allDocs.activatedSongIds["song-1"]).toBe(true);
+    expect(store.getState().allDocs.allSongDocs).toEqual([]);
+  });
+
+  it("preserves a valid V2 projection and activation across a transient read failure", () => {
+    const store = createStore();
+    const projection = { ...makeDoc("song-1", "song"), docType: "song-v2-root" as const, name: "Known V2" };
+    store.dispatch(applySongLibraryRefresh({ songId: "song-1", projection }));
+
+    store.dispatch(applySongLibraryRefresh({
+      songId: "song-1",
+      authority: "v2",
+      preserveProjection: true,
+      diagnostic: { songId: "song-1", rootId: "song-v2:root:song-1", code: "read-failed", message: "database busy" },
+    }));
+    store.dispatch(applyDoc({ ...makeDoc("song-1", "song"), name: "Stale legacy" }));
+
+    expect(store.getState().allDocs.activatedSongIds["song-1"]).toBe(true);
+    expect(store.getState().allDocs.allSongDocs).toEqual([expect.objectContaining({ name: "Known V2", docType: "song-v2-root" })]);
+    expect(store.getState().allDocs.songLibraryDiagnostics).toEqual([
+      expect.objectContaining({ code: "read-failed", message: "database busy" }),
+    ]);
+  });
+
+  it("preserves the legacy projection and authority when the root read is unknown", () => {
+    const store = createStore();
+    const legacy = { ...makeDoc("song-1", "song"), name: "Known legacy" };
+    store.dispatch(hydrateItemCache([legacy]));
+
+    store.dispatch(applySongLibraryRefresh({
+      songId: "song-1",
+      authority: "unknown",
+      diagnostic: { songId: "song-1", rootId: "song-v2:root:song-1", code: "read-failed", message: "database busy" },
+    }));
+
+    expect(store.getState().allDocs.activatedSongIds["song-1"]).toBeUndefined();
+    expect(store.getState().allDocs.allSongDocs).toEqual([expect.objectContaining({ name: "Known legacy" })]);
+    expect(store.getState().allDocs.songLibraryDiagnostics).toEqual([
+      expect.objectContaining({ code: "read-failed", message: "database busy" }),
+    ]);
   });
 });
 

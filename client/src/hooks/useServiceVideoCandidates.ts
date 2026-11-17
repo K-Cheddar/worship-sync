@@ -45,7 +45,7 @@ import {
 import { isTransportSafeMediaUrl } from "../utils/mediaPreparationManifest";
 import { getImageFromVideoUrl } from "../utils/generalUtils";
 import { getActiveItemSlides } from "../utils/activeItemSlides";
-import { getSongV2DocumentIdentity, getSongV2RootDocId, loadItemWithSongHydration } from "../utils/songPersistence";
+import { classifySongV2RootState, getSongV2DocumentIdentity, getSongV2RootDocId, loadItemWithSongHydration } from "../utils/songPersistence";
 
 type ServiceItemMedia = {
   itemId: string;
@@ -816,21 +816,41 @@ export const useServiceVideoCandidates = ({
       if (generation !== loadGenerationRef.current) return;
       const authoritativeSongIds = new Set<string>();
       const deletedRootSongIds = new Set<string>();
-      (rootsResponse.rows ?? []).forEach((row) => {
+      const unknownRootSongIds = new Set<string>();
+      const rootRowsById = new Map((rootsResponse.rows ?? []).map((row) => {
         const docId = row.doc && typeof row.doc === "object"
           ? (row.doc as { _id?: unknown })._id
           : undefined;
         const key = row.key ?? row.id ?? (typeof docId === "string" ? docId : "");
-        if (row.error !== "not_found" && (row.value?.deleted || row.doc)) {
-          const identity = getSongV2DocumentIdentity(key);
-          if (identity?.kind === "root") {
-            authoritativeSongIds.add(identity.songId);
-            if (row.value?.deleted) deletedRootSongIds.add(identity.songId);
-          }
+        return [key, row] as const;
+      }));
+      uniqueItemIds.forEach((songId) => {
+        const key = getSongV2RootDocId(songId);
+        const row = rootRowsById.get(key);
+        if (!row) {
+          unknownRootSongIds.add(songId);
+          return;
         }
+        const identity = getSongV2DocumentIdentity(key);
+        if (identity?.kind !== "root") {
+          unknownRootSongIds.add(songId);
+          return;
+        }
+        const rootState = classifySongV2RootState(
+          row.value?.deleted
+            ? { kind: "deleted" }
+            : row.error === "not_found"
+              ? { kind: "missing" }
+              : row.doc
+                ? { kind: "found", root: row.doc }
+                : { kind: "read-failed" },
+        );
+        if (rootState === "v2") authoritativeSongIds.add(identity.songId);
+        else if (rootState === "unknown") unknownRootSongIds.add(identity.songId);
+        else if (row.value?.deleted) deletedRootSongIds.add(identity.songId);
       });
       const v2SongIds = uniqueItemIds.filter(id => authoritativeSongIds.has(id) && !deletedRootSongIds.has(id));
-      const v2HydrationErrors = new Set<string>(deletedRootSongIds);
+      const v2HydrationErrors = new Set<string>(unknownRootSongIds);
       for (let start = 0; start < v2SongIds.length; start += 4) {
         const batch = v2SongIds.slice(start, start + 4);
         const hydrated = await Promise.all(batch.map(async (songId) => {
@@ -881,7 +901,7 @@ export const useServiceVideoCandidates = ({
       const discoveredById = new Map(nextServiceMedia.map((media) => [media.itemId, media]));
       if (missingItemIds.length > 0) {
         serviceMediaRef.current.forEach((media) => {
-          if (authoritativeSongIds.has(media.itemId)) return;
+          if (authoritativeSongIds.has(media.itemId) || deletedRootSongIds.has(media.itemId)) return;
           if (!discoveredById.has(media.itemId) && !missingItemIds.includes(media.itemId)) return;
           if (!discoveredById.has(media.itemId)) discoveredById.set(media.itemId, media);
         });

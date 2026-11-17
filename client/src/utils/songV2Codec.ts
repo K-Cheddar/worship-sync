@@ -11,6 +11,24 @@ export type SongV2DocumentIdentity = {
   kind: "root" | "arrangement" | "slide";
 };
 
+export type SongV2RootStateEvidence =
+  | { kind: "found"; root: unknown }
+  | { kind: "missing" }
+  | { kind: "deleted" }
+  | { kind: "read-failed" };
+
+/** A live root owns authority even when it is logically deleted or incomplete. */
+export const classifySongV2RootState = (
+  evidence: SongV2RootStateEvidence,
+): "legacy" | "v2" | "unknown" => {
+  if (evidence.kind === "read-failed") return "unknown";
+  if (evidence.kind === "missing" || evidence.kind === "deleted") return "legacy";
+  if (!evidence.root || typeof evidence.root !== "object") return "unknown";
+  const root = evidence.root as Record<string, unknown>;
+  if (root._deleted === true) return "legacy";
+  return root.docType === "song-v2-root" ? "v2" : "unknown";
+};
+
 /** Decodes the logical song identity carried by a physical Song V2 document ID. */
 export const getSongV2DocumentIdentity = (id: string): SongV2DocumentIdentity | undefined => {
   const prefix = id.startsWith(SONG_V2_ROOT_ID_PREFIX)

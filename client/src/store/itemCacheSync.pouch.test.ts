@@ -5,10 +5,44 @@ import { configureStore } from "@reduxjs/toolkit";
 import { waitFor } from "@testing-library/react";
 import allDocs from "./allDocsSlice";
 import { startItemCacheSync } from "./itemCacheSync";
+import { applySongLibraryRefresh } from "./allDocsSlice";
 import type { DBItem } from "../types";
 import { serializeSongToV2Documents } from "../utils/songPersistence";
+import { updateAllDocs } from "../utils/dbUtils";
 
 describe("item cache with real local PouchDB and replication", () => {
+  it("clears stale V2 activation on a complete full-library refresh after rollback", async () => {
+    const local = new PouchDB(`cache-song-v2-full-refresh-${Date.now()}`);
+    const songId = "song/full-refresh-rollback";
+    const legacy = { _id: songId, type: "song", name: "Restored legacy", slides: [] };
+    const documents = serializeSongToV2Documents({
+      _id: songId,
+      type: "song",
+      name: "V2 predecessor",
+      selectedArrangement: 0,
+      arrangements: [{ id: "master", name: "Master", formattedLyrics: [], songOrder: [], slides: [] }],
+      slides: [],
+    } as unknown as DBItem);
+    await local.put(legacy as any);
+    await local.put(documents.root);
+    await local.bulkDocs([...documents.arrangements, ...documents.slides]);
+    await local.remove(await local.get(documents.root._id));
+    const store = configureStore({ reducer: { allDocs } });
+    store.dispatch(applySongLibraryRefresh({
+      songId,
+      projection: { ...legacy, name: "Stale V2 cache", docType: "song-v2-root" } as unknown as DBItem,
+    }));
+    try {
+      await expect(updateAllDocs(store.dispatch, local)).resolves.toBe(true);
+      expect(store.getState().allDocs.activatedSongIds[songId]).toBeUndefined();
+      expect(store.getState().allDocs.allSongDocs).toMatchObject([
+        { _id: songId, name: "Restored legacy" },
+      ]);
+    } finally {
+      await local.destroy();
+    }
+  });
+
   it("replays a write after an empty snapshot that omits update_seq", async () => {
     const local = new PouchDB(`cache-empty-gap-${Date.now()}`);
     const database = {
@@ -200,6 +234,36 @@ describe("item cache with real local PouchDB and replication", () => {
       await remote.put({ ...legacy, name: "Late legacy echo" });
       await remote.replicate.to(local);
       expect(store.getState().allDocs.allSongDocs).toEqual([]);
+
+      const logicalDelete = await remote.get<typeof documents.root>(documents.root._id);
+      const physicalDelete = await remote.remove(logicalDelete);
+      await remote.replicate.to(local);
+      await waitFor(() => expect(store.getState().allDocs.allSongDocs).toMatchObject([
+        { _id: "song/live", name: "Late legacy echo" },
+      ]));
+      expect(store.getState().allDocs.activatedSongIds["song/live"]).toBeUndefined();
+      expect(store.getState().allDocs.songLibraryDiagnostics).toEqual([]);
+
+      const restartedStore = configureStore({ reducer: { allDocs } });
+      const stopRestarted = startItemCacheSync(local, restartedStore.dispatch);
+      try {
+        await waitFor(() => expect(restartedStore.getState().allDocs.allSongDocs).toEqual([
+          expect.objectContaining({ _id: "song/live", name: "Late legacy echo" }),
+        ]));
+        expect(restartedStore.getState().allDocs.activatedSongIds["song/live"]).toBeUndefined();
+
+        await remote.put({ ...documents.root, _rev: physicalDelete.rev, name: "Reactivated V2 song" });
+        await remote.replicate.to(local);
+        await waitFor(() => expect(restartedStore.getState().allDocs.allSongDocs[0]).toMatchObject({
+          _id: "song/live",
+          name: "Reactivated V2 song",
+          docType: "song-v2-root",
+        }));
+        await waitFor(() => expect(store.getState().allDocs.allSongDocs[0]?.name).toBe("Reactivated V2 song"));
+        expect(restartedStore.getState().allDocs.activatedSongIds["song/live"]).toBe(true);
+      } finally {
+        stopRestarted();
+      }
     } finally {
       stop();
       await local.destroy();
@@ -244,6 +308,65 @@ describe("item cache with real local PouchDB and replication", () => {
       }));
       expect(store.getState().allDocs.songLibraryDiagnostics).toEqual([]);
     } finally {
+      stop();
+      await local.destroy();
+      await remote.destroy();
+    }
+  });
+
+  it("keeps the active V2 projection through a transient root read failure and retries", async () => {
+    const local = new PouchDB(`cache-song-v2-read-failure-${Date.now()}`);
+    const remote = new PouchDB(`cache-song-v2-read-failure-remote-${Date.now()}`);
+    const store = configureStore({ reducer: { allDocs } });
+    const legacy = { _id: "song/read-failure", type: "song", name: "Legacy", slides: [] };
+    const documents = serializeSongToV2Documents({
+      _id: "song/read-failure",
+      type: "song",
+      name: "Known V2",
+      selectedArrangement: 0,
+      arrangements: [{ id: "master", name: "Master", formattedLyrics: [], songOrder: [], slides: [] }],
+      slides: [],
+    } as unknown as DBItem);
+    await remote.put(legacy as any);
+    const stop = startItemCacheSync(local, store.dispatch);
+    const originalGet = local.get.bind(local);
+    let failRootRead = false;
+    const getSpy = jest.spyOn(local, "get").mockImplementation(async (id, options) => {
+      if (failRootRead && id === documents.root._id) {
+        failRootRead = false;
+        throw new Error("temporary Pouch read failure");
+      }
+      return originalGet(id, options);
+    });
+    try {
+      await remote.replicate.to(local);
+      await waitFor(() => expect(store.getState().allDocs.allSongDocs[0]?.name).toBe("Legacy"));
+      await remote.put(documents.root);
+      await remote.bulkDocs([...documents.arrangements, ...documents.slides]);
+      await remote.replicate.to(local);
+      await waitFor(() => expect(store.getState().allDocs.allSongDocs[0]).toMatchObject({
+        name: "Known V2",
+        docType: "song-v2-root",
+      }));
+
+      failRootRead = true;
+      const root = await remote.get<typeof documents.root>(documents.root._id);
+      await remote.put({ ...root, name: "Recovered V2" });
+      await remote.replicate.to(local);
+      await waitFor(() => expect(store.getState().allDocs.songLibraryDiagnostics).toEqual([
+        expect.objectContaining({ code: "read-failed", message: "temporary Pouch read failure" }),
+      ]));
+      expect(store.getState().allDocs.allSongDocs[0]).toMatchObject({
+        name: "Known V2",
+        docType: "song-v2-root",
+      });
+      expect(store.getState().allDocs.activatedSongIds["song/read-failure"]).toBe(true);
+
+      await waitFor(() => expect(store.getState().allDocs.allSongDocs[0]?.name).toBe("Recovered V2"), { timeout: 5000 });
+      expect(store.getState().allDocs.songLibraryDiagnostics).toEqual([]);
+      expect(store.getState().allDocs.activatedSongIds["song/read-failure"]).toBe(true);
+    } finally {
+      getSpy.mockRestore();
       stop();
       await local.destroy();
       await remote.destroy();
@@ -299,6 +422,133 @@ describe("item cache with real local PouchDB and replication", () => {
       await localA.destroy();
       await remoteA.destroy();
       await localB.destroy();
+    }
+  });
+
+  it("does not apply a delayed rollback read after switching churches with the same song ID", async () => {
+    const localA = new PouchDB(`cache-song-v2-rollback-switch-a-${Date.now()}`);
+    const remoteA = new PouchDB(`cache-song-v2-rollback-switch-remote-${Date.now()}`);
+    const localB = new PouchDB(`cache-song-v2-rollback-switch-b-${Date.now()}`);
+    const store = configureStore({ reducer: { allDocs } });
+    const songId = "same-rollback-song-id";
+    const legacy = { _id: songId, type: "song", name: "Church A legacy", slides: [] };
+    const documents = serializeSongToV2Documents({
+      _id: songId,
+      type: "song",
+      name: "Church A V2",
+      selectedArrangement: 0,
+      arrangements: [{ id: "master", name: "Master", formattedLyrics: [], songOrder: [], slides: [] }],
+      slides: [],
+    } as unknown as DBItem);
+    await remoteA.put(legacy as any);
+    await remoteA.put(documents.root);
+    await remoteA.bulkDocs([...documents.arrangements, ...documents.slides]);
+    await remoteA.replicate.to(localA);
+    await localB.put({ ...legacy, name: "Church B song" } as any);
+
+    let releaseLegacyRead!: () => void;
+    let legacyReadStarted!: () => void;
+    const readGate = new Promise<void>((resolve) => { releaseLegacyRead = resolve; });
+    const readStarted = new Promise<void>((resolve) => { legacyReadStarted = resolve; });
+    const originalGet = localA.get.bind(localA);
+    let blockLegacyRead = false;
+    const blockedGet = jest.spyOn(localA, "get").mockImplementation(async (id, options) => {
+      if (blockLegacyRead && id === songId) {
+        blockLegacyRead = false;
+        legacyReadStarted();
+        await readGate;
+      }
+      return originalGet(id, options);
+    });
+    const stopA = startItemCacheSync(localA, store.dispatch);
+    let stopB: (() => void) | undefined;
+    try {
+      await waitFor(() => expect(store.getState().allDocs.allSongDocs[0]?.name).toBe("Church A V2"));
+      blockLegacyRead = true;
+      await localA.remove(await localA.get(documents.root._id));
+      await readStarted;
+
+      stopA();
+      stopB = startItemCacheSync(localB, store.dispatch);
+      await waitFor(() => expect(store.getState().allDocs.allSongDocs[0]?.name).toBe("Church B song"));
+      releaseLegacyRead();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(store.getState().allDocs.allSongDocs).toEqual([
+        expect.objectContaining({ _id: songId, name: "Church B song" }),
+      ]);
+      expect(store.getState().allDocs.activatedSongIds[songId]).toBeUndefined();
+    } finally {
+      releaseLegacyRead();
+      blockedGet.mockRestore();
+      stopA();
+      stopB?.();
+      await localA.destroy();
+      await remoteA.destroy();
+      await localB.destroy();
+    }
+  });
+
+  it("does not let a delayed legacy rollback read overwrite a reactivated V2 root", async () => {
+    const local = new PouchDB(`cache-song-v2-reactivation-race-${Date.now()}`);
+    const remote = new PouchDB(`cache-song-v2-reactivation-race-remote-${Date.now()}`);
+    const store = configureStore({ reducer: { allDocs } });
+    const songId = "song/reactivation-race";
+    const legacy = { _id: songId, type: "song", name: "Legacy", slides: [] };
+    const documents = serializeSongToV2Documents({
+      _id: songId,
+      type: "song",
+      name: "Original V2",
+      selectedArrangement: 0,
+      arrangements: [{ id: "master", name: "Master", formattedLyrics: [], songOrder: [], slides: [] }],
+      slides: [],
+    } as unknown as DBItem);
+    await remote.put(legacy as any);
+    await remote.put(documents.root);
+    await remote.bulkDocs([...documents.arrangements, ...documents.slides]);
+    await remote.replicate.to(local);
+    const originalGet = local.get.bind(local);
+    let releaseLegacyRead!: () => void;
+    let legacyReadStarted!: () => void;
+    const readGate = new Promise<void>((resolve) => { releaseLegacyRead = resolve; });
+    const readStarted = new Promise<void>((resolve) => { legacyReadStarted = resolve; });
+    let blockLegacyRead = false;
+    const blockedGet = jest.spyOn(local, "get").mockImplementation(async (id, options) => {
+      if (blockLegacyRead && id === songId) {
+        blockLegacyRead = false;
+        legacyReadStarted();
+        await readGate;
+      }
+      return originalGet(id, options);
+    });
+    const stop = startItemCacheSync(local, store.dispatch);
+    try {
+      await waitFor(() => expect(store.getState().allDocs.allSongDocs[0]?.name).toBe("Original V2"));
+      blockLegacyRead = true;
+      const deletion = await remote.remove(await remote.get(documents.root._id));
+      await remote.replicate.to(local);
+      await readStarted;
+
+      await remote.put({ ...documents.root, _rev: deletion.rev, name: "Reactivated V2" });
+      await remote.replicate.to(local);
+      await waitFor(() => expect(store.getState().allDocs.allSongDocs[0]).toMatchObject({
+        name: "Reactivated V2",
+        docType: "song-v2-root",
+      }));
+      releaseLegacyRead();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(store.getState().allDocs.allSongDocs).toEqual([
+        expect.objectContaining({ _id: songId, name: "Reactivated V2", docType: "song-v2-root" }),
+      ]);
+      expect(store.getState().allDocs.activatedSongIds[songId]).toBe(true);
+      expect(store.getState().allDocs.songLibraryDiagnostics).toEqual([]);
+    } finally {
+      releaseLegacyRead();
+      blockedGet.mockRestore();
+      stop();
+      await local.destroy();
+      await remote.destroy();
     }
   });
 });
