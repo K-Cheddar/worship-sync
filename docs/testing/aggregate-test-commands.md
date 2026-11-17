@@ -10,6 +10,10 @@ Run these commands from the repository root:
 
 The aggregates run sequentially. A failed suite does not stop later suites. Each attempted suite has a status and duration in the final report. Failed and skipped suites are listed at the end. The process exits unsuccessfully if a check or suite fails, or if a required suite cannot run because a prerequisite is missing.
 
+## GitHub Actions checks
+
+Every pull request and manual `Checks` run uses the same four ordinary Jest shards; CI does not collect or enforce coverage. The final required status remains **`npm run checks`** and aggregates all four client shards, server tests, lint/type checking, and Heroku and Electron builds. Local coverage commands remain available for development.
+
 ## E2E inventory and individual commands
 
 `test:e2e:all` runs these suites once each, in this order:

@@ -28,7 +28,7 @@ import type { MediaType } from "../../types";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import { buildLocalVideoCloudSharePatch } from "../../containers/Media/localMediaCloudShare";
 import { createLocalMediaFromDownloadedVideo } from "../../containers/Media/localMediaImport";
-import { uploadDownloadedVideoToMux } from "../../containers/Media/utils/muxUpload";
+import { uploadDownloadedVideoToMux, uploadLocalVideoAssetToMux } from "../../containers/Media/utils/muxUpload";
 import { MEDIA_STORAGE_CHANGED_EVENT } from "../../containers/Media/mediaStorageEvents";
 import {
   DesktopVideoDownloadManager as DesktopVideoDownloadController,
@@ -169,7 +169,9 @@ const DesktopVideoDownloadManager = ({ children }: { children: ReactNode }) => {
           getInMemoryMediaItems: () => reduxStore.getState().media.list,
           isOwnerCurrent,
         }),
-      uploadToCloud: uploadDownloadedVideoToMux,
+      uploadToCloud: (source, fileName, options, callbacks) => source.kind === "download-job"
+        ? uploadDownloadedVideoToMux(source.jobId, fileName, options, callbacks)
+        : uploadLocalVideoAssetToMux(source.assetId, fileName, options, callbacks),
       buildCloudPatch: buildLocalVideoCloudSharePatch,
       viewMedia: (media, owner) => {
         dispatch(setRequestOpenMediaPanel(true));

@@ -439,6 +439,42 @@ describe("desktop video download lifecycle manager", () => {
     expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("complete");
   });
 
+  it("retries a church-switched upload from the retained local asset after cleaning its temporary job", async () => {
+    let activeChurch = "church-a";
+    let markUploadStarted!: () => void;
+    const uploadStarted = new Promise<void>((resolve) => { markUploadStarted = resolve; });
+    const uploadToCloud = jest.fn()
+      .mockImplementationOnce((_source, _fileName, _options, callbacks) => new Promise((_resolve, reject) => {
+        markUploadStarted();
+        callbacks.setCancelUpload(async () => reject(new Error("Upload cancelled when the church changed.")));
+      }))
+      .mockResolvedValueOnce(muxResult);
+    const harness = makeHarness({
+      isOwnerCurrent: () => activeChurch === "church-a",
+      uploadToCloud,
+    });
+    const jobId = harness.start("cloud");
+    const pipeline = harness.manager.handleProgress(completion(jobId));
+    await uploadStarted;
+    expect(uploadToCloud.mock.calls[0][0]).toEqual({ kind: "download-job", jobId });
+
+    activeChurch = "church-b";
+    harness.manager.handleChurchChange("church-b");
+    await Promise.all([pipeline, harness.action(jobId, "cancel")]);
+    expect(harness.native.cleanupVideoDownload).toHaveBeenCalledWith(jobId);
+
+    activeChurch = "church-a";
+    await harness.action(jobId, "retry");
+
+    expect(uploadToCloud).toHaveBeenCalledTimes(2);
+    expect(uploadToCloud.mock.calls[1][0]).toEqual({ kind: "local-asset", assetId: asset.assetId });
+    expect(harness.native.startVideoDownload).toHaveBeenCalledTimes(1);
+    expect(harness.native.importDownloadedVideo).toHaveBeenCalledTimes(1);
+    expect(harness.deps.registerLocalMedia).toHaveBeenCalledTimes(1);
+    expect(harness.deps.registerCloudMedia).toHaveBeenCalledTimes(1);
+    expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("complete");
+  });
+
   it("adopts a successful Mux result on retry when cloud media registration fails", async () => {
     const registerCloudMedia = jest.fn().mockRejectedValueOnce(new Error("Cloud media record write failed.")).mockResolvedValue(undefined);
     const uploadToCloud = jest.fn(async () => muxResult);

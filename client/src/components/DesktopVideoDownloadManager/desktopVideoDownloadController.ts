@@ -26,6 +26,10 @@ export type DesktopVideoDownloadInput = {
   owner: Omit<DesktopVideoDownloadOwner, "dbAtStart">;
 };
 
+export type DesktopVideoUploadSource =
+  | { kind: "download-job"; jobId: string }
+  | { kind: "local-asset"; assetId: string };
+
 export type DesktopVideoDownloadNative = {
   inspectVideoUrl: (url: string) => Promise<DesktopVideoInspection>;
   startVideoDownload: (input: { jobId: string; inspectionId: string; quality: number | "best"; destinationDirectoryId?: string }) => Promise<{ jobId: string }>;
@@ -64,7 +68,7 @@ export type DesktopVideoDownloadDependencies = {
     owner: DesktopVideoDownloadOwner,
   ) => Promise<MediaType | undefined>;
   uploadToCloud: (
-    jobId: string,
+    source: DesktopVideoUploadSource,
     fileName: string,
     options: { churchId: string; mediaId: string; title: string },
     callbacks: MuxUploadCallbacks,
@@ -94,6 +98,7 @@ type Runtime = {
   uploadToCloud: boolean;
   owner: DesktopVideoDownloadOwner;
   downloadFinished: boolean;
+  temporaryDownloadAvailable: boolean;
   mediaInfo?: { width: number; height: number; duration: number; size: number };
   asset?: ElectronLocalAsset;
   media?: MediaType;
@@ -168,6 +173,7 @@ export class DesktopVideoDownloadManager {
       uploadToCloud: input.uploadToCloud,
       owner,
       downloadFinished: false,
+      temporaryDownloadAvailable: false,
       localMediaRegistered: false,
       cloudMediaRegistered: false,
       nativeCleaned: false,
@@ -243,6 +249,7 @@ export class DesktopVideoDownloadManager {
         return;
       }
       runtime.downloadFinished = true;
+      runtime.temporaryDownloadAvailable = true;
       runtime.mediaInfo = event.result;
       runtime.progress = 100;
       return this.runPipeline(runtime);
@@ -465,8 +472,13 @@ export class DesktopVideoDownloadManager {
         if (!runtime.cloudResult) {
           this.assertCurrentOwner(runtime);
           this.publish(runtime, "active", "Uploading", 0, "Uploading video to WorshipSync");
+          const source: DesktopVideoUploadSource = runtime.temporaryDownloadAvailable && !runtime.nativeCleaned
+            ? { kind: "download-job", jobId: runtime.jobId }
+            : runtime.asset?.assetId
+              ? { kind: "local-asset", assetId: runtime.asset.assetId }
+              : (() => { throw new Error("The downloaded video source is no longer available for upload."); })();
           const cloudResult = await this.deps.uploadToCloud(
-            runtime.jobId,
+            source,
             `${runtime.displayName}.mp4`,
             { churchId: runtime.owner.churchId, mediaId: runtime.media.id, title: runtime.displayName },
             {
@@ -673,6 +685,7 @@ export class DesktopVideoDownloadManager {
     if (runtime.cleanupPromise) return runtime.cleanupPromise;
     const cleanup = this.deps.native.cleanupVideoDownload(runtime.jobId).then(() => {
       runtime.nativeCleaned = true;
+      runtime.temporaryDownloadAvailable = false;
       runtime.cleanupError = undefined;
     }, (error: unknown) => {
       runtime.cleanupError = messageOf(error, "Temporary download cleanup is pending.");

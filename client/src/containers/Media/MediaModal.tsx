@@ -388,8 +388,11 @@ const MediaModal = ({
     filteredList,
     enableRangeSelection: true,
   });
+  const [localVideoRefreshKey, setLocalVideoRefreshKey] = useState(0);
   const selectedLocalVideo = useLocalVideoFileUrl(
     modalSelectedMedia.localVideoFile,
+    "display",
+    localVideoRefreshKey,
   );
 
   const handleModalDeleteClick = useCallback(
@@ -656,8 +659,6 @@ const MediaModal = ({
       modalSelectedMediaIds.size === 1 &&
       modalSelectedMedia.localVideoFile?.storageMode === "linked" &&
       selectedLocalVideo.isOwner &&
-      (selectedLocalVideo.localStatus === "unavailable" ||
-        selectedLocalVideo.status === "unavailable") &&
       onRelinkLocalVideoFile
     ) {
       actions.push({
@@ -802,6 +803,8 @@ const MediaModal = ({
   const localPreviewImage = useLocalImageUrl(modalPreviewMedia?.localImage);
   const localPreviewVideo = useLocalVideoFileUrl(
     modalPreviewMedia?.localVideoFile,
+    "display",
+    localVideoRefreshKey,
   );
   const localVideoInputPreview = useMemo(
     () =>
@@ -840,6 +843,7 @@ const MediaModal = ({
   // Initialize modal selection from the parent only on open; avoid snapping back when parent props refresh while open.
   useEffect(() => {
     if (isOpen && !wasModalOpenRef.current) {
+      setLocalVideoRefreshKey((current) => current + 1);
       setModalSelectedMedia(selectedMedia);
       setModalSelectedMediaIds(new Set(selectedMediaIds));
       setModalPreviewMedia(previewMedia);
@@ -1031,6 +1035,13 @@ const MediaModal = ({
                         className="max-h-full max-w-full w-full h-full object-contain"
                         controls
                         autoPlay
+                        onError={() => {
+                          if (localPreviewVideo.isLocalVideoFile &&
+                              localPreviewVideo.isOwner &&
+                              localPreviewVideo.localStatus !== "unavailable") {
+                            setLocalVideoRefreshKey((current) => current + 1);
+                          }
+                        }}
                       />
                     ) : (
                       <img

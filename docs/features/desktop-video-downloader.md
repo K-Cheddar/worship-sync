@@ -46,6 +46,18 @@ computer.
   thumbnail when its file is unavailable, offers “Relink file”, and may use a
   valid cloud copy for playback. Relinking updates the existing item; a changed
   file invalidates stale cloud playback metadata and thumbnails.
+- Owners can always find “Relink file” for a linked video. Opening its Media
+  dialog and a failed local preview recheck the source, while cloud fallback and
+  saved thumbnails remain available. The check is scoped to the modal so it does
+  not disturb active display playback.
+- Linking and relinking show an accessible, indeterminate status from the native
+  picker through validation and Media Library persistence. Canceling, failing,
+  changing church, or leaving the route clears the status.
+- Cloud upload uses native streaming only when the packaged runtime reports the
+  downloader service available; unsupported desktop builds and browser/PWA use
+  the existing Blob upload path. A retry after switching churches uses the
+  retained permanent local asset if the temporary download job was cleaned up,
+  without repeating the download or import.
 - After the Media Library initializes, persisted interrupted relinks are
   reconciled with native relink status and restored in Transfer Activity,
   including after an app restart. Startup discovery does not delete files or

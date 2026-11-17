@@ -522,6 +522,29 @@ export async function persistMediaStateChanges(
           const afterValue = item[key];
           if (JSON.stringify(beforeValue) === JSON.stringify(afterValue)) continue;
           const currentValue = current?.[key];
+          if (key === "localVideoFile" && beforeValue && afterValue &&
+              typeof beforeValue === "object" && typeof afterValue === "object") {
+            const beforeFields = beforeValue as unknown as Record<string, unknown>;
+            const afterFields = afterValue as unknown as Record<string, unknown>;
+            const currentFields = (currentValue ?? {}) as unknown as Record<string, unknown>;
+            const nestedChanges: Record<string, unknown> = {};
+            for (const nestedKey of new Set([...Object.keys(beforeFields), ...Object.keys(afterFields)])) {
+              const nestedBefore = beforeFields[nestedKey];
+              const nestedAfter = afterFields[nestedKey];
+              if (JSON.stringify(nestedBefore) === JSON.stringify(nestedAfter)) continue;
+              const nestedCurrent = currentFields[nestedKey];
+              if (JSON.stringify(nestedCurrent) !== JSON.stringify(nestedBefore) &&
+                  JSON.stringify(nestedCurrent) !== JSON.stringify(nestedAfter)) {
+                hasUnresolvedFieldConflict = true;
+                continue;
+              }
+              nestedChanges[nestedKey] = nestedAfter;
+            }
+            if (Object.keys(nestedChanges).length > 0) {
+              (changes as Record<string, unknown>)[key] = { ...currentFields, ...nestedChanges };
+            }
+            continue;
+          }
           if (JSON.stringify(currentValue) !== JSON.stringify(beforeValue)
             && JSON.stringify(currentValue) !== JSON.stringify(afterValue)) {
             hasUnresolvedFieldConflict = true;
