@@ -149,7 +149,13 @@ const invalidateCache = (
 ) => {
   for (const [key, entry] of store) {
     const [cachedAssetId] = JSON.parse(key) as [string];
-    if (cachedAssetId !== assetId || entry.references > 0) continue;
+    if (cachedAssetId !== assetId) continue;
+    if (entry.references > 0) {
+      // Existing leases retain their URL through release; future acquisitions,
+      // including saved snapshots with an old revision, must resolve anew.
+      store.delete(key);
+      continue;
+    }
     dispose(store, key, entry);
   }
 };

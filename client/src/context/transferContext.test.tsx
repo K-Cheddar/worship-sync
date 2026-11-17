@@ -144,7 +144,7 @@ test("minimizing and restoring keeps the active Canva import progress", async ()
   render(<MemoryRouter><TransferProvider><SlowHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Start slow import" }));
   expect(await screen.findByText(/Processing Canva pages · 0 of 2/)).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Close activity" }));
+  await user.click(screen.getByRole("button", { name: "Minimize activity" }));
   expect(screen.queryByRole("complementary", { name: "Activity" })).not.toBeInTheDocument();
   expect(screen.getByTestId("activity-panel")).toHaveClass("transition-[opacity,transform]", "scale-95", "opacity-0");
   expect(screen.getByTestId("activity-panel")).toHaveAttribute("aria-hidden", "true");
@@ -209,20 +209,20 @@ test("shows the minimized global fallback only when no local Activity host is mo
   };
   render(<MemoryRouter><TransferProvider><HostHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Start upload" }));
-  await user.click(screen.getByRole("button", { name: "Close activity" }));
+  await user.click(screen.getByRole("button", { name: "Minimize activity" }));
   expect(screen.getByTestId("global-activity-fallback")).toBeInTheDocument();
   expect(screen.getByTestId("activity-panel")).toHaveClass("scale-95", "opacity-0");
   expect(screen.getByTestId("activity-panel")).toHaveAttribute("aria-hidden", "true");
 
   await user.click(screen.getByTestId("global-activity-fallback"));
-  await user.click(screen.getByRole("button", { name: "Close activity" }));
+  await user.click(screen.getByRole("button", { name: "Minimize activity" }));
   await user.click(screen.getByRole("button", { name: "Toggle local Activity host" }));
   expect(screen.queryByTestId("global-activity-fallback")).not.toBeInTheDocument();
   const localActivity = screen.getByRole("button", { name: "Show Activity · 1 active" });
   await user.click(localActivity);
   expect(screen.getByRole("complementary", { name: "Activity" })).toBeInTheDocument();
 
-  await user.click(screen.getByRole("button", { name: "Close activity" }));
+  await user.click(screen.getByRole("button", { name: "Minimize activity" }));
   expect(screen.queryByTestId("global-activity-fallback")).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Toggle local Activity host" }));
   expect(screen.getByTestId("global-activity-fallback")).toBeInTheDocument();
@@ -837,7 +837,7 @@ test("keeps folder deletion activity alive while the Activity panel is closed", 
   render(<MemoryRouter><TransferProvider><Harness /></TransferProvider></MemoryRouter>);
 
   await user.click(screen.getByRole("button", { name: "Start panel-close deletion" }));
-  await user.click(screen.getByRole("button", { name: "Close activity" }));
+  await user.click(screen.getByRole("button", { name: "Minimize activity" }));
   await act(async () => gate.resolve());
   await user.click(screen.getByRole("button", { name: /Show Activity/ }));
   expect(screen.getByText("Complete", { exact: true })).toBeInTheDocument();

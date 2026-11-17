@@ -277,6 +277,33 @@ test("public detailed views load only members assigned to the matching occurrenc
   );
 });
 
+test("legacy public plan association falls back to the plan date when start times drift", () => {
+  assert.deepEqual(
+    publicServingMemberIdsForPlan({
+      plan: { ...plan, serviceId: "sunday", date: "2026-07-27" },
+      schedules: [{
+        occurrences: [{
+          occurrenceId: "sunday@2026-07-27",
+          logicalOccurrenceId: "sunday@2026-07-27",
+          serviceId: "sunday",
+          serviceDate: "2026-07-27",
+          startsAt: "2026-07-27T14:15:00.000Z",
+        }],
+        assignments: {
+          "sunday@2026-07-27": {
+            "lead::0": { primaryMemberId: "member-current" },
+          },
+        },
+        microphoneAssignments: {
+          "sunday@2026-07-27": { "lead::0": ["mic-current"] },
+        },
+      }],
+      timezone: "America/New_York",
+    }),
+    ["member-current"],
+  );
+});
+
 test("general snapshots never expose scheduled microphone holders", () => {
   const snapshot = buildPublicServicePlanSnapshot({
     plan: {

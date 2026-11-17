@@ -1,4 +1,4 @@
-import { getLocalVideoFile, getOrCreateLocalVideoFileThumbnail } from "./localVideoFileAssets";
+import { getLocalVideoFile, getOrCreateLocalVideoFileThumbnail, subscribeLocalVideoFileChanges } from "./localVideoFileAssets";
 import {
   acquireLocalVideoFileThumbnailUrl,
   acquireLocalVideoFileUrl,
@@ -13,6 +13,7 @@ jest.mock("./localVideoFileAssets", () => ({
 }));
 
 const mockGetLocalVideoFile = jest.mocked(getLocalVideoFile);
+const notifyNativeChange = jest.mocked(subscribeLocalVideoFileChanges).mock.calls[0][0];
 const mockGetOrCreateLocalVideoFileThumbnail = jest.mocked(
   getOrCreateLocalVideoFileThumbnail,
 );
@@ -139,5 +140,46 @@ describe("localVideoFileUrlCache", () => {
     expect(peekLocalVideoFileUrl("video-1", "revision-1")).toBeUndefined();
 
     lease.release();
+  });
+
+  it("refreshes an actively leased saved revision after native content replacement", async () => {
+    const getLocalAsset = jest.fn().mockResolvedValueOnce({ url: "worshipsync-media://asset/stable?v=old" })
+      .mockResolvedValue({ url: "worshipsync-media://asset/stable?v=new" });
+    window.electronAPI = { getLocalAsset } as unknown as typeof window.electronAPI;
+    const old = acquireLocalVideoFileUrl("stable", "saved-old-revision");
+    await expect(old.url).resolves.toContain("v=old");
+    notifyNativeChange("stable");
+    const refreshed = acquireLocalVideoFileUrl("stable", "saved-old-revision");
+    await expect(refreshed.url).resolves.toContain("v=new");
+    old.release(); jest.advanceTimersByTime(10_000);
+    expect(peekLocalVideoFileUrl("stable", "saved-old-revision")).toContain("v=new");
+    refreshed.release(); jest.advanceTimersByTime(10_000);
+  });
+
+  it("retires an old thumbnail for new acquisitions without revoking its active lease", async () => {
+    jest.mocked(URL.createObjectURL).mockReturnValueOnce("blob:old-thumbnail").mockReturnValueOnce("blob:new-thumbnail");
+    const old = acquireLocalVideoFileThumbnailUrl("stable-thumb", "saved-revision");
+    await expect(old.url).resolves.toBe("blob:old-thumbnail");
+    notifyNativeChange("stable-thumb");
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+    const refreshed = acquireLocalVideoFileThumbnailUrl("stable-thumb", "saved-revision");
+    await expect(refreshed.url).resolves.toBe("blob:new-thumbnail");
+    old.release(); jest.advanceTimersByTime(10_000);
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:old-thumbnail");
+    expect(peekLocalVideoFileThumbnailUrl("stable-thumb", "saved-revision")).toBe("blob:new-thumbnail");
+    refreshed.release(); jest.advanceTimersByTime(10_000);
+  });
+
+  it("invalidates a thumbnail recached between native adoption and the later metadata notification", async () => {
+    jest.mocked(URL.createObjectURL).mockReturnValueOnce("blob:old").mockReturnValueOnce("blob:old-recached").mockReturnValueOnce("blob:new");
+    const old = acquireLocalVideoFileThumbnailUrl("two-phase", "saved-revision");
+    await expect(old.url).resolves.toBe("blob:old");
+    notifyNativeChange("two-phase");
+    const betweenCommits = acquireLocalVideoFileThumbnailUrl("two-phase", "saved-revision");
+    await expect(betweenCommits.url).resolves.toBe("blob:old-recached");
+    notifyNativeChange("two-phase");
+    const completed = acquireLocalVideoFileThumbnailUrl("two-phase", "saved-revision");
+    await expect(completed.url).resolves.toBe("blob:new");
+    old.release(); betweenCommits.release(); completed.release(); jest.advanceTimersByTime(10_000);
   });
 });

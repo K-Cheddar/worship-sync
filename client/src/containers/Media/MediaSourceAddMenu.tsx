@@ -1,6 +1,6 @@
 import Button from "../../components/Button/Button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../../components/ui/DropdownMenu";
-import { HardDrive, ImageUp, MonitorUp, Plus, Video } from "lucide-react";
+import { Download, HardDrive, ImageUp, Link2, MonitorUp, Plus, Video } from "lucide-react";
 import { useOptionalTransfers } from "../../context/transferContext";
 import { getMediaTransferOverview } from "../../context/transferModel";
 import { MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES } from "./mediaLibraryOrigin";
@@ -11,6 +11,8 @@ type MediaSourceAddMenuProps = {
   onAddVideoInput?: () => void;
   onAddScreenShare?: () => void;
   onImportFromCanva?: () => void;
+  onDownloadVideo?: () => void;
+  onLinkVideo?: () => void;
   mediaUploadDisabled?: boolean;
   isGuestSession?: boolean;
 };
@@ -20,12 +22,14 @@ export const MediaSourceAddMenu = ({
   onAddVideoInput,
   onAddScreenShare,
   onImportFromCanva,
+  onDownloadVideo,
+  onLinkVideo,
   mediaUploadDisabled = false,
   isGuestSession = false,
 }: MediaSourceAddMenuProps) => {
   const transferContext = useOptionalTransfers();
   const activeUploads = getMediaTransferOverview(transferContext?.transfers ?? []).activeCount;
-  const title = activeUploads ? `Add Media · ${activeUploads} active uploads` : "Add Media";
+  const title = activeUploads ? `Add Media · ${activeUploads} active media transfers` : "Add Media";
 
   return (
     <DropdownMenu>
@@ -34,9 +38,19 @@ export const MediaSourceAddMenu = ({
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         <ShowTransfersMenuItem />
+        {onDownloadVideo ? (
+          <DropdownMenuItem disabled={mediaUploadDisabled} onSelect={onDownloadVideo}>
+            <Download aria-hidden /> Download Video
+          </DropdownMenuItem>
+        ) : null}
         {onAddMedia ? (
           <DropdownMenuItem disabled={mediaUploadDisabled} onSelect={onAddMedia}>
             <HardDrive className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon} /> Add files
+          </DropdownMenuItem>
+        ) : null}
+        {onLinkVideo ? (
+          <DropdownMenuItem disabled={mediaUploadDisabled} onSelect={onLinkVideo}>
+            <Link2 className={MEDIA_LIBRARY_ORIGIN_COLOR_CLASSES.local.icon} /> Link local video
           </DropdownMenuItem>
         ) : null}
         {onAddVideoInput ? (

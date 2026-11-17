@@ -1,7 +1,8 @@
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useStore } from "react-redux";
 import { CloudUpload } from "lucide-react";
-import { ControllerInfoContext } from "../../context/controllerInfo";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext, globalDb } from "../../context/controllerInfo";
+import { GlobalInfoContext, globalFireDbInfo } from "../../context/globalInfo";
 import { useToast } from "../../context/toastContext";
 import { useDispatch } from "../../hooks";
 import { updateMediaItemFields } from "../../store/mediaSlice";
@@ -13,6 +14,9 @@ import { claimMediaUpload, isMediaUploadClaimed, type MediaUploadClaim } from ".
 import { useOptionalTransferActions } from "../../context/transferContext";
 import type { Transfer, TransferFileActivity } from "../../context/transferModel";
 import { deleteChurchMuxAsset } from "../../api/providerStorage";
+import { readMediaItemForDeletion } from "../../utils/mediaDocUtils";
+import { registerLinkedVideoReplacementRecovery } from "./relinkLocalVideo";
+import type { RootState } from "../../store/store";
 import { getLocalVideoFileBlob } from "../../utils/localVideoFileAssets";
 import type { MuxUploadResult } from "./MediaUploadInput.types";
 import type { MediaLibraryBarAction } from "./mediaLibraryActions";
@@ -23,7 +27,7 @@ import {
   localMediaHasCloudCopy,
 } from "./mediaLibraryLocalAvailability";
 import type { MuxUploadCallbacks } from "./utils/muxUpload";
-import { uploadVideoToMux } from "./utils/muxUpload";
+import { uploadLocalVideoAssetToMux, uploadVideoToMux } from "./utils/muxUpload";
 
 export const buildLocalVideoCloudSharePatch = (
   media: MediaType,
@@ -63,6 +67,14 @@ export const uploadOwnedLocalVideoToCloud = async (
   const assetId = media.localVideoFile?.id;
   if (!assetId) {
     throw new Error("This video is not saved on this device.");
+  }
+  if (window.electronAPI?.uploadLocalVideoAssetToMux) {
+    const result = await uploadLocalVideoAssetToMux(
+      assetId,
+      media.localVideoFile!.fileName || `${media.name}.mp4`,
+      { churchId, mediaId: media.id, title: media.name },
+    );
+    return buildLocalVideoCloudSharePatch(media, result, churchId);
   }
   const fileParts = await getLocalVideoFileBlob(assetId);
   if (!fileParts) {
@@ -178,6 +190,7 @@ type CloudShareBatch = {
 
 export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
   const dispatch = useDispatch();
+  const reduxStore = useStore<RootState>();
   const { showToast } = useToast();
   const { churchId = "", uploadPreset = "bpqu4ma5" } =
     useContext(GlobalInfoContext) || {};
@@ -443,10 +456,36 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
               entry.progress = 100;
               entry.phase = "Upload complete";
             } else if (media.localVideoFile) {
-              const parts = await getLocalVideoFileBlob(media.localVideoFile.id);
-              if (!parts) throw new Error("This video is not available on this device.");
-              if (!claim.isCurrent() || batch.cancelledMediaIds.has(media.id)) { entry.status = "cancelled"; return; }
-              const file = new File([parts.blob], parts.fileName, { type: parts.contentType || "video/mp4" });
+              if (media.localVideoFile.storageMode === "linked") {
+                if (!batch.database) throw new Error("Media Library is not ready. Retry when this controller is connected.");
+                const persisted = await readMediaItemForDeletion(batch.database as PouchDB.Database, media.id);
+                if (!claim.isCurrent() || activeScopeRef.current.db !== batch.database || activeScopeRef.current.churchId !== batch.churchId) {
+                  entry.status = "cancelled"; return;
+                }
+                const reference = persisted?.item.localVideoFile;
+                const sourceNotReady = (message: string) => {
+                  const error = new Error(message);
+                  if (persisted?.item.pendingLinkedVideoCleanup?.length) {
+                    const owner = { churchId: batch.churchId, workspaceId: batch.churchId,
+                      dbAtStart: batch.database as PouchDB.Database, controllerProfileId: "", folderId: media.folderId ?? null, routePath: "/controller" };
+                    registerLinkedVideoReplacementRecovery({ item: persisted.item, owner,
+                      isOwnerCurrent: () => globalDb === owner.dbAtStart && globalFireDbInfo.churchId === owner.churchId,
+                      getItems: () => reduxStore.getState().media.list, dispatch, transfer: actionsRef.current ?? undefined, error });
+                  }
+                  return error;
+                };
+                if (!reference || reference.id !== media.localVideoFile.id || reference.contentHash !== media.localVideoFile.contentHash) {
+                  throw sourceNotReady("This video changed. Finish any pending relink in Activity, then select the video again and restart the upload.");
+                }
+                const native = await window.electronAPI?.getLocalAsset(reference.id);
+                if (!native || native.workspaceId !== batch.churchId ||
+                    (reference.contentHash && native.contentHash !== reference.contentHash)) {
+                  throw sourceNotReady("This video's local source is not ready. Finish relinking in Activity or reconnect its drive, then retry the upload.");
+                }
+                if (!claim.isCurrent() || activeScopeRef.current.db !== batch.database || activeScopeRef.current.churchId !== batch.churchId) {
+                  entry.status = "cancelled"; return;
+                }
+              }
               const callbacks: MuxUploadCallbacks = {
                 onProgress: (value) => { entry.progress = Math.min(88, value * 0.88); entry.phase = "Uploading video"; publish(); },
                 onStatusUpdate: (message) => { entry.phase = message; publish(); },
@@ -454,7 +493,21 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
                 setXhr: (xhr) => batch.xhrs.set(media.id, xhr),
                 setCancelUpload: (cancel) => { cancelMuxUpload = cancel; },
               };
-              const result = await uploadVideoToMux(file, { churchId, mediaId: media.id, title: media.name }, callbacks);
+              let result: MuxUploadResult;
+              if (window.electronAPI?.uploadLocalVideoAssetToMux) {
+                result = await uploadLocalVideoAssetToMux(
+                  media.localVideoFile.id,
+                  media.localVideoFile.fileName || `${media.name}.mp4`,
+                  { churchId, mediaId: media.id, title: media.name },
+                  callbacks,
+                );
+              } else {
+                const parts = await getLocalVideoFileBlob(media.localVideoFile.id);
+                if (!parts) throw new Error("This video is not available on this device.");
+                if (!claim.isCurrent() || batch.cancelledMediaIds.has(media.id)) { entry.status = "cancelled"; return; }
+                const file = new File([parts.blob], parts.fileName, { type: parts.contentType || "video/mp4" });
+                result = await uploadVideoToMux(file, { churchId, mediaId: media.id, title: media.name }, callbacks);
+              }
               if (!batch.ownerActive || activeScopeRef.current.db !== batch.database || activeScopeRef.current.churchId !== batch.churchId) {
                 const cleanup = async () => { await deleteChurchMuxAsset(batch.churchId, result.assetId); };
                 try {
@@ -566,7 +619,7 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
       batch.completion = runBatch();
       await batch.completion;
     },
-    [actions, churchId, db, deviceId, dispatch, isGuestSession, onStorageUsageChanged, setBusy, showToast, uploadPreset],
+    [actions, churchId, db, deviceId, dispatch, isGuestSession, onStorageUsageChanged, reduxStore, setBusy, showToast, uploadPreset],
   );
 
   const getBarAction = useCallback(

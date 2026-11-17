@@ -19,6 +19,8 @@ const mockCreateTeamRosterMember = jest.fn();
 const mockUpdateTeamRosterMember = jest.fn();
 const mockGetTeamRosterMemberProfile = jest.fn();
 const mockUpdateTeamRosterMemberProfile = jest.fn();
+const mockGetMemberServiceAvailability = jest.fn();
+const mockUpdateMemberServiceAvailability = jest.fn();
 
 const mockInviteTeamRosterMember = jest.fn(async (..._args: any[]) => ({
   success: true,
@@ -26,7 +28,13 @@ const mockInviteTeamRosterMember = jest.fn(async (..._args: any[]) => ({
 const mockRecordMemberSmsConsent = jest.fn(async (..._args: unknown[]) => ({ success: true, eligibility: { status: "enabled", eligible: true, phoneNumber: "+19545551234" } }));
 
 jest.mock("../../../api/auth", () => ({
-  AuthApiError: class MockAuthApiError extends Error {},
+  AuthApiError: class MockAuthApiError extends Error {
+    status?: number;
+    constructor(message: string, options: { status?: number } = {}) {
+      super(message);
+      this.status = options.status;
+    }
+  },
   archiveTeamRosterMember: jest.fn(),
   getTeamRosterMemberProfile: (...args: unknown[]) => mockGetTeamRosterMemberProfile(...args),
   manageVolunteerPersonalAccess: jest.fn().mockResolvedValue({ success: true, status: "none" }),
@@ -41,6 +49,8 @@ jest.mock("../../../api/auth", () => ({
   updateTeamRosterMember: (...args: unknown[]) =>
     mockUpdateTeamRosterMember(...args),
   updateTeamRosterMemberProfile: (...args: unknown[]) => mockUpdateTeamRosterMemberProfile(...args),
+  getTeamRosterMemberServiceAvailability: (...args: unknown[]) => mockGetMemberServiceAvailability(...args),
+  updateTeamRosterMemberServiceAvailability: (...args: unknown[]) => mockUpdateMemberServiceAvailability(...args),
   recordMemberSmsConsent: (...args: unknown[]) =>
     mockRecordMemberSmsConsent(...args),
 }));
@@ -131,6 +141,8 @@ const renderManager = ({
   onScopedProfileSaved = jest.fn(),
   isLoading = false,
   churchId = "church-1",
+  serviceTimeZone = "",
+  serviceTimeZoneStatus = "loading" as const,
   useHashRouter = false,
 }: {
   data?: TeamsData;
@@ -152,6 +164,8 @@ const renderManager = ({
   onScopedProfileSaved?: jest.Mock;
   isLoading?: boolean;
   churchId?: string;
+  serviceTimeZone?: string;
+  serviceTimeZoneStatus?: "loading" | "ready" | "error";
   useHashRouter?: boolean;
 } = {}) => {
   const content = (currentData = data, readyMemberIds = teamProfileReadyMemberIds) => (
@@ -177,6 +191,8 @@ const renderManager = ({
               canManageMemberLifecycle={canManageMemberLifecycle}
               canEditMember={canEditMember}
               teamProfileReadyMemberIds={readyMemberIds}
+              serviceTimeZone={serviceTimeZone}
+              serviceTimeZoneStatus={serviceTimeZoneStatus}
               onSaved={onSaved}
               onIdentityChanged={onIdentityChanged}
               onTeamSaved={onTeamSaved}
@@ -305,6 +321,71 @@ afterEach(() => {
 });
 
 describe("MemberManager member preferences", () => {
+  it("shows service availability only in the church-wide member editor", async () => {
+    const service = {
+      id: "one-time",
+      serviceId: "one-time",
+      churchId: "church-1",
+      name: "Special service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    } as const;
+    const sharedData = joinedData({ services: [service] as unknown as TeamsData["services"] });
+    const { unmount } = renderManager({
+      data: sharedData,
+      canEditAllTeams: true,
+      serviceTimeZone: "UTC",
+      serviceTimeZoneStatus: "ready",
+      initialEntry: `${TEAMS_SECTION_PATHS.members}?editMember=${worshipMember.memberId}`,
+    });
+    expect(await screen.findByText("Service availability")).toBeInTheDocument();
+    unmount();
+
+    renderManager({
+      data: sharedData,
+      canEditAllTeams: false,
+      initialEntry: `${TEAMS_SECTION_PATHS.members}?editMember=${worshipMember.memberId}&teamId=${worshipTeam.teamId}`,
+    });
+    await screen.findByRole("region", { name: "Rae Kim" });
+    expect(screen.queryByText("Service availability")).not.toBeInTheDocument();
+  });
+
+  it("keeps availability drafts in the editor's discard guard", async () => {
+    const user = userEvent.setup();
+    const startsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+    startsAt.setUTCHours(15, 0, 0, 0);
+    const service = {
+      id: "one-time",
+      serviceId: "one-time",
+      churchId: "church-1",
+      name: "Special service",
+      timerType: "countdown",
+      reccurence: "one_time",
+      dateTimeISO: startsAt.toISOString(),
+    } as const;
+    renderManager({
+      data: joinedData({ services: [service] as unknown as TeamsData["services"] }),
+      canEditAllTeams: true,
+      serviceTimeZone: "UTC",
+      serviceTimeZoneStatus: "ready",
+      initialEntry: `${TEAMS_SECTION_PATHS.members}?editMember=${worshipMember.memberId}`,
+    });
+    await screen.findByRole("region", { name: "Edit member" });
+    await user.click(screen.getByText("Service availability"));
+    const availability = screen.getByRole("combobox", { name: /Availability for Special service/ });
+    await user.click(availability);
+    await user.click(screen.getByRole("option", { name: "Unavailable" }));
+    await user.click(form().getByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Stay" }));
+    expect(availability).toHaveTextContent("Unavailable");
+    await user.click(form().getByRole("button", { name: "Cancel" }));
+    await user.click(await screen.findByRole("button", { name: "Discard changes" }));
+    expect(screen.queryByRole("region", { name: "Edit member" })).not.toBeInTheDocument();
+    expect(mockUpdateMemberServiceAvailability).not.toHaveBeenCalled();
+  });
+
   it("guards a deep link that would replace an unsaved new member draft", async () => {
     const user = userEvent.setup();
     const second = { ...worshipMember, memberId: "member-2", firstName: "Avery" };

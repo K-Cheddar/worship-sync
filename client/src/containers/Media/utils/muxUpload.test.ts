@@ -8,6 +8,8 @@ import {
 import {
   convertMuxVideoToLocalMp4,
   pollUploadStatus,
+  uploadDownloadedVideoToMux,
+  uploadLocalVideoAssetToMux,
 } from "./muxUpload";
 
 jest.mock("../../../api/providerStorage", () => ({
@@ -111,6 +113,81 @@ describe("church-scoped Mux upload and temporary conversion", () => {
     expect(mockCreateUpload).toHaveBeenCalledWith("church-1", expect.objectContaining({ temporary: true }));
     expect(mockGetAsset).toHaveBeenCalledWith("church-1", "asset-1");
     expect(mockDeleteAsset).toHaveBeenCalledWith("church-1", "asset-1");
+  });
+
+  it("streams a disk-backed download through the native transport and the existing Mux registration workflow", async () => {
+    const uploadDownloadedVideo = jest.fn().mockResolvedValue(undefined);
+    const setCancelUpload = jest.fn();
+    window.electronAPI = {
+      uploadDownloadedVideoToMux: uploadDownloadedVideo,
+    } as unknown as typeof window.electronAPI;
+
+    const result = await uploadDownloadedVideoToMux(
+      "job-1",
+      "Sunday Opener.mp4",
+      { churchId: "church-1", mediaId: "media-1", title: "Sunday Opener" },
+      { setCancelUpload },
+    );
+
+    expect(uploadDownloadedVideo).toHaveBeenCalledWith("job-1", "https://upload");
+    expect(mockCreateUpload).toHaveBeenCalledWith("church-1", {
+      mediaId: "media-1",
+      title: "Sunday Opener",
+      temporary: undefined,
+    });
+    expect(result).toMatchObject({ playbackId: "playback-1", name: "Sunday Opener" });
+    expect(setCancelUpload).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("streams a linked local asset through native Mux transport without a renderer File", async () => {
+    type NativeUploadEvent = { jobId: string; stage: "uploading"; progress: number | null };
+    let progressListener: ((event: NativeUploadEvent) => void) | undefined;
+    const uploadLocalAsset = jest.fn(async ({ jobId }: { jobId: string }) => {
+      progressListener?.({ jobId, stage: "uploading", progress: 42 });
+    });
+    const unsubscribe = jest.fn();
+    const onProgress = jest.fn();
+    const onVideoDownloadProgress = jest.fn((callback: (event: NativeUploadEvent) => void) => {
+      progressListener = callback;
+      return unsubscribe;
+    });
+    window.electronAPI = {
+      uploadLocalVideoAssetToMux: uploadLocalAsset,
+      onVideoDownloadProgress,
+    } as unknown as typeof window.electronAPI;
+
+    const result = await uploadLocalVideoAssetToMux(
+      "local_video_link_1",
+      "welcome.mp4",
+      { churchId: "church-1", mediaId: "media-1", title: "Welcome" },
+      { onProgress },
+    );
+
+    expect(uploadLocalAsset).toHaveBeenCalledWith(expect.objectContaining({
+      assetId: "local_video_link_1",
+      url: "https://upload",
+    }));
+    expect(onProgress).toHaveBeenCalledWith(42);
+    expect(onProgress).toHaveBeenCalledWith(100);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ playbackId: "playback-1", name: "welcome" });
+  });
+
+  it("cleans a newly-created Mux upload without starting disk streaming if cancellation arrived during upload creation", async () => {
+    const uploadDownloadedVideo = jest.fn().mockResolvedValue(undefined);
+    window.electronAPI = {
+      uploadDownloadedVideoToMux: uploadDownloadedVideo,
+    } as unknown as typeof window.electronAPI;
+
+    await expect(uploadDownloadedVideoToMux(
+      "job-1",
+      "Sunday Opener.mp4",
+      { churchId: "church-1", mediaId: "media-1", title: "Sunday Opener" },
+      { isCancelled: () => true },
+    )).rejects.toThrow("Upload cancelled");
+
+    expect(uploadDownloadedVideo).not.toHaveBeenCalled();
+    expect(mockCancelUpload).toHaveBeenCalledWith("church-1", "upload-1");
   });
 
   it("removes an uncommitted asset after rendition polling is cancelled", async () => {
