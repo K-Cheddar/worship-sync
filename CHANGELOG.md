@@ -1,3 +1,31 @@
+# [2.51.0](https://github.com/K-Cheddar/worship-sync/compare/v2.50.0...v2.51.0) (2026-11-17)
+
+
+### Bug Fixes
+
+* **client:** complete Song V2 commits and restore monitor layout ([c6e4658](https://github.com/K-Cheddar/worship-sync/commit/c6e46581d1f9db564cf3732465f2533b19393e46))
+* **client:** harden Song V2 recovery ownership ([baa944b](https://github.com/K-Cheddar/worship-sync/commit/baa944b4820be20c65da814c2c20d5cddf2d4b9a))
+* **client:** persist Song V2 recovery checkpoints ([8a7e45d](https://github.com/K-Cheddar/worship-sync/commit/8a7e45df96b465ed8af121a9855dbd0da29b6547))
+* **client:** recover interrupted Song V2 autosaves ([3965f2a](https://github.com/K-Cheddar/worship-sync/commit/3965f2a1eea85ad0314413a6d7366612f6675a6e))
+* **client:** retry failed Song V2 recovery checkpoints ([b7b6197](https://github.com/K-Cheddar/worship-sync/commit/b7b6197d9b869807ef912f6b4e807d4b428af952))
+* compare complete Song V2 snapshots ([e670178](https://github.com/K-Cheddar/worship-sync/commit/e6701783deef286766bcef5ccc054734010d345d))
+* **controller:** keep slide actions inline when space permits ([76a26f3](https://github.com/K-Cheddar/worship-sync/commit/76a26f32ac91e23b70536f5ad9e72c4846e7430b))
+* defer song v2 deletion until migration validation ([2c7b43d](https://github.com/K-Cheddar/worship-sync/commit/2c7b43d950df6b692a9d5a6ab37d381d75ea7d67))
+* preserve concurrent Song v2 edits and reduce synchronization ([ea6808b](https://github.com/K-Cheddar/worship-sync/commit/ea6808baaa3863671204d5cdc4e804921d415dcb))
+* preserve controller content state across changes ([505fb57](https://github.com/K-Cheddar/worship-sync/commit/505fb5761b9f0caf6142c91c7335d4a4d97c17ac))
+* preserve SMS consent CSRF error code ([1008f9c](https://github.com/K-Cheddar/worship-sync/commit/1008f9c89f37dd40895d035ee3a34c1514ad633e))
+* preserve SMS consent CSRF error code ([463f68f](https://github.com/K-Cheddar/worship-sync/commit/463f68f86423d57186a7f681e9a62dfabaa5bc91))
+* refresh stale Song V2 remote choices ([d4e73ac](https://github.com/K-Cheddar/worship-sync/commit/d4e73acd190aa3d3b76e45f802c9517623096326))
+* resolve PR 388 CI failures ([5a37201](https://github.com/K-Cheddar/worship-sync/commit/5a372011d5eeadab48196bd3c6f15a566aa8357a))
+* scope registry recovery and song refreshes ([360cf25](https://github.com/K-Cheddar/worship-sync/commit/360cf2541034d67072f3925559854e65601d1552))
+* **sync:** preserve cross-device outline edits ([a1e51cc](https://github.com/K-Cheddar/worship-sync/commit/a1e51ccc4f88a5bdf26b29196f00e037d790532b))
+
+
+### Features
+
+* improve Song v2 conflict review comparisons ([b10acab](https://github.com/K-Cheddar/worship-sync/commit/b10acab589892b3e76f0d317a4d8192f211376e3))
+* **media:** add local video input thumbnails ([1a94ff5](https://github.com/K-Cheddar/worship-sync/commit/1a94ff5c3815d0a88dae6ceb005651e7db89a5c1))
+
 # [2.50.0](https://github.com/K-Cheddar/worship-sync/compare/v2.49.2...v2.50.0) (2026-11-10)
 
 
