@@ -1408,11 +1408,14 @@ const MemberManager = ({
     setAvailabilitySavingMemberId(saving ? editing?.memberId || "" : "");
   }, [editing?.memberId]);
   const handleAvailabilitySaved = useCallback((savedMember: TeamRosterMember) => {
-    onSaved(savedMember, savedMember.memberId);
+    const currentMember = data.members.find((member) => member.memberId === savedMember.memberId) ?? savedMember;
+    onSaved({ ...currentMember, serviceAvailability: savedMember.serviceAvailability }, savedMember.memberId);
     setEditing((current) =>
-      current?.memberId === savedMember.memberId ? savedMember : current,
+      current?.memberId === savedMember.memberId
+        ? { ...current, serviceAvailability: savedMember.serviceAvailability }
+        : current,
     );
-  }, [onSaved]);
+  }, [data.members, onSaved]);
   let memberEditorTitle = "Create member";
   if (editing) {
     memberEditorTitle = isScopedMemberEditing ? memberName(editing) : "Edit member";

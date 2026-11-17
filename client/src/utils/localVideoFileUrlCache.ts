@@ -165,4 +165,9 @@ const invalidateLocalVideoFileUrl = (assetId: string) => {
   invalidateCache(thumbnailCache, assetId);
 };
 
+/** Refresh future display leases while existing playback leases keep their current URL. */
+export const refreshLocalVideoFileUrl = (assetId: string) => {
+  invalidateCache(cache, assetId);
+};
+
 subscribeLocalVideoFileChanges(invalidateLocalVideoFileUrl);

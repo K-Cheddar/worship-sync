@@ -10,6 +10,7 @@ import {
   acquireLocalVideoFileUrl,
   peekLocalVideoFileThumbnailUrl,
   peekLocalVideoFileUrl,
+  refreshLocalVideoFileUrl,
 } from "../utils/localVideoFileUrlCache";
 
 export type LocalVideoFileResolution = {
@@ -31,6 +32,7 @@ type LocalVideoFileUrlPurpose = "display" | "thumbnail";
 export const useLocalVideoFileUrl = (
   value: LocalVideoFileReference | undefined,
   purpose: LocalVideoFileUrlPurpose = "display",
+  refreshKey = 0,
 ): LocalVideoFileResolution => {
   const cloudUrl = value?.cloudUrl;
   const contentRevision = value?.contentRevision;
@@ -168,6 +170,9 @@ export const useLocalVideoFileUrl = (
       });
       return;
     }
+    if (isOwner && purpose === "display" && refreshKey > 0) {
+      refreshLocalVideoFileUrl(reference.id);
+    }
     if (useCloudPlayback) {
       if (!isOwner) {
         setState({
@@ -297,6 +302,7 @@ export const useLocalVideoFileUrl = (
     assetRevision,
     isOwner,
     purpose,
+    refreshKey,
     reference,
     referenceKey,
     useCloudPlayback,

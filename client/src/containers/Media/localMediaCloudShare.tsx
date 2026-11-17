@@ -29,6 +29,18 @@ import {
 import type { MuxUploadCallbacks } from "./utils/muxUpload";
 import { uploadLocalVideoAssetToMux, uploadVideoToMux } from "./utils/muxUpload";
 
+/** The preload API exists on every desktop, but the streaming service ships only where its binaries do. */
+export const canUploadLocalVideoAssetNatively = async (
+  api = window.electronAPI,
+): Promise<boolean> => {
+  if (!api?.uploadLocalVideoAssetToMux || !api.isVideoDownloaderAvailable) return false;
+  try {
+    return await api.isVideoDownloaderAvailable();
+  } catch {
+    return false;
+  }
+};
+
 export const buildLocalVideoCloudSharePatch = (
   media: MediaType,
   result: MuxUploadResult,
@@ -68,7 +80,7 @@ export const uploadOwnedLocalVideoToCloud = async (
   if (!assetId) {
     throw new Error("This video is not saved on this device.");
   }
-  if (window.electronAPI?.uploadLocalVideoAssetToMux) {
+  if (await canUploadLocalVideoAssetNatively()) {
     const result = await uploadLocalVideoAssetToMux(
       assetId,
       media.localVideoFile!.fileName || `${media.name}.mp4`,
@@ -494,7 +506,7 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
                 setCancelUpload: (cancel) => { cancelMuxUpload = cancel; },
               };
               let result: MuxUploadResult;
-              if (window.electronAPI?.uploadLocalVideoAssetToMux) {
+              if (await canUploadLocalVideoAssetNatively()) {
                 result = await uploadLocalVideoAssetToMux(
                   media.localVideoFile.id,
                   media.localVideoFile.fileName || `${media.name}.mp4`,

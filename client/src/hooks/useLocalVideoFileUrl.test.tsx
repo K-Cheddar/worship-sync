@@ -23,6 +23,7 @@ jest.mock("../utils/localVideoFileUrlCache", () => ({
   acquireLocalVideoFileUrl: jest.fn(),
   peekLocalVideoFileThumbnailUrl: jest.fn(),
   peekLocalVideoFileUrl: jest.fn(),
+  refreshLocalVideoFileUrl: jest.fn(),
 }));
 
 const mockGetOrCreateDeviceId = jest.mocked(getOrCreateDeviceId);
@@ -154,5 +155,26 @@ describe("useLocalVideoFileUrl", () => {
         url: "blob:leased-video",
       }),
     );
+  });
+
+  it("rechecks an open modal's local source and switches to cloud after the file disappears", async () => {
+    mockAcquireLocalVideoFileUrl
+      .mockReturnValueOnce({ url: Promise.resolve("worshipsync-media://asset/old"), release: mockRelease })
+      .mockReturnValueOnce({ url: Promise.resolve(undefined), release: mockRelease });
+    const refreshLocalVideoFileUrl = jest.requireMock("../utils/localVideoFileUrlCache").refreshLocalVideoFileUrl as jest.Mock;
+    const referenceWithCloud = { ...reference, cloudUrl: "https://stream.mux.com/playback.m3u8" };
+    const { result, rerender } = renderHook(
+      ({ refreshKey }) => useLocalVideoFileUrl(referenceWithCloud, "display", refreshKey),
+      { initialProps: { refreshKey: 0 } },
+    );
+    await waitFor(() => expect(result.current.url).toBe("worshipsync-media://asset/old"));
+
+    rerender({ refreshKey: 1 });
+    await waitFor(() => expect(result.current).toEqual(expect.objectContaining({
+      localStatus: "unavailable",
+      url: "https://stream.mux.com/playback.m3u8",
+    })));
+    expect(refreshLocalVideoFileUrl).toHaveBeenCalledWith(reference.id);
+    expect(mockAcquireLocalVideoFileUrl).toHaveBeenCalledTimes(2);
   });
 });

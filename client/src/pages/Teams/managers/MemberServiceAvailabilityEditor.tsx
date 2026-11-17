@@ -191,13 +191,16 @@ const MemberServiceAvailabilityEditor = ({
       const savedMember: TeamRosterMember = {
         ...member,
         serviceAvailability: response.serviceAvailability || {},
-        updatedAt: response.updatedAt || member.updatedAt,
+        // The availability endpoint has its own revision. Keep the profile
+        // revision attached to this draft so a later profile save can still
+        // detect changes made by another operator.
+        updatedAt: member.updatedAt,
       };
       onSaved(savedMember);
       setPendingChanges({});
       setReviewedAvailability({
         serviceAvailability: savedMember.serviceAvailability,
-        updatedAt: savedMember.updatedAt || "",
+        updatedAt: response.updatedAt || "",
       });
       setConflict(false);
     } catch (saveError) {
