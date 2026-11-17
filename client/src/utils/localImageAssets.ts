@@ -421,6 +421,42 @@ export const saveLocalImageThumbnail = async (
   notifyLocalImageChange(thumbnail.id, "thumbnail");
 };
 
+/** Save a video still atomically with a check that its owning video still exists. */
+export const saveLocalVideoThumbnail = async (
+  thumbnail: StoredLocalImageThumbnail,
+  expectedContentHash?: string,
+) => {
+  const db = await openLocalAssetDb();
+  let saved = false;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(
+        [LOCAL_VIDEO_STORE_NAME, THUMBNAIL_STORE_NAME],
+        "readwrite",
+      );
+      const videoRequest = transaction
+        .objectStore(LOCAL_VIDEO_STORE_NAME)
+        .get(thumbnail.id);
+      videoRequest.onsuccess = () => {
+        if (!videoRequest.result || videoRequest.result.contentHash !== expectedContentHash) return;
+        transaction.objectStore(THUMBNAIL_STORE_NAME).put(thumbnail);
+        saved = true;
+      };
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () =>
+        reject(
+          transaction.error ??
+            new Error("The local video thumbnail could not be saved."),
+        );
+      transaction.onabort = transaction.onerror;
+    });
+  } finally {
+    db.close();
+  }
+  if (saved) notifyLocalImageChange(thumbnail.id, "thumbnail");
+  return saved;
+};
+
 export const getLocalImageThumbnail = async (
   assetId: string,
 ): Promise<StoredLocalImageThumbnail | undefined> => {

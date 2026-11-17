@@ -19,6 +19,7 @@ import {
   rememberLocalImagePolicy,
   deleteLocalImage,
 } from "../../utils/localImageAssets";
+import { registerLocalAssetCleanupRetry } from "../../utils/mediaCleanupActivity";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import { cancelLocalImageUpload, enqueueLocalImageUpload, getLocalImageUploadJob, retryLocalImageUpload, retryLocalImageUploadCancellation, waitForLocalImageUpload } from "../../utils/localImageUploadQueue";
 import { claimMediaUpload, type MediaUploadClaim } from "../../utils/mediaOperationClaims";
@@ -41,8 +42,8 @@ import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 import { FileList } from "./components/FileList";
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { normalizeMediaLibraryDisplayName } from "./mediaLibraryMeta";
-import { useOptionalTransferActions, useOptionalTransfers } from "../../context/transferContext";
-import { getMediaTransferOverview, type Transfer } from "../../context/transferModel";
+import { useOptionalTransferActions } from "../../context/transferContext";
+import type { Transfer } from "../../context/transferModel";
 import { getMediaBatchProgress, getMediaCloudFileProgress } from "./mediaUploadProgress";
 
 const isLocalMediaPlaybackError = (error: unknown) =>
@@ -55,71 +56,6 @@ const deleteLocalMediaAsset = async (media: FileUploadProgress["localMedia"]) =>
   else if (media?.localVideoFile) await deleteLocalVideoFile(media.localVideoFile.id);
 };
 
-const registerLocalAssetCleanupRetry = (
-  media: NonNullable<FileUploadProgress["localMedia"]>,
-  retryCleanup: () => Promise<void>,
-  initialError: unknown,
-  updateTransfer?: (transfer: Transfer) => void,
-  registerTransferAction?: (id: string, key: string, handler: () => void | Promise<void>) => () => void,
-  removeTransfer?: (id: string) => void,
-) => {
-  if (!updateTransfer || !registerTransferAction) return false;
-  const transferId = `media-cleanup-${media.id}`;
-  const errorMessage = (error: unknown) => error instanceof Error ? error.message : "Local asset cleanup failed. Try again.";
-  const publish = (error?: unknown) => updateTransfer({
-    id: transferId,
-    type: "Media upload",
-    name: media.name,
-    status: "cancelled",
-    progress: 0,
-    phase: { key: "cancelled", label: "Upload cancelled" },
-    detail: "The local asset still needs cleanup.",
-    files: [{ id: media.id, name: media.name, status: "cancelled", progress: 0, phase: "Upload cancelled" }],
-    ...(error ? { error: { message: errorMessage(error) } } : {}),
-    canCancel: false,
-    blocksUnload: false,
-    actions: [{ key: "retry-cleanup", label: "Retry cleanup" }, { key: "dismiss", label: "Dismiss" }],
-  });
-  let unregisterRetry = () => {};
-  let unregisterDismiss = () => {};
-  unregisterRetry = registerTransferAction(transferId, "retry-cleanup", async () => {
-    try {
-      await retryCleanup();
-      unregisterRetry();
-      unregisterDismiss();
-      removeTransfer?.(transferId);
-    } catch (error) {
-      publish(error);
-    }
-  });
-  unregisterDismiss = registerTransferAction(transferId, "dismiss", () => {
-    unregisterRetry();
-    unregisterDismiss();
-    removeTransfer?.(transferId);
-  });
-  publish(initialError);
-  return true;
-};
-
-const MediaUploadTaskbarProgress = () => {
-  const transferContext = useOptionalTransfers();
-  const overview = getMediaTransferOverview(transferContext?.transfers ?? []);
-  useEffect(() => {
-    const api = window.electronAPI;
-    if (!api) return;
-    const active = overview.activeCount > 0;
-    api.setUploadInProgress(active);
-    if (api.setTaskbarUploadProgress) {
-      void api.setTaskbarUploadProgress(active && overview.progress !== null ? overview.progress / 100 : null);
-    }
-  }, [overview.activeCount, overview.progress]);
-  useEffect(() => () => {
-    const api = window.electronAPI;
-    api?.setUploadInProgress(false);
-    if (api?.setTaskbarUploadProgress) void api.setTaskbarUploadProgress(null);
-  }, []);
-  return null;
-};
 
 type UploadTimeout = {
   timeoutId: NodeJS.Timeout;
@@ -1108,7 +1044,6 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     return (
       <>
-        <MediaUploadTaskbarProgress />
         {showButton && (
           <Button
             variant="tertiary"

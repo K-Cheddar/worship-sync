@@ -307,6 +307,13 @@ export const createTeamsAuthHandlers = ({
     requireServicesWorkspaceViewSession || requireServicesView;
   const requireBroadTeamsView =
     requireBroadTeamsViewSession || requireAdminSession;
+  const requireChurchWideTeamsEdit = async (req, churchId) => {
+    const editor = await requireTeamsEdit(req, churchId);
+    if (editor.role !== "admin" && editor.permissions?.teams !== "edit") {
+      throw httpError(403, "Church-wide Teams edit access is required.");
+    }
+    return editor;
+  };
   const requireServicePlansView =
     requireServicePlansViewSession || requireServicesView;
   const requireScheduleMicrophoneEdit =
@@ -3742,6 +3749,31 @@ export const createTeamsAuthHandlers = ({
       });
     }
     return result;
+  };
+
+  const isServiceAvailabilityKeyForOccurrence = ({
+    key,
+    occurrence,
+    timeZone,
+  }) => {
+    if (key === occurrence.logicalOccurrenceId) return true;
+    const separator = String(key || "").lastIndexOf("@");
+    if (separator <= 0) return false;
+    const prefix = key.slice(0, separator);
+    const suffix = key.slice(separator + 1);
+    const servicePrefixes = occurrence.groupId
+      ? [
+          `group:${occurrence.groupId}`,
+          ...(occurrence.serviceIds || [occurrence.serviceId]),
+        ]
+      : [occurrence.serviceId];
+    if (!servicePrefixes.includes(prefix)) return false;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(suffix)) {
+      return suffix === occurrence.serviceDate;
+    }
+    const timestamp = new Date(suffix);
+    return !Number.isNaN(timestamp.getTime()) &&
+      calendarDateInTimeZone(timestamp, timeZone) === occurrence.serviceDate;
   };
 
   const replaceServiceAvailabilityForForm = ({
@@ -17336,6 +17368,253 @@ export const createTeamsAuthHandlers = ({
         });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this member.");
+      }
+    },
+
+    async getTeamRosterMemberServiceAvailability(req, res) {
+      try {
+        const { churchId, memberId } = req.params;
+        await requireChurchWideTeamsEdit(req, churchId);
+        const member = await assertTeamEntityInChurch("member", memberId, churchId, {
+          label: "Member",
+          active: false,
+        });
+        return res.json({
+          success: true,
+          serviceAvailability: member.serviceAvailability || {},
+          updatedAt: member.updatedAt || "",
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not load service availability.");
+      }
+    },
+
+    async updateTeamRosterMemberServiceAvailability(req, res) {
+      try {
+        await assertCsrf(req);
+        const { churchId, memberId } = req.params;
+        const editor = await requireChurchWideTeamsEdit(req, churchId);
+        // Establish the member's church ownership before validating submitted
+        // occurrence details; cross-church IDs must remain indistinguishable
+        // from missing members.
+        await assertTeamEntityInChurch("member", memberId, churchId, {
+          label: "Member",
+          active: false,
+        });
+        const expectedUpdatedAt = typeof req.body?.expectedUpdatedAt === "string"
+          ? normalizeShortText(req.body.expectedUpdatedAt, { max: 64 })
+          : null;
+        const rawChanges = req.body?.changes;
+        if (expectedUpdatedAt === null) {
+          throw httpError(400, "Refresh this member before saving availability.");
+        }
+        if (!Array.isArray(rawChanges) || rawChanges.length === 0 || rawChanges.length > 300) {
+          throw httpError(400, "Choose at least one service availability change.");
+        }
+
+        const timeZone = await requireConfiguredChurchServiceTimeZone(churchId);
+        const activeServices = (await readChurchServiceTimes(churchId))
+          .filter((service) => !service?.archivedAt);
+        const servicesById = new Map(activeServices.map((service) => [
+          normalizeShortText(service?.serviceId || service?.id, { max: 160 }),
+          service,
+        ]));
+        const changes = [];
+        const logicalIds = new Set();
+        const removeIds = new Set();
+        const seenStorageIds = new Set();
+
+        for (const raw of rawChanges) {
+          const serviceId = normalizeShortText(raw?.serviceId, { max: 160 });
+          const serviceIds = normalizeIdArray(
+            Array.isArray(raw?.serviceIds) && raw.serviceIds.length
+              ? raw.serviceIds
+              : [serviceId],
+          );
+          const groupId = normalizeShortText(raw?.groupId, { max: 160 });
+          const serviceDate = assertPlainDate(raw?.serviceDate, "Service date");
+          const startsAt = assertTeamScheduleDateTime(raw?.startsAt, "Service time");
+          const occurrenceId = normalizeShortText(raw?.occurrenceId, { max: 260 });
+          const logicalOccurrenceId = normalizeShortText(raw?.logicalOccurrenceId, { max: 260 });
+          const status = raw?.status;
+          if (status !== null && status !== "available" && status !== "unavailable") {
+            throw httpError(400, "Choose Available, Unavailable, or Not set.");
+          }
+          const expectedLogicalId = groupId
+            ? logicalOccurrenceIdForGroup(groupId, serviceDate)
+            : logicalOccurrenceIdForService(serviceId, serviceDate);
+          if (
+            !serviceId ||
+            !serviceIds.includes(serviceId) ||
+            !occurrenceId ||
+            logicalOccurrenceId !== expectedLogicalId ||
+            logicalIds.has(logicalOccurrenceId)
+          ) {
+            throw httpError(400, "A service availability change has an invalid occurrence identity.");
+          }
+          const localParts = getOccurrenceCalendarParts(startsAt, timeZone);
+          if (localParts.date !== serviceDate) {
+            throw httpError(400, "A service occurrence has an invalid calendar date.");
+          }
+          const canonicalOccurrence = {
+            occurrenceId: expectedLogicalId,
+            logicalOccurrenceId,
+            serviceId,
+            serviceIds,
+            ...(groupId ? { groupId } : {}),
+            serviceDate,
+            startsAt,
+          };
+          assertOccurrenceServiceGroup({
+            ...canonicalOccurrence,
+            groupId: groupId || undefined,
+            localParts,
+            timeZone,
+            servicesById,
+          });
+
+          if (!isServiceAvailabilityKeyForOccurrence({
+            key: occurrenceId,
+            occurrence: canonicalOccurrence,
+            timeZone,
+          })) {
+            throw httpError(400, "A service availability change has an invalid occurrence key.");
+          }
+          if (occurrenceId !== expectedLogicalId) seenStorageIds.add(occurrenceId);
+
+          const requestedRemovals = raw?.removeOccurrenceIds === undefined
+            ? []
+            : raw.removeOccurrenceIds;
+          if (!Array.isArray(requestedRemovals) || requestedRemovals.length > 30) {
+            throw httpError(400, "A service availability change has invalid occurrence keys.");
+          }
+          const normalizedRemovals = requestedRemovals.map((key) =>
+            normalizeShortText(key, { max: 260 }),
+          );
+          if (new Set(normalizedRemovals).size !== normalizedRemovals.length) {
+            throw httpError(400, "A service availability change contains duplicate occurrence keys.");
+          }
+          normalizedRemovals.forEach((key) => {
+            if (!key || !isServiceAvailabilityKeyForOccurrence({
+              key,
+              occurrence: canonicalOccurrence,
+              timeZone,
+            })) {
+              throw httpError(400, "A service availability change has an invalid occurrence key.");
+            }
+            if (removeIds.has(key)) {
+              throw httpError(400, "A service availability change contains duplicate occurrence keys.");
+            }
+            removeIds.add(key);
+          });
+
+          logicalIds.add(logicalOccurrenceId);
+          changes.push({
+            occurrenceId,
+            logicalOccurrenceId,
+            canonicalOccurrence,
+            status,
+            removeOccurrenceIds: normalizedRemovals,
+          });
+        }
+
+        if (seenStorageIds.size) {
+          const schedules = await listTeamCollectionForChurch(
+            COLLECTIONS.teamSchedules,
+            "scheduleId",
+            churchId,
+          );
+          const storedById = new Map();
+          schedules.forEach((schedule) => {
+            (schedule.occurrences || []).forEach((occurrence) => {
+              if (occurrence?.occurrenceId && !storedById.has(occurrence.occurrenceId)) {
+                storedById.set(occurrence.occurrenceId, occurrence);
+              }
+            });
+          });
+          const storedOccurrences = [...storedById.values()];
+          changes.forEach((change) => {
+            if (change.occurrenceId === change.logicalOccurrenceId) return;
+            const match = matchOccurrencesByIdentity(
+              storedOccurrences,
+              [change.canonicalOccurrence],
+              timeZone,
+            ).matches.get(change.logicalOccurrenceId);
+            if (match?.occurrenceId !== change.occurrenceId) {
+              throw httpError(400, "A saved service occurrence no longer matches this availability change.");
+            }
+          });
+        }
+
+        const set = {};
+        const remove = new Set(removeIds);
+        changes.forEach((change) => {
+          if (change.status === null) {
+            remove.add(change.occurrenceId);
+            remove.add(change.logicalOccurrenceId);
+          } else {
+            set[change.occurrenceId] = change.status;
+            // If a prior key used the other supported occurrence identity, the
+            // explicit edit replaces it with the selected schedule key.
+            if (change.logicalOccurrenceId !== change.occurrenceId) {
+              remove.add(change.logicalOccurrenceId);
+            }
+          }
+        });
+        Object.keys(set).forEach((key) => remove.delete(key));
+
+        const db = requireFirestore?.();
+        const ref = db?.collection(COLLECTIONS.teamRosterMembers).doc(memberId);
+        const now = nowIso();
+        const commit = async (transaction) => {
+          const current = transaction
+            ? await transaction.get(ref).then((snapshot) =>
+                snapshot.exists
+                  ? { memberId: snapshot.id, ...snapshot.data() }
+                  : null,
+              )
+            : await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+          if (!current || current.churchId !== churchId) {
+            throw httpError(404, "Member not found.");
+          }
+          if (current.memberId && current.memberId !== memberId) {
+            throw httpError(409, "Member ownership is invalid.");
+          }
+          if (String(current.updatedAt || "") !== expectedUpdatedAt) {
+            throw httpError(409, "This member changed somewhere else. Refresh and review the latest availability.");
+          }
+          await updateDocMapKeys(
+            COLLECTIONS.teamRosterMembers,
+            memberId,
+            "serviceAvailability",
+            {
+              set,
+              remove: [...remove],
+              fields: { updatedAt: now, updatedByUid: editor.user.uid },
+              transaction,
+            },
+          );
+        };
+
+        if (db?.runTransaction) {
+          await db.runTransaction((transaction) => commit(transaction));
+        } else {
+          await enqueueInMemoryRosterMemberMutation(memberId, () => commit(null));
+        }
+        const updated = await getTeamEntity("member", memberId);
+        await addSecurityEvent({
+          type: "team_roster_member_service_availability_updated",
+          churchId,
+          userId: editor.user.uid,
+          memberId,
+        });
+        return res.json({
+          success: true,
+          serviceAvailability: updated.serviceAvailability || {},
+          updatedAt: updated.updatedAt || now,
+        });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save service availability.");
       }
     },
 
