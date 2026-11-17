@@ -44,6 +44,8 @@ import {
 } from "../utils/electronMediaSurfaceDiagnostics";
 import { isTransportSafeMediaUrl } from "../utils/mediaPreparationManifest";
 import { getImageFromVideoUrl } from "../utils/generalUtils";
+import { getActiveItemSlides } from "../utils/activeItemSlides";
+import { classifySongV2RootState, getSongV2DocumentIdentity, getSongV2RootDocId, loadItemWithSongHydration } from "../utils/songPersistence";
 
 type ServiceItemMedia = {
   itemId: string;
@@ -93,7 +95,10 @@ type PouchAllDocsResult = {
   }>;
 };
 
-type SlideBearingDocument = Pick<DBItem, "_id" | "name" | "slides">;
+type SlideBearingDocument = Pick<
+  DBItem,
+  "_id" | "name" | "type" | "slides" | "arrangements" | "selectedArrangement"
+>;
 
 const isSlideBearingDocument = (
   doc: unknown,
@@ -104,13 +109,16 @@ const isSlideBearingDocument = (
     name?: unknown;
     type?: unknown;
     slides?: unknown;
+    arrangements?: unknown;
   };
   return (
     typeof candidate._id === "string" &&
     candidate._id.length > 0 &&
     typeof candidate.name === "string" &&
     candidate.type !== "heading" &&
-    Array.isArray(candidate.slides)
+    (candidate.type === "song"
+      ? Array.isArray(candidate.arrangements)
+      : Array.isArray(candidate.slides))
   );
 };
 
@@ -429,9 +437,10 @@ const getItemMedia = async (
   cacheRequests?: Map<string, CacheRequestState>,
 ): Promise<ServiceItemMedia | undefined> => {
   if (!isSlideBearingDocument(doc)) return undefined;
+  const slides = getActiveItemSlides(doc);
 
   const discoveries = await Promise.all(
-    doc.slides.flatMap((slide) => {
+    slides.flatMap((slide) => {
       if (!slide || !Array.isArray(slide.boxes)) return [];
       return [
         ...slide.boxes.map((box) =>
@@ -464,7 +473,7 @@ const getItemMedia = async (
     );
   const posterUrls = Array.from(
     new Set(
-      doc.slides.flatMap((slide) =>
+      slides.flatMap((slide) =>
         Array.isArray(slide?.boxes)
           ? slide.boxes.flatMap((box) => {
               const media = box.mediaInfo;
@@ -672,7 +681,7 @@ export const useServiceVideoCandidates = ({
           apply([]);
           return;
         }
-        const currentDoc = await db.get(currentItemTargetId);
+        const currentDoc = await loadItemWithSongHydration(db, currentItemTargetId);
         if (generation !== loadGenerationRef.current) return;
         activeListIdRef.current = undefined;
         serviceItemIdsRef.current = new Set([currentItemTargetId]);
@@ -796,6 +805,78 @@ export const useServiceVideoCandidates = ({
         }
         docsById.set(itemId, row.doc);
       }
+      // The logical row can be a stale pre-migration predecessor. Probe root
+      // markers in one bulk read, then hydrate each activated song through the
+      // authoritative V2 path before reading any media candidates.
+      const uniqueItemIds = [...new Set(itemIds)];
+      const rootsResponse = (await db.allDocs({
+        keys: uniqueItemIds.map(getSongV2RootDocId),
+        include_docs: true,
+      })) as PouchAllDocsResult;
+      if (generation !== loadGenerationRef.current) return;
+      const authoritativeSongIds = new Set<string>();
+      const deletedRootSongIds = new Set<string>();
+      const unknownRootSongIds = new Set<string>();
+      const rootRowsById = new Map((rootsResponse.rows ?? []).map((row) => {
+        const docId = row.doc && typeof row.doc === "object"
+          ? (row.doc as { _id?: unknown })._id
+          : undefined;
+        const key = row.key ?? row.id ?? (typeof docId === "string" ? docId : "");
+        return [key, row] as const;
+      }));
+      uniqueItemIds.forEach((songId) => {
+        const key = getSongV2RootDocId(songId);
+        const row = rootRowsById.get(key);
+        if (!row) {
+          unknownRootSongIds.add(songId);
+          return;
+        }
+        const identity = getSongV2DocumentIdentity(key);
+        if (identity?.kind !== "root") {
+          unknownRootSongIds.add(songId);
+          return;
+        }
+        const rootState = classifySongV2RootState(
+          row.value?.deleted
+            ? { kind: "deleted" }
+            : row.error === "not_found"
+              ? { kind: "missing" }
+              : row.doc
+                ? { kind: "found", root: row.doc }
+                : { kind: "read-failed" },
+        );
+        if (rootState === "v2") authoritativeSongIds.add(identity.songId);
+        else if (rootState === "unknown") unknownRootSongIds.add(identity.songId);
+        else if (row.value?.deleted) deletedRootSongIds.add(identity.songId);
+      });
+      const v2SongIds = uniqueItemIds.filter(id => authoritativeSongIds.has(id) && !deletedRootSongIds.has(id));
+      const v2HydrationErrors = new Set<string>(unknownRootSongIds);
+      for (let start = 0; start < v2SongIds.length; start += 4) {
+        const batch = v2SongIds.slice(start, start + 4);
+        const hydrated = await Promise.all(batch.map(async (songId) => {
+          try {
+            return [songId, await loadItemWithSongHydration(db, songId)] as const;
+          } catch {
+            // Keep the activated root authoritative even while children are
+            // replicating or the song is logically deleted. Never use its
+            // legacy predecessor as a media fallback.
+            v2HydrationErrors.add(songId);
+            return [songId, undefined] as const;
+          }
+        }));
+        if (generation !== loadGenerationRef.current) return;
+        hydrated.forEach(([songId, doc]) => {
+          if (doc && isSlideBearingDocument(doc)) {
+            docsById.set(songId, doc);
+            const missingIndex = missingItemIds.indexOf(songId);
+            if (missingIndex >= 0) missingItemIds.splice(missingIndex, 1);
+          } else docsById.delete(songId);
+        });
+      }
+      v2HydrationErrors.forEach(songId => {
+        docsById.delete(songId);
+        if (!missingItemIds.includes(songId)) missingItemIds.push(songId);
+      });
       const nextServiceMedia = (
         await Promise.all(
           itemIds.map(async (itemId, itemIndex) => {
@@ -820,6 +901,7 @@ export const useServiceVideoCandidates = ({
       const discoveredById = new Map(nextServiceMedia.map((media) => [media.itemId, media]));
       if (missingItemIds.length > 0) {
         serviceMediaRef.current.forEach((media) => {
+          if (authoritativeSongIds.has(media.itemId) || deletedRootSongIds.has(media.itemId)) return;
           if (!discoveredById.has(media.itemId) && !missingItemIds.includes(media.itemId)) return;
           if (!discoveredById.has(media.itemId)) discoveredById.set(media.itemId, media);
         });
@@ -1210,7 +1292,8 @@ export const useServiceVideoCandidates = ({
         ids.length === 0 ||
         ids.includes("ItemLists") ||
         ids.includes(activeListIdRef.current ?? "") ||
-        ids.some((id) => serviceItemIdsRef.current.has(id))
+        ids.some((id) => serviceItemIdsRef.current.has(id) ||
+          serviceItemIdsRef.current.has(getSongV2DocumentIdentity(id)?.songId ?? ""))
       ) {
         void loadServiceMedia();
       }

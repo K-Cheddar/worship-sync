@@ -20,6 +20,7 @@ import type {
   Arrangment,
   FormattedSection,
   ItemSlideType,
+  MonitorLayout,
   ShouldSendTo,
   TimerInfo,
 } from "../../types";
@@ -100,6 +101,7 @@ type OutlineItemSlidesScrollerProps = {
         listId: string;
         timerId?: string;
         shouldSendTo?: ShouldSendTo;
+        monitorLayout?: MonitorLayout;
       };
     },
   ) => void;
@@ -236,9 +238,10 @@ const OutlineVirtualSlide = memo(
       ) {
         return section.slides;
       }
-      return ensureSlidesHaveMonitorBandFormatting(section.slides);
+      return ensureSlidesHaveMonitorBandFormatting(section.slides, section.monitorLayout);
     }, [
       previewMode,
+      section.monitorLayout,
       section.slides,
       section.type,
       monitorSettings.showNextSlide,
@@ -1247,6 +1250,7 @@ const OutlineItemSlidesScroller = ({
             itemId: section.itemId,
             listId: section.listId,
             shouldSendTo: section.shouldSendTo,
+            monitorLayout: section.monitorLayout,
             timerId: timersByItemId.get(section.itemId)?.id,
           },
         });

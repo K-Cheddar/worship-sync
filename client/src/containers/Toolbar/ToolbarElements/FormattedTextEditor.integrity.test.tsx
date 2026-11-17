@@ -28,7 +28,13 @@ jest.mock("../../../context/controllerInfo", () => ({
 }));
 jest.mock("../../../context/globalInfo", () => ({
   GlobalInfoContext: jest.requireActual("react").createContext(null),
-  globalFireDbInfo: { db: undefined, database: undefined }, globalHostId: "test-host",
+  globalFireDbInfo: {
+    db: undefined,
+    database: "integrity-church",
+    churchId: "integrity-church",
+    canWriteSongContent: true,
+  },
+  globalHostId: "test-host",
 }));
 jest.mock("firebase/database", () => ({
   ref: jest.fn(), set: jest.fn(), get: jest.fn(),
@@ -43,9 +49,16 @@ jest.mock("../../../components/SectionTextEditor/SectionTextEditor", () => ({
 }));
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const getMockDocument = async (docs: Map<string, DBItem>, id: string) => {
+  const document = docs.get(id);
+  if (!document) {
+    throw Object.assign(new Error(`missing ${id}`), { status: 404, name: "not_found" });
+  }
+  return clone(document);
+};
 const mockDocs = new Map<string, DBItem>();
 const mockDb = {
-  get: jest.fn(async (id: string) => clone(mockDocs.get(id))),
+  get: jest.fn(async (id: string) => getMockDocument(mockDocs, id)),
   put: jest.fn(async (doc: DBItem) => {
     if (doc._rev !== mockDocs.get(doc._id)?._rev) throw new Error("conflict");
     mockDocs.set(doc._id, clone({ ...doc, _rev: "2-written" }));
@@ -54,7 +67,7 @@ const mockDb = {
 };
 const mockDatabaseBDocs = new Map<string, DBItem>();
 const mockDatabaseB = {
-  get: jest.fn(async (id: string) => clone(mockDatabaseBDocs.get(id))),
+  get: jest.fn(async (id: string) => getMockDocument(mockDatabaseBDocs, id)),
   put: jest.fn(async (doc: DBItem) => {
     if (doc._rev !== mockDatabaseBDocs.get(doc._id)?._rev) throw new Error("conflict");
     mockDatabaseBDocs.set(doc._id, clone({ ...doc, _rev: "2-written" }));
@@ -307,7 +320,10 @@ describe("delayed formatted text content integrity", () => {
     expect(savedA?.formattedSections?.[0]?.words).toBe(
       isSong ? undefined : "A pending section text",
     );
-    expect(savedA?.slides.some((slide) =>
+    const savedSlides = isSong
+      ? savedA?.arrangements[0]?.slides ?? []
+      : savedA?.slides ?? [];
+    expect(savedSlides.some((slide) =>
       slide.boxes.some((box) => (box.words ?? "").includes("A pending section text")),
     )).toBe(true);
     expect(mockDb.put).toHaveBeenCalledTimes(1);
@@ -553,7 +569,7 @@ describe("delayed formatted text content integrity", () => {
       churchId: "other-church",
     };
     await act(async () => {
-      await flushContentDatabaseBeforeTeardown(mockActiveOwner.scopeId);
+      await flushContentDatabaseBeforeTeardown(mockActiveOwner, mockDb as never);
     });
     setActiveContentDatabase(ownerB, mockDatabaseB as never);
     mockCurrentDb = mockDatabaseB;

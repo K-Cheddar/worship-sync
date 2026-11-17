@@ -90,7 +90,7 @@ export let globalBroadcastRef: BroadcastChannel | undefined = undefined;
 
 export const setGlobalContentDatabase = (
   databaseInstance: PouchDB.Database | undefined,
-  scope?: { databaseKey: string; churchId: string },
+  scope?: { databaseKey: string; churchId: string; accountId?: string },
 ) => {
   if (!databaseInstance || !scope) {
     const previousOwner = getActiveContentDatabaseOwner();
@@ -104,12 +104,14 @@ export const setGlobalContentDatabase = (
 
   const databaseKey = scope.databaseKey.toLowerCase();
   const churchId = scope.churchId || "";
+  const accountId = scope.accountId || "anonymous";
   const scopeId = JSON.stringify([
     churchId,
+    accountId,
     databaseKey,
     databaseInstance.name,
   ]);
-  const owner = { scopeId, databaseKey, churchId };
+  const owner = { scopeId, databaseKey, churchId, accountId };
   const previousOwner = getActiveContentDatabaseOwner();
   if (
     previousOwner &&
@@ -120,6 +122,102 @@ export const setGlobalContentDatabase = (
   }
   globalDb = databaseInstance;
   setActiveContentDatabase(owner, databaseInstance);
+};
+
+type CleanupMaintenanceState = {
+  lastStartedAt: number;
+  running?: Promise<void>;
+  timer?: ReturnType<typeof setTimeout>;
+  abortController?: AbortController;
+  consecutiveFailures: number;
+  rerunRequested: boolean;
+  cancelled: boolean;
+};
+const cleanupMaintenanceRuns = new WeakMap<PouchDB.Database, CleanupMaintenanceState>();
+export const cancelSongV2CleanupMaintenance = (db: PouchDB.Database | undefined) => {
+  if (!db) return;
+  const state = cleanupMaintenanceRuns.get(db);
+  if (!state || state.cancelled) return;
+  state.cancelled = true;
+  state.rerunRequested = false;
+  if (state.timer) {
+    clearTimeout(state.timer);
+    state.timer = undefined;
+  }
+  state.abortController?.abort();
+};
+export const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = false) => {
+  const state = cleanupMaintenanceRuns.get(db) ?? {
+    lastStartedAt: 0,
+    consecutiveFailures: 0,
+    rerunRequested: false,
+    cancelled: false,
+  };
+  cleanupMaintenanceRuns.set(db, state);
+  const isActive = () => !state.cancelled && cleanupMaintenanceRuns.get(db) === state;
+
+  const scheduleAfter = (delay: number) => {
+    if (!isActive()) return;
+    if (state.timer) return;
+    state.timer = setTimeout(() => {
+      state.timer = undefined;
+      if (!isActive()) return;
+      scheduleSongV2CleanupMaintenance(db, true);
+    }, delay);
+  };
+  const retryDelay = () => Math.min(30_000 * 2 ** Math.min(state.consecutiveFailures - 1, 4), 300_000);
+
+  if (!isActive()) return;
+  if (state.running) {
+    state.rerunRequested = true;
+    return;
+  }
+  if (state.timer) {
+    if (!force) return;
+    clearTimeout(state.timer);
+    state.timer = undefined;
+  }
+  const throttleRemaining = 30_000 - (Date.now() - state.lastStartedAt);
+  if (!force && throttleRemaining > 0) {
+    scheduleAfter(throttleRemaining);
+    return;
+  }
+  state.lastStartedAt = Date.now();
+  const abortController = new AbortController();
+  state.abortController = abortController;
+  state.running = import("../utils/songV2Writer")
+    .then(({ reconcilePendingSongV2Cleanup }) => {
+      if (!isActive() || abortController.signal.aborted) return undefined;
+      return reconcilePendingSongV2Cleanup(db, 20, abortController.signal);
+    })
+    .then((result) => {
+      if (!isActive() || abortController.signal.aborted || result?.cancelled) return;
+      if (!result) return;
+      if (result.quarantined.length) {
+        console.warn("Song cleanup records were quarantined after their target revisions changed:", result.quarantined);
+      }
+      if (result.cleanupErrors.length) {
+        console.error("Song cleanup maintenance left records for a later retry:", result.cleanupErrors);
+      }
+      state.consecutiveFailures = result.cleanupErrors.length ? state.consecutiveFailures + 1 : 0;
+      if (result.cleanupErrors.length) scheduleAfter(retryDelay());
+      else if (result.hasMore) scheduleAfter(250);
+    })
+    .catch((error) => {
+      if (!isActive() || abortController.signal.aborted) return;
+      state.consecutiveFailures += 1;
+      console.error("Could not run song cleanup maintenance:", error);
+      scheduleAfter(retryDelay());
+    })
+    .finally(() => {
+      if (cleanupMaintenanceRuns.get(db) !== state) return;
+      state.running = undefined;
+      state.abortController = undefined;
+      if (isActive() && state.rerunRequested) {
+        state.rerunRequested = false;
+        scheduleAfter(0);
+      }
+    });
 };
 
 const DEMO_DATABASE_KEY = "demo";
@@ -151,6 +249,8 @@ let syncTimeout: NodeJS.Timeout | null = null;
 
 const ControllerInfoProvider = ({ children }: any) => {
   const [db, setDb] = useState<PouchDB.Database | undefined>(undefined);
+  const contentDbRef = useRef<PouchDB.Database | undefined>(db);
+  contentDbRef.current = db;
   const [bibleDb, setBibleDb] = useState<PouchDB.Database | undefined>(
     undefined
   );
@@ -189,6 +289,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     ? `${DEMO_DATABASE_KEY}-guest`
     : activeDatabaseKey;
   const databaseSessionKey = JSON.stringify([churchId || "", userId || "", broadcastDatabaseKey]);
+  const contentAccountId = userId || (isGuestSession ? "guest" : "anonymous");
   const databaseSessionRef = useRef(databaseSessionKey);
   databaseSessionRef.current = databaseSessionKey;
   const dbSessionRef = useRef<string | null>(null);
@@ -313,6 +414,10 @@ const ControllerInfoProvider = ({ children }: any) => {
               updater.current.dispatchEvent(
                 new CustomEvent("update", { detail: event.change.docs })
               );
+              if ((event.change.docs as Array<{ docType?: string }> | undefined)
+                ?.some((doc) => doc.docType === "song-v2-cleanup" || doc.docType === "song-v2-cleanup-discovery")) {
+                scheduleSongV2CleanupMaintenance(localDb);
+              }
             }
           })
           .on("active", () => {
@@ -588,12 +693,15 @@ const ControllerInfoProvider = ({ children }: any) => {
           if (!isCurrentSession()) return;
           dbSessionRef.current = sessionAtStart;
           setDbProgress(100);
+          contentDbRef.current = localDb;
           setDb(localDb);
           setIsDbSetup(true);
           setGlobalContentDatabase(localDb, {
             databaseKey: broadcastDatabaseKey,
             churchId: globalFireDbInfo.churchId || "",
+            accountId: contentAccountId,
           });
+          scheduleSongV2CleanupMaintenance(localDb, true);
           if (broadcastDatabaseKey) {
             updateGlobalBroadcast(broadcastDatabaseKey);
           }
@@ -631,6 +739,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         setGlobalContentDatabase(localDb, {
           databaseKey: activeDatabaseKey,
           churchId: churchId || "",
+          accountId: contentAccountId,
         });
         setDb(localDb);
         setIsDbSetup(true);
@@ -643,7 +752,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     };
     if (shouldInitializeControllerData && !isDbSetup) void setupDb();
     return () => { cancelled = true; };
-  }, [shouldInitializeControllerData, databaseSessionKey, churchId, activeDatabaseKey, broadcastDatabaseKey, isGuestSession, isDbSetup]);
+  }, [shouldInitializeControllerData, databaseSessionKey, churchId, activeDatabaseKey, broadcastDatabaseKey, contentAccountId, isGuestSession, isDbSetup]);
 
   const initialRemoteDatabaseRef = useRef<PouchDB.Database | null>(null);
   const contentDatabaseSessionRef = useRef<
@@ -780,6 +889,11 @@ const ControllerInfoProvider = ({ children }: any) => {
             }
             setDbProgress(100);
             initialRemoteDatabaseRef.current = localDb;
+            contentDbRef.current = localDb;
+            scheduleSongV2CleanupMaintenance(localDb, true);
+            if (broadcastDatabaseKey) {
+              updateGlobalBroadcast(broadcastDatabaseKey);
+            }
             if (isAuthenticatedSession) {
               syncDb(localDb, remoteDb, activeDatabaseKey);
             }
@@ -799,7 +913,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       initialContentReplicationActivityRef.current?.release();
       initialContentReplicationActivityRef.current = null;
     };
-  }, [db, hasCouchSession, isAuthenticatedSession, databaseSessionKey, activeDatabaseKey, isGuestSession, syncDb, getCouchSession]);
+  }, [db, hasCouchSession, isAuthenticatedSession, databaseSessionKey, activeDatabaseKey, broadcastDatabaseKey, isGuestSession, syncDb, getCouchSession]);
 
   useEffect(() => {
     const setupBibleDb = async () => {
@@ -902,6 +1016,14 @@ const ControllerInfoProvider = ({ children }: any) => {
   ]);
 
   const tearDownLocalDatabases = useCallback(async () => {
+    const mainDb = db;
+    const bibleDbInstance = bibleDb;
+    const contentOwnerAtTeardown = getActiveContentDatabaseOwner();
+    const contentDatabaseAtTeardown = contentOwnerAtTeardown
+      ? getContentDatabaseForOwner(contentOwnerAtTeardown)
+      : mainDb;
+    cancelSongV2CleanupMaintenance(mainDb);
+    if (contentDbRef.current === mainDb) contentDbRef.current = undefined;
     // Invalidate auth-recovery continuations before cancelling handles or
     // destroying the database owned by the previous church.
     syncGenerationRef.current += 1;
@@ -922,14 +1044,14 @@ const ControllerInfoProvider = ({ children }: any) => {
     manualContentPullActivityRef.current = null;
     manualContentPullRef.current = null;
     remoteDbRef.current = null;
-    const previousContentOwner = getActiveContentDatabaseOwner();
-    if (previousContentOwner) {
-      await flushContentDatabaseBeforeTeardown(previousContentOwner.scopeId);
+    if (contentOwnerAtTeardown && contentDatabaseAtTeardown) {
+      await flushContentDatabaseBeforeTeardown(
+        contentOwnerAtTeardown,
+        contentDatabaseAtTeardown,
+      );
     }
     setGlobalContentDatabase(undefined);
     globalBibleDb = undefined;
-    const mainDb = db;
-    const bibleDbInstance = bibleDb;
     setDb(undefined);
     setDbProgress(0);
     setBibleDb(undefined);
@@ -1002,6 +1124,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     return () => {
       // Auth recovery may still be awaiting session renewal or backoff.
       // Prevent its continuation from reconnecting after provider unmount.
+      cancelSongV2CleanupMaintenance(contentDbRef.current);
       syncGenerationRef.current += 1;
       if (syncTimeout) {
         clearTimeout(syncTimeout);

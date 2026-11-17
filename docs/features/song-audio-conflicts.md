@@ -12,6 +12,72 @@ Authorization: production correctness request, October 14, 2026.
 
 ## Implementation and verification
 
+### Concurrent lyric editing (October 26, 2026)
+
+Authorization: the Song v2 concurrent slide editing request.
+
+- Text typed during a formatting debounce is protected immediately. Remote
+  updates and save acknowledgments must not declare this input saved or replace it.
+- Ordinary lyric formatting preserves the identity of each section occurrence
+  and page, including title and blank slides. Overflow creates/removes pages
+  without borrowing another section's slide or box identities.
+- Disjoint canonical lyric edits use the authored baseline to merge against
+  the latest section before formatting. Ambiguous overlaps and concurrent
+  structural/layout changes retain the draft and use existing conflict choices.
+- Child-document replication refreshes the affected active song. Library
+  projections refresh for root/arrangement changes; slide-only notifications
+  must not scan the library. A slide-only notification also invalidates the
+  hydrated outline-content cache for that song, including when another song is
+  active, so reopening the outline item loads the replicated slides and their
+  unchanged neighbors. Active-song refreshes continue through existing draft
+  and conflict guards. Revision-checked writes remain mandatory.
+- Song migrations, schema changes and v2 deletion remain outside this change.
+
+### Song v2 saved conflict recovery (October 27, 2026)
+
+Authorization: the “WorshipSync Song v2 — Fix Blocking Conflict Screen and Restore Song Access” request.
+
+- A song with competing saved revisions remains accessible in a read-only state while review is pending. The operator can inspect the actual saved revision content and affected arrangement or slide, choose a version or make a manual lyric reconciliation, then save that choice explicitly.
+- Normal editing and autosave stay paused until the resolution is persisted. Conflict leaves are retired only after the intended content is durable and the reviewed winner and complete leaf set still match. A newly arrived or previously unseen revision is preserved.
+- Automatic reconciliation is limited to provably disjoint lyric text changes with revision-safe writes. Unresolved conflict fingerprints are not retried on every render or replication notification.
+- A later browser can recover the song after the original editors close. Unconflicted songs keep their normal opening and editing flow; migrations and unrelated songs are unchanged.
+- A conflict-review completion may write to its captured original database, but it only updates the editor or conflict state while the original database session, church, item, and outline occurrence still own the view. An item/database switch or unmount suppresses stale UI publication.
+
+### Interrupted Song V2 autosaves (November 10, 2026)
+
+Authorization: the current high-priority code-review remediation request.
+
+- If authorization or the content database session ends after part of a multi-document autosave is durable, retain that authored intent and its original owner. When the same account, church, and database returns with song-edit permission, reread the authoritative V2 documents, recognize already-applied intent, and finish the save before applying newer pending edits. A different owner never resumes it, and explicit Use Their Changes retires the retained autosave.
+- Commit the pending intent and baseline to a separate local IndexedDB recovery store before the first physical V2 document write. Keep the owner-scoped record across renderer reloads and PouchDB recreation; serialize writes to the same song database across same-origin windows, and retry only after that database's successful initial remote pull. A transient read failure leaves the record available for a later readiness/activity retry. Remove it after the intent and any selected conflict retirement are verified. Explicit Use Their Changes replaces it with a small durable tombstone so another window cannot restore the rejected draft.
+- Persist unresolved recovery conflicts for review rather than repeatedly auto-retrying them. When the same owner reopens the song, restore the authored draft against its original baseline and present the current saved revision through the existing conflict UI.
+
+### Read-only hydration and authorized automatic reconciliation
+
+Authorization: the current high-priority code-review remediation request, November 10, 2026.
+
+- Song hydration and conflict inspection are read-only. A view-only Controller session or paired display reads the current winning song content and retains competing revisions; reads never persist a merge or retire a revision leaf.
+- Automatic merge of provably disjoint canonical lyric edits uses the existing Controller song-edit access (`music` or `full`). The permission and original database/session/item owner are checked at each content write and revision retirement. Genuine conflicts remain for explicit review.
+
+### Concurrent editing simplification (November 12, 2026)
+
+Authorization: the current request to simplify concurrent Song V2 and outline editing.
+
+- Song V2 revision leaves with identical canonical authored content do not block the editor; revision history and audit metadata do not make an authored change. Safe disjoint lyric edits continue through the authorized, revision-checked merge path.
+- A successfully committed merge remains usable if cleanup of its already-incorporated leaves fails. The session recognizes only the exact committed winner and reviewed leaves; a changed winner or new meaningful leaf returns to conflict review. Permission revocation still prevents further writes and leaf retirement.
+- Competing slide bodies, structural edits, overlapping lyrics, rich text, or changes that cannot be proven disjoint remain available for explicit review. Durable autosave recovery, owner checks and the stored Song V2 schema remain in effect.
+
+Targeted nonactive slide-cache invalidation and stale conflict-review completion guards are confirmed by the November 5, 2026 code-review remediation request.
+
+### Song v2 semantic conflict review (October 27, 2026)
+
+Authorization: the current “Improve Song v2 Conflict Review with Semantic Change Comparisons” request.
+
+- Compare every alternative against the same currently saved version. Inspecting an alternative does not select it for saving; document-level version selection remains the resolution unit.
+- Describe section and slide additions, removals, movement, lyric edits, formatting, media, and arrangement settings in operator language. Treat regenerated slide IDs as equivalent only when authored slide content matches; identify reflow only when the lyric content is verified in the selected arrangement. Mark missing or ambiguous structural relationships as uncertain.
+- Show the selected hydrated song's lyrics, section/slide orders, remaining slides, and possible content loss before committing a resolution.
+- Offer manual lyric editing only when lyric differences are present or the operator has opened the editor. Preserve pending manual text across version selection and surface edits that cannot apply to the selected version.
+- Keep revision validation, stale-review handling, conflict retirement, automatic lyric-merge rules, normal song autosave, and the Song v2 schema unchanged.
+
 `persistSongAudioAttachment` reads the original database's latest document and uses Pouch revision checks to write the audio field while preserving unrelated data. It returns the exact written document and returned revision. A competing write can reject with 409; it is not silently overwritten.
 
 `applyPersistedSongAudio` patches audio and revision metadata without accepting a new lyric baseline. It patches audio in a pending remote document so either conflict decision retains the completed audio operation. The store reschedules pending local intent using the preserved baseline, retires superseded work before writes, and suppresses stale acknowledgments after newer intent/audio. Partial acknowledgments advance only the fields actually written. `SlideEditor` captures the database and mutation owner and suppresses publication after owner retirement.

@@ -2,12 +2,14 @@ import { configureStore } from "@reduxjs/toolkit";
 import {
   itemDocMatchesEditorState,
   getItemPersistenceChanges,
+  getItemPersistenceConflicts,
   updateSlideVideoBackgroundLoop,
   updateSlideVideoBackgroundSendMode,
   itemSlice,
   updateArrangements,
   updateSlides,
 } from "./itemSlice";
+import { getMonitorLayoutForSlides } from "../utils/monitorSlideFormatter";
 import type { ItemState } from "../types";
 
 type ItemSliceState = { item: ItemState };
@@ -22,6 +24,86 @@ const createStore = (preloadedState?: Partial<ItemSliceState>) =>
   });
 
 describe("itemSlice", () => {
+  it.each(["free", "bible"] as const)("tracks layout-only %s edits and reports conflicting monitor layouts", (type) => {
+    const base = {
+      _id: `${type}-layout`,
+      type,
+      name: `${type} item`,
+      selectedArrangement: 0,
+      slides: [],
+      monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 24 },
+    } as any;
+    const local = {
+      ...itemSlice.getInitialState(),
+      ...base,
+      monitorLayout: { currentFontSizePx: 28, nextFontSizePx: 22 },
+      baseItem: base,
+    } as ItemState;
+    const remoteOtherField = { ...base, name: "Remote name" };
+    const remoteLayout = { ...base, monitorLayout: { currentFontSizePx: 27, nextFontSizePx: 20 } };
+
+    expect(getItemPersistenceChanges(local, base)).toEqual(["monitorLayout"]);
+    expect(getItemPersistenceConflicts(local, base, remoteOtherField)).toEqual([]);
+    expect(getItemPersistenceConflicts(local, base, remoteLayout)).toEqual(["monitorLayout"]);
+  });
+
+  it("keeps monitor layouts in persisted baselines and markItemPersisted updates", () => {
+    const baseline = {
+      _id: "free-layout-save",
+      type: "free" as const,
+      name: "Free item",
+      selectedArrangement: 0,
+      slides: [],
+      monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 24 },
+    } as any;
+    const persisted = { ...baseline, monitorLayout: { currentFontSizePx: 28, nextFontSizePx: 22 } };
+    const store = createStore({ item: {
+      ...itemSlice.getInitialState(),
+      ...baseline,
+      baseItem: baseline,
+      monitorLayout: persisted.monitorLayout,
+      hasPendingUpdate: true,
+    } as ItemState });
+
+    store.dispatch(itemSlice.actions.markItemPersisted(persisted, persisted));
+    expect(store.getState().item.monitorLayout).toEqual(persisted.monitorLayout);
+    expect(store.getState().item.baseItem?.monitorLayout).toEqual(persisted.monitorLayout);
+    expect(getItemPersistenceChanges(store.getState().item, persisted)).toEqual([]);
+
+    const newerRemote = { ...persisted, monitorLayout: { currentFontSizePx: 26, nextFontSizePx: 18 } };
+    store.dispatch(itemSlice.actions.rebaseItemPersistence(newerRemote));
+    expect(store.getState().item.baseItem?.monitorLayout).toEqual(newerRemote.monitorLayout);
+    expect(getItemPersistenceChanges(store.getState().item, newerRemote)).toEqual(["monitorLayout"]);
+  });
+
+  it("keeps Song V2 arrangement layouts scoped to their arrangement", () => {
+    const baseline = {
+      _id: "song-layout-v2",
+      type: "song" as const,
+      docType: "song-v2-root",
+      name: "Song",
+      slides: [],
+      selectedArrangement: 0,
+      arrangements: [{
+        id: "master", name: "Master", slides: [], formattedLyrics: [], songOrder: [],
+        monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 24 },
+      }],
+    } as any;
+    const current = {
+      ...itemSlice.getInitialState(), ...baseline, baseItem: baseline,
+      monitorLayout: undefined,
+      arrangements: [{ ...baseline.arrangements[0], monitorLayout: { currentFontSizePx: 28, nextFontSizePx: 22 } }],
+    } as ItemState;
+    const latest = {
+      ...baseline,
+      arrangements: [{ ...baseline.arrangements[0], monitorLayout: { currentFontSizePx: 27, nextFontSizePx: 20 } }],
+    };
+
+    expect(getItemPersistenceChanges(current, baseline)).toContain("arrangements");
+    expect(getItemPersistenceChanges(current, baseline)).not.toContain("monitorLayout");
+    expect(getItemPersistenceConflicts(current, baseline, latest)).not.toContain("monitorLayout");
+  });
+
   it("rejects audio results for another song or church with the same song ID", () => {
     const store = createStore();
     const owner = { scopeId: "a", databaseKey: "a", churchId: "a", itemId: "song-A", itemType: "song" as const };
@@ -78,6 +160,7 @@ describe("itemSlice", () => {
       arrangements: [{
         id: "B-arrangement",
         name: "B arrangement",
+        monitorLayout: { currentFontSizePx: 300, nextFontSizePx: 300 },
         slides: [slide("B-slide", "B words")],
         formattedLyrics: [],
         songOrder: [],
@@ -111,14 +194,14 @@ describe("itemSlice", () => {
       }],
       expectedOwner: staleOwnerA,
     }) as never);
-    expect(store.getState().undoable.present.item.slides).toEqual(itemB.slides);
+    expect(store.getState().undoable.present.item.slides).toEqual([]);
     expect(store.getState().undoable.present.item.arrangements).toEqual(itemB.arrangements);
 
     await store.dispatch(updateSlides({
       slides: [slide("B-slide", "B updated words")],
       expectedOwner: activeOwnerB,
     }) as never);
-    expect(store.getState().undoable.present.item.slides[0].boxes[0].words).toBe(
+    expect(store.getState().undoable.present.item.arrangements[0].slides[0].boxes[0].words).toBe(
       "B updated words",
     );
   });
@@ -178,7 +261,9 @@ describe("itemSlice", () => {
     store.dispatch(itemSlice.actions.setActiveItem(item));
 
     const state = store.getState().item;
-    expect(state.baseItem?.slides[0].boxes[0].textDocument).toEqual(textDocument);
+    expect(state.slides).toEqual([]);
+    expect(state.baseItem?.slides).toEqual([]);
+    expect(state.baseItem?.arrangements[0].slides[0].boxes[0].textDocument).toEqual(textDocument);
     expect(state.baseItem?.formattedSections?.[0].textDocument).toEqual(
       textDocument,
     );
@@ -186,6 +271,11 @@ describe("itemSlice", () => {
       state.baseItem?.arrangements?.[0].formattedLyrics[0].textDocument,
     ).toEqual(textDocument);
     expect(itemDocMatchesEditorState(state.baseItem!, state)).toBe(true);
+    expect(itemDocMatchesEditorState({ ...state.baseItem!, docType: "song-v2-root" }, state)).toBe(false);
+    store.dispatch(itemSlice.actions.setActiveItem({ ...item, docType: "song-v2-root" }));
+    const v2State = store.getState().item;
+    expect(v2State.docType).toBe("song-v2-root");
+    expect(itemDocMatchesEditorState(v2State.baseItem!, v2State)).toBe(true);
   });
 
   describe("reducer only", () => {
@@ -271,6 +361,18 @@ describe("itemSlice", () => {
           lrclibId: 8,
         }),
       );
+    });
+
+    it("replaces storage identity when switching to an item without a docType", () => {
+      const store = createStore();
+      store.dispatch(itemSlice.actions.setActiveItem({
+        _id: "v2-song", name: "V2", type: "song", docType: "song-v2-root",
+      }));
+      store.dispatch(itemSlice.actions.setActiveItem({
+        _id: "timer", name: "Timer", type: "timer",
+      }));
+      expect(store.getState().item.docType).toBeUndefined();
+      expect(store.getState().item.baseItem?.docType).toBeUndefined();
     });
 
     it("setActiveItem loads song links and attached audio", () => {
@@ -459,6 +561,34 @@ describe("itemSlice", () => {
       expect(store.getState().item.hasPendingUpdate).toBe(true);
     });
 
+    it("songs read and edit only the selected arrangement slides", async () => {
+      const store = createStore();
+      const firstSlide = {
+        type: "Verse" as const, name: "Master Verse", id: "master-1", boxes: [{ words: "Master", width: 100, height: 100 }],
+      };
+      const secondSlide = {
+        type: "Verse" as const, name: "Acoustic Verse", id: "acoustic-1", boxes: [{ words: "Acoustic", width: 100, height: 100 }],
+      };
+      store.dispatch(itemSlice.actions.setActiveItem({
+        _id: "song-active", name: "Song", type: "song", selectedArrangement: 0,
+        slides: [{ ...firstSlide, name: "legacy duplicate" }],
+        arrangements: [
+          { id: "master", name: "Master", songOrder: [], formattedLyrics: [], slides: [firstSlide] },
+          { id: "acoustic", name: "Acoustic", songOrder: [], formattedLyrics: [], slides: [secondSlide] },
+        ],
+      } as any));
+
+      expect(store.getState().item.slides).toEqual([]);
+      expect(store.getState().item.arrangements[0].slides[0].name).toBe("Master Verse");
+      store.dispatch(itemSlice.actions._setSelectedArrangement(1));
+      store.dispatch(itemSlice.actions._updateSlides([{ ...secondSlide, name: "Edited Acoustic" }]));
+
+      const state = store.getState().item;
+      expect(state.slides).toEqual([]);
+      expect(state.arrangements[0].slides).toEqual([firstSlide]);
+      expect(state.arrangements[1].slides[0].name).toBe("Edited Acoustic");
+    });
+
     it("_updateSlides replaces slides", () => {
       const store = createStore();
       const slides = [
@@ -532,6 +662,52 @@ describe("itemSlice", () => {
         "Edited line",
       );
       expect(state.hasPendingUpdate).toBe(true);
+    });
+
+    it("recalculates compact monitor layout when updateArrangements replaces sizing inputs", async () => {
+      const originalSlides = [{
+        id: "slide-1",
+        type: "Verse" as const,
+        name: "Verse 1",
+        boxes: [
+          { id: "bg", width: 100, height: 100 },
+          { id: "text", width: 80, height: 50, words: "Short", fontSize: 40 },
+        ],
+      }];
+      const nextSlides = [{
+        ...originalSlides[0],
+        boxes: [
+          ...originalSlides[0].boxes.slice(0, 1),
+          { ...originalSlides[0].boxes[1], height: 35 },
+        ],
+      }];
+      const item = {
+        ...itemSlice.getInitialState(),
+        _id: "song-monitor-layout",
+        type: "song",
+        selectedArrangement: 0,
+        selectedSlide: 0,
+        arrangements: [{
+          id: "arr-1",
+          name: "Master",
+          formattedLyrics: [],
+          songOrder: [],
+          slides: originalSlides,
+          monitorLayout: { currentFontSizePx: 999, nextFontSizePx: 999 },
+        }],
+      } as ItemState;
+      const dispatch = jest.fn();
+      const getState = () => ({ undoable: { present: { item } } });
+
+      await updateArrangements({
+        arrangements: [{ ...item.arrangements[0], slides: nextSlides }],
+      })(dispatch as any, getState as any, undefined);
+
+      const action = dispatch.mock.calls.find(([entry]) =>
+        entry.type === "item/_updateArrangements",
+      )?.[0];
+      expect(action.payload[0].monitorLayout).toEqual(getMonitorLayoutForSlides(nextSlides));
+      expect(action.payload[0].monitorLayout.currentFontSizePx).not.toBe(999);
     });
 
     it("applies an already-persisted Canva replacement without marking the item dirty", () => {
@@ -698,7 +874,10 @@ describe("itemSlice", () => {
       { id: "first", type: "Section" as const, name: "First", boxes: [], videoBackgroundSendMode: "restart" as const },
       { id: "second", type: "Section" as const, name: "Second", boxes: [] },
     ];
-    const item: ItemState = { ...itemSlice.getInitialState(), _id: "item", type, slides, selectedSlide: 0, arrangements: [{ id: "arrangement", name: "Default", slides, formattedLyrics: [], songOrder: [] }] };
+    const arrangements = type === "song"
+      ? [{ id: "arrangement", name: "Default", slides, formattedLyrics: [], songOrder: [] }]
+      : [];
+    const item: ItemState = { ...itemSlice.getInitialState(), _id: "item", type, slides, selectedSlide: 0, arrangements };
     type TestState = { undoable: { present: { item: ItemState } } };
     const store = configureStore({ reducer: (state: TestState = { undoable: { present: { item } } }, action: { type: string }): TestState => ({ undoable: { present: { item: itemSlice.reducer(state.undoable.present.item, action) } } }) });
     store.dispatch(itemSlice.actions.setActiveItem(item));
@@ -707,17 +886,28 @@ describe("itemSlice", () => {
     await store.dispatch(updateSlideVideoBackgroundSendMode({ mode: "continue" }) as never);
     await store.dispatch(updateSlideVideoBackgroundLoop({ loop: true }) as never);
     const saved = store.getState().undoable.present.item;
-    expect(saved.slides[0]).toMatchObject({ videoBackgroundLoop: true, videoBackgroundSendMode: "continue" });
-    expect(saved.arrangements[0].slides[0]).toEqual(saved.slides[0]);
-    expect(saved.slides[1]).toEqual(slides[1]);
-    expect(getItemPersistenceChanges(saved, baseline)).toEqual(expect.arrayContaining(["slides", "arrangements"]));
+    const savedSlides = type === "song" ? saved.arrangements[0].slides : saved.slides;
+    expect(savedSlides[0]).toMatchObject({ videoBackgroundLoop: true, videoBackgroundSendMode: "continue" });
+    expect(savedSlides[1]).toEqual(slides[1]);
+    expect(getItemPersistenceChanges(saved, baseline)).toEqual([
+      type === "song" ? "arrangements" : "slides",
+    ]);
     const restored = createStore();
     restored.dispatch(itemSlice.actions.setActiveItem(JSON.parse(JSON.stringify(saved))));
-    expect(restored.getState().item.slides[0].videoBackgroundLoop).toBe(true);
-    expect(restored.getState().item.baseItem?.arrangements[0].slides[0].videoBackgroundLoop).toBe(true);
+    const restoredSlides = type === "song"
+      ? restored.getState().item.arrangements[0].slides
+      : restored.getState().item.slides;
+    expect(restoredSlides[0].videoBackgroundLoop).toBe(true);
+    expect(restored.getState().item.slides).toEqual(type === "song" ? [] : saved.slides);
+    expect(restored.getState().item.baseItem?.arrangements[0]?.slides[0]?.videoBackgroundLoop).toBe(
+      type === "song" ? true : undefined,
+    );
     expect(itemDocMatchesEditorState(restored.getState().item.baseItem!, restored.getState().item)).toBe(true);
     await store.dispatch(updateSlideVideoBackgroundLoop({ loop: false }) as never);
-    expect(store.getState().undoable.present.item.slides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "continue" });
+    const updatedSlides = type === "song"
+      ? store.getState().undoable.present.item.arrangements[0].slides
+      : store.getState().undoable.present.item.slides;
+    expect(updatedSlides[0]).toMatchObject({ videoBackgroundLoop: false, videoBackgroundSendMode: "continue" });
   });
 
 });

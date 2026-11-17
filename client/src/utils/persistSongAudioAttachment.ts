@@ -1,7 +1,7 @@
 import PouchDB from "pouchdb-browser";
 
 import { DBItem, SongAudio } from "../types";
-import { applyPouchAudit } from "./pouchAudit";
+import { loadSong, saveSong } from "./songPersistence";
 
 /**
  * Deletes the private object before removing its only durable pointer. If the
@@ -24,20 +24,17 @@ export const persistSongAudioAttachment = async ({
   db,
   songId,
   audio,
+  baselineSong,
 }: {
   db: PouchDB.Database;
   songId: string;
   audio: SongAudio | null;
+  baselineSong?: DBItem;
 }): Promise<DBItem> => {
-  const existing = (await db.get(songId)) as DBItem;
+  const existing = baselineSong ?? await loadSong(db, songId);
+  if (existing._id !== songId) throw new Error("Cannot save audio using another song's baseline");
   const next: DBItem = { ...existing };
-  if (audio) {
-    next.songAudio = audio;
-  } else {
-    delete next.songAudio;
-  }
+  next.songAudio = audio ?? undefined;
 
-  const audited = applyPouchAudit(existing, next, { isNew: false });
-  const result = await db.put(audited);
-  return { ...audited, _rev: result.rev };
+  return saveSong(db, next, existing);
 };

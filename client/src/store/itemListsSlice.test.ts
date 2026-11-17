@@ -95,6 +95,41 @@ describe("itemListsSlice", () => {
       expect(state.currentLists[0]._id).toBe("id-1");
     });
 
+    it("keeps a local registry edit while applying unrelated remote registry changes", () => {
+      const store = createStore();
+      store.dispatch(
+        initiateItemLists({
+          itemLists: [
+            outline("A", "id-a"),
+            outline("B", "id-b"),
+          ],
+        }),
+      );
+      store.dispatch(updateItemLists([
+        outline("A local rename", "id-a"),
+        outline("B", "id-b"),
+      ]));
+
+      store.dispatch(updateItemListsFromRemote({
+        itemLists: [
+          outline("A", "id-a"),
+          outline("B remote rename", "id-b"),
+          { ...outline("C remote addition", "id-c"), controllerScope: "aux" },
+        ],
+        activeListId: "id-b",
+      }));
+
+      const state = store.getState().itemLists;
+      expect(state.currentLists).toEqual([
+        outline("A local rename", "id-a"),
+        outline("B remote rename", "id-b"),
+        { ...outline("C remote addition", "id-c"), controllerScope: "aux" },
+      ]);
+      expect(state.selectedList?._id).toBe("id-a");
+      expect(state.activeList?._id).toBe("id-b");
+      expect(state.selectedIdByScope).toEqual({ presentation: "id-a" });
+    });
+
     it("removeFromItemLists deletes an outline", () => {
       const store = createStore({
         itemLists: {
@@ -198,6 +233,7 @@ describe("itemListsSlice", () => {
     const mixed = [
       scoped("Sunday AM", "sun-am"),
       scoped("Lobby Loop", "lobby-1", "ctrl_lobby"),
+      scoped("Lobby Backup", "lobby-2", "ctrl_lobby"),
       scoped("Sunday PM", "sun-pm"),
     ];
 
@@ -269,21 +305,17 @@ describe("itemListsSlice", () => {
       expect(state.selectedList?._id).toBe("lobby-1");
     });
 
-    it("restores each scope's last selection from a persisted map on initiate", () => {
+    it("keeps each controller scope's selection local while switching scopes", () => {
       const store = createStore();
       store.dispatch(setOutlineScope("ctrl_lobby"));
-      store.dispatch(
-        initiateItemLists({
-          itemLists: mixed,
-          selectedIdByScope: {
-            presentation: "sun-pm",
-            ctrl_lobby: "lobby-1",
-          },
-        }),
-      );
+      store.dispatch(initiateItemLists(mixed));
       expect(store.getState().itemLists.selectedList?._id).toBe("lobby-1");
+      store.dispatch(selectItemList("lobby-2"));
       store.dispatch(setOutlineScope("presentation"));
-      expect(store.getState().itemLists.selectedList?._id).toBe("sun-pm");
+      expect(store.getState().itemLists.selectedList?._id).toBe("sun-am");
+      store.dispatch(selectItemList("sun-pm"));
+      store.dispatch(setOutlineScope("ctrl_lobby"));
+      expect(store.getState().itemLists.selectedList?._id).toBe("lobby-2");
     });
 
     it("applies a remote active outline id without leaving the local scope", () => {
@@ -299,6 +331,29 @@ describe("itemListsSlice", () => {
       const state = store.getState().itemLists;
       expect(state.activeList?._id).toBe("sun-pm");
       expect(state.selectedList?._id).toBe("lobby-1");
+    });
+
+    it("retains the local registry draft when a remote update changed the same field", () => {
+      const store = createStore();
+      store.dispatch(initiateItemLists([
+        { _id: "outline-a", name: "A" },
+        { _id: "outline-b", name: "B" },
+      ]));
+      store.dispatch(updateItemLists([
+        { _id: "outline-a", name: "Local rename" },
+        { _id: "outline-b", name: "B" },
+      ]));
+
+      expect(() => store.dispatch(updateItemListsFromRemote({
+        itemLists: [
+          { _id: "outline-a", name: "Remote rename" },
+          { _id: "outline-b", name: "B" },
+        ],
+        activeListId: "outline-a",
+      }))).not.toThrow();
+      expect(store.getState().itemLists.currentLists[0].name).toBe("Local rename");
+      expect(store.getState().itemLists.registryBaseline.currentLists[0].name)
+        .toBe("Remote rename");
     });
 
     it("falls active back to a presentation outline when the active one is removed", () => {

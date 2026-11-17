@@ -468,6 +468,11 @@ jest.mock("../../../context/globalInfo", () => {
     GlobalInfoContext: ReactLib.createContext({
       churchId: "church-1",
     }),
+    globalFireDbInfo: {
+      db: undefined,
+      database: "church-1",
+      churchId: "church-1",
+    },
   };
 });
 

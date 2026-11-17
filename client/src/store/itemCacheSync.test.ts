@@ -41,7 +41,7 @@ describe("item cache lifecycle", () => {
     expect(store.getState().allDocs.isInitialized).toBe(true);
     expect(calls.changes).toHaveBeenCalledWith({ since: 0, live: true, include_docs: true });
     handles[0].emit("change", { seq: 1, id: songDocument._id, doc: songDocument });
-    expect(store.getState().allDocs.allSongDocs).toEqual([songDocument]);
+    expect(store.getState().allDocs.allSongDocs).toEqual([expect.objectContaining(songDocument)]);
     stop();
   });
 
