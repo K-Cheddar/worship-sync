@@ -1,10 +1,10 @@
 import type { DBItem, SongV2RootDocument, SongV2ArrangementDocument } from "../types";
-import { buildSongV2LibraryProjection, getSongV2RootDocId } from "./songPersistence";
+import { buildSongV2LibraryProjection, classifySongV2RootState, getSongV2RootDocId } from "./songPersistence";
 
 export type SongLibraryDiagnostic = {
   songId: string;
   rootId: string;
-  code: "incomplete-v2";
+  code: "incomplete-v2" | "read-failed";
   message: string;
 };
 
@@ -20,7 +20,11 @@ export function discoverSongLibrary(documents: unknown[]): {
   for (const input of documents) {
     if (!input || typeof input !== "object") continue;
     const doc = input as Record<string, unknown>;
-    if (doc.docType === "song-v2-root") roots.push(input as SongV2RootDocument);
+    if (doc.docType === "song-v2-root") {
+      if (classifySongV2RootState({ kind: "found", root: input }) === "v2") {
+        roots.push(input as SongV2RootDocument);
+      }
+    }
     else if (doc.docType === "song-v2-arrangement") {
       const arrangement = input as SongV2ArrangementDocument;
       const group = arrangements.get(arrangement.songId) ?? [];

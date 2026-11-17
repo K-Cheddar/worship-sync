@@ -1,8 +1,10 @@
 import { discoverSongLibrary } from "./songLibraryDiscovery";
 import {
-  updateSongLibraryDiagnostics,
-  markSongV2Activated,
-  updateAllSongDocs,
+  beginSongLibraryRefresh,
+  isCurrentSongLibraryRefresh,
+} from "./songLibraryRefreshGeneration";
+import {
+  replaceSongLibrarySnapshot,
   updateAllFreeFormDocs,
   updateAllTimerDocs,
   updateAllBibleDocs,
@@ -52,6 +54,8 @@ import {
 } from "../types";
 import { formatItemInfo } from "./formatItemInfo";
 import { formatSong, getFormattedSections } from "./overflow";
+
+export { invalidateSongLibraryRefresh as invalidateLibraryRefresh } from "./songLibraryRefreshGeneration";
 
 export {
   BIBLE_ITEM_CLEANUP_GRACE_PERIOD_MS,
@@ -698,47 +702,54 @@ async function appendCreditIdToIndex(
   throw new Error("Could not update the credits index.");
 }
 
-const libraryRefreshVersions = new WeakMap<PouchDB.Database, number>();
-export const invalidateLibraryRefresh = (database: PouchDB.Database) => {
-  const version = (libraryRefreshVersions.get(database) ?? 0) + 1;
-  libraryRefreshVersions.set(database, version);
-  return version;
-};
-
 export const updateAllDocs = async (
   dispatch: Function,
   db: PouchDB.Database | undefined = globalDb,
   shouldApply: () => boolean = () => true,
 ): Promise<boolean> => {
   if (!db) return false;
-  const refreshVersion = invalidateLibraryRefresh(db);
+  const refreshVersion = beginSongLibraryRefresh(db);
   try {
     // Discover IDs first so a library refresh never reads authored v2 slide bodies.
-    const manifest = await db.allDocs({ include_docs: false });
+    const manifest = await db.allDocs({ include_docs: false, update_seq: true });
+    if (!Array.isArray(manifest.rows)) throw new Error("The item library manifest is incomplete.");
     const keys = manifest.rows.map((row) => row.id ?? row.key ?? (row.doc as DBItem | undefined)?._id)
       .filter((id): id is string => Boolean(id) && !id.startsWith("song-v2:slide:"));
     const allDocs = (keys.length ? await db.allDocs({ keys, include_docs: true }) : { rows: [] }) as allDocsType;
-    const songLibrary = discoverSongLibrary(allDocs.rows.map((row) => row.doc));
+    const rows = allDocs.rows ?? [];
+    const rowsByKey = new Map(rows.map((row) => [
+      row.key ?? row.id ?? (row.doc as DBItem | undefined)?._id,
+      row,
+    ]));
+    if (rows.length !== keys.length || keys.some((key) => {
+      const row = rowsByKey.get(key);
+      return !row || (!("error" in row && row.error === "not_found") && !row.doc);
+    })) {
+      throw new Error("The item library document scan was incomplete.");
+    }
+    if (manifest.update_seq !== undefined) {
+      const changes = await db.changes({ since: manifest.update_seq, limit: 1, include_docs: false });
+      if (changes.results.length > 0) return false;
+    }
+    const songLibrary = discoverSongLibrary(rows.map((row) => row.doc));
     const { songs: allSongs, diagnostics, activatedSongIds } = songLibrary;
 
-    const allFreeFormDocs = allDocs.rows
+    const allFreeFormDocs = rows
       .filter((row) => (row.doc as any)?.type === "free")
       .map((row) => row.doc as DBItem);
 
-    const allTimers = allDocs.rows
+    const allTimers = rows
       .filter((row) => (row.doc as any)?.type === "timer")
       .map((row) => row.doc as DBItem);
 
-    const allBibles = allDocs.rows
+    const allBibles = rows
       .filter((row) => (row.doc as any)?.type === "bible")
       .map((row) => row.doc as DBItem);
 
-    if (!shouldApply() || libraryRefreshVersions.get(db) !== refreshVersion) return false;
+    if (!shouldApply() || !isCurrentSongLibraryRefresh(db, refreshVersion)) return false;
 
-    dispatch(updateSongLibraryDiagnostics(diagnostics));
-    dispatch(markSongV2Activated(activatedSongIds));
+    dispatch(replaceSongLibrarySnapshot({ songs: allSongs, diagnostics, activatedSongIds }));
     if (diagnostics.length) console.warn("Incomplete v2 song library projections", diagnostics);
-    dispatch(updateAllSongDocs(allSongs));
     dispatch(updateAllFreeFormDocs(allFreeFormDocs));
     dispatch(updateAllTimerDocs(allTimers));
     dispatch(updateAllBibleDocs(allBibles));

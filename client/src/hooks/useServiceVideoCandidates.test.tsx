@@ -103,9 +103,10 @@ const renderCandidates = (
       } as unknown as DBItemListDetails;
     }),
     allDocs: jest.fn(async ({ keys }: { keys: string[] }) => ({
-      rows: keys.map((key) => ({
-        doc: currentDocs.find((doc) => doc._id === key),
-      })),
+      rows: keys.map((key) => {
+        const doc = currentDocs.find((candidate) => candidate._id === key);
+        return doc ? { key, doc } : { key, error: "not_found" };
+      }),
     })),
   };
   const updater = new EventTarget();

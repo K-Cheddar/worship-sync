@@ -1,6 +1,6 @@
 import type { DBItem } from "../types";
 import { discoverSongLibrary } from "./songLibraryDiscovery";
-import { buildSongV2LibraryProjection, loadSongV2LibraryProjection, serializeSongToV2Documents } from "./songPersistence";
+import { buildSongV2LibraryProjection, classifySongV2RootState, loadSongV2LibraryProjection, serializeSongToV2Documents } from "./songPersistence";
 import { filterAndSortSongsForSearchWithEnrichment } from "./songSearchUtils";
 import { getSongV2DocumentIdentity, getSongV2RootDocId } from "./songV2Codec";
 import * as monitor from "./monitorSlideFormatter";
@@ -16,6 +16,14 @@ const fixture = () => serializeSongToV2Documents({
 
 describe("song library discovery", () => {
   afterEach(() => jest.restoreAllMocks());
+
+  it("classifies physical absence separately from logical deletion and read failure", () => {
+    const docs = fixture();
+    expect(classifySongV2RootState({ kind: "missing" })).toBe("legacy");
+    expect(classifySongV2RootState({ kind: "deleted" })).toBe("legacy");
+    expect(classifySongV2RootState({ kind: "found", root: { ...docs.root, deletedAt: "2026-11-16" } })).toBe("v2");
+    expect(classifySongV2RootState({ kind: "read-failed" })).toBe("unknown");
+  });
 
   it("leaves v1 documents unchanged", () => {
     const song = { _id: "legacy", type: "song", name: "Legacy" } as DBItem;
@@ -62,6 +70,18 @@ describe("song library discovery", () => {
     const v1 = { _id: docs.root.songId, type: "song", name: "Stale" } as DBItem;
     docs.root.deletedAt = "2026-10-07T00:00:00.000Z";
     expect(discoverSongLibrary([v1, docs.root, ...docs.arrangements])).toEqual({ songs: [], diagnostics: [], activatedSongIds: [docs.root.songId] });
+  });
+
+  it("restores legacy authority when a physical root tombstone is present", () => {
+    const docs = fixture();
+    const legacy = { _id: docs.root.songId, type: "song", name: "Restored legacy" } as DBItem;
+    const tombstone = { ...docs.root, _deleted: true };
+
+    expect(discoverSongLibrary([tombstone, legacy, ...docs.arrangements])).toEqual({
+      songs: [legacy],
+      diagnostics: [],
+      activatedSongIds: [],
+    });
   });
 
   it.each([false, true])("gives v2 authority independent of scan order (%s)", (reverse) => {
