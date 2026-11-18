@@ -8675,11 +8675,15 @@ for (const purpose of ["general_intake", "team_availability"]) {
     assert.ok(repairedRecipient.respondedAt);
     member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
     assert.equal(member.serviceAvailability.newer, "available");
-    await submit({ occurrenceAvailability: {} });
+    const currentAvailabilityRevision = {
+      [occurrenceId]: 1,
+      [secondId]: 1,
+    };
+    await submit({ occurrenceAvailability: {}, availabilityRevision: currentAvailabilityRevision });
     member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
     assert.deepEqual(member.serviceAvailability, { outside: "unavailable", newer: "available" });
     await setDoc(COLLECTIONS.teamRosterMembers, memberId, { serviceAvailability: { ...member.serviceAvailability, [occurrenceId]: "unavailable" } }, { merge: true });
-    await submit({ occurrenceAvailability: {} });
+    await submit({ occurrenceAvailability: {}, availabilityRevision: currentAvailabilityRevision });
     member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
     assert.equal(member.serviceAvailability[occurrenceId], "unavailable");
     assert.equal((await queryDocs(COLLECTIONS.teamIntakeSubmissions, [{ field: "formId", value: formId }])).length, 1);
@@ -15597,7 +15601,7 @@ test("individual intake recipients personalize and automatically apply one audit
     ).respondedAt,
   );
 
-  const submit = async (availability) => {
+  const submit = async (availability, availabilityRevision = preview.payload.recipient.availabilityRevision) => {
     const response = createRes();
     await authHandlers.submitTeamIntake(
       {
@@ -15612,6 +15616,7 @@ test("individual intake recipients personalize and automatically apply one audit
           positionIds: [positionIds.Vocal],
           occurrenceAvailability:
             availability === undefined ? {} : { [occurrenceId]: availability },
+          availabilityRevision,
           blockoutRanges: [],
           notes: "",
         },
@@ -15652,9 +15657,21 @@ test("individual intake recipients personalize and automatically apply one audit
   assert.equal(firstRecipient.submissionId, firstSubmissionId);
   assert.ok(firstRecipient.respondedAt);
 
+  const refreshedPreview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token, recipientOnly: "true" },
+    },
+    refreshedPreview,
+  );
+  assert.equal(refreshedPreview.statusCode, 200, JSON.stringify(refreshedPreview.payload));
+  const currentAvailabilityRevision = refreshedPreview.payload.recipient.availabilityRevision;
   const concurrentRepeats = await Promise.all([
-    submit("available"),
-    submit("available"),
+    submit("available", currentAvailabilityRevision),
+    submit("available", currentAvailabilityRevision),
   ]);
   assert.equal(concurrentRepeats[0].statusCode, 200);
   assert.equal(concurrentRepeats[1].statusCode, 200);
@@ -15675,7 +15692,18 @@ test("individual intake recipients personalize and automatically apply one audit
     "available",
   );
 
-  const cleared = await submit();
+  const clearPreview = createRes();
+  await authHandlers.getTeamIntakePreview(
+    {
+      params: {},
+      headers: {},
+      session: createSession(),
+      query: { token, recipientOnly: "true" },
+    },
+    clearPreview,
+  );
+  assert.equal(clearPreview.statusCode, 200, JSON.stringify(clearPreview.payload));
+  const cleared = await submit(undefined, clearPreview.payload.recipient.availabilityRevision);
   assert.equal(cleared.statusCode, 200);
   const afterCleared = await callHandler(authHandlers.getTeamsBootstrap, {
     context,
@@ -23957,6 +23985,10 @@ test("my availability uses current recipient scope without disclosing tokens or 
   assert.equal(read.statusCode, 200);
   assert.equal(read.payload.requests.length, 1);
   assert.equal(read.payload.requests[0].recipientId, recipientId);
+  assert.equal(read.payload.requests[0].editable, true);
+  assert.deepEqual(read.payload.requests[0].availability, {});
+  assert.deepEqual(read.payload.requests[0].unansweredOccurrenceIds, [assigned.occurrenceId]);
+  assert.deepEqual(read.payload.requests[0].availabilityRevision, { [assigned.occurrenceId]: 0 });
   assert.doesNotMatch(JSON.stringify(read.payload), /private-hash|private-ciphertext|someone-else/);
   const saved = await callHandler(authHandlers.submitMyVolunteerAvailability, {
     context, body: { recipientId, occurrenceAvailability: { [assigned.occurrenceId]: "unavailable", forbidden: "available" },
@@ -23966,6 +23998,44 @@ test("my availability uses current recipient scope without disclosing tokens or 
   const member = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
   assert.deepEqual(member.serviceAvailability, { [assigned.occurrenceId]: "unavailable" });
   assert.deepEqual(member.positionIds, [assigned.media.positionIds.Camera]);
+  assert.equal(member.serviceAvailabilityRevisions[assigned.occurrenceId], 1);
+  const retry = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context, body: { recipientId, occurrenceAvailability: { [assigned.occurrenceId]: "unavailable", forbidden: "available" } },
+  });
+  assert.equal(retry.statusCode, 200, JSON.stringify(retry.payload));
+  assert.equal(retry.payload.submissionId, saved.payload.submissionId);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId))
+    .serviceAvailabilityRevisions[assigned.occurrenceId], 1);
+  const deliberateEdit = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context, body: { recipientId, occurrenceAvailability: { [assigned.occurrenceId]: "available" }, availabilityRevision: { [assigned.occurrenceId]: 1 } },
+  });
+  assert.equal(deliberateEdit.statusCode, 200, JSON.stringify(deliberateEdit.payload));
+  assert.equal(deliberateEdit.payload.submissionId, saved.payload.submissionId);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId))
+    .serviceAvailability[assigned.occurrenceId], "available");
+  const stale = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context, body: { recipientId, occurrenceAvailability: {}, availabilityRevision: { [assigned.occurrenceId]: 0 } },
+  });
+  assert.equal(stale.statusCode, 409, JSON.stringify(stale.payload));
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId))
+    .serviceAvailability[assigned.occurrenceId], "available");
+  const latest = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.deepEqual(latest.payload.requests[0].availabilityRevision, { [assigned.occurrenceId]: 2 });
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, { responseDeadline: "2000-01-01" }, { merge: true });
+  const expiredRead = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.equal(expiredRead.payload.requests[0].editable, false);
+  const expiredWrite = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context, body: { recipientId, occurrenceAvailability: {}, availabilityRevision: { [assigned.occurrenceId]: 2 } },
+  });
+  assert.equal(expiredWrite.statusCode, 409);
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, { responseDeadline: "2099-11-01", active: false }, { merge: true });
+  const closedRead = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.equal(closedRead.payload.requests[0].editable, false);
+  const closedWrite = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context, body: { recipientId, occurrenceAvailability: {}, availabilityRevision: { [assigned.occurrenceId]: 2 } },
+  });
+  assert.equal(closedWrite.statusCode, 400);
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, { active: true }, { merge: true });
   const other = await callHandler(authHandlers.submitMyVolunteerAvailability, {
     context, body: { recipientId: `${recipientId}_other`, occurrenceAvailability: {} },
   });
@@ -23976,6 +24046,117 @@ test("my availability uses current recipient scope without disclosing tokens or 
   });
   assert.equal(revoked.statusCode, 404);
   assert.deepEqual((await callHandler(authHandlers.getMyVolunteerAvailability, { context })).payload.requests, []);
+});
+
+test("availability revisions survive unrelated member edits and fence concurrent administrator answers", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability_revision_writers");
+  const assigned = await seedAssignedSchedule(context, "volunteer_availability_revision_writers");
+  const formId = "availability_revision_writer_form";
+  const recipientId = "availability_revision_writer_recipient";
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, { memberIds: [assigned.memberId] }, { merge: true });
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId, churchId: context.churchId, name: "Revision request", purpose: "team_availability",
+    teamIds: [assigned.media.teamId], active: true, enabledFields: ["availability"],
+    startDate: "2099-11-01", endDate: "2099-11-30", responseDeadline: "2099-11-30",
+    availabilityOccurrences: [{ occurrenceId: assigned.occurrenceId, name: "Sunday", startsAt: "2099-11-08T14:00:00.000Z" }],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+    recipientId, formId, memberId: assigned.memberId, churchId: context.churchId, revokedAt: null,
+  });
+
+  const saveMember = async (current, fields) => callHandler(authHandlers.updateTeamRosterMember, {
+    context,
+    params: { memberId: assigned.memberId },
+    body: {
+      expectedUpdatedAt: current.updatedAt || "",
+      firstName: current.firstName,
+      lastName: current.lastName,
+      email: current.email || "",
+      phoneNumber: current.phoneNumber || "",
+      title: current.title || "",
+      ...(current.birthDate ? { birthDate: current.birthDate } : {}),
+      isMinor: current.isMinor,
+      servingFrequency: current.servingFrequency,
+      recurringAvailability: current.recurringAvailability,
+      positionIds: current.positionIds || [],
+      desiredPositionIds: current.desiredPositionIds || [],
+      blockoutDates: current.blockoutDates || [],
+      notes: current.notes || "",
+      serviceAvailability: current.serviceAvailability || {},
+      ...fields,
+    },
+  });
+
+  let member = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  const initial = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.deepEqual(initial.payload.requests[0].availabilityRevision, { [assigned.occurrenceId]: 0 });
+  const phoneEdit = await saveMember(member, { phoneNumber: "+12125550199" });
+  assert.equal(phoneEdit.statusCode, 200, JSON.stringify(phoneEdit.payload));
+  const volunteerSave = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context,
+    body: {
+      recipientId,
+      occurrenceAvailability: { [assigned.occurrenceId]: "unavailable" },
+      availabilityRevision: { [assigned.occurrenceId]: 0 },
+    },
+  });
+  assert.equal(volunteerSave.statusCode, 200, JSON.stringify(volunteerSave.payload));
+  member = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  assert.equal(member.phoneNumber, "+12125550199");
+  assert.equal(member.serviceAvailability[assigned.occurrenceId], "unavailable");
+
+  const adminEdit = await saveMember(member, {
+    serviceAvailability: { [assigned.occurrenceId]: "available" },
+  });
+  assert.equal(adminEdit.statusCode, 200, JSON.stringify(adminEdit.payload));
+  const staleVolunteerSave = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context,
+    body: {
+      recipientId,
+      occurrenceAvailability: { [assigned.occurrenceId]: "unavailable" },
+      availabilityRevision: { [assigned.occurrenceId]: 1 },
+    },
+  });
+  assert.equal(staleVolunteerSave.statusCode, 409, JSON.stringify(staleVolunteerSave.payload));
+  member = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  assert.equal(member.serviceAvailability[assigned.occurrenceId], "available");
+  assert.equal(member.serviceAvailabilityRevisions[assigned.occurrenceId], 2);
+  assert.equal(member.phoneNumber, "+12125550199");
+});
+
+test("omitting the availability map through the volunteer API leaves existing answers and revisions intact", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability_omitted_map");
+  const assigned = await seedAssignedSchedule(context, "volunteer_availability_omitted_map");
+  const formId = "availability_omitted_map_form";
+  const recipientId = "availability_omitted_map_recipient";
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, { memberIds: [assigned.memberId] }, { merge: true });
+  await setDoc(COLLECTIONS.teamRosterMembers, assigned.memberId, {
+    serviceAvailability: { [assigned.occurrenceId]: "unavailable", outside: "available" },
+    serviceAvailabilityRevisions: { [assigned.occurrenceId]: 5 },
+  }, { merge: true });
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId, churchId: context.churchId, name: "Revision request", purpose: "team_availability",
+    teamIds: [assigned.media.teamId], active: true, enabledFields: ["availability"],
+    startDate: "2099-11-01", endDate: "2099-11-30", responseDeadline: "2099-11-30",
+    availabilityOccurrences: [{ occurrenceId: assigned.occurrenceId, name: "Sunday", startsAt: "2099-11-08T14:00:00.000Z" }],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+    recipientId, formId, memberId: assigned.memberId, churchId: context.churchId, revokedAt: null,
+  });
+
+  const response = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context,
+    body: { recipientId },
+  });
+  assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  assert.deepEqual(member.serviceAvailability, {
+    [assigned.occurrenceId]: "unavailable",
+    outside: "available",
+  });
+  assert.deepEqual(member.serviceAvailabilityRevisions, { [assigned.occurrenceId]: 5 });
 });
 
 test("quick member creation preserves equipment settings, roster membership and equipment assignments on reload", async (t) => {

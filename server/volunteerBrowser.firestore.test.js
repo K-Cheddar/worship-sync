@@ -159,6 +159,28 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
       headers: { "x-volunteer-csrf": desktopSession.csrfToken },
     })).json();
     assert.doesNotMatch(JSON.stringify(desktopData), /PRIVATE-|recipientToken|phoneNumber|email/);
+    const portalAvailability = await (await adminContext.request.get(`${base}/api/volunteer/availability`, {
+      headers: { "x-volunteer-csrf": desktopSession.csrfToken },
+    })).json();
+    assert.equal(portalAvailability.requests.length, 1);
+    assert.deepEqual(portalAvailability.requests[0].availability, {});
+    assert.deepEqual(portalAvailability.requests[0].unansweredOccurrenceIds, [
+      occurrenceId,
+      "service@2099-12-01",
+    ]);
+    assert.deepEqual(portalAvailability.requests[0].availabilityRevision, {
+      [occurrenceId]: 0,
+      "service@2099-12-01": 0,
+    });
+    const humanHeaders = { authorization: `Bearer ${admin.humanApiToken}` };
+    const humanSession = await (await adminContext.request.get(`${base}/api/auth/me`, {
+      headers: humanHeaders,
+    })).json();
+    const humanAvailability = await (await adminContext.request.get(
+      `${base}/api/churches/${churchId}/my-availability`,
+      { headers: { ...humanHeaders, "x-csrf-token": humanSession.csrfToken } },
+    )).json();
+    assert.deepEqual(humanAvailability.requests, portalAvailability.requests);
     await desktopVolunteer.getByRole("button", { name: /Open Sunday Gathering/i }).click();
     await desktopVolunteer.getByRole("tab", { name: /Service plan/i }).click();
     await desktopVolunteer.getByText("Welcome everyone", { exact: true }).waitFor();
@@ -332,6 +354,28 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     const availabilitySubmission = (await db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId).get()).data();
     assert.deepEqual(availabilitySubmission.occurrenceAvailability, { "historical@2099-10-01": "available" });
     assert.deepEqual(availabilitySubmission.answers, { notes: "Keep this answer" });
+    const portalSave = await adminContext.request.post(`${base}/api/volunteer/availability`, {
+      headers: { "x-volunteer-csrf": desktopSession.csrfToken },
+      data: {
+        recipientId,
+        occurrenceAvailability: { [occurrenceId]: "unavailable" },
+        availabilityRevision: portalAvailability.requests[0].availabilityRevision,
+      },
+    });
+    assert.equal(portalSave.status(), 200, await portalSave.text());
+    const savedPersonalAvailability = await portalSave.json();
+    assert.equal(savedPersonalAvailability.success, true);
+    const humanAvailabilityAfterPortalSave = await (await adminContext.request.get(
+      `${base}/api/churches/${churchId}/my-availability`,
+      { headers: { ...humanHeaders, "x-csrf-token": humanSession.csrfToken } },
+    )).json();
+    assert.deepEqual(humanAvailabilityAfterPortalSave.requests[0].availability, {
+      [occurrenceId]: "unavailable",
+    });
+    assert.deepEqual(humanAvailabilityAfterPortalSave.requests[0].availabilityRevision, {
+      [occurrenceId]: 1,
+      "service@2099-12-01": 1,
+    });
     const signedInPage = await adminContext.newPage();
     await signedInPage.goto(`${base}/#/my-schedule`);
     await signedInPage.getByRole("button", { name: /Open Sunday Gathering/i }).waitFor();

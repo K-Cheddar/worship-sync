@@ -1,4 +1,4 @@
-import type { MyScheduleOperations, PersonalScheduleAccess } from "../pages/myScheduleOperations";
+import type { MyScheduleOperations, PersonalScheduleAccess, VolunteerAvailabilityRequest } from "../pages/myScheduleOperations";
 import { clearVolunteerIngress, readVolunteerIngress } from "../public/volunteerIngress";
 
 export type VolunteerSession = { csrfToken: string; churchId: string; memberId: string; expiresAt: number };
@@ -112,6 +112,26 @@ export const personalScheduleAccess = (session: VolunteerSession): PersonalSched
   };
   return { churchId: session.churchId, memberId: session.memberId, operations };
 };
+
+export const getVolunteerAvailability = (session: VolunteerSession) =>
+  volunteerRequest<{ success: boolean; requests: VolunteerAvailabilityRequest[] }>(
+    "availability",
+    undefined,
+    session.csrfToken,
+  );
+
+export const submitVolunteerAvailability = (
+  session: VolunteerSession,
+  request: Pick<VolunteerAvailabilityRequest, "recipientId" | "availability" | "availabilityRevision">,
+) => volunteerRequest<{ success: boolean; submissionId: string }>(
+  "availability",
+  {
+    recipientId: request.recipientId,
+    occurrenceAvailability: request.availability,
+    availabilityRevision: request.availabilityRevision,
+  },
+  session.csrfToken,
+);
 
 export const volunteerRequestKey = () => Array.from(crypto.getRandomValues(new Uint8Array(24)))
   .map((value) => value.toString(16).padStart(2, "0")).join("");

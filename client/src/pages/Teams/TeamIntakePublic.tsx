@@ -186,7 +186,12 @@ const TeamIntakePublic = () => {
     setFieldErrors({});
     setSubmitting(true);
     try {
-      await submitTeamIntake(token, payload, { personalized: isPersonalized });
+      await submitTeamIntake(token, {
+        ...payload,
+        ...(preview?.recipient?.availabilityRevision
+          ? { availabilityRevision: preview.recipient.availabilityRevision }
+          : {}),
+      }, { personalized: isPersonalized });
       setSubmitted(true);
     } catch (submitError) {
       showApiErrorToast(showToast, submitError, "Could not submit this form.");

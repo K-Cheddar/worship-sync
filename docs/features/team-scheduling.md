@@ -89,6 +89,15 @@ A schedule follows **Virtual → Draft ↔ Published**.
 
 **Approval source:** Current product-owner request, 2026-10-15. This Forms behavior adds Team-level availability coverage and filtering without changing scheduling, form-link, response, SMS, or authorization contracts.
 
+### Availability answers and Auto-fill
+
+- The canonical date-specific answer is `teamRosterMembers.serviceAvailability`, keyed by logical service occurrence. Recurring preferences and time-off dates remain separate inputs to scheduling.
+- An availability request is optional. A missing or unanswered date is unknown and does not exclude a volunteer from Auto-fill. Only an explicit `unavailable` answer excludes that volunteer under the existing Auto-fill rules.
+- Saving an availability response changes only the occurrence scope of that form. Per-occurrence server revisions prevent an older response from silently replacing a newer answer from another device, form or administrator. Disjoint occurrence edits and unrelated roster fields remain intact.
+- The revision check does not change assignment ranking, eligibility, blockout, qualification or cross-Team conflict rules. It does not require a prior request before schedule creation.
+
+**Approval source:** Current product-owner Phase 2B-1 request, 2026-11-16.
+
 ### Volunteer account identity and church membership
 
 - Signed-in My Schedule resolves identity only from the authenticated account's roster link in the requested church. Names and email addresses are never used to find a roster record.

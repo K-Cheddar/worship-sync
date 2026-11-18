@@ -54,14 +54,16 @@ const createFirestoreMock = (seed, { afterTransactionRead } = {}) => {
       doc,
       where(field, operator, value) {
         const filters = [{ field, operator, value }];
-        let limit = Infinity;
         const query = {
+          collection: name,
+          filters,
+          resultLimit: Infinity,
           where(nextField, nextOperator, nextValue) {
             filters.push({ field: nextField, operator: nextOperator, value: nextValue });
             return query;
           },
           limit(count) {
-            limit = count;
+            query.resultLimit = count;
             return query;
           },
           async get() {
@@ -69,7 +71,7 @@ const createFirestoreMock = (seed, { afterTransactionRead } = {}) => {
               .filter(([, value]) => filters.every((filter) =>
                 filter.operator === "==" && value[filter.field] === filter.value,
               ))
-              .slice(0, limit)
+              .slice(0, query.resultLimit)
               .map(([id, value]) => ({
                 id,
                 ref: doc(id),
@@ -95,6 +97,30 @@ const createFirestoreMock = (seed, { afterTransactionRead } = {}) => {
             async get(target) {
               if (typeof target.get !== "function") {
                 throw new Error("Unsupported Firestore transaction read");
+              }
+              if (target.collection && Array.isArray(target.filters)) {
+                const store = stores.get(target.collection) || new Map();
+                const docs = [...store.entries()]
+                  .filter(([, value]) => target.filters.every((filter) =>
+                    filter.operator === "==" && value[filter.field] === filter.value,
+                  ))
+                  .slice(0, target.resultLimit)
+                  .map(([id, value]) => {
+                    reads.push({ store, id, value: structuredClone(value) });
+                    const docRef = collection(target.collection).doc(id);
+                    const snapshot = {
+                      id,
+                      ref: docRef,
+                      data: () => structuredClone(value),
+                    };
+                    afterTransactionRead?.({
+                      collection: target.collection,
+                      id,
+                      store,
+                    });
+                    return snapshot;
+                  });
+                return { docs };
               }
               if (!target.collection || !target.id) return target.get();
               const store = stores.get(target.collection) || new Map();
@@ -383,6 +409,147 @@ test("availability transaction preserves concurrent outside dates and does not r
   assert.equal((await queryDocs(COLLECTIONS.teamIntakeSubmissions, [{ field: "formId", value: fixture.formId }])).length, 1);
 });
 
+test("recipient availability edits advance scoped revisions, clear answers, and reject stale retries", async (t) => {
+  const fixture = makeAvailabilityTransactionSeed();
+  setServerFirestoreForTests(createFirestoreMock(fixture.stores));
+  t.after(() => setServerFirestoreForTests(null));
+  const request = (availability, revision) => submitAvailabilityToken(fixture.token, fixture.occurrenceId, {
+    occurrenceAvailability: availability,
+    availabilityRevision: { [fixture.occurrenceId]: revision },
+  });
+
+  const first = await request({ [fixture.occurrenceId]: "unavailable" }, 0);
+  assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+  const retry = await request({ [fixture.occurrenceId]: "unavailable" }, 0);
+  assert.equal(retry.statusCode, 200, JSON.stringify(retry.payload));
+  assert.equal(retry.payload.submissionId, first.payload.submissionId);
+  let member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.equal(member.serviceAvailability[fixture.occurrenceId], "unavailable");
+  assert.equal(member.serviceAvailabilityRevisions[fixture.occurrenceId], 1);
+
+  const deliberateEdit = await request({ [fixture.occurrenceId]: "available" }, 1);
+  assert.equal(deliberateEdit.statusCode, 200, JSON.stringify(deliberateEdit.payload));
+  assert.equal(deliberateEdit.payload.submissionId, first.payload.submissionId);
+  const stale = await request({ [fixture.occurrenceId]: "unavailable" }, 0);
+  assert.equal(stale.statusCode, 409, JSON.stringify(stale.payload));
+  assert.match(stale.payload.errorMessage, /availability changed.*reload/i);
+  member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.equal(member.serviceAvailability[fixture.occurrenceId], "available");
+  assert.equal(member.serviceAvailabilityRevisions[fixture.occurrenceId], 2);
+
+  const cleared = await request({}, 2);
+  assert.equal(cleared.statusCode, 200, JSON.stringify(cleared.payload));
+  member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.equal(member.serviceAvailability[fixture.occurrenceId], undefined);
+  assert.equal(member.serviceAvailabilityRevisions[fixture.occurrenceId], 3);
+  assert.equal((await queryDocs(COLLECTIONS.teamIntakeSubmissions, [
+    { field: "formId", value: fixture.formId },
+  ])).length, 1);
+});
+
+test("overlapping forms reject stale answers while disjoint scopes both commit", async (t) => {
+  const overlap = makeAvailabilityTransactionSeed();
+  const overlapToken = createTeamIntakeRecipientToken();
+  overlap.stores[COLLECTIONS.teamIntakeForms].other_form = {
+    ...overlap.stores[COLLECTIONS.teamIntakeForms][overlap.formId],
+    formId: "other_form",
+    name: "Overlapping request",
+  };
+  overlap.stores[COLLECTIONS.teamIntakeRecipients].other_recipient = {
+    recipientId: "other_recipient", formId: "other_form", churchId: overlap.churchId,
+    memberId: overlap.memberId, recipientTokenHash: hashTeamIntakeRecipientToken(overlapToken),
+  };
+  setServerFirestoreForTests(createFirestoreMock(overlap.stores));
+  t.after(() => setServerFirestoreForTests(null));
+  const first = await submitAvailabilityToken(overlap.token, overlap.occurrenceId, {
+    occurrenceAvailability: { [overlap.occurrenceId]: "unavailable" },
+    availabilityRevision: { [overlap.occurrenceId]: 0 },
+  });
+  assert.equal(first.statusCode, 200, JSON.stringify(first.payload));
+  const second = await submitAvailabilityToken(overlapToken, overlap.occurrenceId, {
+    occurrenceAvailability: { [overlap.occurrenceId]: "available" },
+    availabilityRevision: { [overlap.occurrenceId]: 0 },
+  });
+  assert.equal(second.statusCode, 409, JSON.stringify(second.payload));
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, overlap.memberId))
+    .serviceAvailability[overlap.occurrenceId], "unavailable");
+
+  const disjoint = makeAvailabilityTransactionSeed();
+  const otherOccurrenceId = "other-service@2099-12-12T10:00:00.000Z";
+  const otherToken = createTeamIntakeRecipientToken();
+  disjoint.stores[COLLECTIONS.teamIntakeForms].other_form = {
+    ...disjoint.stores[COLLECTIONS.teamIntakeForms][disjoint.formId],
+    formId: "other_form", name: "Disjoint request",
+    availabilityOccurrences: [{ occurrenceId: otherOccurrenceId, name: "Other service" }],
+  };
+  disjoint.stores[COLLECTIONS.teamIntakeRecipients].other_recipient = {
+    recipientId: "other_recipient", formId: "other_form", churchId: disjoint.churchId,
+    memberId: disjoint.memberId, recipientTokenHash: hashTeamIntakeRecipientToken(otherToken),
+  };
+  setServerFirestoreForTests(createFirestoreMock(disjoint.stores));
+  const firstDisjoint = await submitAvailabilityToken(disjoint.token, disjoint.occurrenceId, {
+    occurrenceAvailability: { [disjoint.occurrenceId]: "unavailable" },
+    availabilityRevision: { [disjoint.occurrenceId]: 0 },
+  });
+  const secondDisjoint = await submitAvailabilityToken(otherToken, otherOccurrenceId, {
+    occurrenceAvailability: { [otherOccurrenceId]: "available" },
+    availabilityRevision: { [otherOccurrenceId]: 0 },
+  });
+  assert.equal(firstDisjoint.statusCode, 200, JSON.stringify(firstDisjoint.payload));
+  assert.equal(secondDisjoint.statusCode, 200, JSON.stringify(secondDisjoint.payload));
+  assert.deepEqual((await getDoc(COLLECTIONS.teamRosterMembers, disjoint.memberId)).serviceAvailability, {
+    "older-occurrence": "unavailable",
+    [disjoint.occurrenceId]: "unavailable",
+    [otherOccurrenceId]: "available",
+  });
+});
+
+test("invalid availability values do not become an available answer", async (t) => {
+  const fixture = makeAvailabilityTransactionSeed();
+  setServerFirestoreForTests(createFirestoreMock(fixture.stores));
+  t.after(() => setServerFirestoreForTests(null));
+  const response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, {
+    occurrenceAvailability: { [fixture.occurrenceId]: "maybe" },
+    availabilityRevision: { [fixture.occurrenceId]: 0 },
+  });
+  assert.equal(response.statusCode, 400, JSON.stringify(response.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.equal(member.serviceAvailability[fixture.occurrenceId], undefined);
+  assert.equal(member.serviceAvailabilityRevisions, undefined);
+});
+
+test("a transaction retry cannot move a public recipient write to a different member", async (t) => {
+  const fixture = makeAvailabilityTransactionSeed();
+  const otherMemberId = "transaction_retry_other_member";
+  let recipientChanged = false;
+  const db = createFirestoreMock(fixture.stores, {
+    afterTransactionRead: ({ collection, id, store }) => {
+      if (recipientChanged || collection !== COLLECTIONS.teamIntakeRecipients || id !== fixture.recipientId) return;
+      recipientChanged = true;
+      store.set(id, { ...store.get(id), memberId: otherMemberId });
+    },
+  });
+  await db.collection(COLLECTIONS.teamRosterMembers).doc(otherMemberId).set({
+    memberId: otherMemberId, churchId: fixture.churchId, serviceAvailability: {},
+  });
+  setServerFirestoreForTests(db);
+  t.after(() => setServerFirestoreForTests(null));
+
+  const response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, {
+    occurrenceAvailability: { [fixture.occurrenceId]: "unavailable" },
+    availabilityRevision: { [fixture.occurrenceId]: 0 },
+  });
+  assert.equal(recipientChanged, true, JSON.stringify(response.payload));
+  assert.equal(response.statusCode, 409, JSON.stringify(response.payload));
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId))
+    .serviceAvailability[fixture.occurrenceId], undefined);
+  assert.deepEqual((await getDoc(COLLECTIONS.teamRosterMembers, otherMemberId)).serviceAvailability, {});
+  assert.equal((await getDoc(COLLECTIONS.teamIntakeRecipients, fixture.recipientId)).respondedAt, undefined);
+  assert.deepEqual(await queryDocs(COLLECTIONS.teamIntakeSubmissions, [
+    { field: "formId", value: fixture.formId },
+  ]), []);
+});
+
 for (const purpose of ["general_intake", "team_availability"]) {
   test(`${purpose} transaction applies explicit selections and clearing while retaining omitted response data`, async (t) => {
     const fixture = makeAvailabilityTransactionSeed();
@@ -412,7 +579,14 @@ for (const purpose of ["general_intake", "team_availability"]) {
     assert.equal(member.serviceAvailability[fixture.occurrenceId], "unavailable");
     const submission = await getDoc(COLLECTIONS.teamIntakeSubmissions, first.payload.submissionId);
     assert.deepEqual(submission.occurrenceAvailability, { [fixture.occurrenceId]: "unavailable" });
-    const cleared = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, { positionIds: [], occurrenceAvailability: {} });
+    const cleared = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, {
+      positionIds: [],
+      occurrenceAvailability: {},
+      availabilityRevision: {
+        [fixture.occurrenceId]: member.serviceAvailabilityRevisions?.[fixture.occurrenceId] || 0,
+        "second-in-scope": member.serviceAvailabilityRevisions?.["second-in-scope"] || 0,
+      },
+    });
     assert.equal(cleared.statusCode, 200, JSON.stringify(cleared.payload));
     member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
     assert.deepEqual(member.desiredPositionIds, purpose === "general_intake" ? [] : ["old"]);
@@ -626,16 +800,38 @@ test("Firestore emulator intake replaces only explicit form-scoped availability"
     await db.collection(COLLECTIONS.churches).doc(fixture.churchId).delete();
     await deleteApp(app);
   });
-  let response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId);
+  let response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, {
+    occurrenceAvailability: { [fixture.occurrenceId]: "available" },
+    availabilityRevision: { [fixture.occurrenceId]: 0, [secondId]: 0 },
+  });
   assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
   let member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
   assert.deepEqual(member.serviceAvailability, { [fixture.occurrenceId]: "available", outside: "available" });
+  assert.deepEqual(member.serviceAvailabilityRevisions, {
+    [fixture.occurrenceId]: 1, [secondId]: 1,
+  });
   response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, { notes: "Omitted availability" });
   assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
   member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
   assert.deepEqual(member.serviceAvailability, { [fixture.occurrenceId]: "available", outside: "available" });
-  response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, { occurrenceAvailability: {} });
+  assert.deepEqual(member.serviceAvailabilityRevisions, {
+    [fixture.occurrenceId]: 1, [secondId]: 1,
+  });
+  response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, {
+    occurrenceAvailability: { [fixture.occurrenceId]: "unavailable" },
+    availabilityRevision: { [fixture.occurrenceId]: 0, [secondId]: 0 },
+  });
+  assert.equal(response.statusCode, 409, JSON.stringify(response.payload));
+  member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.equal(member.serviceAvailability[fixture.occurrenceId], "available");
+  response = await submitAvailabilityToken(fixture.token, fixture.occurrenceId, {
+    occurrenceAvailability: {},
+    availabilityRevision: { [fixture.occurrenceId]: 1, [secondId]: 1 },
+  });
   assert.equal(response.statusCode, 200, JSON.stringify(response.payload));
   member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
   assert.deepEqual(member.serviceAvailability, { outside: "available" });
+  assert.deepEqual(member.serviceAvailabilityRevisions, {
+    [fixture.occurrenceId]: 2, [secondId]: 2,
+  });
 });

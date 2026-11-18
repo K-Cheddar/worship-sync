@@ -291,6 +291,8 @@ export type TeamRosterMember = {
    * constraint: the member cannot be assigned to that occurrence.
    */
   serviceAvailability?: Record<string, "available" | "unavailable">;
+  /** Server-owned per-occurrence preconditions used by availability response writes. */
+  serviceAvailabilityRevisions?: Record<string, number>;
   teamMemberships?: Record<string, TeamMemberMembership>;
   qualifications?: TeamMemberQualification[];
   blockoutDates: TeamBlockoutDateRange[];
@@ -1049,6 +1051,8 @@ export type TeamIntakePreview = {
   recipient?: {
     firstName: string;
     missingFields?: TeamIntakeMemberDetailField[];
+    /** Hidden save precondition for this recipient link's occurrence scope. */
+    availabilityRevision?: Record<string, number>;
   };
   /** Allowlisted position fields only — the public link never ships internal columns. */
   positions: Pick<TeamPosition, "positionId" | "teamId" | "name" | "icon">[];

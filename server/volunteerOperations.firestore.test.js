@@ -144,10 +144,15 @@ test("Firestore human availability operation shares the recipient transaction an
     await authHandlers.getMyVolunteerAvailability(request(headers), read);
     assert.equal(read.statusCode, 200);
     assert.equal(read.payload.requests.length, 1);
+    assert.equal(read.payload.requests[0].editable, true);
+    assert.deepEqual(read.payload.requests[0].availability, {});
+    assert.deepEqual(read.payload.requests[0].unansweredOccurrenceIds, ["own"]);
+    assert.deepEqual(read.payload.requests[0].availabilityRevision, { own: 0 });
     assert.doesNotMatch(JSON.stringify(read.payload), /private|elsewhere/);
     const saved = response();
     await authHandlers.submitMyVolunteerAvailability(request(headers, {
       recipientId, occurrenceAvailability: { own: "unavailable", outside: "available" },
+      availabilityRevision: { own: 0 },
     }), saved);
     assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
     submissionId = saved.payload.submissionId;
@@ -155,6 +160,13 @@ test("Firestore human availability operation shares the recipient transaction an
     assert.deepEqual(member.serviceAvailability, { elsewhere: "unavailable", own: "unavailable" });
     assert.deepEqual(member.positionIds, ["position"]);
     assert.equal(member.notes, "private");
+    assert.equal(member.serviceAvailabilityRevisions.own, 1);
+    const stale = response();
+    await authHandlers.submitMyVolunteerAvailability(request(headers, {
+      recipientId, occurrenceAvailability: { own: "available" }, availabilityRevision: { own: 0 },
+    }), stale);
+    assert.equal(stale.statusCode, 409, JSON.stringify(stale.payload));
+    assert.equal((await refs[1].get()).data().serviceAvailability.own, "unavailable");
     const duplicateRef = db.collection(COLLECTIONS.teamRosterMembers).doc(`${memberId}_duplicate`);
     refs.push(duplicateRef);
     await duplicateRef.set({ ...member, memberId: duplicateRef.id });
@@ -170,6 +182,7 @@ test("Firestore human availability operation shares the recipient transaction an
     const revoked = response();
     await authHandlers.submitMyVolunteerAvailability(request(headers, {
       recipientId, occurrenceAvailability: { own: "available" },
+      availabilityRevision: { own: 0 },
     }), revoked);
     assert.equal(revoked.statusCode, 404);
     assert.equal((await refs[1].get()).data().serviceAvailability.own, "unavailable");

@@ -1409,6 +1409,8 @@ export type TeamIntakeSubmissionPayload = {
   birthDate?: import("./authTypes").BirthDate | null;
   positionIds: string[];
   occurrenceAvailability: NonNullable<TeamIntakeSubmission["occurrenceAvailability"]>;
+  /** Server-issued per-occurrence revisions from a recipient preview. */
+  availabilityRevision?: Record<string, number>;
   blockoutRanges: NonNullable<TeamIntakeSubmission["blockoutRanges"]>;
   notes?: string;
   servingFrequency?: TeamIntakeSubmission["servingFrequency"];
@@ -2227,8 +2229,16 @@ export const acceptMyUnansweredAssignments = (churchId: string, afterScheduleId?
 export const getMyVolunteerAvailability = (churchId: string) => apiFetch<{ success: boolean; requests: VolunteerAvailabilityRequest[] }>(
   `api/churches/${churchId}/my-availability`,
 );
-export const submitMyVolunteerAvailability = (churchId: string, recipientId: string, occurrenceAvailability: VolunteerAvailabilityRequest["availability"]) => apiFetch<{ success: boolean }>(
-  `api/churches/${churchId}/my-availability`, { method: "POST", body: JSON.stringify({ recipientId, occurrenceAvailability }) },
+export const submitMyVolunteerAvailability = (
+  churchId: string,
+  recipientId: string,
+  occurrenceAvailability: VolunteerAvailabilityRequest["availability"],
+  availabilityRevision: VolunteerAvailabilityRequest["availabilityRevision"],
+) => apiFetch<{ success: boolean; submissionId: string }>(
+  `api/churches/${churchId}/my-availability`, {
+    method: "POST",
+    body: JSON.stringify({ recipientId, occurrenceAvailability, availabilityRevision }),
+  },
 );
 
 export const manageVolunteerPersonalAccess = (churchId: string, memberId: string,

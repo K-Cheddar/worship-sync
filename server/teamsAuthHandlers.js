@@ -3731,17 +3731,114 @@ export const createTeamsAuthHandlers = ({
   };
 
   // Per-occurrence availability map keyed by occurrenceId (`serviceId@startsAt`).
-  // Any value other than "unavailable" is treated as available.
   const normalizeServiceAvailability = (value) => {
     const result = {};
-    if (value && typeof value === "object") {
-      Object.entries(value).forEach(([occurrenceId, status]) => {
-        const key = normalizeShortText(occurrenceId, { max: 200 });
-        if (!key) return;
-        result[key] = status === "unavailable" ? "unavailable" : "available";
-      });
+    if (value === undefined) return result;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw httpError(400, "Availability answers are invalid.");
     }
+    Object.entries(value).forEach(([occurrenceId, status]) => {
+      const key = normalizeShortText(occurrenceId, { max: 200 });
+      if (!key) return;
+      if (status !== "available" && status !== "unavailable") {
+        throw httpError(400, "Choose available or unavailable for each service date.");
+      }
+      if (Object.hasOwn(result, key)) {
+        throw httpError(400, "Availability answers contain a duplicate service date.");
+      }
+      result[key] = status;
+    });
     return result;
+  };
+
+  const normalizeServiceAvailabilityRevisions = (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter(([, revision]) =>
+      Number.isSafeInteger(revision) && revision >= 0,
+    ));
+  };
+
+  const getServiceAvailabilityRevision = (member, occurrenceId) => {
+    const revisions = member?.serviceAvailabilityRevisions;
+    const revision = revisions && typeof revisions === "object" && !Array.isArray(revisions)
+      ? revisions[occurrenceId]
+      : undefined;
+    return Number.isSafeInteger(revision) ? revision : 0;
+  };
+
+  const getFormAvailabilityOccurrenceIds = (form) => Array.from(new Set(
+    (Array.isArray(form?.availabilityOccurrences) ? form.availabilityOccurrences : [])
+      .map((occurrence) => String(occurrence?.occurrenceId || "").trim())
+      .filter(Boolean),
+  ));
+
+  const getServiceAvailabilityRevisionSnapshot = (member, occurrenceIds) =>
+    Object.fromEntries(occurrenceIds.map((occurrenceId) => [
+      occurrenceId,
+      getServiceAvailabilityRevision(member, occurrenceId),
+    ]));
+
+  const normalizeSubmittedServiceAvailabilityRevision = (value, occurrenceIds) => {
+    // Deployed recipient-link clients predate revisions. Their safe legacy
+    // baseline is revision zero; once an occurrence has changed under this
+    // version, they receive 409 instead of being allowed to replace it stale.
+    if (value === undefined) return Object.fromEntries(occurrenceIds.map((id) => [id, 0]));
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw httpError(400, "Reload this availability request before saving.");
+    }
+    const expectedIds = new Set(occurrenceIds);
+    const suppliedIds = Object.keys(value);
+    if (suppliedIds.length !== expectedIds.size || suppliedIds.some((id) => !expectedIds.has(id))) {
+      throw httpError(409, "The service dates in this request changed. Reload the latest availability before saving.");
+    }
+    const revisions = {};
+    for (const occurrenceId of occurrenceIds) {
+      const revision = value[occurrenceId];
+      if (!Number.isSafeInteger(revision) || revision < 0) {
+        throw httpError(400, "Reload this availability request before saving.");
+      }
+      revisions[occurrenceId] = revision;
+    }
+    return revisions;
+  };
+
+  const assertServiceAvailabilityRevisionCurrent = (member, expectedRevisions) => {
+    for (const [occurrenceId, expected] of Object.entries(expectedRevisions || {})) {
+      if (getServiceAvailabilityRevision(member, occurrenceId) !== expected) {
+        throw httpError(409, "Availability changed since you opened this request. Reload the latest answers before saving.");
+      }
+    }
+  };
+
+  const nextServiceAvailabilityRevision = (revisions, member, occurrenceId) => {
+    const next = getServiceAvailabilityRevision(member, occurrenceId) + 1;
+    if (!Number.isSafeInteger(next)) {
+      throw httpError(409, "Availability changed too many times. Reload the latest answers before saving.");
+    }
+    revisions[occurrenceId] = next;
+  };
+
+  const replaceServiceAvailabilityWithRevisions = ({ member, serviceAvailability }) => {
+    const existingAvailability = member?.serviceAvailability || {};
+    const nextRevisions = normalizeServiceAvailabilityRevisions(
+      member?.serviceAvailabilityRevisions,
+    );
+    const occurrenceIds = new Set([
+      ...Object.keys(existingAvailability),
+      ...Object.keys(serviceAvailability || {}),
+    ]);
+    for (const occurrenceId of occurrenceIds) {
+      if (!isDeepStrictEqual(
+        existingAvailability[occurrenceId],
+        serviceAvailability?.[occurrenceId],
+      )) {
+        nextServiceAvailabilityRevision(nextRevisions, member, occurrenceId);
+      }
+    }
+    return {
+      serviceAvailability: serviceAvailability || {},
+      serviceAvailabilityRevisions: nextRevisions,
+    };
   };
 
   const replaceServiceAvailabilityForForm = ({
@@ -3770,6 +3867,28 @@ export const createTeamsAuthHandlers = ({
     return { ...preserved, ...Object.fromEntries(
       Object.entries(replacementAvailability || {}).filter(([id]) => formOccurrenceIds.has(id)),
     ) };
+  };
+
+  const replaceServiceAvailabilityForFormWithRevisions = ({
+    member,
+    replacementAvailability,
+    form,
+  }) => {
+    const serviceAvailability = replaceServiceAvailabilityForForm({
+      existingAvailability: member?.serviceAvailability,
+      replacementAvailability,
+      form,
+    });
+    const revisions = normalizeServiceAvailabilityRevisions(
+      member?.serviceAvailabilityRevisions,
+    );
+    for (const occurrenceId of getFormAvailabilityOccurrenceIds(form)) {
+      // A submitted map is a complete write of this occurrence scope. Advancing
+      // even unchanged answers also gives the development fallback a durable
+      // marker for recovering a response after the member write succeeds.
+      nextServiceAvailabilityRevision(revisions, member, occurrenceId);
+    }
+    return { serviceAvailability, serviceAvailabilityRevisions: revisions };
   };
 
   // Combine the notes of merged blockout ranges, de-duplicating individual
@@ -6531,6 +6650,10 @@ export const createTeamsAuthHandlers = ({
   }) => {
     const config = TEAM_ENTITY_CONFIG[kind];
     const db = requireFirestore();
+    if (kind === "member" && id && Object.hasOwn(payload, "serviceAvailability") &&
+        expectedUpdatedAt === undefined) {
+      throw httpError(409, "Reload this member before changing service availability.");
+    }
     const now = nowIso();
     const nextId = id || (portableCreateKey
       ? `${config.idPrefix}_${portableCreateKey.slice(0, 40)}`
@@ -6638,15 +6761,23 @@ export const createTeamsAuthHandlers = ({
         if (current.memberId && current.memberId !== nextId) {
           throw httpError(409, "Member ownership is invalid.");
         }
-        if (current.updatedAt && expectedUpdatedAt !== current.updatedAt) {
+        if ((current.updatedAt || Object.hasOwn(payload, "serviceAvailability")) &&
+            expectedUpdatedAt !== current.updatedAt) {
           throw httpError(409, "This member changed somewhere else. Reload and try again.");
         }
+        const availabilityMutation = Object.hasOwn(payload, "serviceAvailability")
+          ? replaceServiceAvailabilityWithRevisions({
+              member: current,
+              serviceAvailability: payload.serviceAvailability,
+            })
+          : {};
         if (hasMemberships) {
           // Keep the established per-team key updates while binding them to
           // the same revision check as the member fields. Reading the current
           // map inside this transaction also preserves team keys added since
           // the editor loaded.
-          const { teamMemberships, ...memberFields } = doc;
+          const { teamMemberships, ...memberDocFields } = doc;
+          const memberFields = { ...memberDocFields, ...availabilityMutation };
           await updateDocMapKeys(
             config.collection,
             nextId,
@@ -6663,13 +6794,17 @@ export const createTeamsAuthHandlers = ({
         } else if (transaction) {
           transaction.set(ref, {
             ...doc,
+            ...availabilityMutation,
             ...volunteerContactIndexFields(
-              { ...current, ...doc },
+              { ...current, ...doc, ...availabilityMutation },
               process.env.AUTH_VOLUNTEER_PORTAL_SECRET,
             ),
           }, { merge: true });
         } else {
-          await setDoc(config.collection, nextId, doc, { merge: true });
+          await setDoc(config.collection, nextId, {
+            ...doc,
+            ...availabilityMutation,
+          }, { merge: true });
         }
       };
       if (db?.runTransaction) {
@@ -8200,22 +8335,18 @@ export const createTeamsAuthHandlers = ({
       : [];
     const occurrenceIds = new Set(
       (form.availabilityOccurrences || []).map(
-        (occurrence) => occurrence.occurrenceId,
+        (occurrence) => String(occurrence?.occurrenceId || "").trim(),
       ),
     );
-    const occurrenceAvailability = {};
-    const rawAvailability =
-      body?.occurrenceAvailability &&
-      typeof body.occurrenceAvailability === "object"
-        ? body.occurrenceAvailability
-        : {};
-    Object.entries(rawAvailability).forEach(([occurrenceId, availability]) => {
-      if (!enabledFields.has("availability")) return;
-      if (!occurrenceIds.has(occurrenceId)) return;
-      occurrenceAvailability[occurrenceId] =
-        availability === "unavailable" ? "unavailable" : "available";
-    });
     const collects = (field, key) => enabledFields.has(field) && Object.hasOwn(body || {}, key);
+    const occurrenceAvailability = {};
+    if (collects("availability", "occurrenceAvailability")) {
+      const rawAvailability = normalizeServiceAvailability(body.occurrenceAvailability);
+      Object.entries(rawAvailability).forEach(([occurrenceId, availability]) => {
+        if (!occurrenceIds.has(occurrenceId)) return;
+        occurrenceAvailability[occurrenceId] = availability;
+      });
+    }
     return {
       firstName,
       lastName,
@@ -8987,7 +9118,7 @@ export const createTeamsAuthHandlers = ({
 
   const getTeamIntakeRecipientContext = async (
     recipient,
-    { requireTokenHash = true } = {},
+    { requireTokenHash = true, allowClosed = false } = {},
   ) => {
     const recipientId = String(
       recipient?.recipientId || recipient?.id || "",
@@ -9014,7 +9145,7 @@ export const createTeamsAuthHandlers = ({
     ) {
       throw httpError(404, "Request not found.");
     }
-    assertTeamIntakeFormIsOpen(form);
+    if (!allowClosed) assertTeamIntakeFormIsOpen(form);
     if (form.purpose === "team_availability") {
       const teamIds = teamAvailabilityFormTeamIds(form);
       const teams = await Promise.all(
@@ -9054,18 +9185,25 @@ export const createTeamsAuthHandlers = ({
     return getTeamIntakeRecipientContext(recipient);
   };
 
-  const getVolunteerAvailabilityContext = async (identity, recipientId) => {
+  const getVolunteerAvailabilityContext = async (
+    identity,
+    recipientId,
+    { forRead = false } = {},
+  ) => {
     await identity.authorize?.();
     const recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
     if (!recipient || recipient.churchId !== identity.churchId || recipient.memberId !== identity.memberId) {
       throw httpError(404, "This availability request is no longer available.");
     }
-    const context = await getTeamIntakeRecipientContext({ recipientId, ...recipient }, { requireTokenHash: false });
+    const context = await getTeamIntakeRecipientContext(
+      { recipientId, ...recipient },
+      { requireTokenHash: false, allowClosed: forRead },
+    );
     if (context.form.purpose !== "team_availability" ||
         (identity.actorUid && context.member.userId !== identity.actorUid)) {
       throw httpError(404, "This availability request is no longer available.");
     }
-    assertTeamIntakeFormResponseDeadline(context.form);
+    if (!forRead) assertTeamIntakeFormResponseDeadline(context.form);
     return context;
   };
 
@@ -9078,19 +9216,28 @@ export const createTeamsAuthHandlers = ({
     for (const recipient of recipients) {
       try {
         const { form, member, recipient: current } = await getVolunteerAvailabilityContext(
-          identity, recipient.recipientId || recipient.id,
+          identity, recipient.recipientId || recipient.id, { forRead: true },
         );
-        const occurrenceIds = new Set((form.availabilityOccurrences || []).map((item) => item.occurrenceId));
+        const occurrenceIds = getFormAvailabilityOccurrenceIds(form);
+        const availability = Object.fromEntries(occurrenceIds
+          .filter((id) => member.serviceAvailability?.[id] === "available" ||
+            member.serviceAvailability?.[id] === "unavailable")
+          .map((id) => [id, member.serviceAvailability[id]]));
+        const responseDeadline = form.responseDeadline || form.endDate || "";
         requests.push({
           recipientId: current.recipientId, formId: form.formId, name: form.name,
-          responseDeadline: form.responseDeadline || form.endDate || "",
+          responseDeadline,
           availabilityMessage: form.availabilityMessage || "",
           occurrences: (form.availabilityOccurrences || []).map((item) => ({
             occurrenceId: item.occurrenceId, name: item.name || "Service", startsAt: item.startsAt || "",
+            ...(item.serviceDate ? { serviceDate: item.serviceDate } : {}),
           })),
-          availability: Object.fromEntries(Object.entries(member.serviceAvailability || {})
-            .filter(([id]) => occurrenceIds.has(id))),
+          availability,
+          unansweredOccurrenceIds: occurrenceIds.filter((id) => !Object.hasOwn(availability, id)),
+          availabilityRevision: getServiceAvailabilityRevisionSnapshot(member, occurrenceIds),
           respondedAt: current.respondedAt || "",
+          submissionId: current.submissionId || "",
+          editable: Boolean(form.active && (!responseDeadline || responseDeadline >= new Date().toISOString().slice(0, 10))),
         });
       } catch (error) {
         // Revoked/closed/out-of-scope requests disappear; datastore failures do not.
@@ -9244,6 +9391,8 @@ export const createTeamsAuthHandlers = ({
     createMember = false,
     personalizedSubmission = false,
     submittedMemberDetails = {},
+    expectedAvailabilityRevision,
+    memberMutationAlreadyQueued = false,
     adminUserId,
     now = nowIso(),
   }) => {
@@ -9285,13 +9434,17 @@ export const createTeamsAuthHandlers = ({
       }
       const updateMember = async (transaction) => {
         const member = await readMember(transaction);
-        const serviceAvailability = replaceServiceAvailabilityForForm({
-          existingAvailability: member.serviceAvailability,
-          replacementAvailability: collects("availability", "occurrenceAvailability") ? normalizeServiceAvailability(
-            submission.occurrenceAvailability,
-          ) : undefined,
-          form,
-        });
+        let availabilityMutation = {};
+        if (collects("availability", "occurrenceAvailability")) {
+          if (expectedAvailabilityRevision) {
+            assertServiceAvailabilityRevisionCurrent(member, expectedAvailabilityRevision);
+          }
+          availabilityMutation = replaceServiceAvailabilityForFormWithRevisions({
+            member,
+            replacementAvailability: normalizeServiceAvailability(submission.occurrenceAvailability),
+            form,
+          });
+        }
         const memberDetailPatch = personalizedSubmission
           ? buildTeamIntakeMissingMemberDetailPatch({
               member,
@@ -9301,7 +9454,7 @@ export const createTeamsAuthHandlers = ({
           : {};
         await writeMember(transaction, member,
           {
-            ...(collects("availability", "occurrenceAvailability") ? { serviceAvailability } : {}),
+            ...availabilityMutation,
             ...memberDetailPatch,
             updatedAt: now,
             updatedByUid: adminUserId,
@@ -9311,7 +9464,9 @@ export const createTeamsAuthHandlers = ({
       };
       const memberIdForResponse = db?.runTransaction
         ? await db.runTransaction(updateMember)
-        : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
+        : memberMutationAlreadyQueued
+          ? await updateMember(null)
+          : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       return {
         member: await getTeamEntity("member", memberIdForResponse),
         updatedTeams: [],
@@ -9336,9 +9491,9 @@ export const createTeamsAuthHandlers = ({
       })),
     );
     const desiredPositionIds = collects("positions", "positionIds") ? submission.positionIds : [];
-    const submissionAvailability = normalizeServiceAvailability(
-      collects("availability", "occurrenceAvailability") ? submission.occurrenceAvailability : undefined,
-    );
+    const submissionAvailability = collects("availability", "occurrenceAvailability")
+      ? normalizeServiceAvailability(submission.occurrenceAvailability)
+      : undefined;
     const formTeamIds = formBelongsToChurch
       ? normalizeIdArray(form.teamIds)
       : [];
@@ -9401,11 +9556,17 @@ export const createTeamsAuthHandlers = ({
               endDate: form.endDate,
             })
           : currentMember.blockoutDates || [];
-        const nextServiceAvailability = replaceServiceAvailabilityForForm({
-          existingAvailability: currentMember.serviceAvailability,
-          replacementAvailability: collects("availability", "occurrenceAvailability") ? submissionAvailability : undefined,
-          form,
-        });
+        let availabilityMutation = {};
+        if (submissionAvailability !== undefined) {
+          if (expectedAvailabilityRevision) {
+            assertServiceAvailabilityRevisionCurrent(currentMember, expectedAvailabilityRevision);
+          }
+          availabilityMutation = replaceServiceAvailabilityForFormWithRevisions({
+            member: currentMember,
+            replacementAvailability: submissionAvailability,
+            form,
+          });
+        }
         const memberDetailPatch = personalizedSubmission
           ? buildTeamIntakeMissingMemberDetailPatch({
               member: currentMember,
@@ -9433,7 +9594,7 @@ export const createTeamsAuthHandlers = ({
         return writeMember(transaction, currentMember,
           {
             ...(collects("positions", "positionIds") ? { desiredPositionIds: nextDesiredPositionIds } : {}),
-            ...(collects("availability", "occurrenceAvailability") ? { serviceAvailability: nextServiceAvailability } : {}),
+            ...availabilityMutation,
             ...(formCollectsBlockouts ? { blockoutDates: nextBlockoutDates } : {}),
             ...memberDetailPatch,
             ...(collects("schedulingFrequency", "servingFrequency") && submission.servingFrequency
@@ -9449,7 +9610,9 @@ export const createTeamsAuthHandlers = ({
       };
       member = db?.runTransaction
         ? await db.runTransaction(updateMember)
-        : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
+        : memberMutationAlreadyQueued
+          ? await updateMember(null)
+          : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       trackTeams(
         await addMemberToTeamsForPositions({
           churchId,
@@ -9487,6 +9650,7 @@ export const createTeamsAuthHandlers = ({
     body,
     identity,
     recipientId,
+    expectedRecipient,
   }) => {
     const db = requireFirestore?.();
     if (!db) return null;
@@ -9511,6 +9675,13 @@ export const createTeamsAuthHandlers = ({
         recipientId: recipientDocument.id,
         ...recipientDocument.data(),
       };
+      if (!expectedRecipient ||
+          recipient.recipientId !== expectedRecipient.recipientId ||
+          recipient.churchId !== expectedRecipient.churchId ||
+          recipient.memberId !== expectedRecipient.memberId ||
+          recipient.formId !== expectedRecipient.formId) {
+        throw httpError(409, "This request changed while you were saving. Reopen the request and try again.");
+      }
       if (recipient.revokedAt) throw httpError(404, "Request not found.");
 
       const formRef = db
@@ -9614,6 +9785,22 @@ export const createTeamsAuthHandlers = ({
         return { success: true, submissionId, formId: form.formId, submittedAt: previousSubmission.submittedAt };
       }
 
+      const availabilityMutation = Object.hasOwn(currentPayload, "occurrenceAvailability")
+        ? (() => {
+            const occurrenceIds = getFormAvailabilityOccurrenceIds(form);
+            const expectedRevisions = normalizeSubmittedServiceAvailabilityRevision(
+              body?.availabilityRevision,
+              occurrenceIds,
+            );
+            assertServiceAvailabilityRevisionCurrent(member, expectedRevisions);
+            return replaceServiceAvailabilityForFormWithRevisions({
+              member,
+              replacementAvailability: currentPayload.occurrenceAvailability,
+              form,
+            });
+          })()
+        : null;
+
       const formCollectsBlockouts =
         Boolean(form.startDate && form.endDate) &&
         Object.hasOwn(currentPayload, "blockoutRanges") &&
@@ -9635,13 +9822,6 @@ export const createTeamsAuthHandlers = ({
             endDate: form.endDate,
           })
         : member.blockoutDates || [];
-      const nextServiceAvailability = replaceServiceAvailabilityForForm({
-        existingAvailability: member.serviceAvailability,
-        replacementAvailability: Object.hasOwn(currentPayload, "occurrenceAvailability") ? normalizeServiceAvailability(
-          currentPayload.occurrenceAvailability,
-        ) : undefined,
-        form,
-      });
       const memberDetailPatch = buildTeamIntakeMissingMemberDetailPatch({
         member,
         submittedMemberDetails: currentPayload.submittedMemberDetails,
@@ -9650,7 +9830,7 @@ export const createTeamsAuthHandlers = ({
       const adminUserId = `recipient:${recipient.recipientId}`;
       const memberUpdate = {
         ...(Object.hasOwn(currentPayload, "positionIds") ? { desiredPositionIds } : {}),
-        ...(Object.hasOwn(currentPayload, "occurrenceAvailability") ? { serviceAvailability: nextServiceAvailability } : {}),
+        ...(availabilityMutation ? availabilityMutation : {}),
         ...(formCollectsBlockouts ? { blockoutDates: nextBlockoutDates } : {}),
         ...memberDetailPatch,
         ...(currentPayload.servingFrequency
@@ -9690,7 +9870,7 @@ export const createTeamsAuthHandlers = ({
       };
       const memberPatch = availabilityOnly
         ? {
-            ...(Object.hasOwn(currentPayload, "occurrenceAvailability") ? { serviceAvailability: nextServiceAvailability } : {}),
+            ...(availabilityMutation ? availabilityMutation : {}),
             ...memberDetailPatch,
             updatedAt: submittedAt,
             updatedByUid: adminUserId,
@@ -9778,6 +9958,12 @@ export const createTeamsAuthHandlers = ({
       async () => {
         let { recipient, form, member } =
           await readContext();
+        const expectedRecipient = {
+          recipientId: recipient.recipientId,
+          churchId: recipient.churchId,
+          memberId: recipient.memberId,
+          formId: recipient.formId,
+        };
         let payload = await validateTeamIntakeSubmissionPayload(
           req.body,
           form,
@@ -9789,19 +9975,32 @@ export const createTeamsAuthHandlers = ({
             body: req.body,
             identity,
             recipientId,
+            expectedRecipient,
           });
         if (transactionalResult) return transactionalResult;
-        if (form.purpose === "team_availability") {
-          // The in-memory store has no transaction. Re-read authorization and
-          // form state immediately before creating its durable response.
-          ({ recipient, form, member } =
-            await readContext());
-          payload = await validateTeamIntakeSubmissionPayload(
-            req.body,
-            form,
-            { member },
-          );
-        }
+        const commitFallback = async (memberMutationAlreadyQueued = false) => {
+          if (form.purpose === "team_availability" || Object.hasOwn(payload, "occurrenceAvailability")) {
+            // The in-memory store has no transaction. Serialize the current
+            // member check, revision compare, and field-scoped write locally.
+            ({ recipient, form, member } = await readContext());
+            if (recipient.recipientId !== expectedRecipient.recipientId ||
+                recipient.churchId !== expectedRecipient.churchId ||
+                recipient.memberId !== expectedRecipient.memberId ||
+                recipient.formId !== expectedRecipient.formId) {
+              throw httpError(409, "This request changed while you were saving. Reopen the request and try again.");
+            }
+            payload = await validateTeamIntakeSubmissionPayload(
+              req.body,
+              form,
+              { member },
+            );
+          }
+          const expectedAvailabilityRevision = Object.hasOwn(payload, "occurrenceAvailability")
+            ? normalizeSubmittedServiceAvailabilityRevision(
+                req.body?.availabilityRevision,
+                getFormAvailabilityOccurrenceIds(form),
+              )
+            : undefined;
         const submittedAt = nowIso();
         const {
           submittedMemberDetails = {},
@@ -9825,6 +10024,9 @@ export const createTeamsAuthHandlers = ({
             }, { merge: true });
           }
           return { success: true, submissionId, formId: form.formId, submittedAt: previousSubmission.submittedAt };
+        }
+        if (expectedAvailabilityRevision) {
+          assertServiceAvailabilityRevisionCurrent(member, expectedAvailabilityRevision);
         }
         const submission = {
           ...previousSubmission,
@@ -9857,6 +10059,8 @@ export const createTeamsAuthHandlers = ({
           memberId: member.memberId,
           personalizedSubmission: true,
           submittedMemberDetails,
+          expectedAvailabilityRevision,
+          memberMutationAlreadyQueued,
           adminUserId: `recipient:${recipient.recipientId}`,
           now: submittedAt,
         });
@@ -9890,6 +10094,14 @@ export const createTeamsAuthHandlers = ({
           formId: form.formId,
           submittedAt,
         };
+        };
+        const serializesAvailability = Boolean(
+          form.purpose === "team_availability" ||
+          Object.hasOwn(payload, "occurrenceAvailability"),
+        );
+        return serializesAvailability
+          ? enqueueInMemoryRosterMemberMutation(member.memberId, () => commitFallback(true))
+          : commitFallback();
       },
     );
     // Both the Firestore transaction and the fallback have committed all
@@ -9911,7 +10123,12 @@ export const createTeamsAuthHandlers = ({
     const recipientId = normalizeShortText(body?.recipientId, { max: 160 });
     if (!recipientId) throw httpError(404, "This availability request is no longer available.");
     const result = await submitTeamIntakeRecipient({ body: {
-      occurrenceAvailability: body?.occurrenceAvailability,
+      ...(Object.hasOwn(body || {}, "occurrenceAvailability")
+        ? { occurrenceAvailability: body.occurrenceAvailability }
+        : {}),
+      ...(Object.hasOwn(body || {}, "availabilityRevision")
+        ? { availabilityRevision: body.availabilityRevision }
+        : {}),
     } }, "", identity, recipientId);
     return { success: result.success, submissionId: result.submissionId };
   };
@@ -19247,6 +19464,12 @@ export const createTeamsAuthHandlers = ({
                 recipient: {
                   firstName: member.firstName || "there",
                   missingFields: getMissingTeamIntakeMemberDetailFields(member),
+                  ...(normalizeTeamIntakeFields(undefined, form.enabledFields).includes("availability")
+                    ? { availabilityRevision: getServiceAvailabilityRevisionSnapshot(
+                        member,
+                        getFormAvailabilityOccurrenceIds(form),
+                      ) }
+                    : {}),
                 },
               }
             : {}),

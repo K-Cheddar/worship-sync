@@ -156,7 +156,7 @@ The bulk of added lines are regression tests and this audit.
   ran with the required filesystem access and a native command shell.
 - `node --check server/teamsAuthHandlers.js` and `git diff --check`: passed.
 
-## Separate architectural observations for the next phase
+## Phase 2B-1 update and remaining boundaries
 
 These are existing boundaries, not additional implementations in this fix:
 
@@ -165,14 +165,23 @@ These are existing boundaries, not additional implementations in this fix:
   disabled-field writes; no historical-data repair or inferred migration is
   attempted. Newly stored absent fields remain distinguishable.
 - An explicitly submitted availability map is a complete response, even if it
-  contains only some dates. Existing clients initialize and send the full map.
-  Reopening a link does not prefill saved answers. Editable/prefilled responses
-  will need to distinguish a deliberate complete response from a dirty-field
-  patch and should carry response revisions for stale-editor conflicts.
-- The request digest fences retries of the latest completed recipient request.
-  Without a client operation ID or response revision, an older distinct request
-  arriving after another response is indistinguishable from a deliberate new
-  complete response. No historical request ledger is introduced here.
+  contains only some dates. Existing public links still open the existing form
+  without prefilled answers. The preview now supplies hidden per-occurrence
+  revisions, and the current public client sends them with the complete map.
+  The future My Availability UI can use the same scope and revision contract.
+- The existing request digest includes the submitted revision snapshot. An exact
+  retry of the latest committed response is idempotent; an older snapshot after
+  a later response returns 409. A fresh revision makes a deliberate later edit
+  distinct without a separate operation ledger.
+- The signed-in and accountless availability APIs project only the current
+  volunteer's recipient-scoped answers. Both use the same server validation,
+  revision compare and member update path. The recipient token remains limited
+  to its existing form and member scope.
+- `serviceAvailabilityRevisions` is stored beside the canonical
+  `serviceAvailability` map on the roster member. Recipient transactions,
+  administrative member edits and administrative intake application advance
+  occurrence revisions; blockout, profile, preference and unrelated roster
+  writes do not change availability revisions.
 - Public general links still create independent review records. Administrative
   new-member creation, team membership updates and review status are separate
   durable operations. They do not acquire recipient-style identity or a new
@@ -184,8 +193,9 @@ These are existing boundaries, not additional implementations in this fix:
 
 ### Findings
 
-Critical: None. High: None. Medium: None. Low: None within this fix's scope.
-The architectural observations above are future response-editing design inputs.
+Critical: None. High: None. Medium: None. Low: None within this audit's scope.
+The Phase 2B-1 contract records the response revision behavior; the new My
+Availability interface remains a separate Phase 2B-2 deliverable.
 
 ### Product authorization status
 

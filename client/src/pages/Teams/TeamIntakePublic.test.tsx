@@ -141,6 +141,38 @@ test("submits the entered availability for the form token", async () => {
   expect(await screen.findByText(/thanks, pat/i)).toBeInTheDocument();
 });
 
+test("recipient availability submission carries its hidden occurrence revision", async () => {
+  const availabilityRevision = { "service@2026-12-06T10:00:00.000Z": 7 };
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    form: {
+      ...preview.form,
+      enabledFields: ["availability"],
+      availabilityOccurrences: [{
+        occurrenceId: "service@2026-12-06T10:00:00.000Z",
+        serviceId: "service",
+        name: "Sunday",
+        startsAt: "2026-12-06T10:00:00.000Z",
+      }],
+    },
+    recipient: { firstName: "Kevin", missingFields: [], availabilityRevision },
+  } as never);
+  mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
+  renderPage("/a/recipient-token");
+  await screen.findByText("Fall Volunteers");
+  await userEvent.click(screen.getByRole("button", { name: /submit availability/i }));
+
+  await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+  expect(mockSubmit).toHaveBeenCalledWith(
+    "recipient-token",
+    expect.objectContaining({
+      occurrenceAvailability: {},
+      availabilityRevision,
+    }),
+    { personalized: true },
+  );
+});
+
 test("opens a personalized /a/:token request without an authenticated app session", async () => {
   mockGetPreview.mockResolvedValue(preview as never);
   renderPage("/a/recipient-token");

@@ -99,3 +99,57 @@ form edits retain the navigation guard.
 
 No default templates, local storage, production migration, prefilling, editable
 responses, reminder automation or new dispatch behavior is introduced.
+
+## Editable availability responses (Phase 2B-1)
+
+Approved by the current product-owner request, 2026-11-16. This phase adds the
+backend contract for reviewing and safely updating service-date availability;
+the separate My Availability interface remains Phase 2B-2.
+
+### Before behavior
+
+Availability is stored on `teamRosterMembers.serviceAvailability`, but response
+maps have no cross-form revision check. An old form can replace a newer answer
+for an occurrence shared with another form. The signed-in and accountless
+availability reads do not return saved answers or an edit precondition.
+
+### After behavior
+
+- `GET /api/churches/:churchId/my-availability` and
+  `GET /api/volunteer/availability` use the same recipient-scoped business logic
+  and return the current user's active and read-only availability requests,
+  form/recipient identity, occurrence answers, unanswered occurrence IDs,
+  response deadline, editability, response state and per-occurrence revision.
+- `POST` to either existing route accepts an explicit complete map for that
+  form's occurrence scope. `available` and `unavailable` are the only accepted
+  answers. A missing key clears that occurrence to unanswered; an omitted map
+  leaves availability unchanged. Answers outside the form scope and unrelated
+  roster fields are preserved.
+- `teamRosterMembers.serviceAvailability` remains the canonical saved-answer
+  map. `serviceAvailabilityRevisions` stores server-owned counters by occurrence
+  on the same member document. Every write path that changes occurrence answers
+  advances the affected counter. A stale scope returns HTTP 409 with a reload
+  instruction; unrelated fields and disjoint occurrence edits survive.
+- The stable recipient and deterministic submission identity remain in use.
+  The submitted revision is included in the existing response digest, so an
+  identical retry after commit returns the committed response, while a later
+  deliberate edit with a fresh revision is distinct. No operation ledger or
+  second availability store is added.
+- The existing recipient preview returns only the form-scoped revision map.
+  Current public clients send it as a hidden precondition. Deployed clients that
+  omit it retain the revision-zero compatibility path; once a newer edit has
+  advanced an occurrence, those stale requests conflict rather than overwrite.
+- Availability requests remain optional. An unanswered request is unknown,
+  not available or unavailable. Auto-fill continues to include unanswered
+  volunteers and excludes explicit unavailability under its existing rules.
+
+### Behavior intentionally unchanged
+
+Existing forms, recipients, response IDs and links remain in place. The form's
+deadline, active status, Team scope, identity checks and complete-replacement
+semantics remain authoritative. No recurring preference, blockout, position,
+profile, consent or schedule field is changed by an availability-only response.
+Availability writes do not activate SMS, send email, schedule reminders or
+change Auto-fill ranking. My Schedule remains assignment-focused; no new UI,
+form system, collection, identity model or migration is introduced in this
+phase.

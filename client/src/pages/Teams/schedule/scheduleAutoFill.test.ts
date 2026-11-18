@@ -455,4 +455,45 @@ describe("buildAutoFillPlan", () => {
       { occurrenceId: "occ1", columnKey: "vocal::0", positionId: "vocal", memberId: "beth" },
     ]);
   });
+
+  it("keeps an unanswered availability response eligible for Auto-fill", () => {
+    const positions = [position("vocal")];
+    const occurrences = [{ occurrenceId: "occ1" }];
+    const requirementsByOccurrence = new Map([
+      ["occ1", [{ positionId: "vocal", count: 1 }]],
+    ]);
+    const columns = buildScheduleColumns({
+      occurrences,
+      requirementsByOccurrence,
+      positions,
+      teamPositionIds: ["vocal"],
+    });
+    const members = [
+      member("unanswered", ["vocal"]),
+      member("unavailable", ["vocal"], {
+        serviceAvailability: { occ1: "unavailable" },
+      }),
+    ];
+    const assignments: TeamScheduleAssignments = {};
+
+    const plan = buildAutoFillPlan({
+      occurrences,
+      columns,
+      requirementsByOccurrence,
+      assignments,
+      members,
+      positions,
+      qualificationLevels: [],
+      duplicateFirstNames,
+      getAssignmentIssue: makeGetAssignmentIssue(members, assignments),
+      getServiceAvailabilityWarning: (memberId) =>
+        memberId === "unavailable" ? "Marked this service unavailable on intake" : "",
+      getCrossTeamConflictWarning: noWarning,
+    });
+
+    expect(plan.entries).toEqual([
+      { occurrenceId: "occ1", columnKey: "vocal::0", positionId: "vocal", memberId: "unanswered" },
+    ]);
+    expect(plan.unfilledSlots).toEqual([]);
+  });
 });

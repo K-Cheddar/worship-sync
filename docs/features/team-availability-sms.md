@@ -113,3 +113,11 @@ updates retain their own wording and issued-request protections. Only broad
 Teams editors can save church defaults; scoped editors can use them. This action
 never sends messages or changes issued forms, links, recipients or responses.
 See [the defaults contract](personalized-team-intake.md#reusable-form-defaults-phase-2a).
+
+## Editable availability responses (Phase 2B-1, 2026-11-16)
+
+The existing response endpoints now expose the volunteer's form-scoped saved
+answers and per-occurrence revision, and accept revision-aware edits through the
+existing recipient and response records. Saving an answer does not send SMS or
+email, create a reminder, activate a provider, or change consent. The future My
+Availability interface is a separate Phase 2B-2 task.
