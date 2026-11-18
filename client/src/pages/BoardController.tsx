@@ -1826,7 +1826,7 @@ export const BoardControllerContent = () => {
         </Sheet>
       )}
 
-      <header data-board-toolbar className="flex h-[48px] min-h-[48px] shrink-0 items-center justify-between gap-3 border-b border-gray-600 bg-gray-800 px-2 py-0 xl:h-auto xl:min-h-0 xl:border-b-2 xl:px-4 xl:py-3">
+      <header data-board-toolbar className="flex h-[48px] min-h-[48px] shrink-0 items-center justify-between gap-2 border-b border-gray-600 bg-gray-800 px-2 py-0">
         <div className="flex min-w-0 items-center gap-3">
           <BoardControllerMenu
             canOpenBoard={Boolean(selectedAliasId)}
@@ -1845,7 +1845,7 @@ export const BoardControllerContent = () => {
             <span className="truncate">Discussion Board</span>
           </h1>
         </div>
-        <UserSection variant="responsiveCompact" />
+        <UserSection variant="compact" />
       </header>
 
       {isMobileStack ? (

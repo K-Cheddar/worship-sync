@@ -14,6 +14,7 @@ const mockDispatch: jest.Mock = jest.fn((action) => {
   }));
   return action;
 });
+const mockKeepElementInView = jest.fn();
 const mockOutlineScroller = jest.fn(({ cols }: { cols: number }) => (
   <div data-testid="outline-scroller" data-cols={cols} />
 ));
@@ -130,7 +131,7 @@ jest.mock("../../utils/dndUtils", () => ({
 }));
 
 jest.mock("../../utils/generalUtils", () => ({
-  keepElementInView: jest.fn(),
+  keepElementInView: (...args: unknown[]) => mockKeepElementInView(...args),
 }));
 
 jest.mock("./OutlineItemSlidesScroller", () => ({
@@ -218,6 +219,7 @@ jest.mock("./ItemSlide", () => ({
           type="button"
           data-testid="mock-item-slide"
           data-slide-id={slide.id}
+        id={`item-slide-${index}`}
           onClick={() => selectSlide(index)}
         >
           {slide.name}
@@ -280,6 +282,19 @@ const mockControllerInfoValue = {
 describe("ItemSlides", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockDispatch.mockImplementation((action) => {
+      if (typeof action === "function") {
+        return action(mockDispatch, () => ({
+          ...mockState,
+          allDocs: {
+            ...mockState.allDocs,
+            session: 1,
+            allSongDocs: [...mockNeighborDocs.values()],
+          },
+        }));
+      }
+      return action;
+    });
     mockControllerInfoValue.isMobile = false;
     mockAcquireWarmLocalVideoCaptureWithBusyRetry.mockReset();
     mockReleaseWarmLocalVideoCapture.mockReset().mockResolvedValue(undefined);
@@ -408,19 +423,20 @@ describe("ItemSlides", () => {
     };
   });
 
-  const renderAncestorItemSlides = (access = "full") => {
-    return render(
-      <ThumbnailPreviewModeProvider>
-        <GlobalInfoContext.Provider value={{ access } as any}>
-          <ControllerInfoContext.Provider value={mockControllerInfoValue}>
-            <ItemSlidesDndContext.Provider value="ancestor">
-              <ItemSlides />
-            </ItemSlidesDndContext.Provider>
-          </ControllerInfoContext.Provider>
-        </GlobalInfoContext.Provider>
-      </ThumbnailPreviewModeProvider>,
-    );
-  };
+  const ancestorItemSlidesTree = (access = "full") => (
+    <ThumbnailPreviewModeProvider>
+      <GlobalInfoContext.Provider value={{ access } as any}>
+        <ControllerInfoContext.Provider value={mockControllerInfoValue}>
+          <ItemSlidesDndContext.Provider value="ancestor">
+            <ItemSlides />
+          </ItemSlidesDndContext.Provider>
+        </ControllerInfoContext.Provider>
+      </GlobalInfoContext.Provider>
+    </ThumbnailPreviewModeProvider>
+  );
+
+  const renderAncestorItemSlides = (access = "full") =>
+    render(ancestorItemSlidesTree(access));
 
   it("changes thumbnail preview locally and keeps it across item navigation", () => {
     const renderTree = () => (
@@ -531,6 +547,36 @@ describe("ItemSlides", () => {
       }),
     );
   };
+
+  const installSlideGridGeometry = (container: HTMLElement) =>
+    jest
+      .spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        const makeRect = (top: number, height: number): DOMRect =>
+          ({
+            x: 0,
+            y: top,
+            top,
+            right: 400,
+            bottom: top + height,
+            left: 0,
+            width: 400,
+            height,
+            toJSON: () => ({}),
+          }) as DOMRect;
+
+        if (this === container) return makeRect(100, 200);
+
+        const slideId = this.getAttribute("data-slide-id");
+        const currentSlides = mockState.undoable.present.item.slides;
+        const slideIndex = currentSlides.findIndex(
+          (slide: { id: string }) => slide.id === slideId,
+        );
+        if (slideIndex >= 0) {
+          return makeRect(100 + slideIndex * 100 - container.scrollTop, 100);
+        }
+        return makeRect(0, 0);
+      });
 
   const getSlideIdsInOrder = () =>
     screen
@@ -753,6 +799,236 @@ describe("ItemSlides", () => {
       .map(([action]) => action)
       .find((action) => action?.type === "item/_updateSlides");
   };
+
+  it("preserves the scrolled anchor when media is inserted before the selected slide", () => {
+    setFreeSlides(
+      Array.from({ length: 6 }, (_, index) => ({
+        id: `slide-${index + 1}`,
+        name: `Slide ${index + 1}`,
+      })),
+    );
+    mockState.undoable.present.item.selectedSlide = 1;
+    const view = renderAncestorItemSlides();
+    const container = screen.getByRole("list") as HTMLElement;
+    const geometrySpy = installSlideGridGeometry(container);
+    container.scrollTop = 300;
+    mockKeepElementInView.mockClear();
+    mockDispatch.mockClear();
+
+    act(() => {
+      mockDndMonitorListener?.onDragEnd?.({
+        active: {
+          id: "media-1",
+          data: { current: { kind: "media", mediaIds: ["media-1"] } },
+        },
+        over: {
+          id: "slide-insert-1",
+          data: { current: { kind: "slide-insert", index: 1 } },
+        },
+      });
+    });
+
+    const updatedSlides = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => action?.type === "item/_updateSlides")?.payload;
+    const updatedSelection = mockDispatch.mock.calls
+      .map(([action]) => action)
+      .find((action) => action?.type === "item/setSelectedSlide")?.payload;
+    expect(updatedSlides).toHaveLength(7);
+    expect(updatedSelection).toBe(2);
+
+    mockState.undoable.present.item.slides = updatedSlides;
+    mockState.undoable.present.item.selectedSlide = updatedSelection;
+    view.rerender(ancestorItemSlidesTree());
+
+    expect(container.scrollTop).toBe(400);
+    expect(screen.getByRole("button", { name: "Slide 4" }).getBoundingClientRect().top).toBe(100);
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+    geometrySpy.mockRestore();
+  });
+
+  it("keeps the visible anchor through slide reorder and removal", () => {
+    setFreeSlides(
+      Array.from({ length: 6 }, (_, index) => ({
+        id: `slide-${index + 1}`,
+        name: `Slide ${index + 1}`,
+      })),
+    );
+    const view = renderAncestorItemSlides();
+    const container = screen.getByRole("list") as HTMLElement;
+    const geometrySpy = installSlideGridGeometry(container);
+    container.scrollTop = 300;
+    mockKeepElementInView.mockClear();
+
+    const currentSlides = mockState.undoable.present.item.slides;
+    mockState.undoable.present.item.slides = [
+      currentSlides[0],
+      currentSlides[1],
+      currentSlides[3],
+      currentSlides[2],
+      currentSlides[4],
+      currentSlides[5],
+    ];
+    view.rerender(ancestorItemSlidesTree());
+    expect(container.scrollTop).toBe(200);
+    expect(screen.getByRole("button", { name: "Slide 4" }).getBoundingClientRect().top).toBe(100);
+
+    mockState.undoable.present.item.slides =
+      mockState.undoable.present.item.slides.slice(2);
+    view.rerender(ancestorItemSlidesTree());
+
+    expect(container.scrollTop).toBe(0);
+    expect(screen.getByRole("button", { name: "Slide 4" }).getBoundingClientRect().top).toBe(100);
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+    geometrySpy.mockRestore();
+  });
+
+  it("does not scroll when slides are added below the selected slide", () => {
+    const view = renderAncestorItemSlides();
+    mockKeepElementInView.mockClear();
+    mockState.undoable.present.item.slides = [
+      ...mockState.undoable.present.item.slides,
+      { ...baseSlides[0], id: "slide-3", name: "Section 3" },
+    ];
+
+    view.rerender(ancestorItemSlidesTree());
+
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+  });
+
+  it("scrolls to an intentionally clicked slide, including on mobile", () => {
+    mockControllerInfoValue.isMobile = true;
+    mockDispatch.mockImplementation((action) => {
+      if (typeof action === "function") {
+        return action(mockDispatch, () => mockState);
+      }
+      if (action?.type === "item/setSelectedSlide") {
+        mockState.undoable.present.item.selectedSlide = action.payload;
+      }
+      return action;
+    });
+    renderAncestorItemSlides();
+    mockKeepElementInView.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Section 2" }));
+
+    expect(mockKeepElementInView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        child: expect.objectContaining({ id: "item-slide-1" }),
+        parent: expect.objectContaining({ id: "item-slides-container" }),
+        shouldScrollToCenter: true,
+      }),
+    );
+  });
+
+  it("reveals the selected slide after an item finishes loading", () => {
+    mockState.undoable.present.item.isLoading = true;
+    const view = renderAncestorItemSlides();
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+    mockKeepElementInView.mockClear();
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "song-2",
+      listId: "list-2",
+      selectedSlide: 1,
+      isLoading: true,
+      slides: [{ ...baseSlides[0], id: "next-1" }, { ...baseSlides[1], id: "next-2" }],
+    };
+
+    view.rerender(ancestorItemSlidesTree());
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+
+    mockState.undoable.present.item.isLoading = false;
+    view.rerender(ancestorItemSlidesTree());
+
+    expect(mockKeepElementInView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        child: expect.objectContaining({ id: "item-slide-1" }),
+      }),
+    );
+  });
+
+  it("ignores obsolete animation frames after an item switch and unmount", () => {
+    const scheduledFrames = new Map<number, FrameRequestCallback>();
+    const cancelledFrames: number[] = [];
+    const originalRequestFrame = window.requestAnimationFrame;
+    const originalCancelFrame = window.cancelAnimationFrame;
+    let nextFrameId = 1;
+    window.requestAnimationFrame = (callback) => {
+      const frameId = nextFrameId++;
+      scheduledFrames.set(frameId, callback);
+      return frameId;
+    };
+    window.cancelAnimationFrame = (frameId) => {
+      cancelledFrames.push(frameId);
+      scheduledFrames.delete(frameId);
+    };
+    const runFrame = (frameId: number) => {
+      const callback = scheduledFrames.get(frameId);
+      if (!callback) throw new Error(`Missing scheduled frame ${frameId}`);
+      scheduledFrames.delete(frameId);
+      act(() => callback(0));
+    };
+
+    try {
+      const view = renderAncestorItemSlides();
+      mockKeepElementInView.mockClear();
+
+      mockState.undoable.present.item = {
+        ...mockState.undoable.present.item,
+        _id: "song-2",
+        listId: "list-2",
+      };
+      view.rerender(ancestorItemSlidesTree());
+      const oldFirstFrame = scheduledFrames.keys().next().value as number;
+      runFrame(oldFirstFrame);
+      const oldSecondFrame = scheduledFrames.keys().next().value as number;
+      const staleSecondCallback = scheduledFrames.get(oldSecondFrame)!;
+
+      mockState.undoable.present.item = {
+        ...mockState.undoable.present.item,
+        _id: "free-3",
+        listId: "list-3",
+      };
+      view.rerender(ancestorItemSlidesTree());
+      expect(cancelledFrames).toContain(oldSecondFrame);
+      act(() => staleSecondCallback(0));
+      expect(mockKeepElementInView).not.toHaveBeenCalled();
+
+      const currentFirstFrame = scheduledFrames.keys().next().value as number;
+      runFrame(currentFirstFrame);
+      const currentSecondFrame = scheduledFrames.keys().next().value as number;
+      runFrame(currentSecondFrame);
+      expect(mockKeepElementInView).toHaveBeenCalled();
+      mockKeepElementInView.mockClear();
+
+      mockState.undoable.present.item = {
+        ...mockState.undoable.present.item,
+        _id: "free-4",
+        listId: "list-4",
+      };
+      view.rerender(ancestorItemSlidesTree());
+      const unmountFirstFrame = scheduledFrames.keys().next().value as number;
+      runFrame(unmountFirstFrame);
+      const unmountSecondFrame = scheduledFrames.keys().next().value as number;
+      const staleUnmountCallback = scheduledFrames.get(unmountSecondFrame)!;
+      view.unmount();
+      act(() => staleUnmountCallback(0));
+      expect(mockKeepElementInView).not.toHaveBeenCalled();
+    } finally {
+      window.requestAnimationFrame = originalRequestFrame;
+      window.cancelAnimationFrame = originalCancelFrame;
+    }
+  });
+
+  it("leaves continuous outline scrolling to its own scroller", () => {
+    mockState.undoable.present.preferences.shouldShowItemEditor = false;
+
+    renderAncestorItemSlides();
+
+    expect(mockKeepElementInView).not.toHaveBeenCalled();
+    expect(screen.getByTestId("outline-scroller")).toBeInTheDocument();
+  });
 
   it("uses its local DndContext when no ancestor owns it", () => {
     render(

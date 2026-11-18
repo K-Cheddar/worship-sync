@@ -1,4 +1,5 @@
 import type { DBItem, ItemSlideType } from "../types";
+import { setAuditSnapshot } from "./pouchAudit";
 import { normalizeItemSlides } from "./activeItemSlides";
 import * as monitorSlideFormatter from "./monitorSlideFormatter";
 import {
@@ -447,6 +448,8 @@ describe("songPersistence", () => {
 
   it("creates canonical one-document songs with audit fields", async () => {
     const source = song({
+      createdAt: "original-created",
+      updatedAt: "stale-update",
       slides: [{
         ...songSlide("legacy-root"),
         monitorCurrentBandBoxes: [{ id: "root-clone" }],
@@ -468,6 +471,7 @@ describe("songPersistence", () => {
         slides: [],
       }],
     });
+    setAuditSnapshot({ displayName: "Song Author" });
     delete source._rev;
     const { db, put } = makeDb(source);
 
@@ -487,8 +491,10 @@ describe("songPersistence", () => {
     expect(persisted.arrangements[0].slides[0]).not.toHaveProperty("monitorNextBandBoxes");
     expect(persisted.arrangements[1].slides[0].id).toBe("legacy-root");
     expect(persisted.arrangements[1].slides[0]).not.toHaveProperty("monitorCurrentBandBoxes");
-    expect(persisted.createdAt).toEqual(expect.any(String));
-    expect(persisted.updatedBy).toEqual(expect.any(String));
+    expect(persisted.createdAt).toBe("original-created");
+    expect(persisted.updatedAt).not.toBe("stale-update");
+    expect(Date.parse(persisted.updatedAt!)).not.toBeNaN();
+    expect(persisted.updatedBy).toBe("Song Author");
   });
 
   it("updates one canonical song while preserving revision and untouched metadata", async () => {
@@ -496,8 +502,10 @@ describe("songPersistence", () => {
       _rev: "3-current",
       createdAt: "created",
       createdBy: "original creator",
+      updatedAt: "previous update",
       songAudio: { id: "audio-1" } as DBItem["songAudio"],
     });
+    setAuditSnapshot({ displayName: "Song Editor" });
     const { db, put } = makeDb(source);
     const existing = await loadSong(db, source._id);
 
@@ -515,6 +523,9 @@ describe("songPersistence", () => {
     expect(persisted._rev).toBe("3-current");
     expect(persisted.createdAt).toBe("created");
     expect(persisted.createdBy).toBe("original creator");
+    expect(persisted.updatedAt).not.toBe("previous update");
+    expect(Date.parse(persisted.updatedAt!)).not.toBeNaN();
+    expect(persisted.updatedBy).toBe("Song Editor");
     expect(persisted.songAudio).toEqual({ id: "audio-1" });
     expect(persisted.name).toBe("Edited");
     expect(persisted).not.toHaveProperty("slides");

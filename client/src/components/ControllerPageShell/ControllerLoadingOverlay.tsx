@@ -1,5 +1,10 @@
-import Spinner from "../Spinner/Spinner";
-import { ConnectionStatus } from "../../context/controllerInfo";
+import type { ConnectionStatus } from "../../context/controllerInfo";
+import {
+  BOOTSTRAP_LOADING_MESSAGES,
+  RotatingLoadingMessage,
+  STUCK_LOADING_MESSAGES,
+  WorshipSyncLoadingContent,
+} from "../LoadingScreenPresentation";
 import { useStuckDbProgress } from "../../hooks/useStuckDbProgress";
 import {
   DbStartupConnectionFailedPanel,
@@ -16,8 +21,6 @@ type ControllerLoadingOverlayProps = {
 const ControllerLoadingOverlay = ({
   dbProgress = 0,
   connectionStatus,
-  user,
-  churchName,
 }: ControllerLoadingOverlayProps) => {
   const isFailed = connectionStatus?.status === "failed";
   const isStuck = useStuckDbProgress(dbProgress, isFailed);
@@ -36,76 +39,41 @@ const ControllerLoadingOverlay = ({
     );
   }
 
-  const displayName = user?.trim() ?? "";
-  const displayChurch = churchName?.trim() ?? "";
-
-  const welcomeLead =
-    displayName.length > 0 ? (
-      <>
-        Welcome, <span className="font-semibold">{displayName}</span>.
-      </>
-    ) : (
-      <>Welcome.</>
-    );
-
-  const readinessLead =
-    displayChurch.length > 0 ? (
-      <>
-        is setting the stage for{" "}
-        <span className="font-semibold">{displayChurch}</span> now.
-      </>
-    ) : (
-      <>is setting the stage for you now.</>
-    );
-
   return (
     <div
       data-testid="controller-loading-overlay"
-      className="fixed top-0 left-0 z-50 w-full h-full bg-homepage-canvas/90 flex justify-center items-center flex-col text-white text-2xl gap-8"
+      className="fixed inset-0 z-[60] flex h-dvh min-h-0 w-full flex-col items-center justify-center gap-6 bg-homepage-canvas px-4 text-white"
+      aria-busy={!isFailed}
     >
-      {isFailed ? (
-        <>
-          {connectionStatus?.message && (
-            <p role="alert" className="max-w-lg px-4 text-center text-base text-red-200">
-              {connectionStatus.message}
-            </p>
-          )}
-          <DbStartupConnectionFailedPanel />
-        </>
-      ) : isStuck ? (
-        <>
-          <DbStartupStuckRecoveryPanel
-            dbProgress={dbProgress}
-            connectionStatus={connectionStatus}
-          />
-          {connectionStatus?.status === "retrying" && (
-            <p className="text-center text-lg text-yellow-400">
-              Connection failed. Retrying...
-            </p>
-          )}
-          <Spinner />
-        </>
-      ) : (
-        <>
-          <p className="max-w-lg px-4 text-center">
-            {welcomeLead}{" "}
-            <span className="font-bold">Worship</span>
-            <span className="text-orange-500 font-semibold">Sync</span>{" "}
-            {readinessLead}
-          </p>
-          {connectionStatus?.status === "retrying" && (
-            <p className="text-center text-lg text-yellow-400">
-              Connection failed. Retrying...
-            </p>
-          )}
-          <Spinner />
-          {dbProgress !== 0 && (
-            <p className="text-center">
-              Progress: <span className="text-orange-500">{dbProgress}%</span>
-            </p>
-          )}
-        </>
-      )}
+      <WorshipSyncLoadingContent>
+        {isFailed ? (
+          <DbStartupConnectionFailedPanel message={connectionStatus?.message} />
+        ) : (
+          <>
+            <RotatingLoadingMessage
+              messages={
+                isStuck ? STUCK_LOADING_MESSAGES : BOOTSTRAP_LOADING_MESSAGES
+              }
+            />
+            {connectionStatus?.status === "retrying" && (
+              <p className="text-sm text-yellow-300">
+                Connection failed. Retrying...
+              </p>
+            )}
+            {!isStuck && dbProgress > 0 && dbProgress < 100 && (
+              <p className="text-xs text-gray-400">
+                Database sync: {dbProgress}%
+              </p>
+            )}
+            {isStuck && (
+              <DbStartupStuckRecoveryPanel
+                dbProgress={dbProgress}
+                connectionStatus={connectionStatus}
+              />
+            )}
+          </>
+        )}
+      </WorshipSyncLoadingContent>
     </div>
   );
 };

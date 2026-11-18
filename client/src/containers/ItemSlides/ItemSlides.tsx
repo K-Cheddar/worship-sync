@@ -70,6 +70,7 @@ import {
   Fragment,
   createContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -746,6 +747,26 @@ const ItemSlidesContent = () => {
   /** Latest selected slide; read in selectSlide before dispatch so transitionDirection uses the prior index. */
   const selectedSlideRef = useRef(selectedSlide);
   selectedSlideRef.current = selectedSlide;
+  const slidesRef = useRef(slides);
+  slidesRef.current = slides;
+  const itemIdentityRef = useRef(itemIdentity);
+  itemIdentityRef.current = itemIdentity;
+  const [selectedSlideScrollRequest, setSelectedSlideScrollRequest] =
+    useState(0);
+  const scrollAnimationFramesRef = useRef<number[]>([]);
+  const scrollGenerationRef = useRef(0);
+  const pendingScrollAnchorRef = useRef<{
+    itemIdentity: string;
+    anchors: Array<{ slideId: string; top: number }>;
+  } | null>(null);
+
+  const cancelPendingSlideScroll = useCallback(() => {
+    scrollGenerationRef.current += 1;
+    scrollAnimationFramesRef.current.forEach((frame) =>
+      window.cancelAnimationFrame(frame),
+    );
+    scrollAnimationFramesRef.current = [];
+  }, []);
 
   /** After a touch long-press, ignore the synthetic click so it does not toggle selection off. */
   const skipNextSlideGridClickRef = useRef(false);
@@ -776,6 +797,12 @@ const ItemSlidesContent = () => {
     (dragPreviewItemIdentityRef.current === itemIdentity
       ? dragPreviewSlides
       : null) ?? slidesToRender;
+  const renderedSlidesRef = useRef(renderedSlides);
+  renderedSlidesRef.current = renderedSlides;
+  const slideOrderKey = slides.map((slide) => slide.id).join("\u0000");
+  const renderedSlideOrderKey = renderedSlides
+    .map((slide) => slide.id)
+    .join("\u0000");
   const monitorPreviewSlides = useMemo(() => {
     if (
       effectivePreviewMode !== "monitor" ||
@@ -814,6 +841,74 @@ const ItemSlidesContent = () => {
 
     return () => clearTimeout(timeout);
   }, [isCollapsedContinuous, slides]);
+
+  useLayoutEffect(() => {
+    if (isCollapsedContinuous) {
+      pendingScrollAnchorRef.current = null;
+      return;
+    }
+
+    const pendingAnchor = pendingScrollAnchorRef.current;
+    if (pendingAnchor && pendingAnchor.itemIdentity !== itemIdentity) {
+      pendingScrollAnchorRef.current = null;
+    } else if (
+      pendingAnchor &&
+      slideOrderKey === renderedSlideOrderKey
+    ) {
+      const parentElement = document.getElementById("item-slides-container");
+      const currentSlides = renderedSlidesRef.current;
+      const survivingAnchor = pendingAnchor.anchors.find((anchor) =>
+        currentSlides.some((slide) => slide.id === anchor.slideId),
+      );
+      const anchorIndex = survivingAnchor
+        ? currentSlides.findIndex(
+            (slide) => slide.id === survivingAnchor.slideId,
+          )
+        : -1;
+      const anchorElement =
+        anchorIndex >= 0
+          ? document.getElementById(`item-slide-${anchorIndex}`)
+          : null;
+      if (parentElement && anchorElement && survivingAnchor) {
+        const parentTop = parentElement.getBoundingClientRect().top;
+        const currentTop = anchorElement.getBoundingClientRect().top - parentTop;
+        const scrollAdjustment = currentTop - survivingAnchor.top;
+        if (Math.abs(scrollAdjustment) > 0.5) {
+          parentElement.scrollTop += scrollAdjustment;
+        }
+      }
+      pendingScrollAnchorRef.current = null;
+    }
+
+    return () => {
+      cancelPendingSlideScroll();
+      if (isCollapsedContinuous) return;
+      if (pendingScrollAnchorRef.current?.itemIdentity === itemIdentity) return;
+
+      const parentElement = document.getElementById("item-slides-container");
+      if (!parentElement) return;
+      const parentRect = parentElement.getBoundingClientRect();
+      const anchors = renderedSlidesRef.current.flatMap((slide, index) => {
+        const element = document.getElementById(`item-slide-${index}`);
+        if (!element) return [];
+        const rect = element.getBoundingClientRect();
+        if (rect.bottom <= parentRect.top || rect.top >= parentRect.bottom) {
+          return [];
+        }
+        return [{ slideId: slide.id, top: rect.top - parentRect.top }];
+      });
+      if (anchors.length > 0) {
+        pendingScrollAnchorRef.current = { itemIdentity, anchors };
+      }
+    };
+  }, [
+    cancelPendingSlideScroll,
+    isCollapsedContinuous,
+    isMobile,
+    itemIdentity,
+    renderedSlideOrderKey,
+    slideOrderKey,
+  ]);
 
   const getBibleInfo = useCallback(
     (index: number) => {
@@ -919,7 +1014,10 @@ const ItemSlidesContent = () => {
         dispatch(setBackgroundTargetRangeAnchorId(slides[index]?.id ?? null));
       }
       const prevSelected = selectedSlideRef.current;
-      if (!options?.presentationOnly) dispatch(setSelectedSlide(index));
+      if (!options?.presentationOnly) {
+        dispatch(setSelectedSlide(index));
+        setSelectedSlideScrollRequest((request) => request + 1);
+      }
       const slide = presentationSlides[index];
       if (slide?.mediaSource?.kind === "local-video-input") {
         const mediaSource = slide.mediaSource;
@@ -1517,13 +1615,31 @@ const ItemSlidesContent = () => {
   }, [isMobile, dispatch]);
 
   useEffect(() => {
-    if (isCollapsedContinuous) return;
-    const parentElement = document.getElementById("item-slides-container");
-    if (!parentElement) return;
+    cancelPendingSlideScroll();
+    if (isCollapsedContinuous || isLoading) return;
+
+    const targetItemIdentity = itemIdentity;
+    const targetSlideId = slidesRef.current[selectedSlideRef.current]?.id;
+    if (!targetSlideId) return;
+
+    const generation = scrollGenerationRef.current;
     const runScroll = () => {
-      const slideElement = document.getElementById(
-        `item-slide-${selectedSlide}`,
+      if (
+        generation !== scrollGenerationRef.current ||
+        itemIdentityRef.current !== targetItemIdentity
+      ) {
+        return;
+      }
+      const currentSlides = slidesRef.current;
+      if (currentSlides[selectedSlideRef.current]?.id !== targetSlideId) return;
+      const currentIndex = currentSlides.findIndex(
+        (slide) => slide.id === targetSlideId,
       );
+      const parentElement = document.getElementById("item-slides-container");
+      const slideElement =
+        currentIndex >= 0
+          ? document.getElementById(`item-slide-${currentIndex}`)
+          : null;
       if (slideElement && parentElement) {
         keepElementInView({
           child: slideElement,
@@ -1532,10 +1648,28 @@ const ItemSlidesContent = () => {
         });
       }
     };
-    requestAnimationFrame(() => {
-      requestAnimationFrame(runScroll);
+
+    const firstFrame = window.requestAnimationFrame(() => {
+      if (
+        generation !== scrollGenerationRef.current ||
+        itemIdentityRef.current !== targetItemIdentity
+      ) {
+        return;
+      }
+      const secondFrame = window.requestAnimationFrame(runScroll);
+      scrollAnimationFramesRef.current.push(secondFrame);
     });
-  }, [selectedSlide, isMobile, slidesToRender.length, isCollapsedContinuous]);
+    scrollAnimationFramesRef.current.push(firstFrame);
+
+    return cancelPendingSlideScroll;
+  }, [
+    cancelPendingSlideScroll,
+    isCollapsedContinuous,
+    isLoading,
+    isMobile,
+    itemIdentity,
+    selectedSlideScrollRequest,
+  ]);
 
   const addSlide = useCallback(() => {
     // Find the highest section number among existing slides

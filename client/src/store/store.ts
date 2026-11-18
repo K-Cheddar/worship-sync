@@ -1318,6 +1318,9 @@ listenerMiddleware.startListening({
       itemSlice.actions.setSectionLoading,
       itemSlice.actions.setHasPendingUpdate,
       itemSlice.actions.setRemoteUpdateReason,
+      // Live timer ticks reconcile runtime state without creating authored item writes.
+      // If an authored timer edit is pending, these echoes must not keep resetting its debounce.
+      itemSlice.actions.syncLiveTimerInfo,
       itemSlice.actions.setItemFormatting,
       itemSlice.actions.clearTransientState,
       itemSlice.actions.markItemPersisted,

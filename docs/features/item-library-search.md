@@ -22,6 +22,10 @@ Let operators find library items by title, remembered lyrics, artist, or custom 
 - Resolve documents by stable ID and type. Duplicate custom-item names never transfer slide content between items.
 - Indexed titles remain searchable before document hydration; unavailable documents contribute no artist or lyric evidence.
 - Empty searches retain alphabetical ordering. The compact song-reference picker keeps its hidden empty-query list and eight-result limit.
+- In Songs, Custom, Timers, and All Items, show an icon-only Type column, then Name, Updated, and Updated by. Use the cached document's audit values; show a dash for missing, invalid, or explicitly unknown values, format valid dates in the operator's local timezone, and never infer historical dates or actors. Creation dates remain stored for compatibility but are not displayed.
+- Library results default to relevance for searches and name for empty searches. Operators sort the visible Name, Updated, and Updated by columns by clicking their headings; a second click reverses direction and a third restores the default ordering. Unknown audit values remain last; ties use name and stable item ID.
+- In All Items, edit-mode operators with delete permission can select individual rows or all matching library results, including rows outside the virtualized viewport. External lyrics and the generated upcoming-service timer are not selectable. Search or type-filter changes clear selection, and removed results leave selection.
+- Confirmed deletion is permanent, removes matching occurrences from the open outline, and clears its undo history; other saved outlines remain independent. Mixed-type deletion reports per-item failures and keeps failed items available for retry. V2 song deletion retains its existing restriction.
 
 ## Behavioral boundaries
 
@@ -34,6 +38,7 @@ Automatic identification and imported-plan Closest matches remain on conservativ
 - **Partial queries:** Retain useful partial hits, ranked below better coverage. Rejecting every incomplete query would hide songs when remembered wording is imperfect. Approved in the planning response, October 24, 2026.
 - **Import suggestions:** Preserve title-based Closest matches; use improved retrieval in the explicit Search library action. This preserves the identity-resolution workflow. Approved in the planning response, October 24, 2026.
 - **Stable identity and hydration:** Use cached document titles and saved IDs for custom slides. The October 26 storage request supersedes index-only title retrieval. Explicitly authorized by this task and the controller-content-viewing contract.
+- **Audit, sorting, selection, and deletion:** Display available item-document update fields in Type, Name, Updated, Updated by order, with a dash for unavailable history; offer clickable local sorting and permission-gated bulk deletion with explicit open-outline cleanup. Clear selection on search or type-filter changes and keep saved outlines independent. Authorized by the current request and follow-up direction, November 18, 2026.
 
 ## Important scenarios and regression evidence
 

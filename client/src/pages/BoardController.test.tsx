@@ -2295,11 +2295,12 @@ describe("BoardControllerContent", () => {
     expect(titleIcon?.parentElement).toHaveClass(
       PAGE_APPEARANCES.boardModeration.iconColorClass,
     );
-    expect(document.querySelector("[data-board-toolbar]")).toHaveClass(
+    const boardToolbar = document.querySelector("[data-board-toolbar]");
+    expect(boardToolbar).toHaveClass(
       "h-[48px]",
       "min-h-[48px]",
-      "xl:h-auto",
     );
+    expect(boardToolbar).not.toHaveClass("xl:h-auto", "xl:min-h-0", "xl:py-3");
     await screen.findByRole("heading", { name: "Sunday Board" });
     expect(screen.queryByRole("heading", { name: "Discussion boards" })).not.toBeInTheDocument();
     expect(screen.getByText(/\d+ total/i)).toBeInTheDocument();

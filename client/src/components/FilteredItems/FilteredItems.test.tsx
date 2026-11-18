@@ -99,6 +99,7 @@ describe("FilteredItems", () => {
   afterEach(() => {
     getBoundingClientRectSpy.mockRestore();
     window.localStorage.removeItem("worshipsync_presentation_controller_mode");
+    window.localStorage.removeItem("worshipsync_presentation_controller_mode");
   });
 
   it.each([
@@ -358,7 +359,112 @@ describe("FilteredItems", () => {
     expect(await screen.findByTitle(song.name)).toBeInTheDocument();
   });
 
-  it("shows no column headers in All Items and defaults creation by filter", async () => {
+  it("selects every matching result across virtualized rows and clears selection when search or type changes", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "edit");
+    const items = Array.from({ length: 35 }, (_, index) => ({
+      _id: `custom-${index}`,
+      name: `${index < 10 ? "Custom" : "Other"} ${String(index).padStart(2, "0")}`,
+      type: "free",
+      listId: `custom-${index}`,
+    })) as any[];
+    const docs = items.map((item) => ({ ...item, slides: [] }));
+    const Harness = () => {
+      const [filter, setFilter] = React.useState<LibraryFilter>("all");
+      const [query, setQuery] = React.useState("");
+      return <FilteredItems
+        list={items}
+        allDocs={docs as never}
+        type="all"
+        heading="All Items"
+        label="item"
+        isLoading={false}
+        searchValue={query}
+        setSearchValue={setQuery}
+        libraryFilter={filter}
+        onLibraryFilterChange={setFilter}
+      />;
+    };
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <PresentationControllerModeProvider>
+              <MemoryRouter><Harness /></MemoryRouter>
+            </PresentationControllerModeProvider>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "Select items" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select all results" }));
+    expect(screen.getByText("35 selected")).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox", { name: /^Select Custom/ }).length).toBeLessThan(items.length);
+
+    fireEvent.change(screen.getByLabelText(/Search/), { target: { value: "Custom" } });
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("filtered-items-results")).toHaveAttribute("data-search-query", "Custom"));
+    await user.click(screen.getByRole("checkbox", { name: "Select all results" }));
+    expect(screen.getByText("10 selected")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Songs" }));
+    expect(screen.getByText("0 selected")).toBeInTheDocument();
+  });
+
+  it("selects only saved library matches, excluding pinned and external results", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "edit");
+    mockedSearchLrclibTracks.mockResolvedValue([{
+      source: "genius",
+      geniusId: 52,
+      geniusUrl: "https://genius.com/external-only-lyrics",
+      trackName: "External-only lyrics",
+      artistName: "External Artist",
+      albumName: "",
+      plainLyrics: "External words",
+      syncedLyrics: null,
+    }]);
+    const item = { _id: "saved-song", name: "Amazing Grace", type: "song", listId: "saved-song" } as any;
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[item]}
+                type="all"
+                heading="All Items"
+                label="item"
+                isLoading={false}
+                allDocs={[item] as never}
+                searchValue="Amazing Grace"
+                setSearchValue={jest.fn()}
+                libraryFilter="song"
+                onLibraryFilterChange={jest.fn()}
+                pinnedTopContent={<div role="listitem">Upcoming service</div>}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(await screen.findByTitle("Amazing Grace")).toBeInTheDocument();
+    expect(screen.getByText("Upcoming service")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("filtered-items-results")).toHaveAttribute("data-search-query", "Amazing Grace"));
+    await user.click(screen.getByRole("button", { name: "Search external lyrics" }));
+    expect(await screen.findByText("External lyrics")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Create song" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Select items" }));
+    await user.click(screen.getByRole("checkbox", { name: "Select all results" }));
+    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select Upcoming service" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select External-only lyrics" })).not.toBeInTheDocument();
+  });
+
+  it("shows sortable metadata columns in All Items and defaults creation by filter", async () => {
     const song = {
       _id: "all-song",
       name: "All Song",
@@ -407,8 +513,12 @@ describe("FilteredItems", () => {
 
     expect(screen.queryByText("Artist")).not.toBeInTheDocument();
     expect(screen.queryByText("Actions")).not.toBeInTheDocument();
-    expect(screen.queryByText("Type")).not.toBeInTheDocument();
-    expect(screen.queryByText("Name")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Type" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "song" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort by Name" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort by Updated" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort by Updated by" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("columnheader")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "All Items" })).toHaveClass(
       "bg-cyan-500/20",
       "border-cyan-300/50",

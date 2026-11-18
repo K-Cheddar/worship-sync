@@ -244,8 +244,11 @@ describe("CreditsEditor", () => {
     // Check for the loading overlay (dbProgress may be undefined if context is mocked globally)
     const loadingOverlay = screen.getByTestId("loading-overlay");
     expect(loadingOverlay).toBeInTheDocument();
-    expect(loadingOverlay).toHaveTextContent(/Setting up/);
-    expect(loadingOverlay).toHaveTextContent(/Progress:.*%/);
+    expect(loadingOverlay).toHaveClass("bg-homepage-canvas");
+    expect(screen.getByRole("img", { name: "WorshipSync" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Getting WorshipSync ready" }))
+      .toBeInTheDocument();
+    expect(loadingOverlay).toHaveTextContent("Database sync: 50%");
   });
 
   it("shows stuck recovery on loading overlay when dbProgress is unchanged for 15s", async () => {
@@ -284,6 +287,7 @@ describe("CreditsEditor", () => {
       expect(
         await screen.findByText(/Startup is taking longer than expected/),
       ).toBeInTheDocument();
+      expect(screen.getByRole("img", { name: "WorshipSync" })).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Try Again" }),
       ).toBeInTheDocument();

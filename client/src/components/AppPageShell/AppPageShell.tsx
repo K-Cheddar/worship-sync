@@ -48,23 +48,23 @@ const AppPageShell = ({
       className="flex h-dvh min-h-0 flex-col overflow-hidden bg-homepage-canvas text-white"
       style={{ "--scrollbar-width": scrollbarWidth } as CSSProperties}
     >
-      <div className="mx-auto flex min-h-0 w-full flex-1 flex-col px-4 pb-6 lg:px-6">
-        <div className="flex w-full shrink-0 flex-wrap items-center justify-between gap-4 border-b border-gray-700 py-3">
-          <div className="flex flex-wrap items-center gap-3">
+      <div className="mx-auto flex min-h-0 w-full flex-1 flex-col px-2 pb-6 sm:px-4 lg:px-6">
+        <div className="flex h-[48px] min-h-[48px] w-full shrink-0 flex-nowrap items-center justify-between gap-2 border-b border-gray-700 py-0">
+          <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-2">
             {showAccountNavigation ? <HomeToolbarMenu /> : null}
-            <div>
-              <h1 className="flex items-center gap-2 text-base font-semibold sm:text-lg">
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="flex min-w-0 items-center gap-2 truncate text-base font-semibold sm:text-lg">
                 {icon ? (
                   <Icon svg={icon} size="md" className={iconColorClass} />
                 ) : null}
-                {title}
+                <span className="truncate">{title}</span>
               </h1>
               {description ? (
-                <p className="mt-0.5 text-sm text-gray-400">{description}</p>
+                <p className="hidden min-w-0 truncate text-xs text-gray-400 sm:block">{description}</p>
               ) : null}
             </div>
           </div>
-          {showAccountNavigation ? <UserSection /> : null}
+          {showAccountNavigation ? <UserSection variant="compact" /> : null}
         </div>
 
         <section

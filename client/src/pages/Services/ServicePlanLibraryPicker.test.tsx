@@ -213,6 +213,9 @@ describe("ServicePlanLibraryPicker", () => {
     await waitFor(() => {
       expect(screen.getByText(songTitleMatcher("Living Hope"))).toBeInTheDocument();
     });
+    expect(screen.queryByRole("button", { name: "Select items" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select all results" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Sort results by" })).not.toBeInTheDocument();
     await attachSongNamed(user, "Living Hope");
 
     expect(onSelectSong).toHaveBeenCalledWith({
