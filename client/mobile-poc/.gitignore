@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.env
+.env.local
+.env.*.local
+*.keystore
+*.jks
+local.properties
+captures/
+.gradle/
+build/
+Pods/
+DerivedData/

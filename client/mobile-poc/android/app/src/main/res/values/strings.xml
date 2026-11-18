@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">WorshipSync Native Storage PoC</string>
+    <string name="title_activity_main">WorshipSync Native Storage PoC</string>
+    <string name="package_name">net.worshipsync.mobilepoc</string>
+    <string name="custom_url_scheme">net.worshipsync.mobilepoc</string>
+</resources>

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#10151d" />
+    <title>WorshipSync PouchDB Browser Peer</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="masthead"><div><p class="eyebrow">WorshipSync · isolated browser peer</p><h1>Desktop sync test</h1></div><span id="runtime" class="status-pill waiting">Starting browser PouchDB</span></header>
+      <section class="panel">
+        <p class="muted">This separate desktop page uses PouchDB’s browser IndexedDB adapter. It only pulls or pushes the single namespaced test document ID entered below. It does not open the full demo database for replication.</p>
+        <div class="form-grid">
+          <label>WorshipSync API base URL<input id="api-base" placeholder="https://www.worshipsync.net/" /></label>
+          <label>CouchDB base URL<input id="couch-url" placeholder="https://db.worshipsync.net" /></label>
+        </div>
+        <div class="auth-card">
+          <div class="section-heading"><div><p class="eyebrow">Existing WorshipSync authentication</p><h2 id="auth-status">Sign in to the demo tenant</h2></div></div>
+          <div class="form-grid">
+            <label>Email<input id="auth-email" type="email" autocomplete="username" /></label>
+            <label>Password<input id="auth-password" type="password" autocomplete="current-password" /></label>
+          </div>
+          <div class="button-row wrap"><button id="sign-in">Sign in using WorshipSync</button><button id="sign-out" class="secondary">Sign out</button></div>
+          <div id="email-code-panel" hidden>
+            <label>Email verification code<input id="email-code" inputmode="numeric" autocomplete="one-time-code" /></label>
+            <button id="verify-code">Verify and continue</button>
+          </div>
+          <p class="hint">Credentials stay in this page's memory. The API session must resolve to <code>demo</code>.</p>
+        </div>
+        <label>Mobile POC test document ID<input id="test-id" placeholder="mobile-poc:test:…" autocomplete="off" /></label>
+        <div class="button-row wrap">
+          <button id="pull-one">Pull this ID from CouchDB</button>
+          <button id="edit-peer" class="secondary">Edit on desktop</button>
+          <button id="inspect" class="secondary">Inspect conflicts</button>
+          <button id="delete-peer" class="danger">Delete locally</button>
+        </div>
+        <div class="authorization">
+          <label class="checkbox-label"><input id="authorize" type="checkbox" />I explicitly authorize one remote write for this namespaced test document.</label>
+          <button id="push-one" class="danger">Push this exact ID</button>
+        </div>
+        <pre id="output" class="json-output">Browser PouchDB peer is preparing…</pre>
+        <p id="message" class="hint" role="status"></p>
+      </section>
+      <footer class="page-footer"><span>Remote DB: <code>worship-sync-demo</code> · browser storage: <code>IndexedDB</code></span></footer>
+    </main>
+    <script type="module" src="/src/peer.ts"></script>
+  </body>
+</html>
