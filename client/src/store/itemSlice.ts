@@ -180,7 +180,7 @@ const defaultBibleInfoForCompare: BibleInfo = {
 
 /** Align optional fields so DB docs missing nested objects match in-memory item state. */
 function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
-  return {
+  const normalized = {
     ...snap,
     shouldSkipTitle: snap.shouldSkipTitle ?? false,
     background: snap.background ?? "",
@@ -191,6 +191,9 @@ function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
     shouldSendTo: snap.shouldSendTo ?? defaultShouldSendTo,
     songLinks: snap.songLinks ?? [],
   };
+  // PouchDB stores JSON documents, so own-save echoes omit undefined-valued
+  // object fields. Compare the JSON-persisted shape to avoid false conflicts.
+  return JSON.parse(JSON.stringify(normalized)) as DBItem;
 }
 
 /** Strips Couch metadata so echo/sync round-trips match the editor despite new `_rev` / timestamps. */

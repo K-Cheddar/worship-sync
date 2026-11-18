@@ -76,6 +76,35 @@ describe("itemSlice", () => {
     )).toBe(false);
   });
 
+  it("treats a Pouch JSON round-trip with omitted undefined fields as the same authored content", () => {
+    const baseline = {
+      _id: "custom-pouch-json-roundtrip",
+      _rev: "1-base",
+      type: "free",
+      docType: "item",
+      name: "Custom item",
+      slides: [{
+        id: "slide-a",
+        name: "A",
+        type: "Section",
+        boxes: [{ id: "box-a", words: "Original", mediaInfo: undefined }],
+      }],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as any;
+    const local = {
+      ...baseline,
+      slides: [{
+        ...baseline.slides[0],
+        boxes: [{ ...baseline.slides[0].boxes[0], words: "My saved edit" }],
+      }],
+    };
+    const pouchEcho = JSON.parse(JSON.stringify(local));
+    pouchEcho._rev = "2-saved";
+
+    expect(itemDocsMatchPersistedContent(pouchEcho, local)).toBe(true);
+    expect(getItemPersistenceConflicts(local, baseline, pouchEcho)).toEqual([]);
+  });
+
   it("rebases a non-overlapping remote edit without replacing the local draft", () => {
     const baseline = {
       _id: "custom-rebase",

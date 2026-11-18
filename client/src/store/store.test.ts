@@ -2980,6 +2980,46 @@ describe("custom item autosave integrity against PouchDB", () => {
     }
   });
 
+  it("does not turn a delayed Pouch JSON echo into a conflict while a newer custom draft is open", async () => {
+    const itemId = `custom-json-echo-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const env = await openItem(database, itemId);
+    try {
+      const firstSlides = clone(env.baseline.slides ?? []);
+      firstSlides[0].boxes[0].words = "First saved value";
+      firstSlides[0].boxes[0].mediaInfo = undefined;
+      await env.store.dispatch(env.updateSlides({ slides: firstSlides }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      const firstSaved = await waitForSaved(env, database, itemId, { slides: firstSlides });
+      const delayedEcho = await database.get<DBItem>(itemId);
+      expect(delayedEcho._rev).toBe(firstSaved._rev);
+      expect(Object.prototype.hasOwnProperty.call(delayedEcho.slides?.[0].boxes?.[0], "mediaInfo"))
+        .toBe(false);
+
+      const newerSlides = clone(env.store.getState().undoable.present.item.slides);
+      newerSlides[0].boxes[0].words = "Newer value to keep";
+      await env.store.dispatch(env.updateSlides({ slides: newerSlides }) as never);
+      env.store.dispatch({
+        type: "allDocs/applyItemDocumentChange",
+        payload: { id: itemId, doc: delayedEcho },
+      });
+      await flushListenerEffects();
+
+      const duringNewerEdit = env.store.getState().undoable.present.item;
+      expect(duringNewerEdit.hasRemoteUpdate).toBe(false);
+      expect(duringNewerEdit.hasPendingUpdate).toBe(true);
+      expect(duringNewerEdit.slides[0].boxes[0].words).toBe("Newer value to keep");
+
+      await jest.advanceTimersByTimeAsync(1500);
+      const saved = await waitForSaved(env, database, itemId, { slides: newerSlides });
+      const reloaded = await database.get<DBItem>(itemId);
+      expect(saved.slides).toEqual(newerSlides);
+      expect(reloaded.slides?.[0].boxes?.[0].words).toBe("Newer value to keep");
+    } finally {
+      await env.close();
+    }
+  });
+
   it("keeps rapid media insertions in order when the first Pouch write is still in flight", async () => {
     const itemId = `custom-media-rapid-${Date.now()}-${Math.random()}`;
     const database = new PouchDB(itemId, { adapter: "idb" });
