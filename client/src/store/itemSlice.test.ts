@@ -105,6 +105,42 @@ describe("itemSlice", () => {
     expect(getItemPersistenceConflicts(local, baseline, pouchEcho)).toEqual([]);
   });
 
+  it("normalizes derived monitor layouts before checking an add-box edit for remote overlap", () => {
+    const baseline = {
+      _id: "custom-derived-monitor-layout",
+      _rev: "1-base",
+      type: "free",
+      docType: "item",
+      name: "Custom item",
+      slides: [{
+        id: "slide-a",
+        name: "A",
+        type: "Section",
+        boxes: [{ id: "box-a", words: "Original", width: 100, height: 100 }],
+      }],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as any;
+    const store = createStore();
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    const editorBaseline = store.getState().item.baseItem!;
+    const locallyEdited = {
+      ...baseline.slides[0],
+      boxes: [
+        ...baseline.slides[0].boxes,
+        { id: "box-b", words: "Added box", width: 75, height: 75 },
+      ],
+    };
+    store.dispatch(itemSlice.actions._updateSlides([locallyEdited]));
+
+    expect(editorBaseline.monitorLayout).toBeDefined();
+    expect(baseline.monitorLayout).toBeUndefined();
+    expect(getItemPersistenceConflicts(
+      store.getState().item,
+      editorBaseline,
+      baseline,
+    )).toEqual([]);
+  });
+
   it("rebases a non-overlapping remote edit without replacing the local draft", () => {
     const baseline = {
       _id: "custom-rebase",

@@ -254,7 +254,11 @@ export const getItemPersistenceChanges = (
   const itemSnapshot = createItemSnapshot(item);
   if (!itemSnapshot) return [];
   const current = normalizeSnapshotForEditorCompare(itemSnapshot);
-  const base = normalizeSnapshotForEditorCompare(baseline);
+  // Normalize the baseline through the same load boundary as the editor. In
+  // particular, legacy custom items can derive monitorLayout from their slides
+  // even though the stored Pouch document has no monitorLayout field yet.
+  const baseSnapshot = createItemSnapshot(baseline) ?? baseline;
+  const base = normalizeSnapshotForEditorCompare(baseSnapshot);
   return ITEM_PERSISTED_FIELDS.filter(
     (field) => !_.isEqual(current[field], base[field]),
   );
@@ -268,8 +272,10 @@ export const getItemPersistenceConflicts = (
   const itemSnapshot = createItemSnapshot(item);
   if (!itemSnapshot) return [];
   const current = normalizeSnapshotForEditorCompare(itemSnapshot);
-  const base = normalizeSnapshotForEditorCompare(baseline);
-  const remote = normalizeSnapshotForEditorCompare(latest);
+  const baseSnapshot = createItemSnapshot(baseline) ?? baseline;
+  const latestSnapshot = createItemSnapshot(latest) ?? latest;
+  const base = normalizeSnapshotForEditorCompare(baseSnapshot);
+  const remote = normalizeSnapshotForEditorCompare(latestSnapshot);
   return getItemPersistenceChanges(itemSnapshot, baseline).filter(
     (field) => {
       // The v2 writer validates arrangement and slide documents separately.

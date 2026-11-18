@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import Undo from "../containers/Toolbar/ToolbarElements/Undo";
 import { loadSongV2Snapshot } from "../utils/songPersistence";
 import { createSongV2 } from "../utils/songV2Writer";
-import { createNewSlide, createSlideFromMedia, insertSlidesAt } from "../utils/slideCreation";
+import { createBox, createNewSlide, createSlideFromMedia, insertSlidesAt } from "../utils/slideCreation";
 import { formatSong } from "../utils/overflow";
 import { getMonitorLayoutForSlides } from "../utils/monitorSlideFormatter";
 import { createOutlineMoveIntent } from "../utils/outlineSync";
@@ -354,6 +354,7 @@ const loadStoreWithItemPersistence = (
     pouchAudit: pouchAuditModule,
     selectControllerItem: selectionModule!.selectControllerItem,
     updateSlides: itemSliceModule.updateSlides,
+    updateBoxes: itemSliceModule.updateBoxes,
     updateSlideVideoBackgroundLoop: itemSliceModule.updateSlideVideoBackgroundLoop,
     updateSlideVideoBackgroundSendMode: itemSliceModule.updateSlideVideoBackgroundSendMode,
     db,
@@ -3015,6 +3016,37 @@ describe("custom item autosave integrity against PouchDB", () => {
       const reloaded = await database.get<DBItem>(itemId);
       expect(saved.slides).toEqual(newerSlides);
       expect(reloaded.slides?.[0].boxes?.[0].words).toBe("Newer value to keep");
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("saves a custom box insertion without treating its derived monitor layout as remote", async () => {
+    const itemId = `custom-add-box-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const originalSlides = [{
+      id: "slide-a",
+      name: "Section A",
+      type: "Section",
+      boxes: [{ id: "box-a", words: "Original", width: 100, height: 100 }],
+    }];
+    await seedItem(database, itemId, originalSlides as any);
+    const env = await openItem(database, itemId);
+    try {
+      expect(env.baseline.monitorLayout).toBeUndefined();
+      expect(env.store.getState().undoable.present.item.baseItem?.monitorLayout).toBeDefined();
+
+      const addedBox = createBox({ words: "Added box", width: 75, height: 75, x: 12.5, y: 12.5 });
+      await env.store.dispatch(env.updateBoxes({
+        boxes: [...originalSlides[0].boxes, addedBox],
+      }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      const persisted = await waitForSaved(env, database, itemId, {});
+
+      expect(persisted.slides?.[0].boxes).toHaveLength(2);
+      expect(persisted.slides?.[0].boxes?.[1].words).toBe("Added box");
+      expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+      expect((await database.get<DBItem>(itemId)).slides?.[0].boxes).toHaveLength(2);
     } finally {
       await env.close();
     }
