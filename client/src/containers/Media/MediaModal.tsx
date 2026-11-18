@@ -26,6 +26,7 @@ import {
   ZoomIn,
   ZoomOut,
   ExternalLink,
+  Link2,
   Cable,
   LayoutGrid,
   MonitorSmartphone,
@@ -93,6 +94,15 @@ import {
 } from "./mediaLibraryOrangeFolderIcon";
 import { StorageUsageIndicators } from "../../components/StorageUsage/StorageUsageIndicators";
 import { useChurchStorageQuota } from "../../components/StorageUsage/useChurchStorageQuota";
+
+const getLocalVideoPreviewSourceKey = (media: MediaType | null | undefined) =>
+  media?.type === "video" && media.localVideoFile
+    ? JSON.stringify([
+        media.localVideoFile.id,
+        media.localVideoFile.contentRevision || "",
+        media.localVideoFile.ownerDeviceId,
+      ])
+    : "";
 
 type MediaModalGridZoomSliderProps = {
   modalZoomLevel: number;
@@ -193,6 +203,8 @@ type MediaModalProps = {
   /** Screens and windows on this computer, offered next to hardware inputs. */
   onAddScreenShare?: () => void;
   onRelinkVideoInput?: (media: MediaType) => void;
+  onRelinkLocalVideoFile?: (media: MediaType) => void;
+  onLinkVideo?: () => void;
   onImportFromCanva?: (sourceMedia?: MediaType) => void;
   /** When true, adding media is blocked (library still loading or failed). */
   mediaUploadDisabled?: boolean;
@@ -235,6 +247,8 @@ const MediaModal = ({
   onAddVideoInput,
   onAddScreenShare,
   onRelinkVideoInput,
+  onRelinkLocalVideoFile,
+  onLinkVideo,
   onImportFromCanva,
   mediaUploadDisabled = false,
   isGuestSession = false,
@@ -302,6 +316,7 @@ const MediaModal = ({
       onAddVideoInput={onAddVideoInput}
       onAddScreenShare={onAddScreenShare}
       onImportFromCanva={onImportFromCanva ? () => onImportFromCanva() : undefined}
+      onLinkVideo={onLinkVideo}
       mediaUploadDisabled={mediaUploadDisabled}
       isGuestSession={isGuestSession}
     />
@@ -382,6 +397,32 @@ const MediaModal = ({
     filteredList,
     enableRangeSelection: true,
   });
+  const [localVideoRefresh, setLocalVideoRefresh] = useState({
+    sourceKey: "",
+    key: 0,
+  });
+  const localVideoAutoRetrySourcesRef = useRef(new Set<string>());
+  const [localVideoPreviewFailureSources, setLocalVideoPreviewFailureSources] =
+    useState<Set<string>>(() => new Set());
+  const localPreviewVideoSourceKey = getLocalVideoPreviewSourceKey(modalPreviewMedia);
+  const localVideoRefreshKey = localVideoRefresh.sourceKey === localPreviewVideoSourceKey
+    ? localVideoRefresh.key
+    : 0;
+  useEffect(() => {
+    setLocalVideoRefresh((current) =>
+      current.sourceKey === localPreviewVideoSourceKey
+        ? current
+        : { sourceKey: localPreviewVideoSourceKey, key: 0 },
+    );
+  }, [localPreviewVideoSourceKey]);
+  const localPreviewVideoFailed = Boolean(
+    localPreviewVideoSourceKey &&
+    localVideoPreviewFailureSources.has(localPreviewVideoSourceKey),
+  );
+  const selectedLocalVideo = useLocalVideoFileUrl(
+    modalSelectedMedia.localVideoFile,
+    "display",
+  );
 
   const handleModalDeleteClick = useCallback(
     (mediaItem: MediaType) => {
@@ -643,6 +684,19 @@ const MediaModal = ({
         onClick: () => onRelinkVideoInput(modalSelectedMedia),
       });
     }
+    if (
+      modalSelectedMediaIds.size === 1 &&
+      modalSelectedMedia.localVideoFile?.storageMode === "linked" &&
+      selectedLocalVideo.isOwner &&
+      onRelinkLocalVideoFile
+    ) {
+      actions.push({
+        id: "relink-local-video-file",
+        label: "Relink file",
+        icon: <Link2 className="size-4" />,
+        onClick: () => onRelinkLocalVideoFile(modalSelectedMedia),
+      });
+    }
     const cloudShareAction = getLocalMediaCloudShareBarAction(
       modalSelectedMedia,
       modalSelectedMediaIds.size,
@@ -668,6 +722,8 @@ const MediaModal = ({
     triggerSlideBackgroundFeedback,
     onImportFromCanva,
     onRelinkVideoInput,
+    onRelinkLocalVideoFile,
+    selectedLocalVideo,
     getLocalMediaCloudShareBarAction,
   ]);
 
@@ -776,6 +832,8 @@ const MediaModal = ({
   const localPreviewImage = useLocalImageUrl(modalPreviewMedia?.localImage);
   const localPreviewVideo = useLocalVideoFileUrl(
     modalPreviewMedia?.localVideoFile,
+    "display",
+    localVideoRefreshKey,
   );
   const localVideoInputPreview = useMemo(
     () =>
@@ -814,6 +872,13 @@ const MediaModal = ({
   // Initialize modal selection from the parent only on open; avoid snapping back when parent props refresh while open.
   useEffect(() => {
     if (isOpen && !wasModalOpenRef.current) {
+      const sourceKey = getLocalVideoPreviewSourceKey(previewMedia);
+      if (sourceKey) {
+        setLocalVideoRefresh((current) => ({
+          sourceKey,
+          key: current.sourceKey === sourceKey ? current.key + 1 : 1,
+        }));
+      }
       setModalSelectedMedia(selectedMedia);
       setModalSelectedMediaIds(new Set(selectedMediaIds));
       setModalPreviewMedia(previewMedia);
@@ -995,6 +1060,10 @@ const MediaModal = ({
                         publishPreview
                         showErrors
                       />
+                    ) : localPreviewVideoFailed ? (
+                      <div role="alert" className="px-4 text-center text-sm text-gray-300">
+                        This video file could not be played.
+                      </div>
                     ) : modalPreviewMedia.type === "video" ? (
                       <video
                         src={
@@ -1005,6 +1074,28 @@ const MediaModal = ({
                         className="max-h-full max-w-full w-full h-full object-contain"
                         controls
                         autoPlay
+                        onError={() => {
+                          if (!localPreviewVideoSourceKey ||
+                              !localPreviewVideo.isLocalVideoFile ||
+                              !localPreviewVideo.isOwner ||
+                              localPreviewVideo.localStatus === "unavailable") return;
+                          if (!localVideoAutoRetrySourcesRef.current.has(localPreviewVideoSourceKey)) {
+                            localVideoAutoRetrySourcesRef.current.add(localPreviewVideoSourceKey);
+                            setLocalVideoRefresh((current) => ({
+                              sourceKey: localPreviewVideoSourceKey,
+                              key: current.sourceKey === localPreviewVideoSourceKey
+                                ? current.key + 1
+                                : 1,
+                            }));
+                            return;
+                          }
+                          setLocalVideoPreviewFailureSources((current) => {
+                            if (current.has(localPreviewVideoSourceKey)) return current;
+                            const next = new Set(current);
+                            next.add(localPreviewVideoSourceKey);
+                            return next;
+                          });
+                        }}
                       />
                     ) : (
                       <img

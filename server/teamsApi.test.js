@@ -23786,6 +23786,198 @@ test("accept all unanswered preserves answers, ignores forged identity and safel
   assert.equal(noCsrf.statusCode, 403);
 });
 
+test("church-wide member availability updates are field-scoped and revision checked", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_service_availability_patch");
+  const serviceId = "availability-sunday";
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: serviceId,
+      name: "Sunday service",
+      reccurence: "weekly",
+      dayOfWeek: 0,
+      time: "16:00",
+    }],
+  });
+  const legacyId = `${serviceId}@2099-11-08T15:00:00.000Z`;
+  const otherId = "other-service@2099-11-15";
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: {
+      firstName: "Rae",
+      lastName: "Kim",
+      notes: "Keep this note",
+      positionIds: [],
+      blockoutDates: [],
+      serviceAvailability: { [legacyId]: "unavailable", [otherId]: "available" },
+    },
+  });
+  assert.equal(created.statusCode, 200);
+  const memberId = created.payload.member.memberId;
+  const initial = await callHandler(authHandlers.getTeamRosterMemberServiceAvailability, {
+    context,
+    params: { memberId },
+  });
+  assert.equal(initial.statusCode, 200);
+  assert.deepEqual(initial.payload.serviceAvailability, {
+    [legacyId]: "unavailable",
+    [otherId]: "available",
+  });
+
+  const logicalId = `${serviceId}@2099-11-08`;
+  const occurrence = {
+    occurrenceId: logicalId,
+    logicalOccurrenceId: logicalId,
+    serviceId,
+    serviceIds: [serviceId],
+    serviceDate: "2099-11-08",
+    startsAt: "2099-11-08T16:00:00.000Z",
+  };
+  const unavailable = await callHandler(authHandlers.updateTeamRosterMemberServiceAvailability, {
+    context,
+    params: { memberId },
+    body: {
+      expectedUpdatedAt: initial.payload.updatedAt,
+      changes: [{ ...occurrence, status: "unavailable", removeOccurrenceIds: [legacyId] }],
+    },
+  });
+  assert.equal(unavailable.statusCode, 200, JSON.stringify(unavailable.payload));
+  assert.deepEqual(unavailable.payload.serviceAvailability, {
+    [logicalId]: "unavailable",
+    [otherId]: "available",
+  });
+
+  const stale = await callHandler(authHandlers.updateTeamRosterMemberServiceAvailability, {
+    context,
+    params: { memberId },
+    body: {
+      expectedUpdatedAt: initial.payload.updatedAt,
+      changes: [{ ...occurrence, status: "available" }],
+    },
+  });
+  assert.equal(stale.statusCode, 409);
+  assert.match(stale.payload.errorMessage, /changed somewhere else/i);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, memberId)).notes, "Keep this note");
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, memberId)).serviceAvailability[logicalId], "unavailable");
+
+  const available = await callHandler(authHandlers.updateTeamRosterMemberServiceAvailability, {
+    context,
+    params: { memberId },
+    body: {
+      expectedUpdatedAt: unavailable.payload.updatedAt,
+      changes: [{ ...occurrence, status: "available" }],
+    },
+  });
+  assert.equal(available.statusCode, 200);
+  assert.equal(available.payload.serviceAvailability[logicalId], "available");
+  const cleared = await callHandler(authHandlers.updateTeamRosterMemberServiceAvailability, {
+    context,
+    params: { memberId },
+    body: {
+      expectedUpdatedAt: available.payload.updatedAt,
+      changes: [{ ...occurrence, status: null, removeOccurrenceIds: [logicalId] }],
+    },
+  });
+  assert.equal(cleared.statusCode, 200);
+  assert.deepEqual(cleared.payload.serviceAvailability, { [otherId]: "available" });
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, memberId)).notes, "Keep this note");
+});
+
+test("member availability validates occurrence statuses, combined services, and church ownership", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("member_availability_occurrence_validation");
+  const firstServiceId = "combined-a";
+  const secondServiceId = "combined-b";
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [firstServiceId, secondServiceId].map((id) => ({
+      id,
+      name: id,
+      reccurence: "one_time",
+      serviceGroupId: "combined-sunday",
+      dateTimeISO: "2099-11-08T10:00:00.000Z",
+    })),
+  });
+  const created = await callHandler(authHandlers.createTeamRosterMember, {
+    context,
+    body: { firstName: "Rae", lastName: "Kim", positionIds: [], blockoutDates: [] },
+  });
+  const memberId = created.payload.member.memberId;
+  const current = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+  const combinedId = "group:combined-sunday@2099-11-08";
+  const combinedChange = {
+    occurrenceId: combinedId,
+    logicalOccurrenceId: combinedId,
+    serviceId: firstServiceId,
+    serviceIds: [firstServiceId, secondServiceId],
+    groupId: "combined-sunday",
+    serviceDate: "2099-11-08",
+    startsAt: "2099-11-08T10:00:00.000Z",
+    status: "available",
+  };
+  const combined = await callHandler(authHandlers.updateTeamRosterMemberServiceAvailability, {
+    context,
+    params: { memberId },
+    body: { expectedUpdatedAt: current.updatedAt, changes: [combinedChange] },
+  });
+  assert.equal(combined.statusCode, 200, JSON.stringify(combined.payload));
+  assert.equal(combined.payload.serviceAvailability[combinedId], "available");
+
+  const invalidStatus = await callHandler(authHandlers.updateTeamRosterMemberServiceAvailability, {
+    context,
+    params: { memberId },
+    body: {
+      expectedUpdatedAt: combined.payload.updatedAt,
+      changes: [{ ...combinedChange, status: "maybe" }],
+    },
+  });
+  assert.equal(invalidStatus.statusCode, 400);
+
+  const invalidIdentity = await callHandler(authHandlers.updateTeamRosterMemberServiceAvailability, {
+    context,
+    params: { memberId },
+    body: {
+      expectedUpdatedAt: combined.payload.updatedAt,
+      changes: [{ ...combinedChange, occurrenceId: "combined-a@2099-11-08" }],
+    },
+  });
+  assert.equal(invalidIdentity.statusCode, 400);
+
+  const otherChurch = await createAdminContext("member_availability_other_church");
+  const crossChurch = await callHandler(authHandlers.updateTeamRosterMemberServiceAvailability, {
+    context: otherChurch,
+    params: { memberId },
+    body: { expectedUpdatedAt: current.updatedAt, changes: [combinedChange] },
+  });
+  assert.equal(crossChurch.statusCode, 404);
+});
+
+test("team-scoped editors cannot read or update church-wide member availability", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("scoped_member_availability");
+  const { teamId, memberIds } = await seedTeam(context, {
+    teamName: "Worship",
+    members: [{ firstName: "Rae", lastName: "Kim" }],
+  });
+  const scoped = await createHumanContext("scoped_member_availability_manager", {
+    churchId: context.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [teamId]: "edit" } },
+  });
+  const read = await callHandler(authHandlers.getTeamRosterMemberServiceAvailability, {
+    context: scoped,
+    params: { memberId: memberIds.Rae },
+  });
+  assert.equal(read.statusCode, 403);
+  const update = await callHandler(authHandlers.updateTeamRosterMemberServiceAvailability, {
+    context: scoped,
+    params: { memberId: memberIds.Rae },
+    body: { expectedUpdatedAt: "", changes: [] },
+  });
+  assert.equal(update.statusCode, 403);
+});
+
 test("my availability uses current recipient scope without disclosing tokens or another member", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("volunteer_availability");
