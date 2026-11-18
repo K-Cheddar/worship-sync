@@ -13,6 +13,7 @@ const allowedSuites = new Set([
   "schedule-quick-member.mjs",
   "my-schedule-service-cards.mjs",
   "service-plan-refresh.mjs",
+  "service-public-efficiency.mjs",
   "availability-workspace.mjs",
 ]);
 if (!allowedSuites.has(suite)) {

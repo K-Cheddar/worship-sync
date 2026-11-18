@@ -189,6 +189,22 @@ describe("LocalVideoCaptureManager", () => {
     );
   });
 
+  it("keeps an output-owned capture active when list warming is cleared", async () => {
+    warmSourceIds = ["source-1"];
+    const view = render(<LocalVideoCaptureManager />);
+
+    await waitFor(() => expect(mockAcquireCapture).toHaveBeenCalledTimes(1));
+    act(() => {
+      warmSourceIds = [];
+      warmIntentListener?.({ sourceIds: [], updatedAt: Date.now() });
+    });
+    view.rerender(<LocalVideoCaptureManager />);
+    await act(async () => { await Promise.resolve(); });
+
+    expect(mockReleaseCapture).not.toHaveBeenCalled();
+    expect(mockAcquireCapture).toHaveBeenCalledTimes(1);
+  });
+
   it("warms a source present on the service list before it goes live", async () => {
     mockState.presentation.outputs.projector.info = {};
     warmSourceIds = ["source-1"];

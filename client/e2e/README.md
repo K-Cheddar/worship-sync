@@ -18,3 +18,7 @@ From `client/`, run `node e2e/responsive-navigation.mjs --smoke`. This uses the 
 # Service-plan refresh scroll regression
 
 From `client/`, run `npm run test:e2e:service-plan-refresh`. It mounts the real `FloatingWindow` and `ControllerServicePlanView` with a local long-plan fixture in Chromium, then verifies native scroll anchoring and expanded-note continuity after an insertion above the reading position, plus a nearby reading position after deleting the visible item. The check needs the existing root Playwright dependency and Chromium, and requires no church account or authentication.
+
+# Public service viewer efficiency check
+
+From `client/`, run `npm run test:e2e:service-public-efficiency`. It mounts the real `ServicePublicView` with a generated 120-item demo snapshot, advances its one-second clock, opens and closes a resource preview, and repeats viewer/home route transitions. It reports optional JS heap data when Chromium exposes it, DOM node counts, loaded resource counts, and rendered item counts. Samples are observational; the check enforces stable rendered content and a clean browser console without imposing a memory threshold. It uses the existing root Playwright dependency and Chromium and does not require a church account or credentials.
