@@ -95,6 +95,15 @@ import {
 import { StorageUsageIndicators } from "../../components/StorageUsage/StorageUsageIndicators";
 import { useChurchStorageQuota } from "../../components/StorageUsage/useChurchStorageQuota";
 
+const getLocalVideoPreviewSourceKey = (media: MediaType | null | undefined) =>
+  media?.type === "video" && media.localVideoFile
+    ? JSON.stringify([
+        media.localVideoFile.id,
+        media.localVideoFile.contentRevision || "",
+        media.localVideoFile.ownerDeviceId,
+      ])
+    : "";
+
 type MediaModalGridZoomSliderProps = {
   modalZoomLevel: number;
   modalZoomSliderMax: number;
@@ -388,11 +397,31 @@ const MediaModal = ({
     filteredList,
     enableRangeSelection: true,
   });
-  const [localVideoRefreshKey, setLocalVideoRefreshKey] = useState(0);
+  const [localVideoRefresh, setLocalVideoRefresh] = useState({
+    sourceKey: "",
+    key: 0,
+  });
+  const localVideoAutoRetrySourcesRef = useRef(new Set<string>());
+  const [localVideoPreviewFailureSources, setLocalVideoPreviewFailureSources] =
+    useState<Set<string>>(() => new Set());
+  const localPreviewVideoSourceKey = getLocalVideoPreviewSourceKey(modalPreviewMedia);
+  const localVideoRefreshKey = localVideoRefresh.sourceKey === localPreviewVideoSourceKey
+    ? localVideoRefresh.key
+    : 0;
+  useEffect(() => {
+    setLocalVideoRefresh((current) =>
+      current.sourceKey === localPreviewVideoSourceKey
+        ? current
+        : { sourceKey: localPreviewVideoSourceKey, key: 0 },
+    );
+  }, [localPreviewVideoSourceKey]);
+  const localPreviewVideoFailed = Boolean(
+    localPreviewVideoSourceKey &&
+    localVideoPreviewFailureSources.has(localPreviewVideoSourceKey),
+  );
   const selectedLocalVideo = useLocalVideoFileUrl(
     modalSelectedMedia.localVideoFile,
     "display",
-    localVideoRefreshKey,
   );
 
   const handleModalDeleteClick = useCallback(
@@ -843,7 +872,13 @@ const MediaModal = ({
   // Initialize modal selection from the parent only on open; avoid snapping back when parent props refresh while open.
   useEffect(() => {
     if (isOpen && !wasModalOpenRef.current) {
-      setLocalVideoRefreshKey((current) => current + 1);
+      const sourceKey = getLocalVideoPreviewSourceKey(previewMedia);
+      if (sourceKey) {
+        setLocalVideoRefresh((current) => ({
+          sourceKey,
+          key: current.sourceKey === sourceKey ? current.key + 1 : 1,
+        }));
+      }
       setModalSelectedMedia(selectedMedia);
       setModalSelectedMediaIds(new Set(selectedMediaIds));
       setModalPreviewMedia(previewMedia);
@@ -1025,6 +1060,10 @@ const MediaModal = ({
                         publishPreview
                         showErrors
                       />
+                    ) : localPreviewVideoFailed ? (
+                      <div role="alert" className="px-4 text-center text-sm text-gray-300">
+                        This video file could not be played.
+                      </div>
                     ) : modalPreviewMedia.type === "video" ? (
                       <video
                         src={
@@ -1036,11 +1075,26 @@ const MediaModal = ({
                         controls
                         autoPlay
                         onError={() => {
-                          if (localPreviewVideo.isLocalVideoFile &&
-                              localPreviewVideo.isOwner &&
-                              localPreviewVideo.localStatus !== "unavailable") {
-                            setLocalVideoRefreshKey((current) => current + 1);
+                          if (!localPreviewVideoSourceKey ||
+                              !localPreviewVideo.isLocalVideoFile ||
+                              !localPreviewVideo.isOwner ||
+                              localPreviewVideo.localStatus === "unavailable") return;
+                          if (!localVideoAutoRetrySourcesRef.current.has(localPreviewVideoSourceKey)) {
+                            localVideoAutoRetrySourcesRef.current.add(localPreviewVideoSourceKey);
+                            setLocalVideoRefresh((current) => ({
+                              sourceKey: localPreviewVideoSourceKey,
+                              key: current.sourceKey === localPreviewVideoSourceKey
+                                ? current.key + 1
+                                : 1,
+                            }));
+                            return;
                           }
+                          setLocalVideoPreviewFailureSources((current) => {
+                            if (current.has(localPreviewVideoSourceKey)) return current;
+                            const next = new Set(current);
+                            next.add(localPreviewVideoSourceKey);
+                            return next;
+                          });
                         }}
                       />
                     ) : (

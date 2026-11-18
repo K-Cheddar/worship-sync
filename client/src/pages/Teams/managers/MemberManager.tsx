@@ -1409,10 +1409,15 @@ const MemberManager = ({
   }, [editing?.memberId]);
   const handleAvailabilitySaved = useCallback((savedMember: TeamRosterMember) => {
     const currentMember = data.members.find((member) => member.memberId === savedMember.memberId) ?? savedMember;
-    onSaved({ ...currentMember, serviceAvailability: savedMember.serviceAvailability }, savedMember.memberId);
+    const updatedAt = savedMember.updatedAt || currentMember.updatedAt;
+    onSaved({
+      ...currentMember,
+      serviceAvailability: savedMember.serviceAvailability,
+      updatedAt,
+    }, savedMember.memberId);
     setEditing((current) =>
       current?.memberId === savedMember.memberId
-        ? { ...current, serviceAvailability: savedMember.serviceAvailability }
+        ? { ...current, serviceAvailability: savedMember.serviceAvailability, updatedAt }
         : current,
     );
   }, [data.members, onSaved]);
