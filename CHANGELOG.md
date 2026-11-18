@@ -1,3 +1,20 @@
+# [2.52.0](https://github.com/K-Cheddar/worship-sync/compare/v2.51.0...v2.52.0) (2026-11-18)
+
+
+### Bug Fixes
+
+* address PR 443 findings ([eab03da](https://github.com/K-Cheddar/worship-sync/commit/eab03da3ed4e173e5ba2b9a6977a96ae49f8701f))
+* ensure schedule picker rows are at least 32px high ([592f80e](https://github.com/K-Cheddar/worship-sync/commit/592f80e6e004f7d1283d7c1177f03aeaff4d29ae))
+* **media:** make folder operation failures retryable ([a27368b](https://github.com/K-Cheddar/worship-sync/commit/a27368b2fa33fc611e43b7517a7d8822b05a62a8))
+* resolve PR 422 CI failures ([14065dc](https://github.com/K-Cheddar/worship-sync/commit/14065dc0ba573b881436a9d4fae43df25ab03a49))
+
+
+### Features
+
+* **media:** support linked local videos and external downloads ([1a8f4c3](https://github.com/K-Cheddar/worship-sync/commit/1a8f4c3da11e0f1a4fad2f8231c03b769e232f59))
+* starting video downloader ([3786769](https://github.com/K-Cheddar/worship-sync/commit/37867691d6923b10bee9cf4e3117764e6d9f6190))
+* **teams:** edit member service availability ([ebb91c2](https://github.com/K-Cheddar/worship-sync/commit/ebb91c2fb81ac6a124c83059d32515b1d0406845))
+
 # [2.51.0](https://github.com/K-Cheddar/worship-sync/compare/v2.50.0...v2.51.0) (2026-11-17)
 
 
