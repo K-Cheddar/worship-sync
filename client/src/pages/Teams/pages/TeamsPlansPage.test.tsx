@@ -430,8 +430,9 @@ describe("TeamsPlansPage", () => {
     serviceDateLists.forEach((list) => {
       expect(list).toHaveClass(
         "grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))]",
-        "max-w-[90rem]",
+        "w-full",
       );
+      expect(list).not.toHaveClass("max-w-[90rem]");
     });
     // Service names land on tiles in date order instead of separate section headers.
     expect(
@@ -467,8 +468,9 @@ describe("TeamsPlansPage", () => {
     serviceDateLists.forEach((list) => {
       expect(list).toHaveClass(
         "grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))]",
-        "max-w-[90rem]",
+        "w-full",
       );
+      expect(list).not.toHaveClass("max-w-[90rem]");
     });
   });
 
