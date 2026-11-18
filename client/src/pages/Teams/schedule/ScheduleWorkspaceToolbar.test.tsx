@@ -2,6 +2,7 @@ import type { ComponentProps } from "react";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ScheduleWorkspaceToolbar, {
+  getScheduleWorkspacePublicationClassName,
   resolveSchedulePublicationStatus,
 } from "./ScheduleWorkspaceToolbar";
 
@@ -56,6 +57,16 @@ describe("ScheduleWorkspaceToolbar", () => {
   });
 
   it.each([
+    ["a saved Draft", { scheduleId: "schedule-1", published: false }, "border-amber-500/50 bg-amber-950/20"],
+    ["a Published schedule", { scheduleId: "schedule-1", published: true }, undefined],
+    ["a legacy Published schedule", { scheduleId: "schedule-1" }, undefined],
+    ["a virtual schedule", { scheduleId: "virtual:team:period" }, undefined],
+  ])("applies the workspace appearance only to %s", (_label, schedule, expected) => {
+    const status = resolveSchedulePublicationStatus(schedule);
+    expect(getScheduleWorkspacePublicationClassName(status)).toBe(expected);
+  });
+
+  it.each([
     [1280, "desktop"],
     [768, "tablet"],
     [390, "mobile"],
@@ -75,6 +86,10 @@ describe("ScheduleWorkspaceToolbar", () => {
       />,
     );
     expect(screen.getByText("3 Services")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Draft schedule status" })).toHaveTextContent(
+      "Draft schedule Not yet published · Not visible to volunteers",
+    );
+    expect(screen.getByRole("group", { name: "Draft schedule status" })).toHaveClass("flex-wrap");
     expect(screen.queryByRole("button", { name: "Expand all services" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Collapse all services" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More schedule actions" }));
@@ -137,6 +152,28 @@ describe("ScheduleWorkspaceToolbar", () => {
     const publishingButton = screen.getByRole("button", { name: "Publishing…" });
     expect(publishingButton).toBeDisabled();
     expect(publishingButton).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("group", { name: "Draft schedule status" })).toBeInTheDocument();
+  });
+
+  it("removes the Draft notice when the selected schedule becomes Published or virtual", () => {
+    const { rerender } = render(<ScheduleWorkspaceToolbar {...makeProps()} />);
+    expect(screen.getByRole("group", { name: "Draft schedule status" })).toBeInTheDocument();
+
+    rerender(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ publicationStatus: "published" })}
+      />,
+    );
+    expect(screen.queryByRole("group", { name: "Draft schedule status" })).not.toBeInTheDocument();
+    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
+
+    rerender(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ publicationStatus: undefined })}
+      />,
+    );
+    expect(screen.queryByRole("group", { name: "Draft schedule status" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Schedule publication status" })).not.toBeInTheDocument();
   });
 
   it("shows Published status without an action for read-only users and keeps Unpublish low emphasis", () => {
@@ -156,6 +193,21 @@ describe("ScheduleWorkspaceToolbar", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Unpublish" })).toHaveAttribute("data-variant", "presentTertiary");
+  });
+
+  it("shows Draft messaging to read-only users without publication actions", () => {
+    render(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ canEdit: false, publicationStatus: "draft" })}
+      />,
+    );
+
+    expect(screen.getByRole("group", { name: "Draft schedule status" })).toHaveTextContent(
+      "Not yet published · Not visible to volunteers",
+    );
+    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
+    expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
   });
 
   it("hides publication controls for virtual schedules and preserves Undo/Redo disabled states", () => {

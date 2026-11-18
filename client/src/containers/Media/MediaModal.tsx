@@ -404,6 +404,20 @@ const MediaModal = ({
   const localVideoAutoRetrySourcesRef = useRef(new Set<string>());
   const [localVideoPreviewFailureSources, setLocalVideoPreviewFailureSources] =
     useState<Set<string>>(() => new Set());
+  const startLocalVideoPreviewAttempt = useCallback((sourceKey: string) => {
+    if (!sourceKey) return;
+    localVideoAutoRetrySourcesRef.current.delete(sourceKey);
+    setLocalVideoPreviewFailureSources((current) => {
+      if (!current.has(sourceKey)) return current;
+      const next = new Set(current);
+      next.delete(sourceKey);
+      return next;
+    });
+    setLocalVideoRefresh((current) => ({
+      sourceKey,
+      key: current.sourceKey === sourceKey ? current.key + 1 : 1,
+    }));
+  }, []);
   const localPreviewVideoSourceKey = getLocalVideoPreviewSourceKey(modalPreviewMedia);
   const localVideoRefreshKey = localVideoRefresh.sourceKey === localPreviewVideoSourceKey
     ? localVideoRefresh.key
@@ -873,12 +887,7 @@ const MediaModal = ({
   useEffect(() => {
     if (isOpen && !wasModalOpenRef.current) {
       const sourceKey = getLocalVideoPreviewSourceKey(previewMedia);
-      if (sourceKey) {
-        setLocalVideoRefresh((current) => ({
-          sourceKey,
-          key: current.sourceKey === sourceKey ? current.key + 1 : 1,
-        }));
-      }
+      startLocalVideoPreviewAttempt(sourceKey);
       setModalSelectedMedia(selectedMedia);
       setModalSelectedMediaIds(new Set(selectedMediaIds));
       setModalPreviewMedia(previewMedia);
@@ -926,6 +935,7 @@ const MediaModal = ({
     setModalSelectedMediaIds,
     setModalPreviewMedia,
     clearModalSelection,
+    startLocalVideoPreviewAttempt,
   ]);
 
   useEffect(

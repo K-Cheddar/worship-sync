@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import {
   CalendarDays,
+  FileText,
   LayoutGrid,
   MoreHorizontal,
   Redo2,
@@ -28,6 +29,12 @@ export const resolveSchedulePublicationStatus = (
   if (!schedule || !isPersistedScheduleId(schedule.scheduleId)) return undefined;
   return schedule.published === false ? "draft" : "published";
 };
+
+export const getScheduleWorkspacePublicationClassName = (
+  publicationStatus: "draft" | "published" | undefined,
+) => publicationStatus === "draft"
+  ? "border-amber-500/50 bg-amber-950/20"
+  : undefined;
 
 type ScheduleWorkspaceToolbarProps = {
   staffingSummary: ReactNode;
@@ -122,102 +129,118 @@ const ScheduleWorkspaceToolbar = ({
   const hasLeadingControls = Boolean(membersControl || canEdit);
 
   return (
-    <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-      <div className="min-w-0">{staffingSummary}</div>
-      <div
-        role="group"
-        aria-label="Team schedule controls"
-        className="flex min-w-0 flex-wrap items-center justify-start gap-x-2 gap-y-2 lg:justify-end"
-      >
-        {membersControl}
-        {canEdit ? (
-          <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Schedule editing history">
-            <Button
-              variant="tertiary"
-              svg={Undo2}
-              iconSize="sm"
-              disabled={!canUndo || autoFilling || undoBlockedByPendingSave}
-              onClick={onUndo}
-              aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
-              title={
-                undoBlockedByPendingSave
-                  ? "Finish saving this assignment before undoing."
-                  : undoLabel
-                    ? `Undo ${undoLabel} (${undoShortcut.undo})`
-                    : `Nothing to undo (${undoShortcut.undo})`
-              }
-            />
-            <Button
-              variant="tertiary"
-              svg={Redo2}
-              iconSize="sm"
-              disabled={!canRedo || autoFilling || redoBlockedByPendingSave}
-              onClick={onRedo}
-              aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
-              title={
-                redoBlockedByPendingSave
-                  ? "Finish saving this assignment before redoing."
-                  : redoLabel
-                    ? `Redo ${redoLabel} (${undoShortcut.redo})`
-                    : `Nothing to redo (${undoShortcut.redo})`
-              }
-            />
-          </div>
-        ) : null}
-        {canEdit ? pasteFromExcelControl : null}
-        {publicationStatus ? (
-          <>
-            {hasLeadingControls ? (
-              <span aria-hidden className="hidden h-5 w-px bg-gray-700 lg:block" />
-            ) : null}
-            <div
-              role="group"
-              aria-label="Schedule publication"
-              className="flex shrink-0 flex-nowrap items-center gap-2"
-            >
-              <span
-                role="status"
-                aria-label="Schedule publication status"
-                className={`inline-flex min-h-8 items-center rounded-full border px-3 text-sm font-medium ${
-                  publicationStatus === "draft"
-                    ? "border-amber-700 bg-amber-950/40 text-amber-100"
-                    : "border-emerald-800 bg-emerald-950/35 text-emerald-100"
-                }`}
-              >
-                {publicationStatus === "draft" ? "Draft" : "Published"}
-              </span>
-              {canEdit ? (
-                <Button
-                  variant={publicationStatus === "draft" ? "secondary" : "tertiary"}
-                  disabled={isScheduleActionPending}
-                  isLoading={isPublicationPending}
-                  onClick={onPublicationChange}
-                >
-                  {publicationButtonLabel}
-                </Button>
-              ) : null}
+    <div className="flex min-w-0 flex-col gap-3">
+      {publicationStatus === "draft" ? (
+        <div
+          role="group"
+          aria-label="Draft schedule status"
+          className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 border-b border-amber-400/20 pb-2 text-sm"
+        >
+          <FileText className="size-4 shrink-0 text-amber-300" aria-hidden="true" />
+          <strong className="font-semibold text-amber-200">Draft schedule</strong>
+          {" "}
+          <span className="text-amber-100/80">
+            Not yet published · Not visible to volunteers
+          </span>
+        </div>
+      ) : null}
+      <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">{staffingSummary}</div>
+        <div
+          role="group"
+          aria-label="Team schedule controls"
+          className="flex min-w-0 flex-wrap items-center justify-start gap-x-2 gap-y-2 lg:justify-end"
+        >
+          {membersControl}
+          {canEdit ? (
+            <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Schedule editing history">
+              <Button
+                variant="tertiary"
+                svg={Undo2}
+                iconSize="sm"
+                disabled={!canUndo || autoFilling || undoBlockedByPendingSave}
+                onClick={onUndo}
+                aria-label={undoLabel ? `Undo ${undoLabel}` : "Undo"}
+                title={
+                  undoBlockedByPendingSave
+                    ? "Finish saving this assignment before undoing."
+                    : undoLabel
+                      ? `Undo ${undoLabel} (${undoShortcut.undo})`
+                      : `Nothing to undo (${undoShortcut.undo})`
+                }
+              />
+              <Button
+                variant="tertiary"
+                svg={Redo2}
+                iconSize="sm"
+                disabled={!canRedo || autoFilling || redoBlockedByPendingSave}
+                onClick={onRedo}
+                aria-label={redoLabel ? `Redo ${redoLabel}` : "Redo"}
+                title={
+                  redoBlockedByPendingSave
+                    ? "Finish saving this assignment before redoing."
+                    : redoLabel
+                      ? `Redo ${redoLabel} (${undoShortcut.redo})`
+                      : `Nothing to redo (${undoShortcut.redo})`
+                }
+              />
             </div>
-          </>
-        ) : null}
-        {(publicationStatus || hasLeadingControls) ? (
-          <span aria-hidden className="hidden h-5 w-px bg-gray-700 lg:block" />
-        ) : null}
-        <Menu
-          align="end"
-          menuItems={[
-            ...(autoFillMenuItem ? [autoFillMenuItem] : []),
-            ...schedulePreferenceItems,
-            ...moreMenuItems,
-          ]}
-          TriggeringButton={
-            <Button
-              variant="tertiary"
-              svg={MoreHorizontal}
-              iconSize="sm"
-              aria-label="More schedule actions"
-            />
-          }
-        />
+          ) : null}
+          {canEdit ? pasteFromExcelControl : null}
+          {publicationStatus ? (
+            <>
+              {hasLeadingControls ? (
+                <span aria-hidden className="hidden h-5 w-px bg-gray-700 lg:block" />
+              ) : null}
+              <div
+                role="group"
+                aria-label="Schedule publication"
+                className="flex shrink-0 flex-nowrap items-center gap-2"
+              >
+                <span
+                  role="status"
+                  aria-label="Schedule publication status"
+                  className={`inline-flex min-h-8 items-center rounded-full border px-3 text-sm font-medium ${
+                    publicationStatus === "draft"
+                      ? "border-amber-700 bg-amber-950/40 text-amber-100"
+                      : "border-emerald-800 bg-emerald-950/35 text-emerald-100"
+                  }`}
+                >
+                  {publicationStatus === "draft" ? "Draft" : "Published"}
+                </span>
+                {canEdit ? (
+                  <Button
+                    variant={publicationStatus === "draft" ? "secondary" : "tertiary"}
+                    disabled={isScheduleActionPending}
+                    isLoading={isPublicationPending}
+                    onClick={onPublicationChange}
+                  >
+                    {publicationButtonLabel}
+                  </Button>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+          {(publicationStatus || hasLeadingControls) ? (
+            <span aria-hidden className="hidden h-5 w-px bg-gray-700 lg:block" />
+          ) : null}
+          <Menu
+            align="end"
+            menuItems={[
+              ...(autoFillMenuItem ? [autoFillMenuItem] : []),
+              ...schedulePreferenceItems,
+              ...moreMenuItems,
+            ]}
+            TriggeringButton={
+              <Button
+                variant="tertiary"
+                svg={MoreHorizontal}
+                iconSize="sm"
+                aria-label="More schedule actions"
+              />
+            }
+          />
+        </div>
       </div>
     </div>
   );
