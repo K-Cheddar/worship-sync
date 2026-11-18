@@ -95,6 +95,15 @@ import {
 import { StorageUsageIndicators } from "../../components/StorageUsage/StorageUsageIndicators";
 import { useChurchStorageQuota } from "../../components/StorageUsage/useChurchStorageQuota";
 
+const getLocalVideoPreviewSourceKey = (media: MediaType | null | undefined) =>
+  media?.type === "video" && media.localVideoFile
+    ? JSON.stringify([
+        media.localVideoFile.id,
+        media.localVideoFile.contentRevision || "",
+        media.localVideoFile.ownerDeviceId,
+      ])
+    : "";
+
 type MediaModalGridZoomSliderProps = {
   modalZoomLevel: number;
   modalZoomSliderMax: number;
@@ -395,13 +404,7 @@ const MediaModal = ({
   const localVideoAutoRetrySourcesRef = useRef(new Set<string>());
   const [localVideoPreviewFailureSources, setLocalVideoPreviewFailureSources] =
     useState<Set<string>>(() => new Set());
-  const localPreviewVideoSourceKey = modalPreviewMedia?.type === "video" && modalPreviewMedia.localVideoFile
-    ? JSON.stringify([
-        modalPreviewMedia.localVideoFile.id,
-        modalPreviewMedia.localVideoFile.contentRevision || "",
-        modalPreviewMedia.localVideoFile.ownerDeviceId,
-      ])
-    : "";
+  const localPreviewVideoSourceKey = getLocalVideoPreviewSourceKey(modalPreviewMedia);
   const localVideoRefreshKey = localVideoRefresh.sourceKey === localPreviewVideoSourceKey
     ? localVideoRefresh.key
     : 0;
@@ -869,7 +872,13 @@ const MediaModal = ({
   // Initialize modal selection from the parent only on open; avoid snapping back when parent props refresh while open.
   useEffect(() => {
     if (isOpen && !wasModalOpenRef.current) {
-      setLocalVideoRefreshKey((current) => current + 1);
+      const sourceKey = getLocalVideoPreviewSourceKey(previewMedia);
+      if (sourceKey) {
+        setLocalVideoRefresh((current) => ({
+          sourceKey,
+          key: current.sourceKey === sourceKey ? current.key + 1 : 1,
+        }));
+      }
       setModalSelectedMedia(selectedMedia);
       setModalSelectedMediaIds(new Set(selectedMediaIds));
       setModalPreviewMedia(previewMedia);
