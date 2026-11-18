@@ -23,7 +23,7 @@ const makeProps = (overrides: Partial<ToolbarProps> = {}): ToolbarProps => ({
   onUndo: jest.fn(),
   onRedo: jest.fn(),
   autoFillMenuItem: { text: "Auto-fill", onClick: jest.fn() },
-  publicationStatus: "draft",
+  lifecycleStatus: "draft",
   isScheduleActionPending: false,
   isPublicationPending: false,
   onPublicationChange: jest.fn(),
@@ -86,10 +86,15 @@ describe("ScheduleWorkspaceToolbar", () => {
       />,
     );
     expect(screen.getByText("3 Services")).toBeInTheDocument();
-    expect(screen.getByRole("group", { name: "Draft schedule status" })).toHaveTextContent(
-      "Draft schedule Not yet published · Not visible to volunteers",
+    const statusBanner = screen.getByRole("group", { name: "Schedule status banner" });
+    expect(statusBanner).toHaveTextContent(
+      "Draft schedule Not published · Not visible to volunteers",
     );
-    expect(screen.getByRole("group", { name: "Draft schedule status" })).toHaveClass("flex-wrap");
+    expect(statusBanner).toHaveClass("flex-wrap", "py-2", "min-w-0");
+    const toolbarControls = within(screen.getByRole("group", { name: "Team schedule controls" }));
+    expect(toolbarControls.queryByRole("status", { name: "Schedule lifecycle status" })).not.toBeInTheDocument();
+    expect(toolbarControls.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(toolbarControls.queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Expand all services" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Collapse all services" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More schedule actions" }));
@@ -124,97 +129,152 @@ describe("ScheduleWorkspaceToolbar", () => {
     expect(screen.getByRole("menuitem", { name: "Layout" })).toBeInTheDocument();
   });
 
-  it("keeps publication status next to the available action and retains pending feedback", async () => {
+  it("shows Publish in the Draft banner and retains pending feedback", async () => {
     const onPublicationChange = jest.fn();
     const user = userEvent.setup();
     const { rerender } = render(
       <ScheduleWorkspaceToolbar {...makeProps({ onPublicationChange })} />,
     );
 
-    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
-    const publicationGroup = within(screen.getByRole("group", { name: "Schedule publication" }));
+    const publicationGroup = within(screen.getByRole("group", { name: "Schedule status banner" }));
     const publishButton = publicationGroup.getByRole("button", { name: "Publish" });
-    expect(publicationGroup.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
+    expect(publicationGroup.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Draft schedule");
     expect(publishButton).toHaveAttribute("data-variant", "presentSecondary");
+    expect(within(screen.getByRole("group", { name: "Team schedule controls" })).queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
     await user.click(publishButton);
     expect(onPublicationChange).toHaveBeenCalledTimes(1);
+    expect(publicationGroup.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Draft schedule");
 
     rerender(
       <ScheduleWorkspaceToolbar
         {...makeProps({
-          publicationStatus: "draft",
+          lifecycleStatus: "draft",
           isScheduleActionPending: true,
           isPublicationPending: true,
           onPublicationChange,
         })}
       />,
     );
-    const publishingButton = screen.getByRole("button", { name: "Publishing…" });
+    const publishingButton = within(screen.getByRole("group", { name: "Schedule status banner" })).getByRole("button", { name: "Publishing…" });
     expect(publishingButton).toBeDisabled();
     expect(publishingButton).toHaveAttribute("aria-busy", "true");
-    expect(screen.getByRole("group", { name: "Draft schedule status" })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Schedule status banner" })).toBeInTheDocument();
   });
 
-  it("removes the Draft notice when the selected schedule becomes Published or virtual", () => {
-    const { rerender } = render(<ScheduleWorkspaceToolbar {...makeProps()} />);
-    expect(screen.getByRole("group", { name: "Draft schedule status" })).toBeInTheDocument();
+  it("updates the banner and styling when the selected schedule changes", async () => {
+    const onPublicationChange = jest.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(<ScheduleWorkspaceToolbar {...makeProps({ onPublicationChange })} />);
+    const draftBanner = screen.getByRole("group", { name: "Schedule status banner" });
+    expect(draftBanner).toHaveClass("border-amber-500/40", "bg-amber-950/35");
 
     rerender(
       <ScheduleWorkspaceToolbar
-        {...makeProps({ publicationStatus: "published" })}
+        {...makeProps({ lifecycleStatus: "published", onPublicationChange })}
       />,
     );
-    expect(screen.queryByRole("group", { name: "Draft schedule status" })).not.toBeInTheDocument();
-    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
+    const publishedBanner = screen.getByRole("group", { name: "Schedule status banner" });
+    expect(publishedBanner).toHaveTextContent("Published schedule Visible to volunteers");
+    expect(publishedBanner).toHaveClass("border-emerald-800/70", "bg-emerald-950/20");
+    await user.click(within(publishedBanner).getByRole("button", { name: "Unpublish" }));
+    expect(onPublicationChange).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText("Draft schedule")).not.toBeInTheDocument();
 
     rerender(
       <ScheduleWorkspaceToolbar
-        {...makeProps({ publicationStatus: undefined })}
+        {...makeProps({
+          lifecycleStatus: "published",
+          isScheduleActionPending: true,
+          isPublicationPending: true,
+          onPublicationChange,
+        })}
       />,
     );
-    expect(screen.queryByRole("group", { name: "Draft schedule status" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("status", { name: "Schedule publication status" })).not.toBeInTheDocument();
+    const unpublishingButton = within(screen.getByRole("group", { name: "Schedule status banner" })).getByRole("button", { name: "Unpublishing…" });
+    expect(unpublishingButton).toBeDisabled();
+    expect(screen.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Published schedule");
+
+    // A failed request leaves the saved schedule Published and restores Unpublish.
+    rerender(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ lifecycleStatus: "published", onPublicationChange })}
+      />,
+    );
+    expect(within(screen.getByRole("group", { name: "Schedule status banner" })).getByRole("button", { name: "Unpublish" })).toBeEnabled();
+
+    rerender(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ lifecycleStatus: "draft", onPublicationChange })}
+      />,
+    );
+    const unpublishedBanner = screen.getByRole("group", { name: "Schedule status banner" });
+    expect(unpublishedBanner).toHaveTextContent("Draft schedule Not published · Not visible to volunteers");
+    expect(unpublishedBanner).toHaveClass("border-amber-500/40", "bg-amber-950/35");
+
+    rerender(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ lifecycleStatus: "virtual" })}
+      />,
+    );
+    const virtualBanner = screen.getByRole("group", { name: "Schedule status banner" });
+    expect(virtualBanner).toHaveTextContent("Schedule preview Not saved yet · Make an assignment to start a draft");
+    expect(virtualBanner).toHaveClass("border-slate-700", "bg-slate-900/50");
+    expect(within(virtualBanner).queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(within(virtualBanner).queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
+
+    // Once the first edit persists, the banner follows the selected Draft schedule.
+    rerender(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ lifecycleStatus: "draft", onPublicationChange })}
+      />,
+    );
+    const firstEditDraftBanner = screen.getByRole("group", { name: "Schedule status banner" });
+    expect(firstEditDraftBanner).toHaveTextContent("Draft schedule Not published · Not visible to volunteers");
+    expect(firstEditDraftBanner).toHaveClass("border-amber-500/40", "bg-amber-950/35");
+    expect(within(firstEditDraftBanner).getByRole("button", { name: "Publish" })).toBeEnabled();
   });
 
   it("shows Published status without an action for read-only users and keeps Unpublish low emphasis", () => {
     const { rerender } = render(
       <ScheduleWorkspaceToolbar
-        {...makeProps({ canEdit: false, publicationStatus: "published" })}
+        {...makeProps({ canEdit: false, lifecycleStatus: "published" })}
       />,
     );
 
-    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
-    expect(screen.queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    const statusBanner = screen.getByRole("group", { name: "Schedule status banner" });
+    expect(statusBanner).toHaveTextContent("Published schedule Visible to volunteers");
+    expect(within(statusBanner).queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
+    expect(within(statusBanner).queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
 
     rerender(
       <ScheduleWorkspaceToolbar
-        {...makeProps({ canEdit: true, publicationStatus: "published" })}
+        {...makeProps({ canEdit: true, lifecycleStatus: "published" })}
       />,
     );
-    expect(screen.getByRole("button", { name: "Unpublish" })).toHaveAttribute("data-variant", "presentTertiary");
+    expect(within(screen.getByRole("group", { name: "Schedule status banner" })).getByRole("button", { name: "Unpublish" })).toHaveAttribute("data-variant", "presentTertiary");
   });
 
   it("shows Draft messaging to read-only users without publication actions", () => {
     render(
       <ScheduleWorkspaceToolbar
-        {...makeProps({ canEdit: false, publicationStatus: "draft" })}
+        {...makeProps({ canEdit: false, lifecycleStatus: "draft" })}
       />,
     );
 
-    expect(screen.getByRole("group", { name: "Draft schedule status" })).toHaveTextContent(
-      "Not yet published · Not visible to volunteers",
+    const statusBanner = screen.getByRole("group", { name: "Schedule status banner" });
+    expect(statusBanner).toHaveTextContent(
+      "Not published · Not visible to volunteers",
     );
-    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
-    expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
+    expect(within(statusBanner).getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Draft schedule");
+    expect(within(statusBanner).queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(within(statusBanner).queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
   });
 
-  it("hides publication controls for virtual schedules and preserves Undo/Redo disabled states", () => {
+  it("shows the Virtual banner without publication actions and preserves Undo/Redo disabled states", () => {
     render(
       <ScheduleWorkspaceToolbar
         {...makeProps({
-          publicationStatus: undefined,
+          lifecycleStatus: "virtual",
           canUndo: false,
           canRedo: true,
           undoBlockedByPendingSave: true,
@@ -223,10 +283,67 @@ describe("ScheduleWorkspaceToolbar", () => {
       />,
     );
 
-    expect(screen.queryByRole("status", { name: "Schedule publication status" })).not.toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Schedule status banner" })).toHaveTextContent(
+      "Schedule preview Not saved yet · Make an assignment to start a draft",
+    );
     expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Undo" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Redo" })).toBeEnabled();
+  });
+
+  it("does not guess a lifecycle state while the selected schedule is unavailable", () => {
+    render(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ lifecycleStatus: undefined })}
+      />,
+    );
+
+    expect(screen.queryByRole("group", { name: "Schedule status banner" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Schedule lifecycle status" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Unpublish" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the current lifecycle state through pending and failed publication requests", async () => {
+    const user = userEvent.setup();
+    const onPublicationChange = jest.fn();
+    const { rerender } = render(
+      <ScheduleWorkspaceToolbar {...makeProps({ onPublicationChange })} />,
+    );
+
+    await user.click(within(screen.getByRole("group", { name: "Schedule status banner" })).getByRole("button", { name: "Publish" }));
+    expect(onPublicationChange).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Draft schedule");
+
+    rerender(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({
+          isScheduleActionPending: true,
+          isPublicationPending: true,
+          onPublicationChange,
+        })}
+      />,
+    );
+    expect(within(screen.getByRole("group", { name: "Schedule status banner" })).getByRole("button", { name: "Publishing…" })).toBeDisabled();
+    expect(screen.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Draft schedule");
+
+    // A failed request clears the pending state without changing the owner's status.
+    rerender(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ onPublicationChange })}
+      />,
+    );
+    expect(within(screen.getByRole("group", { name: "Schedule status banner" })).getByRole("button", { name: "Publish" })).toBeEnabled();
+
+    // The parent updates the selected schedule only after a successful response.
+    rerender(
+      <ScheduleWorkspaceToolbar
+        {...makeProps({ lifecycleStatus: "published", onPublicationChange })}
+      />,
+    );
+    expect(screen.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Published schedule");
+    expect(within(screen.getByRole("group", { name: "Schedule status banner" })).getByRole("button", { name: "Unpublish" })).toBeEnabled();
   });
 
   it("supports keyboard navigation and selection in the organize submenu", async () => {

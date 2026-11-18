@@ -6805,6 +6805,9 @@ const ScheduleTab = ({
   ];
 
   const schedulePublicationStatus = resolveSchedulePublicationStatus(selectedSchedule);
+  const scheduleLifecycleStatus = schedulePublicationStatus || (
+    selectedSchedule?.scheduleId.startsWith("virtual:") ? "virtual" : undefined
+  );
   let publishAndCopyButtonLabel = publishAndCopyLink?.published
     ? publishAndCopyLink.publicUrl ? "Copy link" : "Copy view-only link"
     : "Publish & Copy Link";
@@ -7094,7 +7097,7 @@ const ScheduleTab = ({
                     </Button>
                   ) : null}
                   autoFillMenuItem={scheduleAutoFillMenuItem}
-                  publicationStatus={schedulePublicationStatus}
+                  lifecycleStatus={scheduleLifecycleStatus}
                   isScheduleActionPending={isScheduleActionPending}
                   isPublicationPending={isPublicationPending}
                   onPublicationChange={() => void handleSchedulePublication()}
