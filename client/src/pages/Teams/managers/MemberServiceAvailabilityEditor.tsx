@@ -188,19 +188,20 @@ const MemberServiceAvailabilityEditor = ({
           })),
         },
       );
+      const updatedAt = response.updatedAt || member.updatedAt || "";
       const savedMember: TeamRosterMember = {
         ...member,
         serviceAvailability: response.serviceAvailability || {},
-        // The availability endpoint has its own revision. Keep the profile
-        // revision attached to this draft so a later profile save can still
-        // detect changes made by another operator.
-        updatedAt: member.updatedAt,
+        // Availability writes advance the member's shared revision. Returning
+        // it lets a later profile save use the current baseline without
+        // replacing the profile draft held by the parent editor.
+        updatedAt,
       };
       onSaved(savedMember);
       setPendingChanges({});
       setReviewedAvailability({
         serviceAvailability: savedMember.serviceAvailability,
-        updatedAt: response.updatedAt || "",
+        updatedAt,
       });
       setConflict(false);
     } catch (saveError) {

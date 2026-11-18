@@ -114,7 +114,7 @@ it("changes a previous intake response and confirms only the availability patch"
   expect(mockUpdateAvailability.mock.calls[0][2]).not.toHaveProperty("firstName");
   await waitFor(() => expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({
     serviceAvailability: expect.objectContaining({ elsewhere: "unavailable" }),
-    updatedAt: member.updatedAt,
+    updatedAt: "revision-2",
   })));
 
   await user.click(control);
@@ -122,7 +122,7 @@ it("changes a previous intake response and confirms only the availability patch"
   await user.click(screen.getByRole("button", { name: "Save availability" }));
   await waitFor(() => expect(mockUpdateAvailability).toHaveBeenCalledTimes(2));
   expect(mockUpdateAvailability.mock.calls[1][2].expectedUpdatedAt).toBe("revision-2");
-  expect(onSaved).toHaveBeenLastCalledWith(expect.objectContaining({ updatedAt: member.updatedAt }));
+  expect(onSaved).toHaveBeenLastCalledWith(expect.objectContaining({ updatedAt: "revision-3" }));
 });
 
 it("clears an explicit response when Not set is selected", async () => {

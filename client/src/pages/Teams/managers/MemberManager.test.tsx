@@ -389,7 +389,7 @@ describe("MemberManager member preferences", () => {
     expect(mockUpdateMemberServiceAvailability).not.toHaveBeenCalled();
   });
 
-  it("keeps the profile revision stale after availability save so a profile conflict preserves its draft", async () => {
+  it("refreshes the profile baseline after availability save and preserves the draft on a later conflict", async () => {
     const user = userEvent.setup();
     const startsAt = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
     startsAt.setUTCHours(15, 0, 0, 0);
@@ -432,7 +432,7 @@ describe("MemberManager member preferences", () => {
     expect(firstName).toHaveValue("Rachel");
     await user.click(saveButton());
     await waitFor(() => expect(mockUpdateTeamRosterMember).toHaveBeenCalledTimes(1));
-    expect(mockUpdateTeamRosterMember.mock.calls[0][2].expectedUpdatedAt).toBe("profile-revision-1");
+    expect(mockUpdateTeamRosterMember.mock.calls[0][2].expectedUpdatedAt).toBe("availability-revision-2");
     expect(firstName).toHaveValue("Rachel");
   });
 
