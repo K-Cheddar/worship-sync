@@ -34,15 +34,78 @@
  * the fallback would put content back on screen that someone deliberately took
  * off.
  */
-import { ShouldSendTo } from "../types";
-import { DisplayOutput, PushOutputType } from "./displayOutputs";
+import type { ShouldSendTo } from "../types";
+import { isPushOutputType } from "./displayOutputs";
+import type { DisplayOutput, PushOutputType } from "./displayOutputs";
 import {
-  ControllerProfile,
   getControllerDefaultSendIds,
   getControllerOutputs,
 } from "./controllerProfiles";
+import type { ControllerProfile } from "./controllerProfiles";
 
 const PUSH_TYPES: PushOutputType[] = ["projector", "monitor", "stream"];
+
+export type SendTargetRestriction = {
+  label: string;
+  tooltip: string;
+};
+
+/**
+ * Summarize intentional routing restrictions for one controller's enabled
+ * push displays. The same target resolver used by presentation sends is the
+ * source of truth here; connection state is deliberately not consulted.
+ */
+export const getSendTargetRestriction = (
+  shouldSendTo: ShouldSendTo,
+  outputs: DisplayOutput[],
+  profile?: ControllerProfile | null,
+): SendTargetRestriction | null => {
+  const applicableOutputs = profile
+    ? getControllerOutputs(profile, outputs)
+    : outputs.filter(
+        (output) => output.enabled && isPushOutputType(output.type),
+      );
+
+  if (applicableOutputs.length === 0) return null;
+
+  const targetedIds = new Set(
+    PUSH_TYPES.flatMap((type) =>
+      shouldSendToType(shouldSendTo, outputs, type, profile)
+        ? getSendTargetIdsForType(shouldSendTo, outputs, type, profile)
+        : [],
+    ),
+  );
+  const targetedOutputs = applicableOutputs.filter((output) =>
+    targetedIds.has(output.id),
+  );
+  const excludedOutputs = applicableOutputs.filter(
+    (output) => !targetedIds.has(output.id),
+  );
+
+  if (excludedOutputs.length === 0) return null;
+
+  const names = (list: DisplayOutput[]) =>
+    list.map((output) => output.name).join(", ");
+  let label: string;
+  let tooltip: string;
+
+  if (targetedOutputs.length === 0) {
+    label = "No displays enabled";
+    tooltip =
+      "This item is not sent to any enabled displays. Click to change Send To settings.";
+  } else {
+    if (targetedOutputs.length === 1 && applicableOutputs.length > 1) {
+      label = `${targetedOutputs[0].name} only`;
+    } else if (excludedOutputs.length === 1) {
+      label = `${excludedOutputs[0].name} off`;
+    } else {
+      label = "Routing restricted";
+    }
+    tooltip = `Sent to ${names(targetedOutputs)}. Not sent to ${names(excludedOutputs)}. Click to change Send To settings.`;
+  }
+
+  return { label, tooltip };
+};
 
 /**
  * Did the operator explicitly clear every display?
