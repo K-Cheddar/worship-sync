@@ -6792,14 +6792,14 @@ export const createTeamsAuthHandlers = ({
             },
           );
         } else if (transaction) {
-          transaction.set(ref, {
+          transaction.update(ref, {
             ...doc,
             ...availabilityMutation,
             ...volunteerContactIndexFields(
               { ...current, ...doc, ...availabilityMutation },
               process.env.AUTH_VOLUNTEER_PORTAL_SECRET,
             ),
-          }, { merge: true });
+          });
         } else {
           await setDoc(config.collection, nextId, {
             ...doc,

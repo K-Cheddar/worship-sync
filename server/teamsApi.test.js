@@ -11597,8 +11597,8 @@ test("Firestore member revision writes keep ready volunteer contact indexes curr
   const proofBeforeChange = (await db.collection(collections.proofs).get()).docs[0].data();
   assert.equal(proofBeforeChange.contactVersion, initialVersion);
 
-  // No teamMemberships field: this must exercise upsertTeamEntity's direct
-  // Firestore transaction.set branch with the revision precondition.
+  // No teamMemberships field: this exercises upsertTeamEntity's direct
+  // Firestore transaction.update branch with the revision precondition.
   const emailChanged = await save(initial.data().updatedAt, { email: newEmail });
   assert.equal(emailChanged.statusCode, 200, JSON.stringify(emailChanged.payload));
   assert.notEqual(emailChanged.payload.member.personalContactVersion, initialVersion);
@@ -11670,6 +11670,220 @@ test("Firestore member revision writes keep ready volunteer contact indexes curr
   await assertIndexMatchesCurrent();
   await assertOwner("sms", newPhone, false);
   assert.deepEqual((await memberRef.get()).data().volunteerContactKeys, []);
+});
+
+test("Firestore administrator availability edits replace maps and retain revision-safe member fields", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const emulatorHost = process.env.FIRESTORE_EMULATOR_HOST;
+  if (!emulatorHost) {
+    t.skip("Requires Firestore emulator for authoritative availability-map replacement");
+    return;
+  }
+
+  const { initializeApp, deleteApp } = await import("firebase-admin/app");
+  const { FieldPath, getFirestore } = await import("firebase-admin/firestore");
+  const suffix = randomBytes(6).toString("hex");
+  const projectId = `demo-teams-availability-${suffix}`;
+  const app = initializeApp({ projectId }, projectId);
+  const db = getFirestore(app);
+  const [host, port] = emulatorHost.split(":");
+  db.settings({ host, port: Number(port), ssl: false });
+  const secret = "synthetic-teams-availability-secret-only";
+  const previousSecret = process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+  process.env.AUTH_VOLUNTEER_PORTAL_SECRET = secret;
+  setServerFirestoreForTests(db);
+  t.after(async () => {
+    setServerFirestoreForTests(null);
+    if (previousSecret === undefined) delete process.env.AUTH_VOLUNTEER_PORTAL_SECRET;
+    else process.env.AUTH_VOLUNTEER_PORTAL_SECRET = previousSecret;
+    for (const collection of await db.listCollections()) await db.recursiveDelete(collection);
+    await db.terminate();
+    await deleteApp(app);
+  });
+
+  const admin = await createAdminContext(`availability-emulator-${suffix}`);
+  const assigned = await seedAssignedSchedule(admin, `availability-emulator-${suffix}`);
+  const availabilityTeam = assigned.media;
+  const addedMembershipTeam = await seedTeam(admin, {
+    teamName: `Concurrent availability ${suffix}`,
+  });
+  const memberId = assigned.memberId;
+  const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc(memberId);
+  await setDoc(COLLECTIONS.teams, availabilityTeam.teamId, {
+    memberIds: [memberId],
+  }, { merge: true });
+  const initialSnapshot = await memberRef.get();
+  assert.equal(initialSnapshot.exists, true);
+  const baselineUpdatedAt = "2026-11-01T00:00:00.000Z";
+  const initialFields = {
+    serviceAvailability: {
+      "service-A": "unavailable",
+      "service-B": "available",
+    },
+    serviceAvailabilityRevisions: { "service-A": 2, "service-B": 9 },
+    teamMemberships: {
+      [availabilityTeam.teamId]: { teamId: availabilityTeam.teamId, isTeamLead: false },
+    },
+    email: "availability-volunteer@example.test",
+    phoneNumber: "+12025550199",
+    notes: "Keep this roster note",
+    updatedAt: baselineUpdatedAt,
+  };
+  const indexedFields = volunteerContactIndexFields(
+    { ...initialSnapshot.data(), ...initialFields },
+    secret,
+  );
+  await memberRef.update({ ...initialFields, ...indexedFields });
+  const initial = (await memberRef.get()).data();
+
+  const formId = `availability-emulator-form-${suffix}`;
+  const recipientId = `availability-emulator-recipient-${suffix}`;
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId,
+    churchId: admin.churchId,
+    name: "Availability revision check",
+    purpose: "team_availability",
+    teamIds: [availabilityTeam.teamId],
+    active: true,
+    enabledFields: ["availability"],
+    startDate: "2099-11-01",
+    endDate: "2099-11-30",
+    responseDeadline: "2099-11-30",
+    availabilityOccurrences: [{
+      occurrenceId: "service-A",
+      name: "Sunday service A",
+      startsAt: "2099-11-08T14:00:00.000Z",
+    }],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+    recipientId,
+    formId,
+    memberId: assigned.memberId,
+    churchId: admin.churchId,
+    revokedAt: null,
+  });
+
+  const saveAdmin = async (expectedUpdatedAt, fields = {}) => {
+    const current = (await memberRef.get()).data();
+    return callHandler(authHandlers.updateTeamRosterMember, {
+      context: admin,
+      params: { memberId },
+      body: {
+        firstName: current.firstName,
+        lastName: current.lastName,
+        email: current.email || "",
+        phoneNumber: current.phoneNumber || "",
+        title: current.title || "",
+        birthDate: current.birthDate || "",
+        isMinor: Boolean(current.isMinor),
+        servingFrequency: current.servingFrequency,
+        recurringAvailability: current.recurringAvailability,
+        positionIds: current.positionIds || [],
+        desiredPositionIds: current.desiredPositionIds || [],
+        blockoutDates: current.blockoutDates || [],
+        notes: current.notes || "",
+        expectedUpdatedAt,
+        ...fields,
+      },
+    });
+  };
+
+  // An interleaved membership-key addition after the admin loaded the member
+  // must survive the availability edit that omits teamMemberships.
+  const concurrentMembership = {
+    teamId: addedMembershipTeam.teamId,
+    isTeamLead: true,
+  };
+  await memberRef.update(
+    new FieldPath("teamMemberships", addedMembershipTeam.teamId),
+    concurrentMembership,
+  );
+
+  // Test A: the administrator removes service-A from the exact seeded map.
+  const adminRemoval = await saveAdmin(initial.updatedAt, {
+    firstName: "Updated",
+    serviceAvailability: { "service-B": "available" },
+  });
+  assert.equal(adminRemoval.statusCode, 200, JSON.stringify(adminRemoval.payload));
+  const afterRemoval = (await memberRef.get()).data();
+  assert.deepEqual(afterRemoval.serviceAvailability, { "service-B": "available" });
+  assert.equal(afterRemoval.serviceAvailability["service-A"], undefined,
+    "removed availability must be physically absent from Firestore");
+  assert.equal(afterRemoval.serviceAvailability["service-B"], "available");
+  assert.equal(afterRemoval.serviceAvailabilityRevisions["service-A"], 3);
+  assert.equal(afterRemoval.serviceAvailabilityRevisions["service-B"], 9);
+  assert.equal(afterRemoval.firstName, "Updated");
+  assert.equal(afterRemoval.notes, "Keep this roster note");
+  assert.equal(afterRemoval.email, "availability-volunteer@example.test");
+  assert.equal(afterRemoval.phoneNumber, "+12025550199");
+  assert.deepEqual(
+    afterRemoval.teamMemberships[availabilityTeam.teamId],
+    initial.teamMemberships[availabilityTeam.teamId],
+  );
+  assert.deepEqual(afterRemoval.teamMemberships[addedMembershipTeam.teamId], concurrentMembership);
+  assert.deepEqual(afterRemoval.volunteerContactKeys, initial.volunteerContactKeys);
+  assert.equal(afterRemoval.volunteerContactKeyId, initial.volunteerContactKeyId);
+  assert.deepEqual(afterRemoval.volunteerContactKeys,
+    volunteerContactIndexFields(afterRemoval, secret).volunteerContactKeys);
+
+  // Test D: the volunteer saves after the administrator loaded afterRemoval.
+  const volunteerSave = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context: admin,
+    body: {
+      recipientId,
+      occurrenceAvailability: { "service-A": "available" },
+      availabilityRevision: { "service-A": 3 },
+    },
+  });
+  assert.equal(volunteerSave.statusCode, 200, JSON.stringify(volunteerSave.payload));
+  const afterVolunteer = (await memberRef.get()).data();
+  assert.equal(afterVolunteer.serviceAvailability["service-A"], "available");
+  assert.equal(afterVolunteer.serviceAvailabilityRevisions["service-A"], 4);
+  assert.notEqual(afterVolunteer.updatedAt, afterRemoval.updatedAt);
+
+  const staleAdmin = await saveAdmin(afterRemoval.updatedAt, {
+    serviceAvailability: { "service-B": "available" },
+  });
+  assert.equal(staleAdmin.statusCode, 409, JSON.stringify(staleAdmin.payload));
+  assert.deepEqual((await memberRef.get()).data(), afterVolunteer,
+    "a rejected stale administrator update must not change answers or revisions");
+
+  // Test C: an ordinary profile edit that omits availability leaves the map
+  // and its revisions intact, including the volunteer's newer answer.
+  const availabilityBeforeOmission = afterVolunteer.serviceAvailability;
+  const revisionsBeforeOmission = afterVolunteer.serviceAvailabilityRevisions;
+  const omittedAvailability = await saveAdmin(afterVolunteer.updatedAt, { notes: "Updated profile notes" });
+  assert.equal(omittedAvailability.statusCode, 200, JSON.stringify(omittedAvailability.payload));
+  const afterOmission = (await memberRef.get()).data();
+  assert.deepEqual(afterOmission.serviceAvailability, availabilityBeforeOmission);
+  assert.deepEqual(afterOmission.serviceAvailabilityRevisions, revisionsBeforeOmission);
+  assert.equal(afterOmission.notes, "Updated profile notes");
+
+  // Test B: an explicitly empty authoritative map clears every answer.
+  const clearAll = await saveAdmin(afterOmission.updatedAt, { serviceAvailability: {} });
+  assert.equal(clearAll.statusCode, 200, JSON.stringify(clearAll.payload));
+  const afterClear = (await memberRef.get()).data();
+  assert.deepEqual(afterClear.serviceAvailability, {});
+  assert.equal(Object.keys(afterClear.serviceAvailability).length, 0);
+  assert.equal(afterClear.serviceAvailabilityRevisions["service-A"], 5);
+  assert.equal(afterClear.serviceAvailabilityRevisions["service-B"], 10);
+
+  // Explicit membership edits still use their separate per-key update path.
+  const memberships = afterClear.teamMemberships;
+  const membershipEdit = await saveAdmin(afterClear.updatedAt, {
+    teamMemberships: memberships,
+  });
+  assert.equal(membershipEdit.statusCode, 200, JSON.stringify(membershipEdit.payload));
+  const finalMember = (await memberRef.get()).data();
+  assert.deepEqual(Object.keys(finalMember.teamMemberships).sort(), Object.keys(memberships).sort());
+  for (const teamId of Object.keys(memberships)) {
+    assert.equal(finalMember.teamMemberships[teamId].teamId, memberships[teamId].teamId);
+    assert.equal(finalMember.teamMemberships[teamId].isTeamLead, memberships[teamId].isTeamLead);
+  }
+  assert.deepEqual(finalMember.serviceAvailability, {});
+  assert.deepEqual(finalMember.serviceAvailabilityRevisions, afterClear.serviceAvailabilityRevisions);
+  assert.deepEqual(finalMember.volunteerContactKeys,
+    volunteerContactIndexFields(finalMember, secret).volunteerContactKeys);
 });
 
 test("updating a member without an email field keeps the existing address", async (t) => {

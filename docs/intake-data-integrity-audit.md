@@ -264,3 +264,50 @@ must explicitly design dirty-field and revision semantics before response editin
 - External side-effect adoption/compensation: Not applicable; no provider change.
 - Authorization/data-projection reviewed: Yes; existing projections unchanged.
 - Production entry point, runtime context and test composition compared: Yes.
+
+## Phase 2B-1 administrator availability-map clearing correction (2026-11-18)
+
+Firestore `transaction.set(..., { merge: true })` recursively merged the
+administrator's replacement `serviceAvailability` map. Removed occurrence
+answers could remain stored while `serviceAvailabilityRevisions` recorded the
+change, so scheduling could continue to use a deleted answer.
+
+Existing-member administrator writes now use `transaction.update(...)` in the
+same read, `expectedUpdatedAt` comparison, revision calculation and contact-index
+transaction. Firestore replaces the top-level availability and revision maps
+while preserving fields omitted from the update. The development fallback is
+unchanged; its in-memory store shallow-merges top-level fields, so it already
+replaced the map.
+
+Personalized and administrative intake application, signed-in volunteer
+availability, and accountless recipient availability continue to share their
+transactional member-update paths. Those paths already write the top-level map
+with `transaction.update(...)`; no other availability writer needed a change.
+
+The new `teamsApi.test.js` emulator case exercises the composed administrator
+handler against real Firestore semantics, including complete-map replacement,
+empty-map clearing, omission, stale administrator rejection after a volunteer
+write, revision increments, interleaved membership keys, profile fields and
+contact-index fields. Before the fix, the same emulator test reproduced the
+reported failure: `service-A` remained in the committed map after the admin
+submitted only `service-B`. After the fix, the focused emulator test passed.
+
+### Executed verification
+
+With `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080`, ran the requested Teams and
+intake transaction suites plus availability workflow, recipient-token and
+submission-digest coverage:
+
+```powershell
+node --import tsx --test server/teamsApi.test.js server/teamIntakeTransactionDigest.test.js server/teamIntakeRecipientConcurrency.test.js server/firestoreNestedMapSemantics.test.js server/teamAvailabilityWorkflow.test.js server/teamIntakeRecipientToken.test.js server/intakeSubmissionDigest.test.js
+```
+
+Result: **386 passed, 0 failed, 0 skipped**. The new administrator regression
+ran against the Firestore emulator through `authHandlers.updateTeamRosterMember`
+and `authHandlers.submitMyVolunteerAvailability`; no in-memory store stood in
+for Firestore nested-map semantics. `node --check` passed for both changed
+server JavaScript files. Client `lint:check` and `type-check` also passed; no
+client files were changed. A broader root `npm run checks` attempt discovered
+111 server test files but stopped emitting output after 30 passing TAP cases;
+it was canceled after about five minutes without a final aggregate result and
+is not counted as a pass.

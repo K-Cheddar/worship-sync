@@ -130,6 +130,10 @@ availability reads do not return saved answers or an edit precondition.
   on the same member document. Every write path that changes occurrence answers
   advances the affected counter. A stale scope returns HTTP 409 with a reload
   instruction; unrelated fields and disjoint occurrence edits survive.
+- Administrative member updates require `expectedUpdatedAt`; when they include
+  `serviceAvailability`, the complete top-level map and its changed-occurrence
+  revisions commit in the same Firestore transaction. Only changed occurrence
+  answers advance revisions. Omitting the map preserves both availability maps.
 - The stable recipient and deterministic submission identity remain in use.
   The submitted revision is included in the existing response digest, so an
   identical retry after commit returns the committed response, while a later
