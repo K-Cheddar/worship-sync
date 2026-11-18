@@ -1737,7 +1737,7 @@ describe("ItemSlides", () => {
     expect(screen.getByRole("slider")).toHaveAttribute("aria-valuemax", "3");
   });
 
-  it.each(["edit", "present"])("exposes independent Loop and send-mode controls in mobile %s mode", (mode) => {
+  const renderVideoBackgroundInMode = (mode: "edit" | "present") => {
     window.localStorage.setItem("worshipsync_presentation_controller_mode", mode);
     mockControllerInfoValue.isMobile = true;
     mockState.presentation.outputs = {};
@@ -1749,11 +1749,24 @@ describe("ItemSlides", () => {
         </ControllerInfoContext.Provider>
       </GlobalInfoContext.Provider>,
     );
+  };
+
+  it("keeps Loop and send-mode controls available in mobile Edit mode", () => {
+    renderVideoBackgroundInMode("edit");
     expect(screen.getByRole("switch", { name: "Loop:" })).toHaveAttribute("aria-checked", "false");
     expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start over" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("switch", { name: "Loop:" }));
     expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "item/_updateSlides", payload: [expect.objectContaining({ videoBackgroundLoop: true })] }));
+    window.localStorage.removeItem("worshipsync_presentation_controller_mode");
+  });
+
+  it("hides Loop and send-mode controls while keeping transport in mobile Present mode", () => {
+    renderVideoBackgroundInMode("present");
+    expect(screen.queryByRole("switch", { name: "Loop:" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Continue" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Start over" })).not.toBeInTheDocument();
+    expect(screen.getByRole("slider", { name: "Video timeline" })).toBeInTheDocument();
     window.localStorage.removeItem("worshipsync_presentation_controller_mode");
   });
 

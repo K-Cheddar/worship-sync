@@ -2100,7 +2100,7 @@ const ItemSlidesContent = () => {
               onSendModeChange={(mode) =>
                 dispatch(updateSlideVideoBackgroundSendMode({ mode }))
               }
-              showSendMode
+              showPlaybackPreferences={false}
               className="min-w-0 flex-1 max-md:order-3 max-md:basis-full md:rounded-none md:border-0 md:bg-transparent md:p-0"
             />
           ) : null}
