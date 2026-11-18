@@ -1,0 +1,7 @@
+{
+  "id": "2026-11-18-media-deletion-queue",
+  "date": "2026-11-18",
+  "type": "improved",
+  "title": "Queue Media deletions",
+  "description": "Media confirmations close when queued, while Activity runs item and folder deletions in order and lets you cancel waiting item jobs. Accepted work continues when you leave Media."
+}

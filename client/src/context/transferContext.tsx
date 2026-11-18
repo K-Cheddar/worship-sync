@@ -73,37 +73,41 @@ export type ResourceUploadInput = {
 export type CanvaTransferInput = Omit<CanvaTransferRuntime, "status" | "lastProgress" | "pageStatus" | "controller" | "customItemRetryPending" | "cleanupRetryPending" | "cleanupError">;
 export type ActiveTransferSummary = Pick<Transfer, "id" | "name" | "type" | "status" | "progress" | "phase" | "detail" | "error" | "result">;
 
-export type MediaFolderDeletionQueueControl = {
+export type MediaDeletionQueueControl = {
   isCancellationRequested: () => boolean;
   isCancellationAvailable: () => boolean;
   setCancellationAvailable: (available: boolean) => void;
 };
 
-export type MediaFolderDeletionQueueScope = {
+export type MediaDeletionQueueScope = {
   churchId: string;
   databaseName: string | null;
 };
 
-export type MediaFolderDeletionQueueJob = {
+export type MediaDeletionQueueTarget =
+  | { kind: "folder"; folderId: string }
+  | { kind: "items"; mediaIds: string[] };
+
+export type MediaDeletionQueueJob = {
   id: string;
-  folderId: string;
-  scope: MediaFolderDeletionQueueScope;
+  target: MediaDeletionQueueTarget;
+  scope: MediaDeletionQueueScope;
   transfer: Transfer;
-  run: (control: MediaFolderDeletionQueueControl) => Promise<void>;
+  run: (control: MediaDeletionQueueControl) => Promise<void>;
   cancelQueued: () => void | Promise<void>;
   cancelRequested: () => void;
   cancelUnavailable: () => void;
 };
 
-type MediaFolderDeletionQueueEntry = MediaFolderDeletionQueueJob & {
+type MediaDeletionQueueEntry = MediaDeletionQueueJob & {
   started: boolean;
   cancellationAvailable: boolean;
   cancellationRequested: boolean;
   unregisterCancel?: () => void;
 };
 
-const getMediaFolderDeletionQueueEntryKey = (
-  scope: MediaFolderDeletionQueueScope,
+const getMediaDeletionQueueEntryKey = (
+  scope: MediaDeletionQueueScope,
   id: string,
 ) => JSON.stringify([scope.churchId, scope.databaseName, id]);
 
@@ -120,7 +124,7 @@ type TransferContextValue = {
   removeTransfer: (id: string) => void;
   registerTransferAction: (id: string, key: string, handler: () => void | Promise<void>) => () => void;
   runTransferAction: (id: string, key: string) => Promise<void>;
-  enqueueMediaFolderDeletion: (job: MediaFolderDeletionQueueJob) => MediaFolderDeletionQueueControl | null;
+  enqueueMediaDeletion: (job: MediaDeletionQueueJob) => MediaDeletionQueueControl | null;
 };
 
 type TransferActionsValue = Omit<TransferContextValue, "transfers" | "isMinimized" | "minimizeTransfers" | "restoreTransfers" | "registerActivityHost"> & {
@@ -297,12 +301,12 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   const resourceUploadListeners = useRef(new Map<string, (resources: ChurchResource[]) => void>());
   const dedupeJobs = useRef(new Map<string, string>());
   const actionHandlers = useRef(new Map<string, Map<string, () => void | Promise<void>>>());
-  const mediaFolderDeletionQueue = useRef<{
-    pending: MediaFolderDeletionQueueEntry[];
-    active: MediaFolderDeletionQueueEntry | null;
-    entries: Map<string, MediaFolderDeletionQueueEntry>;
+  const mediaDeletionQueue = useRef<{
+    pending: MediaDeletionQueueEntry[];
+    active: MediaDeletionQueueEntry | null;
+    entries: Map<string, MediaDeletionQueueEntry>;
   }>({ pending: [], active: null, entries: new Map() });
-  const drainMediaFolderDeletionQueueRef = useRef<() => void>(() => undefined);
+  const drainMediaDeletionQueueRef = useRef<() => void>(() => undefined);
   const unregisterTransferActions = useCallback((id: string) => {
     actionHandlers.current.delete(id);
   }, []);
@@ -566,13 +570,13 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     setTransfers((current) => current.filter((item) => item.id !== id));
   }, [unregisterTransferActions]);
 
-  const drainMediaFolderDeletionQueue = useCallback(() => {
-    const queue = mediaFolderDeletionQueue.current;
+  const drainMediaDeletionQueue = useCallback(() => {
+    const queue = mediaDeletionQueue.current;
     if (queue.active || queue.pending.length === 0) return;
     const entry = queue.pending.shift()!;
     queue.active = entry;
     entry.started = true;
-    const control: MediaFolderDeletionQueueControl = {
+    const control: MediaDeletionQueueControl = {
       isCancellationRequested: () => entry.cancellationRequested,
       isCancellationAvailable: () => entry.cancellationAvailable,
       setCancellationAvailable: (available) => {
@@ -586,12 +590,12 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
           transfersRef.current.find((transfer) => transfer.id === entry.id) ??
           entry.transfer;
         const message =
-          error instanceof Error ? error.message : "Folder deletion failed.";
+          error instanceof Error ? error.message : "Media deletion failed.";
         updateTransfer({
           ...current,
           status: "failed",
           progress: null,
-          phase: { key: "failed", label: "Folder deletion failed" },
+          phase: { key: "failed", label: "Media deletion failed" },
           error: { message },
           canCancel: false,
           blocksUnload: false,
@@ -602,35 +606,37 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         entry.cancellationAvailable = false;
         entry.unregisterCancel?.();
         if (queue.active === entry) queue.active = null;
-        queue.entries.delete(
-          getMediaFolderDeletionQueueEntryKey(entry.scope, entry.id),
-        );
-        drainMediaFolderDeletionQueueRef.current();
+        queue.entries.delete(getMediaDeletionQueueEntryKey(entry.scope, entry.id));
+        drainMediaDeletionQueueRef.current();
       });
   }, [updateTransfer]);
-  drainMediaFolderDeletionQueueRef.current = drainMediaFolderDeletionQueue;
+  drainMediaDeletionQueueRef.current = drainMediaDeletionQueue;
 
-  const enqueueMediaFolderDeletion = useCallback<
-    TransferContextValue["enqueueMediaFolderDeletion"]
+  const enqueueMediaDeletion = useCallback<
+    TransferContextValue["enqueueMediaDeletion"]
   >(
     (job) => {
-      const queue = mediaFolderDeletionQueue.current;
+      const queue = mediaDeletionQueue.current;
       const activeOrQueued = [queue.active, ...queue.pending].filter(
-        (entry): entry is MediaFolderDeletionQueueEntry => Boolean(entry),
+        (entry): entry is MediaDeletionQueueEntry => Boolean(entry),
       );
-      const duplicateFolderRequest = activeOrQueued.some(
-        (entry) =>
-          entry.folderId === job.folderId &&
-          entry.scope.churchId === job.scope.churchId &&
-          entry.scope.databaseName === job.scope.databaseName,
+      const queueEntryKey = getMediaDeletionQueueEntryKey(job.scope, job.id);
+      const overlaps = (left: MediaDeletionQueueTarget, right: MediaDeletionQueueTarget) => {
+        if (left.kind === "folder" && right.kind === "folder") return left.folderId === right.folderId;
+        if (left.kind === "items" && right.kind === "items") {
+          const rightIds = new Set(right.mediaIds);
+          return left.mediaIds.some((mediaId) => rightIds.has(mediaId));
+        }
+        return false;
+      };
+      const duplicateTarget = activeOrQueued.some(
+        (entry) => entry.scope.churchId === job.scope.churchId &&
+          entry.scope.databaseName === job.scope.databaseName &&
+          overlaps(entry.target, job.target),
       );
-      const queueEntryKey = getMediaFolderDeletionQueueEntryKey(
-        job.scope,
-        job.id,
-      );
-      if (queue.entries.has(queueEntryKey) || duplicateFolderRequest) return null;
+      if (queue.entries.has(queueEntryKey) || duplicateTarget || (job.target.kind === "items" && job.target.mediaIds.length === 0)) return null;
 
-      const entry: MediaFolderDeletionQueueEntry = {
+      const entry: MediaDeletionQueueEntry = {
         ...job,
         started: false,
         cancellationAvailable: true,
@@ -686,7 +692,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
                 actions: [{ key: "dismiss", label: "Dismiss" }],
               });
             } finally {
-              drainMediaFolderDeletionQueueRef.current();
+              drainMediaDeletionQueueRef.current();
             }
             return;
           }
@@ -700,7 +706,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
         },
       );
 
-      drainMediaFolderDeletionQueueRef.current();
+      drainMediaDeletionQueueRef.current();
       return {
         isCancellationRequested: () => entry.cancellationRequested,
         isCancellationAvailable: () => entry.cancellationAvailable,
@@ -745,7 +751,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
       if (activityHosts.current.delete(hostId)) setActivityHostCount(activityHosts.current.size);
     };
   }, []);
-  const value = useMemo(() => ({ transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction, enqueueMediaFolderDeletion }), [transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction, enqueueMediaFolderDeletion]);
+  const value = useMemo(() => ({ transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction, enqueueMediaDeletion }), [transfers, isMinimized, minimizeTransfers, restoreTransfers, registerActivityHost, startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction, enqueueMediaDeletion]);
   const actionValue = useMemo(() => ({
     startCanvaTransfer,
     startResourceUpload,
@@ -754,9 +760,9 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     removeTransfer,
     registerTransferAction,
     runTransferAction,
-    enqueueMediaFolderDeletion,
+    enqueueMediaDeletion,
     getTransfer: (id: string) => transfersRef.current.find((transfer) => transfer.id === id),
-  }), [startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction, enqueueMediaFolderDeletion]);
+  }), [startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction, enqueueMediaDeletion]);
   return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferTaskbarProgress transfers={transfers} /><TransferPanel transfers={transfers} isMinimized={isMinimized} hasLocalActivityHost={activityHostCount > 0} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
 };
 

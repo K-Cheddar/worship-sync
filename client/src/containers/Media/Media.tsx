@@ -860,7 +860,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           isOpen={c.showDeleteModal}
           onClose={c.handleCancelDelete}
           onConfirm={c.handleConfirmDelete}
-          isConfirming={c.isDeleteInProgress}
           itemName={c.isDeletingMultiple ? undefined : c.mediaToDelete?.name}
           title="Delete Media"
           message={
