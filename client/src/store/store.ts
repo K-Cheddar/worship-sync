@@ -35,6 +35,7 @@ import {
 import {
   getItemPersistenceChanges,
   getItemPersistenceConflicts,
+  itemDocsMatchPersistedContent,
   itemDocMatchesEditorState,
   itemSlice,
 } from "./itemSlice";
@@ -361,12 +362,16 @@ const itemActionsThatRefreshHistoryMetadata = isAnyOf(
   itemSlice.actions.setActiveItem,
   itemSlice.actions.markItemPersisted,
   itemSlice.actions.rebaseItemPersistence,
+  itemSlice.actions.mergeRemoteItemUpdate,
   itemSlice.actions.bufferRemoteItemUpdate,
+  itemSlice.actions.bufferItemRevisionConflict,
   itemSlice.actions.bufferSongV2RevisionConflict,
   itemSlice.actions.applyPendingRemoteItem,
   itemSlice.actions.discardPendingRemoteItem,
   itemSlice.actions.keepLocalItemChanges,
   itemSlice.actions.setRemoteUpdateReason,
+  itemSlice.actions.setItemPersistenceError,
+  itemSlice.actions.retryItemSave,
 );
 
 const normalizeOverlayForPersistenceCompare = (overlay: OverlayInfo) => {
@@ -921,7 +926,9 @@ const excludedActions: string[] = [
   itemSlice.actions.forceUpdate.toString(),
   itemSlice.actions.markItemPersisted.toString(),
   itemSlice.actions.rebaseItemPersistence.toString(),
+  itemSlice.actions.mergeRemoteItemUpdate.toString(),
   itemSlice.actions.bufferRemoteItemUpdate.toString(),
+  itemSlice.actions.bufferItemRevisionConflict.toString(),
   itemSlice.actions.bufferSongV2RevisionConflict.toString(),
   itemSlice.actions.discardPendingRemoteItem.toString(),
   itemSlice.actions.applyPendingRemoteItem.toString(),
@@ -938,6 +945,8 @@ const excludedActions: string[] = [
   itemSlice.actions.clearBackgroundTargetSelection.toString(),
   itemSlice.actions.clearBackgroundTargetSlideIdsOnly.toString(),
   itemSlice.actions.setRestoreFocusToBox.toString(),
+  itemSlice.actions.setItemPersistenceError.toString(),
+  itemSlice.actions.retryItemSave.toString(),
   overlaysSlice.actions.initiateOverlayList.toString(),
   overlaysSlice.actions.updateOverlayListFromRemote.toString(),
   overlaysSlice.actions.updateOverlaysByIdFromRemote.toString(),
@@ -1095,6 +1104,14 @@ type PendingItemAutosave = {
 const itemAutosaveDebounces = new Map<string, ItemAutosaveDebounce>();
 const itemAutosaveWriteQueues = new Map<string, Promise<void>>();
 const pendingItemAutosaves = new Map<string, PendingItemAutosave>();
+const inFlightItemAutosaveDocuments = new Map<string, {
+  document: DBItem;
+  mutationVersion: number;
+}>();
+// A reviewed Pouch conflict leaf remains retained by CouchDB/PouchDB. Remember
+// the exact leaf set within this store session so its own save echo does not
+// reopen the same decision; a different leaf set still requires review.
+const reviewedItemRevisionConflicts = new Map<string, string>();
 // A partially committed V2 autosave must finish before a coalesced newer
 // autosave can use its original baseline. Keep that predecessor by owner/key.
 const pendingSongV2WriteRecoveries = new Map<string, PendingItemAutosave>();
@@ -1167,9 +1184,30 @@ const itemAutosaveKey = (item: ItemState) =>
     item.contentOwner?.scopeId ?? "legacy",
     item.contentOwner?.databaseKey ?? "",
     item.contentOwner?.churchId ?? "",
+    item.contentOwner?.accountId ?? "",
     item._id,
     item.type,
   ]);
+
+const itemRevisionConflictFingerprint = (revisions: string[]) =>
+  JSON.stringify([...new Set(revisions)].sort());
+
+const logItemPersistence = (
+  event: string,
+  item: Pick<ItemState, "_id" | "type" | "contentOwner">,
+  database: NonNullable<typeof db> | undefined,
+  details: Record<string, unknown> = {},
+) => {
+  console.debug("[item persistence]", {
+    event,
+    itemId: item._id,
+    itemType: item.type,
+    churchId: item.contentOwner?.churchId,
+    ownerScopeId: item.contentOwner?.scopeId,
+    databaseKey: item.contentOwner?.databaseKey ?? database?.name,
+    ...details,
+  });
+};
 
 const scheduleItemAutosaveDebounce = (key: string) => {
   const previous = itemAutosaveDebounces.get(key);
@@ -1252,7 +1290,7 @@ const flushItemAutosavesForContentDatabase = async (scopeId: string) => {
 // handle item updates
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
-    if (retryPendingItemAutosave.match(action)) return true;
+    if (retryPendingItemAutosave.match(action) || itemSlice.actions.retryItemSave.match(action)) return true;
     if (itemSlice.actions.markItemPersisted.match(action)) {
       const currentItem = (currentState as RootState).undoable.present.item;
       return !!currentItem.baseItem &&
@@ -1307,6 +1345,13 @@ listenerMiddleware.startListening({
   },
 
   effect: async (_action, listenerApi) => {
+    if (itemSlice.actions.retryItemSave.match(_action)) {
+      const activeItem = (listenerApi.getState() as RootState).undoable.present.item;
+      const saveKey = itemAutosaveKey(activeItem);
+      const pending = pendingItemAutosaves.get(saveKey);
+      if (pending) requestPendingItemAutosaveRetry(saveKey, pending, false);
+      return;
+    }
     const retryRequest = retryPendingItemAutosave.match(_action) ? _action.payload : undefined;
     const retryPending = retryRequest
       ? retryRequest.recovery
@@ -1471,6 +1516,33 @@ listenerMiddleware.startListening({
           return decision?.discarding !== true &&
             (decision?.version ?? 0) === explicitRemoteDecisionVersionAtStart;
         };
+        const readGenericItemRevision = async () => {
+          const stored = await writeDatabase.get<DBItem & { _conflicts?: string[] }>(
+            desired._id,
+            { conflicts: true },
+          );
+          const { _conflicts: revisions = [], ...item } = stored;
+          return { item: item as DBItem, revisions };
+        };
+        const bufferGenericRevisionConflict = (
+          item: DBItem,
+          revisions: string[],
+        ) => {
+          if (desired.type === "song" || revisions.length === 0) return false;
+          const fingerprint = itemRevisionConflictFingerprint(revisions);
+          if (reviewedItemRevisionConflicts.get(saveKey) === fingerprint) return false;
+          const activeItem = (listenerApi.getState() as RootState).undoable.present.item;
+          if (!sameItemMutationOwner(
+            getItemMutationOwner(activeItem),
+            getItemMutationOwner(desired),
+          )) return true;
+          logItemPersistence("remote_revision_conflict", desired, writeDatabase, {
+            winningRevision: item._rev,
+            conflictingRevisions: revisions,
+          });
+          listenerApi.dispatch(itemSlice.actions.bufferItemRevisionConflict({ item, revisions }));
+          return true;
+        };
         const writeMutationGuard = createSongV2MutationGuard(
           writeDatabase,
           writeContentOwner,
@@ -1524,6 +1596,12 @@ listenerMiddleware.startListening({
         }
         let db_item: DBItem = snapshot?.hydrated ?? await loadItemWithSongHydration(writeDatabase, desired._id);
         if (!operationIsRetained()) return;
+        if (desired.type !== "song" && db_item.docType !== "song-v2-root") {
+          const revision = await readGenericItemRevision();
+          if (!operationIsRetained()) return;
+          db_item = revision.item;
+          if (bufferGenericRevisionConflict(db_item, revision.revisions)) return;
+        }
         const changedFields = getItemPersistenceChanges(desired, writeBaseline);
         const conflicts = getItemPersistenceConflicts(
           desired,
@@ -1686,7 +1764,7 @@ listenerMiddleware.startListening({
             return;
           }
         }
-        let result: { rev: string };
+        let result: { rev: string } = { rev: db_item._rev! };
         try {
           if (nextItem.type === "song") {
             const authoredBaseline = writeBaseline;
@@ -1698,17 +1776,106 @@ listenerMiddleware.startListening({
                 ? authoredBaseline
                 : db_item.docType === "song-v2-root" ? undefined : db_item,
             ] as const;
-            db_item = snapshot
-              ? await saveSong(...saveArgs, undefined, snapshot, writeMutationGuard)
-              : await saveSong(...saveArgs, undefined, undefined, writeMutationGuard);
+            const trackLegacySongEcho = !usesV2Baseline && db_item.docType !== "song-v2-root";
+            if (trackLegacySongEcho) inFlightItemAutosaveDocuments.set(saveKey, {
+              document: nextItem,
+              mutationVersion,
+            });
+            try {
+              db_item = snapshot
+                ? await saveSong(...saveArgs, undefined, snapshot, writeMutationGuard)
+                : await saveSong(...saveArgs, undefined, undefined, writeMutationGuard);
+            } finally {
+              if (trackLegacySongEcho &&
+                inFlightItemAutosaveDocuments.get(saveKey)?.mutationVersion === mutationVersion) {
+                inFlightItemAutosaveDocuments.delete(saveKey);
+              }
+            }
             result = { rev: db_item._rev! };
           } else {
-            db_item = applyPouchAudit(db_item, nextItem, {
-              // Doc came from db.get — always an update (legacy rows may lack createdAt).
-              isNew: false,
-            });
-            result = await writeDatabase.put(db_item);
-            db_item = { ...db_item, _rev: result.rev };
+            const maxRevisionRaceRetries = 3;
+            let committed = false;
+            for (let attempt = 0; attempt <= maxRevisionRaceRetries; attempt += 1) {
+              if (!operationIsRetained()) return;
+              const candidate: DBItem = {
+                ...db_item,
+                ...(Object.fromEntries(
+                  changedFields.map((field) => [field, desired[field]]),
+                ) as Partial<DBItem>),
+              };
+              const audited = applyPouchAudit(db_item, {
+                ...candidate,
+                // Keep a legacy creation date unknown; when it exists, only the
+                // saved document may supply the original value.
+                createdAt: db_item.createdAt ?? candidate.createdAt,
+                updatedAt: new Date().toISOString(),
+              }, {
+                // Doc came from db.get — always an update (legacy rows may lack createdAt).
+                isNew: false,
+              });
+              inFlightItemAutosaveDocuments.set(saveKey, {
+                document: audited,
+                mutationVersion,
+              });
+              try {
+                result = await writeDatabase.put(audited);
+                if (inFlightItemAutosaveDocuments.get(saveKey)?.mutationVersion === mutationVersion) {
+                  inFlightItemAutosaveDocuments.delete(saveKey);
+                }
+                db_item = { ...audited, _rev: result.rev };
+                committed = true;
+                break;
+              } catch (error) {
+                if (inFlightItemAutosaveDocuments.get(saveKey)?.mutationVersion === mutationVersion) {
+                  inFlightItemAutosaveDocuments.delete(saveKey);
+                }
+                if ((error as { status?: number })?.status !== 409) throw error;
+                logItemPersistence("revision_race", desired, writeDatabase, {
+                  baseRevision: writeBaseline._rev,
+                  attemptedRevision: audited._rev,
+                  attempt: attempt + 1,
+                  changedFields,
+                });
+                const latest = await readGenericItemRevision();
+                if (!operationIsRetained()) return;
+                if (bufferGenericRevisionConflict(latest.item, latest.revisions)) return;
+
+                const latestConflicts = getItemPersistenceConflicts(
+                  desired,
+                  writeBaseline,
+                  latest.item,
+                );
+                if (latestConflicts.length > 0) {
+                  logItemPersistence("remote_content_conflict", desired, writeDatabase, {
+                    baseRevision: writeBaseline._rev,
+                    remoteRevision: latest.item._rev,
+                    changedFields: latestConflicts,
+                  });
+                  const activeItem = (listenerApi.getState() as RootState).undoable.present.item;
+                  if (sameItemMutationOwner(
+                    getItemMutationOwner(activeItem),
+                    getItemMutationOwner(desired),
+                  )) listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(latest.item));
+                  return;
+                }
+                db_item = latest.item;
+                if (changedFields.every((field) => _.isEqual(latest.item[field], desired[field]))) {
+                  // Another writer already committed this exact authored intent.
+                  result = { rev: latest.item._rev! };
+                  committed = true;
+                  break;
+                }
+                if (attempt === maxRevisionRaceRetries) {
+                  logItemPersistence("revision_retry_exhausted", desired, writeDatabase, {
+                    latestRevision: latest.item._rev,
+                    attempts: attempt + 1,
+                    changedFields,
+                  });
+                  throw error;
+                }
+              }
+            }
+            if (!committed) return;
           }
         } catch (error) {
           const errorName = error instanceof Error ? error.name : "";
@@ -1718,7 +1885,7 @@ listenerMiddleware.startListening({
           const isSongV2Conflict = error instanceof Error && (
             isSongV2ContentConflict || isSongV2VersionTransition
           );
-          if ((error as { status?: number })?.status === 409 || isSongV2Conflict) {
+          if (((error as { status?: number })?.status === 409 && desired.type === "song") || isSongV2Conflict) {
             if (currentPending.recoveryRecordId) {
               await retainSongV2AutosaveForReview(saveKey, currentPending);
             }
@@ -1880,6 +2047,32 @@ listenerMiddleware.startListening({
         }
       } else {
         await performWrite();
+      }
+    }).catch((error: unknown) => {
+      const latestPending = pendingItemAutosaves.get(saveKey);
+      if (latestPending?.mutationVersion === mutationVersion) {
+        const activeItem = (listenerApi.getState() as RootState).undoable.present.item;
+        const changedFields = getItemPersistenceChanges(latestPending.desired, latestPending.baseline);
+        logItemPersistence("write_failed", latestPending.desired, latestPending.database, {
+          baseRevision: latestPending.baseline._rev,
+          changedFields,
+          mutationVersion,
+          errorName: error instanceof Error ? error.name : "unknown",
+          status: (error as { status?: number })?.status,
+        });
+        if (
+          latestPending.desired.docType !== "song-v2-root" &&
+          sameItemMutationOwner(
+            getItemMutationOwner(activeItem),
+            latestPending.owner,
+          )
+        ) listenerApi.dispatch(itemSlice.actions.setItemPersistenceError(mutationVersion));
+      } else {
+        logItemPersistence("superseded_write_failed", nextPending.desired, nextPending.database, {
+          mutationVersion,
+          errorName: error instanceof Error ? error.name : "unknown",
+          status: (error as { status?: number })?.status,
+        });
       }
     }).finally(() => {
       if (retryId) queuedItemAutosaveRetries.delete(retryId);
@@ -2046,6 +2239,7 @@ listenerMiddleware.startListening({
     allDocsSlice.actions.updateAllSongDocs,
     allDocsSlice.actions.hydrateItemCache,
     allDocsSlice.actions.applyItemDocumentChange,
+    itemSlice.actions.setActiveItem,
   ),
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
@@ -2069,16 +2263,21 @@ listenerMiddleware.startListening({
       allTimerDocs.find((d) => d._id === activeId) ??
       allBibleDocs.find((d) => d._id === activeId) ??
       allServiceTimeDocs.find((d) => d._id === activeId);
+    const selectingItem = itemSlice.actions.setActiveItem.match(action);
     const previousDoc =
       previousSongDocs.find((d) => d._id === activeId) ??
       previousFreeFormDocs.find((d) => d._id === activeId) ??
       previousTimerDocs.find((d) => d._id === activeId) ??
       previousBibleDocs.find((d) => d._id === activeId) ??
       previousServiceTimeDocs.find((d) => d._id === activeId);
+    const cacheChangedActiveItem = allDocsSlice.actions.applyItemDocumentChange.match(action) &&
+      action.payload.id === activeId;
+    const cacheHydrated = allDocsSlice.actions.hydrateItemCache.match(action);
     let songV2Conflicts: Awaited<ReturnType<typeof loadSongV2Snapshot>>["conflicts"];
 
     if (doc) {
-      if (doc.docType !== "song-v2-root" && _.isEqual(doc, previousDoc)) {
+      if (!selectingItem && !cacheChangedActiveItem && !cacheHydrated &&
+        doc.docType !== "song-v2-root" && _.isEqual(doc, previousDoc)) {
         return;
       }
 
@@ -2093,6 +2292,7 @@ listenerMiddleware.startListening({
           const latest = listenerApi.getState() as RootState;
           const latestItem = latest.undoable.present.item;
           if (db !== database || latestItem._id !== activeId || latestItem.listId !== listId ||
+            latestItem !== currentItem ||
             latestItem.baseItem !== currentItem.baseItem ||
             latest.allDocs.allSongDocs.find((song) => song._id === activeId) !== projection) return;
           currentItem = latestItem;
@@ -2107,6 +2307,57 @@ listenerMiddleware.startListening({
       currentItem = (listenerApi.getState() as RootState).undoable.present.item;
       if (!sameItemMutationOwner(refreshOwner, getItemMutationOwner(currentItem))) return;
 
+      if (doc.docType !== "song-v2-root" &&
+        (selectingItem || cacheChangedActiveItem || cacheHydrated || doc._rev !== currentItem.baseItem?._rev)) {
+        const database = refreshOwner
+          ? getContentDatabaseForOwner(refreshOwner)
+          : db;
+        if (database) {
+          try {
+            const stored = await database.get<DBItem & { _conflicts?: string[] }>(activeId, { conflicts: true });
+            const latestState = listenerApi.getState() as RootState;
+            const latestItem = latestState.undoable.present.item;
+            const cachedDoc = [
+              ...latestState.allDocs.allFreeFormDocs,
+              ...latestState.allDocs.allTimerDocs,
+              ...latestState.allDocs.allBibleDocs,
+              ...latestState.allDocs.allServiceTimeDocs,
+            ].find((entry) => entry._id === activeId);
+            if (
+              !sameItemMutationOwner(refreshOwner, getItemMutationOwner(latestItem)) ||
+              latestItem !== currentItem ||
+              latestItem.baseItem !== currentItem.baseItem ||
+              cachedDoc?._rev !== doc._rev ||
+              stored._rev !== doc._rev
+            ) return;
+            const conflictingRevisions = stored._conflicts ?? [];
+            const saveKey = itemAutosaveKey(latestItem);
+            const fingerprint = itemRevisionConflictFingerprint(conflictingRevisions);
+            if (latestItem.type !== "song" && conflictingRevisions.length > 0 &&
+              reviewedItemRevisionConflicts.get(saveKey) !== fingerprint) {
+              const { _conflicts: _ignoredConflicts, ...latestDocument } = stored;
+              logItemPersistence("remote_revision_conflict", latestItem, database, {
+                winningRevision: stored._rev,
+                conflictingRevisions,
+              });
+              listenerApi.dispatch(itemSlice.actions.bufferItemRevisionConflict({
+                item: latestDocument,
+                revisions: conflictingRevisions,
+              }));
+              return;
+            }
+            const { _conflicts: _ignoredConflicts, ...latestDocument } = stored;
+            doc = latestDocument;
+          } catch (error) {
+            logItemPersistence("revision_check_failed", currentItem, database, {
+              revision: doc._rev,
+              errorName: error instanceof Error ? error.name : "unknown",
+              status: (error as { status?: number })?.status,
+            });
+          }
+        }
+      }
+
       if (songV2Conflicts?.length) {
         // Replication owns authorized reconciliation. A read-only session must
         // retain the leaves and surface them without adopting a partial winner.
@@ -2119,24 +2370,69 @@ listenerMiddleware.startListening({
         return;
       }
 
-      const docMatchesBase =
-        !!currentItem.baseItem && _.isEqual(doc, currentItem.baseItem);
+      const isSongV2Document = currentItem.docType === "song-v2-root" ||
+        doc.docType === "song-v2-root";
+      const acknowledgedBaseline = !isSongV2Document
+        ? pendingItemAutosaves.get(itemAutosaveKey(currentItem))?.baseline
+        : undefined;
+      const comparisonBaseline = acknowledgedBaseline ?? currentItem.baseItem;
+      const docMatchesBase = !!comparisonBaseline &&
+        itemDocsMatchPersistedContent(
+          doc,
+          comparisonBaseline,
+        );
       const docMatchesCurrent = itemDocMatchesEditorState(doc, currentItem);
+      const inFlightSave = inFlightItemAutosaveDocuments.get(itemAutosaveKey(currentItem));
+      if (inFlightSave && itemDocsMatchPersistedContent(doc, inFlightSave.document)) {
+        logItemPersistence("local_save_echo", currentItem, db ?? undefined, {
+          revision: doc._rev,
+          mutationVersion: inFlightSave.mutationVersion,
+        });
+        return;
+      }
       const shouldBufferRemote =
-        !!(currentItem.hasPendingUpdate || currentItem.isLyricsEditorOpen) &&
+        !!(currentItem.hasPendingUpdate || currentItem.hasRemoteUpdate || currentItem.isLyricsEditorOpen) &&
         !docMatchesBase;
 
       if (shouldBufferRemote) {
         if (docMatchesCurrent) {
           return;
         }
-        if (!_.isEqual(doc, currentItem.pendingRemoteItem)) {
+        const authoredBaseline = comparisonBaseline;
+        const localChanges = authoredBaseline
+          ? getItemPersistenceChanges(currentItem, authoredBaseline)
+          : [];
+        const conflicts = authoredBaseline
+          ? getItemPersistenceConflicts(currentItem, authoredBaseline, doc)
+          : ["unknown-baseline"];
+        if (!isSongV2Document && conflicts.length === 0 && localChanges.length > 0 &&
+          authoredBaseline && !currentItem.hasRemoteUpdate) {
+          const saveKey = itemAutosaveKey(currentItem);
+          const pending = pendingItemAutosaves.get(saveKey);
+          if (pending) pendingItemAutosaves.set(saveKey, { ...pending, baseline: doc });
+          logItemPersistence("remote_non_overlapping_merge", currentItem, db ?? pending?.database, {
+            previousRevision: authoredBaseline._rev,
+            remoteRevision: doc._rev,
+          });
+          listenerApi.dispatch(itemSlice.actions.mergeRemoteItemUpdate({
+            document: doc,
+            authoredBaseline,
+          }));
+          return;
+        }
+        if (!currentItem.pendingRemoteItem ||
+          !itemDocsMatchPersistedContent(doc, currentItem.pendingRemoteItem)) {
+          logItemPersistence("remote_content_conflict", currentItem, db ?? undefined, {
+            baseRevision: currentItem.baseItem?._rev,
+            remoteRevision: doc._rev,
+            changedFields: conflicts,
+          });
           listenerApi.dispatch(itemSlice.actions.bufferRemoteItemUpdate(doc));
         }
         return;
       }
 
-      if (docMatchesBase && !currentItem.hasRemoteUpdate) {
+      if (docMatchesBase) {
         return;
       }
 
@@ -5550,21 +5846,41 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
       currentItem.contentOwner.scopeId === "unscoped";
 
   if (
-    (itemSlice.actions.bufferRemoteItemUpdate.match(action) || itemSlice.actions.bufferSongV2RevisionConflict.match(action)) &&
+    (itemSlice.actions.bufferRemoteItemUpdate.match(action) ||
+      itemSlice.actions.bufferItemRevisionConflict.match(action) ||
+      itemSlice.actions.bufferSongV2RevisionConflict.match(action)) &&
     !itemBelongsToActiveDatabase
   ) {
     return action;
   }
 
-  if (itemSlice.actions.bufferRemoteItemUpdate.match(action) || itemSlice.actions.bufferSongV2RevisionConflict.match(action) ||
+  if (itemSlice.actions.bufferRemoteItemUpdate.match(action) ||
+    itemSlice.actions.bufferItemRevisionConflict.match(action) ||
+    itemSlice.actions.bufferSongV2RevisionConflict.match(action) ||
+    itemSlice.actions.mergeRemoteItemUpdate.match(action) ||
     itemSlice.actions.markItemPersisted.match(action)) {
     flushPendingItemMutations(currentOwner);
   }
-  if (itemSlice.actions.bufferSongV2RevisionConflict.match(action)) {
+  if (itemSlice.actions.bufferRemoteItemUpdate.match(action) ||
+    itemSlice.actions.bufferItemRevisionConflict.match(action) ||
+    itemSlice.actions.bufferSongV2RevisionConflict.match(action)) {
     const pending = pendingItemAutosaves.get(itemAutosaveKey(currentItem));
-    if (pending) pendingItemAutosaves.set(itemAutosaveKey(currentItem), {
+    const isSongV2Conflict = currentItem.docType === "song-v2-root" ||
+      pending?.desired.docType === "song-v2-root";
+    if (pending && !isSongV2Conflict) pendingItemAutosaves.set(itemAutosaveKey(currentItem), {
       ...pending, mutationVersion: ++itemAutosaveMutationVersion,
     });
+  }
+
+  if (itemSlice.actions.keepLocalItemChanges.match(action) ||
+    itemSlice.actions.applyPendingRemoteItem.match(action)) {
+    const reviewedConflict = currentItem.pendingItemRevisionConflict;
+    if (reviewedConflict?.revisions.length) {
+      reviewedItemRevisionConflicts.set(
+        itemAutosaveKey(currentItem),
+        itemRevisionConflictFingerprint(reviewedConflict.revisions),
+      );
+    }
   }
 
   if (itemSlice.actions.applyPendingRemoteItem.match(action)) {

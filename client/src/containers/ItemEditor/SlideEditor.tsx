@@ -42,6 +42,7 @@ import {
   applyOwnedContentMutation,
   setRestoreFocusToBox,
   setHasPendingUpdate,
+  retryItemSave,
 } from "../../store/itemSlice";
 import {
   flushPendingItemMutations,
@@ -179,6 +180,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     hasRemoteUpdate,
     remoteUpdateReason,
     pendingSongV2Conflicts,
+    itemPersistenceError,
     hasPendingUpdate,
     songMetadata,
     songLinks,
@@ -286,6 +288,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   } | null>(null);
   const cursorPositionsRef = useRef<Record<number, number>>({});
   const remoteUpdateToastIdRef = useRef<string | null>(null);
+  const itemSaveErrorToastIdRef = useRef<string | null>(null);
   const isEditorMountedRef = useRef(true);
   const [isReformatting, setIsReformatting] = useState(false);
   const itemTypeLabel = useMemo(() => getItemTypeLabel(type), [type]);
@@ -417,6 +420,48 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       if (remoteUpdateToastIdRef.current && removeToast) {
         removeToast(remoteUpdateToastIdRef.current);
         remoteUpdateToastIdRef.current = null;
+      }
+    };
+  }, [removeToast]);
+
+  useEffect(() => {
+    if (!itemPersistenceError) {
+      if (itemSaveErrorToastIdRef.current && removeToast) {
+        removeToast(itemSaveErrorToastIdRef.current);
+        itemSaveErrorToastIdRef.current = null;
+      }
+      return;
+    }
+    if (itemSaveErrorToastIdRef.current || !showToast || !removeToast) return;
+
+    itemSaveErrorToastIdRef.current = showToast({
+      message: "Couldn't save your changes. Your draft is still open.",
+      variant: "error",
+      persist: true,
+      showCloseButton: false,
+      children: (toastId) => (
+        <div className="mt-2 flex gap-2">
+          <Button
+            variant="primary"
+            className="text-sm"
+            onClick={() => {
+              dispatch(retryItemSave());
+              removeToast(toastId);
+              itemSaveErrorToastIdRef.current = null;
+            }}
+          >
+            Retry save
+          </Button>
+        </div>
+      ),
+    });
+  }, [dispatch, itemPersistenceError, removeToast, showToast]);
+
+  useEffect(() => {
+    return () => {
+      if (itemSaveErrorToastIdRef.current && removeToast) {
+        removeToast(itemSaveErrorToastIdRef.current);
+        itemSaveErrorToastIdRef.current = null;
       }
     };
   }, [removeToast]);

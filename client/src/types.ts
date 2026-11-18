@@ -404,9 +404,13 @@ export type ItemState = ItemProperties & {
   isItemFormatting?: boolean;
   hasPendingUpdate?: boolean;
   hasRemoteUpdate?: boolean;
+  /** Local-only identifier for the latest failed autosave, used to offer a retry. */
+  itemPersistenceError?: number | null;
   remoteUpdateReason?: "song-version-transition" | "song-content-conflict" | "song-recovery-discard-failed" | null;
   baseItem?: DBItem | null;
   pendingRemoteItem?: DBItem | null;
+  /** PouchDB leaf revisions shown by the generic item conflict prompt. */
+  pendingItemRevisionConflict?: { revisions: string[] };
   /** Runtime-only revision leaves shown with the current conflict decision. */
   pendingSongV2Conflicts?: { documentId: string; winningRevision: string; revisions: string[] }[];
   /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */

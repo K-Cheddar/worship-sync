@@ -120,6 +120,7 @@ jest.mock("../../../store/itemSlice", () => ({
   updateBoxes: (payload: any) => mockUpdateBoxes(payload),
   discardPendingRemoteItem: () => mockDiscardPendingRemoteItem(),
   applyPendingRemoteItem: () => mockApplyPendingRemoteItem(),
+  retryItemSave: () => ({ type: "item/retryItemSave" }),
   setRestoreFocusToBox: jest.fn((payload: any) => ({
     type: "item/setRestoreFocusToBox",
     payload,
@@ -1809,6 +1810,27 @@ describe("SlideEditor", () => {
     fireEvent.click(screen.getByRole("button", { name: "Use Their Changes" }));
 
     expect(mockApplyPendingRemoteItem).toHaveBeenCalled();
+    expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
+  });
+
+  it("shows a recoverable item-save error and retries the retained draft", () => {
+    mockState = makeStateWithItem({
+      hasPendingUpdate: true,
+      itemPersistenceError: 7,
+    });
+
+    renderWithToastContext();
+
+    expect(mockShowToast).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Couldn't save your changes. Your draft is still open.",
+      variant: "error",
+      persist: true,
+    }));
+    const { children } = mockShowToast.mock.calls[0][0];
+    render(<>{children("toast-1")}</>);
+    fireEvent.click(screen.getByRole("button", { name: "Retry save" }));
+
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({ type: "item/retryItemSave" }));
     expect(mockRemoveToast).toHaveBeenCalledWith("toast-1");
   });
 
