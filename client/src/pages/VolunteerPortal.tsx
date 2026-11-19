@@ -1,11 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { openVolunteerSession, personalScheduleAccess, volunteerRequest, volunteerRequestKey, VolunteerApiError, type VolunteerSession } from "../api/volunteer";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
 import { readVolunteerIngress, clearVolunteerIngress } from "../public/volunteerIngress";
 import MySchedule from "./MySchedule";
+import MyAvailability from "./MyAvailability";
 
 const VolunteerPortal = () => {
+  const [searchParams] = useSearchParams();
+  const activePage = searchParams.get("view") === "availability" ? "availability" : "schedule";
   const [session, setSession] = useState<VolunteerSession | null>(null);
   const [status, setStatus] = useState("loading");
   const [contact, setContact] = useState("");
@@ -66,7 +70,9 @@ const VolunteerPortal = () => {
     } catch { if (mounted.current) setMessage("Could not verify this code. Try again or request a new code."); }
     finally { if (mounted.current) setPending(false); }
   };
-  if (access) return <MySchedule access={access} />;
+  if (access) return activePage === "availability"
+    ? <MyAvailability access={access} />
+    : <MySchedule access={access} />;
   return <main className="flex h-dvh items-center justify-center overflow-y-auto bg-neutral-950 px-4 text-white">
     <div className="flex w-full max-w-md flex-col gap-4 py-8">
       <h1 className="text-xl font-semibold">My Schedule</h1>

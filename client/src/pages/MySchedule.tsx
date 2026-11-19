@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import type { ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import {
   ArrowLeft,
   CalendarDays,
@@ -57,6 +58,7 @@ import {
   myScheduleServiceGroupKey,
 } from "./myScheduleTimeline";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
+import VolunteerSelfServiceNavigation from "./VolunteerSelfServiceNavigation";
 import {
   findBlockoutRangeForDate,
   formatBlockoutDateRangeLabel,
@@ -846,7 +848,7 @@ const OccurrenceDetail = ({
   );
 };
 
-const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
+const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAccess; openTimeOff: boolean }) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const churchId = access?.churchId || context?.churchId || "";
@@ -1451,6 +1453,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
       contentClassName="max-w-[90rem]"
     >
       <div className="flex w-full flex-col gap-4">
+        <VolunteerSelfServiceNavigation access={access} active="schedule" />
         {status === "loading" ? (
           <MyScheduleLoadingSkeleton showSmsPreferences={Boolean(access)} />
         ) : null}
@@ -1527,6 +1530,7 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
                   onDirtyChange={handleTimeOffDirtyChange}
                   onStale={refreshAfterConflict}
                   savedDatesLoad={savedDatesLoad}
+                  initiallyOpen={openTimeOff}
                 />
               </>
             ) : null}
@@ -1679,8 +1683,9 @@ const MyScheduleView = ({ access }: { access?: PersonalScheduleAccess }) => {
 
 const MySchedule = ({ access }: { access?: PersonalScheduleAccess }) => {
   const context = useContext(GlobalInfoContext);
+  const location = useLocation();
   const identity = access ? `personal:${access.churchId}:${access.memberId}` : `human:${context?.churchId || ""}:${context?.userId || ""}`;
-  return <MyScheduleView key={identity} access={access} />;
+  return <MyScheduleView key={identity} access={access} openTimeOff={location.hash === "#time-off"} />;
 };
 
 export default MySchedule;

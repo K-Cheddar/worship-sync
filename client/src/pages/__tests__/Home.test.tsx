@@ -198,6 +198,8 @@ describe("Home", () => {
       );
     }
     expect(screen.getByRole("link", { name: /^Administration\b/ })).toHaveAttribute("href", "/account");
+    expect(screen.getByRole("link", { name: /^My availability\b/i })).toHaveAttribute("href", "/my-availability");
+    expect(screen.getByRole("link", { name: /^My schedule\b/ })).toHaveAttribute("href", "/my-schedule");
     expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
   });
 
@@ -218,6 +220,10 @@ describe("Home", () => {
     expect(
       screen.queryByRole("link", { name: /^Teams and Services\b/ }),
     ).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /^My availability\b/i }))
+      .toHaveAttribute("href", "/my-availability");
+    expect(screen.getByRole("link", { name: /^My schedule\b/ }))
+      .toHaveAttribute("href", "/my-schedule");
   });
 
   it("renders fixed launcher appearances from the shared map", () => {

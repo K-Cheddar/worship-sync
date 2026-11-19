@@ -157,3 +157,21 @@ Availability writes do not activate SMS, send email, schedule reminders or
 change Auto-fill ranking. My Schedule remains assignment-focused; no new UI,
 form system, collection, identity model or migration is introduced in this
 phase.
+
+## My Availability (Phase 2B-2, 2026-11-18)
+
+The shared volunteer UI is available at `/my-availability` to signed-in humans
+and at `/s?view=availability` through an existing accountless personal session.
+It lists the volunteer's own open requests that still have unanswered dates,
+followed by answered or closed requests. Each occurrence supports Available,
+Unavailable, and Not answered; the last choice stays absent from the complete
+submitted map so it remains neutral.
+
+Saving uses the Phase 2B-1 recipient-scoped complete-map endpoint and its
+per-occurrence revision snapshot. A 409 retains the draft and requires explicit
+review of the original, current, and draft answers before rebasing. Uncertain
+write outcomes are reconciled by reading the authoritative endpoint, without
+automatic resubmission. The read includes the validated church service timezone
+for display. Time Off remains in assignment-focused My Schedule. Volunteer
+recurring-availability preferences remain deferred because no safe self-service
+operation exists for them yet.

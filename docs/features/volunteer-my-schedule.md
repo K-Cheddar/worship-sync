@@ -11,7 +11,7 @@ The October 21, 2026 “Simplify My Schedule Cards and Share the Service Card De
 - Phase 3 completion is an end-to-end workflow, not removal of the flag alone. An active roster member needs no account, Firebase login, human church membership or Teams permission. Volunteers with no assignments still have Time Off. Availability forms remain available through existing intake links. Temporary ingress/data failures offer an explicit retry; usable ingress remains only in memory until successful redemption or definitive denial. Background access failures keep mounted unsaved dates and provide personal-link guidance. Confirmed by the October 21, 2026 Complete and Enable Accountless My Schedule request.
 - Account and accountless volunteers use the same My Schedule renderer and volunteer business operations. The server resolves church/member scope from a human session or validated personal credential; request member IDs never establish identity.
 - Both identities can read their current and previous assignments and own responses, respond individually, accept all unanswered, manage time off, see conflicts and teammate display names, read permitted service details, and use applicable self-service preferences. Preserve signed-in filters, navigation, exports, history and account capabilities. Availability forms stay in their existing intake flow.
-- Phase 2B-1 adds recipient-scoped availability state and revision-aware writes to the existing signed-in and personal-session APIs. Both identities use the same underlying business logic and may access only their own authorized requests. Availability requests are still not rendered as My Schedule cards; the My Availability interface is Phase 2B-2. Approval: current product-owner request, 2026-11-16.
+- Phase 2B adds a separate My Availability surface for recipient-scoped availability requests. Signed-in volunteers and personal-link volunteers share its interface and underlying operations, and each may access only their own authorized requests. Availability requests are not My Schedule cards. Approval: current product-owner request, 2026-11-16.
 - Private notes, teammate contacts/responses, administrative data and Draft assignments are excluded. Missing schedule publication metadata retains legacy Published semantics. Publication and notification delivery remain separate.
 - Accept all unanswered checks persisted responses in each schedule transaction. Existing answers survive concurrent bulk acceptance. Multi-schedule outcomes identify committed schedules and failures; retry skips completed answers.
 - Both identities use Phase 1B's canonical pending-only acceptance over upcoming published primary assignments. Past occurrences, Drafts, existing answers and unrelated response metadata remain unchanged. Both clients follow bounded schedule pages and share partial-completion feedback. Personal credential/session generation and member authority are checked inside every independent schedule transaction, including retries. Confirmed by the October 21, 2026 Shared Volunteer Bulk Response fix request. Individual and legacy schedule-link responses retain explicit Accept/Decline semantics.
@@ -66,6 +66,48 @@ No active linked record retains the existing empty-read/unlinked-write behavior.
 See [implementation plan](../volunteer-portal-plan.md). Required milestones are
 A shared core, B personal access/recovery, C shared UI, D compact messaging.
 This contract records approved intent, not proof that those milestones have shipped.
+
+## My Availability: Phase 2B-2 (2026-11-18)
+
+**Approval source:** current product-owner request for Phase 2B-2, 2026-11-18.
+
+### Before behavior
+
+Volunteers could respond to a request through its existing form link, but had
+no consolidated place to review their saved availability requests. My Schedule
+remained focused on assigned services and Time Off.
+
+### After behavior
+
+- Signed-in volunteers open **My Availability** from the Home launcher at
+  `/my-availability`. Accountless volunteers use their existing personal
+  session at `/s?view=availability`; this does not require a new account or
+  credential. Both entry points use the same request list and editor.
+- Open requests with unanswered service dates appear under **Needs response**;
+  submitted and closed requests appear under **Previous responses**. Each date
+  offers **Available**, **Unavailable**, or **Not answered**. An unanswered
+  choice is neutral and does not count as unavailable.
+- Saving sends one complete answer map for that request's occurrence scope and
+  the per-occurrence revisions returned by the server. A conflict keeps the
+  volunteer's draft, displays the original and latest answers for review, and
+  requires an explicit choice before another save. When a network result is
+  uncertain, the client reads the server state and does not blindly repeat the
+  write.
+- Date and time labels use the configured church service timezone when present.
+  If it is missing, the service date remains visible and the time is omitted
+  rather than silently substituting the browser's timezone.
+- My Schedule remains assignment-only. Its existing Time Off workflow is
+  unchanged and remains linked from My Availability. No schedule answer is
+  required to be considered for scheduling.
+
+### Behavior intentionally unchanged
+
+Existing form links, submissions, recipient records, saved answers, and
+revision-aware APIs remain in place. My Availability does not change blockouts,
+recurring serving preferences, positions, profile data, consent, assignments,
+messages, or notification behavior. Recurring availability preferences remain
+deferred because there is no safe volunteer self-service read/write operation
+for them in the existing server contract.
 
 
 ## Personal credential foundation: Phase 2 contract (2026-10-21)

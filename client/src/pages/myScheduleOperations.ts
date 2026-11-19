@@ -2,15 +2,35 @@ import type { AcceptPendingAssignmentsResponse, MyScheduleOccurrence } from "../
 import type { TeamRosterMember } from "../api/authTypes";
 
 export type MyScheduleMember = Pick<TeamRosterMember, "memberId" | "churchId" | "firstName" | "lastName" | "blockoutDates" | "updatedAt">;
+export type VolunteerAvailabilityAnswer = "available" | "unavailable";
 export type VolunteerAvailabilityRequest = {
   recipientId: string; formId: string; name: string; responseDeadline: string;
   availabilityMessage: string; respondedAt: string; submissionId: string; editable: boolean;
   occurrences: { occurrenceId: string; name: string; startsAt: string; serviceDate?: string }[];
-  availability: Record<string, "available" | "unavailable">;
+  availability: Record<string, VolunteerAvailabilityAnswer>;
   /** Dates inside the form scope with no explicit saved answer. */
   unansweredOccurrenceIds: string[];
   /** Per-occurrence preconditions returned by the server for the next save. */
   availabilityRevision: Record<string, number>;
+};
+export type VolunteerAvailabilityRead = {
+  success: boolean;
+  serviceTimeZone?: string | null;
+  requests: VolunteerAvailabilityRequest[];
+};
+export type VolunteerAvailabilitySave = {
+  recipientId: string;
+  availability: VolunteerAvailabilityRequest["availability"];
+  availabilityRevision: VolunteerAvailabilityRequest["availabilityRevision"];
+};
+export type VolunteerAvailabilitySaveResult = {
+  success: boolean;
+  submissionId: string;
+  submittedAt?: string;
+};
+export type VolunteerAvailabilityOperations = {
+  loadAvailability: () => Promise<VolunteerAvailabilityRead>;
+  saveAvailability: (request: VolunteerAvailabilitySave) => Promise<VolunteerAvailabilitySaveResult>;
 };
 export type VolunteerBulkResult = AcceptPendingAssignmentsResponse;
 export type MyScheduleOperations = {
@@ -21,5 +41,6 @@ export type MyScheduleOperations = {
 };
 
 export type PersonalScheduleAccess = {
-  churchId: string; memberId: string; churchName?: string; operations: MyScheduleOperations;
+  churchId: string; memberId: string; churchName?: string; sessionKey?: string;
+  operations: MyScheduleOperations & Partial<VolunteerAvailabilityOperations>;
 };

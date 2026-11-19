@@ -98,6 +98,7 @@ const PreparedVideoSurfaces = lazyRoute(
 
 // Planning / people
 const MySchedule = lazyRoute(() => import("./pages/MySchedule"));
+const MyAvailability = lazyRoute(() => import("./pages/MyAvailability"));
 const Account = lazyRoute(() => import("./pages/Account"));
 const Resources = lazyRoute(() => import("./pages/Resources"));
 const TeamsAndServices = lazyRoute(
@@ -424,6 +425,14 @@ export const AppRoutes = () => {
                 element={
                   <AuthGate allowedKinds={["human"]}>
                     <MySchedule />
+                  </AuthGate>
+                }
+              />
+              <Route
+                path="/my-availability"
+                element={
+                  <AuthGate allowedKinds={["human"]}>
+                    <MyAvailability />
                   </AuthGate>
                 }
               />

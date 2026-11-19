@@ -119,5 +119,5 @@ See [the defaults contract](personalized-team-intake.md#reusable-form-defaults-p
 The existing response endpoints now expose the volunteer's form-scoped saved
 answers and per-occurrence revision, and accept revision-aware edits through the
 existing recipient and response records. Saving an answer does not send SMS or
-email, create a reminder, activate a provider, or change consent. The future My
-Availability interface is a separate Phase 2B-2 task.
+email, create a reminder, activate a provider, or change consent. The separate
+My Availability interface reads and edits those answers in Phase 2B-2.

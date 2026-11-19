@@ -168,7 +168,7 @@ These are existing boundaries, not additional implementations in this fix:
   contains only some dates. Existing public links still open the existing form
   without prefilled answers. The preview now supplies hidden per-occurrence
   revisions, and the current public client sends them with the complete map.
-  The future My Availability UI can use the same scope and revision contract.
+  The Phase 2B-2 My Availability UI uses the same scope and revision contract.
 - The existing request digest includes the submitted revision snapshot. An exact
   retry of the latest committed response is idempotent; an older snapshot after
   a later response returns 409. A fresh revision makes a deliberate later edit
@@ -194,8 +194,8 @@ These are existing boundaries, not additional implementations in this fix:
 ### Findings
 
 Critical: None. High: None. Medium: None. Low: None within this audit's scope.
-The Phase 2B-1 contract records the response revision behavior; the new My
-Availability interface remains a separate Phase 2B-2 deliverable.
+The Phase 2B-1 contract records the response revision behavior. Phase 2B-2
+implements the volunteer-facing My Availability interface on that contract.
 
 ### Product authorization status
 

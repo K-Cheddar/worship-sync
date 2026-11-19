@@ -9208,6 +9208,7 @@ export const createTeamsAuthHandlers = ({
   };
 
   const getVolunteerAvailability = async (identity) => {
+    const church = await getDoc(COLLECTIONS.churches, identity.churchId);
     const recipients = await queryDocs(COLLECTIONS.teamIntakeRecipients, [
       { field: "churchId", value: identity.churchId },
       { field: "memberId", value: identity.memberId },
@@ -9244,7 +9245,13 @@ export const createTeamsAuthHandlers = ({
         if (![400, 403, 404, 409].includes(error?.status || error?.statusCode)) throw error;
       }
     }
-    return { success: true, requests };
+    return {
+      success: true,
+      serviceTimeZone: isValidPortableTimeZone(church?.serviceTimeZone)
+        ? church.serviceTimeZone
+        : null,
+      requests,
+    };
   };
 
   const writeTeamIntakeRecipientBatch = async (

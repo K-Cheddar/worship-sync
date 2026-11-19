@@ -162,6 +162,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     const portalAvailability = await (await adminContext.request.get(`${base}/api/volunteer/availability`, {
       headers: { "x-volunteer-csrf": desktopSession.csrfToken },
     })).json();
+    assert.equal(portalAvailability.serviceTimeZone, "America/New_York");
     assert.equal(portalAvailability.requests.length, 1);
     assert.deepEqual(portalAvailability.requests[0].availability, {});
     assert.deepEqual(portalAvailability.requests[0].unansweredOccurrenceIds, [
@@ -181,6 +182,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
       { headers: { ...humanHeaders, "x-csrf-token": humanSession.csrfToken } },
     )).json();
     assert.deepEqual(humanAvailability.requests, portalAvailability.requests);
+    assert.equal(humanAvailability.serviceTimeZone, portalAvailability.serviceTimeZone);
     await desktopVolunteer.getByRole("button", { name: /Open Sunday Gathering/i }).click();
     await desktopVolunteer.getByRole("tab", { name: /Service plan/i }).click();
     await desktopVolunteer.getByText("Welcome everyone", { exact: true }).waitFor();

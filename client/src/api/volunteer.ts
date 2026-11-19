@@ -1,4 +1,11 @@
-import type { MyScheduleOperations, PersonalScheduleAccess, VolunteerAvailabilityRequest } from "../pages/myScheduleOperations";
+import type {
+  MyScheduleOperations,
+  PersonalScheduleAccess,
+  VolunteerAvailabilityOperations,
+  VolunteerAvailabilityRead,
+  VolunteerAvailabilitySave,
+  VolunteerAvailabilitySaveResult,
+} from "../pages/myScheduleOperations";
 import { clearVolunteerIngress, readVolunteerIngress } from "../public/volunteerIngress";
 
 export type VolunteerSession = { csrfToken: string; churchId: string; memberId: string; expiresAt: number };
@@ -105,16 +112,22 @@ export const openVolunteerSession = async (): Promise<VolunteerSession> => {
 
 export const personalScheduleAccess = (session: VolunteerSession): PersonalScheduleAccess => {
   const request = <T>(path: string, body?: unknown) => volunteerRequest<T>(path, body, session.csrfToken);
-  const operations: MyScheduleOperations = {
+  const operations: MyScheduleOperations & VolunteerAvailabilityOperations = {
     load: () => request("schedule"), respond: (body) => request<{ success: boolean; response: "accepted" | "declined" }>("respond", body),
     saveBlockouts: (blockoutDates, expectedUpdatedAt) => request("blockouts", { blockoutDates, expectedUpdatedAt }),
     acceptUnanswered: (afterScheduleId) => request("accept-unanswered", afterScheduleId ? { afterScheduleId } : {}),
+    loadAvailability: () => request<VolunteerAvailabilityRead>("availability"),
+    saveAvailability: (payload) => request<VolunteerAvailabilitySaveResult>("availability", {
+      recipientId: payload.recipientId,
+      occurrenceAvailability: payload.availability,
+      availabilityRevision: payload.availabilityRevision,
+    }),
   };
-  return { churchId: session.churchId, memberId: session.memberId, operations };
+  return { churchId: session.churchId, memberId: session.memberId, sessionKey: session.csrfToken, operations };
 };
 
 export const getVolunteerAvailability = (session: VolunteerSession) =>
-  volunteerRequest<{ success: boolean; requests: VolunteerAvailabilityRequest[] }>(
+  volunteerRequest<VolunteerAvailabilityRead>(
     "availability",
     undefined,
     session.csrfToken,
@@ -122,8 +135,8 @@ export const getVolunteerAvailability = (session: VolunteerSession) =>
 
 export const submitVolunteerAvailability = (
   session: VolunteerSession,
-  request: Pick<VolunteerAvailabilityRequest, "recipientId" | "availability" | "availabilityRevision">,
-) => volunteerRequest<{ success: boolean; submissionId: string }>(
+  request: VolunteerAvailabilitySave,
+) => volunteerRequest<VolunteerAvailabilitySaveResult>(
   "availability",
   {
     recipientId: request.recipientId,

@@ -650,6 +650,15 @@ const Welcome = () => {
                   showDescriptions={showDescriptions}
                 />
               ) : null}
+              {showMySchedule ? (
+                <HomeNavigationLink
+                  title="My availability"
+                  to="/my-availability"
+                  {...PAGE_APPEARANCES.myAvailability}
+                  description="Review service-date requests and update your responses."
+                  showDescriptions={showDescriptions}
+                />
+              ) : null}
               {showMyTeams ? (
                 <HomeNavigationLink
                   title="My teams"

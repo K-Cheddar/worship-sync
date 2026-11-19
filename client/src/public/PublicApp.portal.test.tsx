@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PublicApp from "./PublicApp";
 import { clearVolunteerIngress, scrubVolunteerIngress } from "./volunteerIngress";
@@ -36,6 +36,18 @@ beforeEach(() => {
   global.fetch = fetchMock;
 });
 afterEach(() => { global.fetch = originalFetch; clearVolunteerIngress(); });
+
+it("opens My Availability through the existing accountless personal session", async () => {
+  window.history.replaceState({}, "", "/s?view=availability");
+  render(<PublicApp />);
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/session"))).toBe(true));
+  expect(await screen.findByText("No availability requests right now.")).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "My Availability" })).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: "My Schedule" })).toHaveAttribute("href", "/s?view=schedule");
+  expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/availability"))).toBe(true);
+  expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/schedule"))).toBe(false);
+});
 
 it("opens the same My Schedule through the real public providers, including deferred time off and plan views", async () => {
   const user = userEvent.setup();

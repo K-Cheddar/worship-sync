@@ -1,5 +1,6 @@
 import {
   Building2,
+  CalendarCheck,
   CalendarClock,
   FolderOpen,
   LayoutDashboard,
@@ -20,6 +21,7 @@ type PageAppearanceKey =
   | "teamsAndServices"
   | "resources"
   | "mySchedule"
+  | "myAvailability"
   | "myTeams"
   | "serviceWorkspace"
   | "currentServiceViewer"
@@ -31,6 +33,7 @@ export const PAGE_APPEARANCES = {
   teamsAndServices: { icon: Users, iconColorClass: "text-cyan-300" },
   resources: { icon: FolderOpen, iconColorClass: "text-violet-300" },
   mySchedule: { icon: CalendarClock, iconColorClass: "text-teal-300" },
+  myAvailability: { icon: CalendarCheck, iconColorClass: "text-cyan-300" },
   myTeams: { icon: Users, iconColorClass: "text-cyan-300" },
   serviceWorkspace: { icon: LayoutDashboard, iconColorClass: "text-blue-300" },
   currentServiceViewer: { icon: ListChecks, iconColorClass: "text-indigo-300" },

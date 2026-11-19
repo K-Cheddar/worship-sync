@@ -43,6 +43,7 @@ type MyScheduleBlockoutsProps = {
   /** Called when the record moved underneath this edit, to pick up the change. */
   onStale: () => Promise<boolean> | undefined;
   savedDatesLoad: SavedDatesLoadState;
+  initiallyOpen?: boolean;
 };
 
 type BlockoutConflict = {
@@ -98,12 +99,13 @@ const MyScheduleBlockouts = ({
   onStale,
   savedDatesLoad,
   saveBlockouts,
+  initiallyOpen = false,
 }: MyScheduleBlockoutsProps) => {
   const { showToast } = useToast();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const conflictHeadingId = useId();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const [showEnded, setShowEnded] = useState(false);
   const [draft, setDraft] = useState<TeamBlockoutDateRange[]>(blockoutDates);
   const { ended: draftEnded, current: draftCurrent } = useMemo(

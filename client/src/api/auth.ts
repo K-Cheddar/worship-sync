@@ -2,7 +2,12 @@ import {
   getApiBasePath,
   isPackagedElectronRenderer,
 } from "../utils/environment";
-import type { VolunteerAvailabilityRequest, VolunteerBulkResult } from "../pages/myScheduleOperations";
+import type {
+  VolunteerAvailabilityRead,
+  VolunteerAvailabilityRequest,
+  VolunteerAvailabilitySaveResult,
+  VolunteerBulkResult,
+} from "../pages/myScheduleOperations";
 import {
   getCsrfToken,
   getHumanApiToken,
@@ -2226,7 +2231,7 @@ export const acceptPendingMyAssignments = async (
 export const acceptMyUnansweredAssignments = (churchId: string, afterScheduleId?: string) => apiFetch<VolunteerBulkResult>(
   `api/churches/${churchId}/my-assignments/accept-unanswered`, { method: "POST", body: JSON.stringify(afterScheduleId ? { afterScheduleId } : {}) },
 );
-export const getMyVolunteerAvailability = (churchId: string) => apiFetch<{ success: boolean; requests: VolunteerAvailabilityRequest[] }>(
+export const getMyVolunteerAvailability = (churchId: string) => apiFetch<VolunteerAvailabilityRead>(
   `api/churches/${churchId}/my-availability`,
 );
 export const submitMyVolunteerAvailability = (
@@ -2234,7 +2239,7 @@ export const submitMyVolunteerAvailability = (
   recipientId: string,
   occurrenceAvailability: VolunteerAvailabilityRequest["availability"],
   availabilityRevision: VolunteerAvailabilityRequest["availabilityRevision"],
-) => apiFetch<{ success: boolean; submissionId: string }>(
+) => apiFetch<VolunteerAvailabilitySaveResult>(
   `api/churches/${churchId}/my-availability`, {
     method: "POST",
     body: JSON.stringify({ recipientId, occurrenceAvailability, availabilityRevision }),

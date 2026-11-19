@@ -24178,6 +24178,7 @@ test("accept all unanswered preserves answers, ignores forged identity and safel
 test("my availability uses current recipient scope without disclosing tokens or another member", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("volunteer_availability");
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: "America/New_York" }, { merge: true });
   const assigned = await seedAssignedSchedule(context, "volunteer_availability");
   const formId = "volunteer_availability_form";
   const recipientId = "volunteer_availability_recipient";
@@ -24197,6 +24198,7 @@ test("my availability uses current recipient scope without disclosing tokens or 
   });
   const read = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
   assert.equal(read.statusCode, 200);
+  assert.equal(read.payload.serviceTimeZone, "America/New_York");
   assert.equal(read.payload.requests.length, 1);
   assert.equal(read.payload.requests[0].recipientId, recipientId);
   assert.equal(read.payload.requests[0].editable, true);
