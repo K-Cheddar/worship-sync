@@ -13,6 +13,7 @@ import timersReducer, { syncTimers } from "../../store/timersSlice";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { globalFireDbInfo, GlobalInfoContext } from "../../context/globalInfo";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import { TransferProvider } from "../../context/transferContext";
 import {
   createMockControllerContext,
   createMockGlobalContext,
@@ -235,41 +236,43 @@ describe("ItemLibrary route initialization", () => {
       <Provider store={store}>
         <ControllerInfoContext.Provider value={createMockControllerContext({ db: database.db }) as any}>
           <GlobalInfoContext.Provider value={createMockGlobalContext({ churchId: "church-1", userId: "operator-a" }) as any}>
-            <PresentationControllerModeProvider>
-              <MemoryRouter initialEntries={["/controller"]}>
-                <ItemLibrary />
-              </MemoryRouter>
-            </PresentationControllerModeProvider>
+            <TransferProvider>
+              <PresentationControllerModeProvider>
+                <MemoryRouter initialEntries={["/controller"]}>
+                  <ItemLibrary />
+                </MemoryRouter>
+              </PresentationControllerModeProvider>
+            </TransferProvider>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
       </Provider>,
     );
 
     await screen.findByTitle("Song");
-    await user.click(screen.getByRole("button", { name: "Select items" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select all results" })).toBeEnabled());
     await user.click(screen.getByRole("checkbox", { name: "Select all results" }));
-    expect(screen.getByText("3 selected")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Delete selected" }));
+    expect(screen.getByText("Delete selected (3)")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Delete selected/ }));
 
     const dialog = await screen.findByRole("dialog", { name: "Delete selected items" });
     expect(within(dialog).getByText(/3 selected items/)).toBeInTheDocument();
     expect(within(dialog).getByText(/removed from the open outline/)).toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Delete selected" }));
 
-    expect(await screen.findByText(/Deleted 2 of 3 items/)).toBeInTheDocument();
-    expect(await screen.findByText(/uses the V2 format/)).toBeInTheDocument();
-    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    expect(await screen.findByText(/2 of 3 deleted; 1 need attention/)).toBeInTheDocument();
+    expect(
+      within(screen.getByRole("complementary", { name: "Activity" }))
+        .getAllByText(/uses the V2 format/).length,
+    ).toBeGreaterThan(0);
     expect(database.remove.mock.calls.map(([document]) => document._id).sort()).toEqual(["custom-1", "timer-1"]);
     expect(store.getState().undoable.present.itemList.list.map((row) => row._id)).toEqual(["song-1", "song-1"]);
     expect(store.getState().undoable.past).toHaveLength(0);
     expect(store.getState().timers.timers).toHaveLength(0);
     expect(JSON.parse(window.localStorage.getItem("timerInfo") || "[]")).toEqual([]);
 
-    await user.click(screen.getByRole("button", { name: "Delete selected" }));
-    const retryDialog = await screen.findByRole("dialog", { name: "Delete selected items" });
-    expect(within(retryDialog).getByText(/1 selected item/)).toBeInTheDocument();
-    await user.click(within(retryDialog).getByRole("button", { name: "Delete selected" }));
-    expect(await screen.findByText(/No items were deleted/)).toBeInTheDocument();
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
+    await user.click(activity.getByRole("button", { name: "Retry unfinished deletion" }));
+    expect(await activity.findByText(/2 of 3 deleted; 1 need attention/)).toBeInTheDocument();
     expect(database.remove).toHaveBeenCalledTimes(2);
   });
 
@@ -296,11 +299,13 @@ describe("ItemLibrary route initialization", () => {
       <Provider store={store}>
         <ControllerInfoContext.Provider value={controllerContext as any}>
           <GlobalInfoContext.Provider value={globalContext as any}>
-            <PresentationControllerModeProvider>
-              <MemoryRouter initialEntries={["/controller"]}>
-                <ItemLibrary />
-              </MemoryRouter>
-            </PresentationControllerModeProvider>
+            <TransferProvider>
+              <PresentationControllerModeProvider>
+                <MemoryRouter initialEntries={["/controller"]}>
+                  <ItemLibrary />
+                </MemoryRouter>
+              </PresentationControllerModeProvider>
+            </TransferProvider>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
       </Provider>
@@ -308,21 +313,24 @@ describe("ItemLibrary route initialization", () => {
     const utils = render(view(editableGlobalContext));
 
     await screen.findByTitle("Pending Custom");
-    await user.click(screen.getByRole("button", { name: "Select items" }));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select all results" })).toBeEnabled());
     await user.click(screen.getByRole("checkbox", { name: "Select all results" }));
-    await user.click(screen.getByRole("button", { name: "Delete selected" }));
+    await user.click(screen.getByRole("button", { name: /Delete selected/ }));
     const dialog = await screen.findByRole("dialog", { name: "Delete selected items" });
     await user.click(within(dialog).getByRole("button", { name: "Delete selected" }));
     await waitFor(() => expect(database.remove).toHaveBeenCalledTimes(1));
 
     utils.rerender(view(viewOnlyGlobalContext));
-    expect(screen.queryByRole("button", { name: "Select items" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select all results" })).not.toBeInTheDocument();
     finishRemove();
 
-    expect(await screen.findByText(/session or permission changed/)).toBeInTheDocument();
-    expect(screen.getByText("Pending Custom")).toBeInTheDocument();
+    const activity = within(screen.getByRole("complementary", { name: "Activity" }));
+    expect(
+      await activity.findAllByText(/You no longer have permission to complete this deletion/),
+    ).not.toHaveLength(0);
+    expect(screen.getAllByText("Pending Custom").length).toBeGreaterThan(0);
     expect(screen.queryByText("Deleted 1 item.")).not.toBeInTheDocument();
     expect(store.getState().undoable.present.itemList.list).toEqual(outline);
-    expect(await screen.findByRole("button", { name: "Retry cleanup for Pending Custom" })).toBeDisabled();
+    expect(await activity.findByRole("button", { name: "Retry unfinished deletion" })).toBeInTheDocument();
   });
 });

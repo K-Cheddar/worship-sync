@@ -720,7 +720,9 @@ describe("MediaUploadInput", () => {
     fireEvent.click(detachedRetryButton);
     await waitFor(() => expect(retryCleanup).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(activity.queryByRole("button", { name: "Retry cleanup" })).not.toBeInTheDocument());
-    expect(activity.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Dismiss activity" }));
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Activity" })).not.toBeInTheDocument());
+    view.unmount();
   });
 
   it("keeps a pre-existing local video checkpoint when its cloud retry is cancelled", async () => {
@@ -919,6 +921,9 @@ describe("MediaUploadInput", () => {
   });
 
   it("keeps independent display names for multiple queued files", async () => {
+    mockedCreateLocalMedia
+      .mockResolvedValueOnce(localImage("local_image_first", "one.png"))
+      .mockResolvedValueOnce(localImage("local_image_second", "two.png"));
     renderUploadInput();
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
     fireEvent.click(screen.getByRole("switch", { name: /Upload to cloud/i }));

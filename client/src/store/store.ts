@@ -2264,13 +2264,20 @@ listenerMiddleware.startListening({
 });
 
 // Durable cache events update the editor through the existing draft/conflict checks.
+const listenerAdoptedActiveItemActions = new WeakSet<object>();
 listenerMiddleware.startListening({
-  predicate: isAnyOf(
-    allDocsSlice.actions.updateAllSongDocs,
-    allDocsSlice.actions.hydrateItemCache,
-    allDocsSlice.actions.applyItemDocumentChange,
-    itemSlice.actions.setActiveItem,
-  ),
+  predicate: (action) => {
+    if (listenerAdoptedActiveItemActions.has(action)) {
+      listenerAdoptedActiveItemActions.delete(action);
+      return false;
+    }
+    return isAnyOf(
+      allDocsSlice.actions.updateAllSongDocs,
+      allDocsSlice.actions.hydrateItemCache,
+      allDocsSlice.actions.applyItemDocumentChange,
+      itemSlice.actions.setActiveItem,
+    )(action);
+  },
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
     const previousState = listenerApi.getOriginalState() as RootState;
@@ -2312,23 +2319,30 @@ listenerMiddleware.startListening({
       }
 
       if (doc.docType === "song-v2-root") {
-        if (!db) return;
-        try {
-          const projection = doc;
-          const database = db;
-          const snapshot = await loadSongV2Snapshot(database, activeId, true);
-          doc = snapshot.hydrated;
-          songV2Conflicts = snapshot.conflicts;
-          const latest = listenerApi.getState() as RootState;
-          const latestItem = latest.undoable.present.item;
-          if (db !== database || latestItem._id !== activeId || latestItem.listId !== listId ||
-            latestItem !== currentItem ||
-            latestItem.baseItem !== currentItem.baseItem ||
-            latest.allDocs.allSongDocs.find((song) => song._id === activeId) !== projection) return;
-          currentItem = latestItem;
-        } catch (error) {
-          console.error("Could not refresh active v2 song", error);
-          return;
+        const selectionHasHydratedContent = selectingItem &&
+          currentItem.arrangements?.some((arrangement) => arrangement.slides?.length);
+        if (selectionHasHydratedContent) {
+          // Selection may already carry an exact-loaded song. Keep that content
+          // instead of replacing it with a stale allDocs projection.
+          doc = currentItem;
+        } else {
+          if (!db) return;
+          try {
+            const projection = doc;
+            const database = db;
+            const snapshot = await loadSongV2Snapshot(database, activeId, true);
+            doc = snapshot.hydrated;
+            songV2Conflicts = snapshot.conflicts;
+            const latest = listenerApi.getState() as RootState;
+            const latestItem = latest.undoable.present.item;
+            if (db !== database || latestItem._id !== activeId || latestItem.listId !== listId ||
+              latestItem.baseItem !== currentItem.baseItem ||
+              latest.allDocs.allSongDocs.find((song) => song._id === activeId) !== projection) return;
+            currentItem = latestItem;
+          } catch (error) {
+            console.error("Could not refresh active v2 song", error);
+            return;
+          }
         }
       }
 
@@ -2481,8 +2495,7 @@ listenerMiddleware.startListening({
             doc.slides?.length ??
             0)
           : (doc.slides?.length ?? 0);
-      listenerApi.dispatch(
-        itemSlice.actions.setActiveItem({
+      const adoptHydratedItem = itemSlice.actions.setActiveItem({
           ...doc,
           listId,
           selectedSlide: Math.min(
@@ -2491,8 +2504,9 @@ listenerMiddleware.startListening({
           ),
           selectedBox: currentItem.selectedBox ?? 1,
           selectedArrangement: arrIndex,
-        }),
-      );
+        });
+      listenerAdoptedActiveItemActions.add(adoptHydratedItem);
+      listenerApi.dispatch(adoptHydratedItem);
     }
   },
 });

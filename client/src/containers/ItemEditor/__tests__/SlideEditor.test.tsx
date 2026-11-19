@@ -489,6 +489,7 @@ const renderWithControllerContexts = () =>
 describe("SlideEditor", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    window.localStorage.removeItem("worshipsync_local_video_inputs");
     mockDispatch.mockImplementation((action: any) =>
       action?.type === "item/applyOwnedContentMutation"
         ? { unwrap: async () => true }
@@ -797,6 +798,9 @@ describe("SlideEditor", () => {
   });
 
   it("shows a video input banner on the editor preview", () => {
+    window.localStorage.setItem("worshipsync_local_video_inputs", JSON.stringify([
+      { sourceId: "local_video_1", deviceId: "camera-device-1", deviceLabel: "Booth camera" },
+    ]));
     mockState = makeBaseState({
       undoable: {
         present: {
@@ -1340,6 +1344,9 @@ describe("SlideEditor", () => {
   });
 
   it("passes a capturable local video input into the editor preview", () => {
+    window.localStorage.setItem("worshipsync_local_video_inputs", JSON.stringify([
+      { sourceId: "local_video_1", deviceId: "camera-device-1", deviceLabel: "Booth camera" },
+    ]));
     mockState = makeBaseState({
       undoable: {
         present: {

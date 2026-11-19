@@ -438,19 +438,21 @@ describe("FilteredItems", () => {
       </Provider>,
     );
 
-    await user.click(await screen.findByRole("button", { name: "Select items" }));
-    await user.click(screen.getByRole("checkbox", { name: "Select all results" }));
-    expect(screen.getByText("35 selected")).toBeInTheDocument();
+    const selectAll = await screen.findByRole("checkbox", { name: "Select all results" });
+    await waitFor(() => expect(selectAll).toBeEnabled());
+    await user.click(selectAll);
+    expect(screen.getByText("Delete selected (35)")).toBeInTheDocument();
     expect(screen.getAllByRole("checkbox", { name: /^Select Custom/ }).length).toBeLessThan(items.length);
 
     fireEvent.change(screen.getByLabelText(/Search/), { target: { value: "Custom" } });
-    expect(screen.getByText("0 selected")).toBeInTheDocument();
+    expect(screen.getByText("Delete selected (0)")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("filtered-items-results")).toHaveAttribute("data-search-query", "Custom"));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select all results" })).toBeEnabled());
     await user.click(screen.getByRole("checkbox", { name: "Select all results" }));
-    expect(screen.getByText("10 selected")).toBeInTheDocument();
+    expect(screen.getByText("Delete selected (10)")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Songs" }));
-    expect(screen.getByText("0 selected")).toBeInTheDocument();
+    expect(screen.getByText("Delete selected (0)")).toBeInTheDocument();
   });
 
   it("selects only saved library matches, excluding pinned and external results", async () => {
@@ -498,9 +500,10 @@ describe("FilteredItems", () => {
     expect(await screen.findByText("External lyrics")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Create song" })).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Select items" }));
-    await user.click(screen.getByRole("checkbox", { name: "Select all results" }));
-    expect(screen.getByText("1 selected")).toBeInTheDocument();
+    const selectAll = await screen.findByRole("checkbox", { name: "Select all results" });
+    await waitFor(() => expect(selectAll).toBeEnabled());
+    await user.click(selectAll);
+    expect(screen.getByText("Delete selected (1)")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Select Upcoming service" })).not.toBeInTheDocument();
     expect(screen.queryByRole("checkbox", { name: "Select External-only lyrics" })).not.toBeInTheDocument();
   });
