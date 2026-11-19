@@ -42,7 +42,7 @@ const ControllerLoadingOverlay = ({
   return (
     <div
       data-testid="controller-loading-overlay"
-      className="fixed inset-0 z-[60] flex h-dvh min-h-0 w-full flex-col items-center justify-center gap-6 bg-homepage-canvas px-4 text-white"
+      className="fixed inset-0 z-[60] flex h-dvh min-h-0 w-full flex-col items-center justify-center gap-6 bg-homepage-canvas/85 px-4 text-white backdrop-blur-[2px]"
       aria-busy={!isFailed}
     >
       <WorshipSyncLoadingContent>

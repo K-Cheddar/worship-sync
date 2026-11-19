@@ -26,6 +26,7 @@ import {
 } from "../../utils/itemTypeMaps";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
+import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
 import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadge/LocalVideoInputSlideBadge";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -110,6 +111,7 @@ import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import {
   buildLocalVideoInputPresentation,
+  getLocalVideoInputPreviewStatus,
 } from "../../utils/localVideoInput";
 import type { LocalVideoThumbnailFrame } from "../../utils/localVideoInputThumbnail";
 import {
@@ -1354,14 +1356,17 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     slides[selectedSlide]?.mediaSource?.kind === "local-video-input"
       ? slides[selectedSlide].mediaSource
       : undefined;
-  const editorLocalVideoInput = useMemo(() => {
-    if (!selectedSlideMediaSource) return undefined;
-    return buildLocalVideoInputPresentation(
-      selectedSlideMediaSource,
-      getOrCreateDeviceId(),
-      getTrustedDeviceLabel(),
-    );
-  }, [selectedSlideMediaSource]);
+  const editorLocalVideoInputStatus = getLocalVideoInputPreviewStatus(
+    selectedSlideMediaSource,
+  );
+  const editorLocalVideoInput =
+    selectedSlideMediaSource && !editorLocalVideoInputStatus
+      ? buildLocalVideoInputPresentation(
+          selectedSlideMediaSource,
+          getOrCreateDeviceId(),
+          getTrustedDeviceLabel(),
+        )
+      : undefined;
   const videoInputCaptureMode: LocalVideoCaptureMode =
     selectedSlideMediaSource?.captureKind === "screen" ||
       selectedSlideMediaSource?.captureKind === "window"
@@ -1775,11 +1780,18 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               localVideoInput={editorLocalVideoInput}
               canCaptureLocalVideo={Boolean(editorLocalVideoInput)}
             />
+            {editorLocalVideoInputStatus ? (
+              <LocalSourceStatus
+                {...editorLocalVideoInputStatus}
+                size="preview"
+              />
+            ) : null}
             {slides[selectedSlide]?.mediaSource?.kind === "local-video-input" ? (
               <LocalVideoInputSlideBadge
                 label={slides[selectedSlide].mediaSource.label}
                 captureKind={slides[selectedSlide].mediaSource.captureKind}
                 variant="banner"
+                className="z-40"
                 size="md"
               />
             ) : null}

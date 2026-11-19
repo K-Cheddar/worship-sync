@@ -40,6 +40,9 @@ type LaneFullFrameMediaProps = {
     receiveHighQuality: boolean;
     publishPreview: boolean;
     showErrors: boolean;
+    showLocalSourceStatus?: boolean;
+    statusSize?: "compact" | "preview" | "canvas";
+    statusScaleFactor?: number;
     transparentBackground: boolean;
     contentVisible: boolean;
   };
@@ -304,6 +307,9 @@ const LaneFullFrameMedia = ({
         receiveHighQuality={local.receiveHighQuality}
         publishPreview={local.publishPreview && !isPrevious}
         showErrors={local.showErrors}
+        showLocalSourceStatus={local.showLocalSourceStatus}
+        statusSize={local.statusSize}
+        statusScaleFactor={local.statusScaleFactor}
         transparentBackground={local.transparentBackground}
         onPaintReadyChange={onPaintReadyChange}
         outputId={outputId}

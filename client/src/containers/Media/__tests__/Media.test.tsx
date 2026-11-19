@@ -1058,22 +1058,30 @@ describe("Media", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("disables media entry points until the library is initialized", async () => {
-    mockState = makeBaseState({
-      media: {
-        list: [],
-        folders: [],
-        isInitialized: false,
-        loadStatus: "loading",
-      },
-    });
-    await renderMedia();
+  it.each(["loading", "waiting"] as const)(
+    "disables media entry points until the library is initialized (%s)",
+    async (loadStatus) => {
+      mockState = makeBaseState({
+        media: {
+          list: [],
+          folders: [],
+          isInitialized: false,
+          loadStatus,
+        },
+      });
+      await renderMedia();
 
-    expect(screen.getByTitle("Add Media")).toBeDisabled();
-    expect(screen.getByTitle("Fullscreen")).toBeDisabled();
-    fireEvent.click(screen.getByTitle("Add Media"));
-    expect(mockOpenModal).not.toHaveBeenCalled();
-  });
+      expect(screen.getByTitle("Add Media")).toBeDisabled();
+      expect(screen.getByTitle("Fullscreen")).toBeDisabled();
+      expect(
+        screen.getByText(
+          loadStatus === "waiting" ? "Preparing media library..." : "Loading media...",
+        ),
+      ).toBeInTheDocument();
+      fireEvent.click(screen.getByTitle("Add Media"));
+      expect(mockOpenModal).not.toHaveBeenCalled();
+    },
+  );
 
   it("keeps media read-only and shows recovery guidance after a load error", async () => {
     mockState = makeBaseState({

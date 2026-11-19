@@ -4,6 +4,7 @@ import {
   createLocalVideoInputMediaSource,
   getAudioInputErrorMessage,
   getLocalVideoInputKindLabel,
+  getLocalVideoInputPreviewStatus,
   getLocalVideoInputSourceFieldLabel,
   getLocalVideoSourceErrorMessage,
   getVideoInputErrorMessage,
@@ -198,6 +199,41 @@ describe("localVideoInput", () => {
       fit: "contain",
       audioEnabled: true,
     });
+  });
+
+  it("classifies unavailable local capture previews from ownership metadata without creating bindings", () => {
+    const remoteSource = {
+      ...createLocalVideoInputMediaSource("Presenter screen", "screen"),
+      ownerDeviceId: "booth-device",
+      ownerLabel: "Booth PC",
+    };
+
+    expect(getLocalVideoInputPreviewStatus(remoteSource, "controller-device"))
+      .toEqual({
+        heading: "Local source on another device",
+        sourceLabel: "Screen share · Presenter screen",
+        ownerLabel: "Booth PC",
+      });
+    expect(resolveLocalVideoInputBinding(remoteSource.sourceId)).toBeUndefined();
+
+    const ownedSource = {
+      ...createLocalVideoInputMediaSource("Stage window", "window"),
+      ownerDeviceId: "controller-device",
+      ownerLabel: "Controller",
+    };
+    expect(getLocalVideoInputPreviewStatus(ownedSource, "controller-device"))
+      .toEqual({
+        heading: "Window share unavailable",
+        sourceLabel: "Window share · Stage window",
+        detail: "Open Media on this device and relink the window share.",
+      });
+    expect(resolveLocalVideoInputBinding(ownedSource.sourceId)).toBeUndefined();
+
+    bindLocalVideoInput(ownedSource.sourceId, "window:1", "Stage window", undefined, undefined, {
+      captureKind: "window",
+    });
+    expect(getLocalVideoInputPreviewStatus(ownedSource, "controller-device"))
+      .toBeUndefined();
   });
 
   it("treats sources saved before screen capture as hardware inputs", () => {

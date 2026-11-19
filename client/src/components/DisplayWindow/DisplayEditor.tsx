@@ -105,7 +105,8 @@ const DisplayEditorComponent = ({
   // over a playing editor video.
   const localVideoDisplay = useLocalVideoFileUrl(box.mediaInfo?.localVideoFile);
   const resolvedVideoUrl = localVideoDisplay.isLocalVideoFile
-    ? localVideoDisplay.url
+    ? localVideoDisplay.url ??
+      (isLocalMediaReferenceUrl(videoUrl) ? undefined : videoUrl)
     : videoUrl;
   const localVideoThumbnail = useLocalVideoFileUrl(
     box.mediaInfo?.localVideoFile,
@@ -121,12 +122,13 @@ const DisplayEditorComponent = ({
     isVideoBg ? undefined : box.mediaInfo?.localImage,
   );
   const cachedBackground = useCachedMediaUrl(
-    localImage.isLocalImage || isLocalMediaReferenceUrl(rawBackground)
+    (localImage.isLocalImage && localImage.status !== "unavailable") ||
+    isLocalMediaReferenceUrl(rawBackground)
       ? undefined
       : rawBackground,
   );
   const background = localImage.isLocalImage
-    ? localImage.url
+    ? localImage.url ?? cachedBackground
     : cachedBackground;
   const { showToast } = useToast();
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
@@ -527,10 +529,14 @@ const DisplayEditorComponent = ({
         right: !isBoxLocked && !disabled,
       }}
     >
-      {localImage.isLocalImage && localImage.status === "unavailable" ? (
+      {localImage.isLocalImage &&
+      localImage.status === "unavailable" &&
+      !background ? (
         showLocalSourceStatus ? (
           <LocalSourceStatus
             sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
+            size="canvas"
+            scaleFactor={scaleFactor}
             ownerLabel={
               localImage.isOwner
                 ? undefined
@@ -546,8 +552,19 @@ const DisplayEditorComponent = ({
             }
           />
         ) : null
-      ) : background ||
-        (localImage.isLocalImage && localImage.status === "loading") ? (
+      ) : localImage.isLocalImage &&
+        localImage.status === "loading" &&
+        !background ? (
+        showLocalSourceStatus ? (
+          <LocalSourceStatus
+            sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
+            heading="Loading local image"
+            state="loading"
+            size="canvas"
+            scaleFactor={scaleFactor}
+          />
+        ) : null
+      ) : background ? (
         <InstantImageSwap
           className={cn(
             "display-box-background h-full w-full absolute",
@@ -570,9 +587,12 @@ const DisplayEditorComponent = ({
       isVideoBg &&
       box.mediaInfo?.localVideoFile &&
       localVideoDisplay.isLocalVideoFile &&
-      localVideoDisplay.status === "unavailable" ? (
+      localVideoDisplay.status === "unavailable" &&
+      (!videoUrl || isLocalMediaReferenceUrl(videoUrl)) ? (
         <LocalSourceStatus
           sourceLabel={`Local video · ${box.mediaInfo.localVideoFile.fileName || "Background"}`}
+          size="canvas"
+          scaleFactor={scaleFactor}
           ownerLabel={
             localVideoDisplay.isOwner
               ? undefined

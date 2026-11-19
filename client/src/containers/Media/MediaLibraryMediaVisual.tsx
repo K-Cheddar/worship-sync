@@ -1,10 +1,12 @@
-import { Film, MonitorUp, Video } from "lucide-react";
+import { Film, ImageOff, MonitorUp, Video } from "lucide-react";
 import CachedMediaImage from "../../components/CachedMediaImage/CachedMediaImage";
+import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
 import type { MediaType } from "../../types";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import { isLocalImageUrl } from "../../utils/localImageAssets";
 import { isMediaLibraryDesktopShare } from "./mediaLibraryOrigin";
+import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
 
 type MediaLibraryMediaVisualProps = {
   mediaItem: MediaType;
@@ -32,6 +34,29 @@ const MediaLibraryMediaVisual = ({
     : localVideo.isLocalVideoFile
       ? localVideo.url || mediaItem.thumbnail
       : mediaItem.thumbnail;
+  const localImageUnavailable = Boolean(
+    localImage.isLocalImage &&
+      localImage.status === "unavailable" &&
+      !resolvedThumbnail,
+  );
+  const localVideoInputStatus = getLocalVideoInputPreviewStatus(
+    mediaItem.localVideoInput,
+  );
+  const localImageStatus = localImage.isLocalImage && !resolvedThumbnail &&
+    (localImage.status === "loading" || localImageUnavailable)
+    ? {
+        sourceLabel: `Local image · ${mediaItem.localImage?.fileName || mediaItem.name}`,
+        heading: localImage.status === "loading"
+          ? "Loading local image"
+          : localImage.isOwner
+            ? "Local image unavailable"
+            : undefined,
+        state: localImage.status === "loading" ? "loading" as const : undefined,
+        ownerLabel: localImage.isOwner
+          ? undefined
+          : mediaItem.localImage?.ownerLabel,
+      }
+    : undefined;
   const shownName = mediaItem.name.includes("/")
     ? mediaItem.name.split("/").slice(1).join("/")
     : mediaItem.name;
@@ -60,13 +85,19 @@ const MediaLibraryMediaVisual = ({
             Live input
           </span>
         ) : null}
+        {localVideoInputStatus ? (
+          <LocalSourceStatus
+            {...localVideoInputStatus}
+            variant="indicator"
+          />
+        ) : null}
       </>
     );
   }
 
   if (mediaItem.localVideoInput) {
     return (
-      <div className="flex max-w-full flex-col items-center justify-center gap-1 px-2">
+      <div className="relative flex max-w-full flex-col items-center justify-center gap-1 px-2">
         {isMediaLibraryDesktopShare(mediaItem) ? (
           <MonitorUp
             className="size-8 shrink-0 text-neutral-400"
@@ -81,12 +112,27 @@ const MediaLibraryMediaVisual = ({
         >
           {shownName || mediaItem.localVideoInput.label}
         </span>
+        {localVideoInputStatus ? (
+          <LocalSourceStatus
+            {...localVideoInputStatus}
+            variant="indicator"
+          />
+        ) : null}
       </div>
     );
   }
 
   if (mediaItem.localVideoFile) {
     return <Film className="size-8 text-neutral-400" aria-hidden />;
+  }
+
+  if (localImageStatus) {
+    return (
+      <div className="relative flex h-full w-full items-center justify-center">
+        <ImageOff className="size-8 text-neutral-400" aria-hidden />
+        <LocalSourceStatus {...localImageStatus} variant="indicator" />
+      </div>
+    );
   }
 
   return null;

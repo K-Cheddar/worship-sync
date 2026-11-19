@@ -832,6 +832,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           isPanelVariant={c.isPanelVariant}
           isMediaExpanded={c.isMediaExpanded}
           isMediaLoading={c.isMediaLoading}
+          isMediaWaitingForSync={c.isMediaWaitingForSync}
           hasMediaLoadError={c.hasMediaLoadError}
           mediaItemsPerRow={c.mediaItemsPerRow}
           mediaListRef={c.mediaListRef}

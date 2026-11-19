@@ -567,11 +567,7 @@ describe("ItemSlides", () => {
 
         if (this === container) return makeRect(100, 200);
 
-        const slideId = this.getAttribute("data-slide-id");
-        const currentSlides = mockState.undoable.present.item.slides;
-        const slideIndex = currentSlides.findIndex(
-          (slide: { id: string }) => slide.id === slideId,
-        );
+        const slideIndex = screen.getAllByTestId("mock-item-slide").indexOf(this);
         if (slideIndex >= 0) {
           return makeRect(100 + slideIndex * 100 - container.scrollTop, 100);
         }
@@ -812,8 +808,21 @@ describe("ItemSlides", () => {
     const container = screen.getByRole("list") as HTMLElement;
     const geometrySpy = installSlideGridGeometry(container);
     container.scrollTop = 300;
+    fireEvent.scroll(container);
     mockKeepElementInView.mockClear();
     mockDispatch.mockClear();
+    mockDispatch.mockImplementation((action) => {
+      if (typeof action === "function") {
+        return action(mockDispatch, () => mockState);
+      }
+      if (action?.type === "item/_updateSlides") {
+        mockState.undoable.present.item.slides = action.payload;
+      }
+      if (action?.type === "item/setSelectedSlide") {
+        mockState.undoable.present.item.selectedSlide = action.payload;
+      }
+      return action;
+    });
 
     act(() => {
       mockDndMonitorListener?.onDragEnd?.({
@@ -848,39 +857,59 @@ describe("ItemSlides", () => {
   });
 
   it("keeps the visible anchor through slide reorder and removal", () => {
-    setFreeSlides(
-      Array.from({ length: 6 }, (_, index) => ({
-        id: `slide-${index + 1}`,
-        name: `Slide ${index + 1}`,
-      })),
-    );
-    const view = renderAncestorItemSlides();
-    const container = screen.getByRole("list") as HTMLElement;
-    const geometrySpy = installSlideGridGeometry(container);
-    container.scrollTop = 300;
-    mockKeepElementInView.mockClear();
+    const originalRequestFrame = window.requestAnimationFrame;
+    const originalCancelFrame = window.cancelAnimationFrame;
+    let geometrySpy: jest.SpyInstance | undefined;
+    jest.useFakeTimers();
+    window.requestAnimationFrame = (callback) => {
+      callback(0);
+      return 0;
+    };
+    window.cancelAnimationFrame = jest.fn();
 
-    const currentSlides = mockState.undoable.present.item.slides;
-    mockState.undoable.present.item.slides = [
-      currentSlides[0],
-      currentSlides[1],
-      currentSlides[3],
-      currentSlides[2],
-      currentSlides[4],
-      currentSlides[5],
-    ];
-    view.rerender(ancestorItemSlidesTree());
-    expect(container.scrollTop).toBe(200);
-    expect(screen.getByRole("button", { name: "Slide 4" }).getBoundingClientRect().top).toBe(100);
+    try {
+      setFreeSlides(
+        Array.from({ length: 6 }, (_, index) => ({
+          id: `slide-${index + 1}`,
+          name: `Slide ${index + 1}`,
+        })),
+      );
+      const view = renderAncestorItemSlides();
+      act(() => jest.runOnlyPendingTimers());
+      const container = screen.getByRole("list") as HTMLElement;
+      geometrySpy = installSlideGridGeometry(container);
+      container.scrollTop = 300;
+      fireEvent.scroll(container);
+      mockKeepElementInView.mockClear();
 
-    mockState.undoable.present.item.slides =
-      mockState.undoable.present.item.slides.slice(2);
-    view.rerender(ancestorItemSlidesTree());
+      const currentSlides = mockState.undoable.present.item.slides;
+      mockState.undoable.present.item.slides = [
+        currentSlides[0],
+        currentSlides[1],
+        currentSlides[3],
+        currentSlides[2],
+        currentSlides[4],
+        currentSlides[5],
+      ];
+      view.rerender(ancestorItemSlidesTree());
+      act(() => jest.runOnlyPendingTimers());
+      expect(container.scrollTop).toBe(200);
+      expect(screen.getByRole("button", { name: "Slide 4" }).getBoundingClientRect().top).toBe(100);
 
-    expect(container.scrollTop).toBe(0);
-    expect(screen.getByRole("button", { name: "Slide 4" }).getBoundingClientRect().top).toBe(100);
-    expect(mockKeepElementInView).not.toHaveBeenCalled();
-    geometrySpy.mockRestore();
+      mockState.undoable.present.item.slides =
+        mockState.undoable.present.item.slides.slice(2);
+      view.rerender(ancestorItemSlidesTree());
+      act(() => jest.runOnlyPendingTimers());
+
+      expect(container.scrollTop).toBe(0);
+      expect(screen.getByRole("button", { name: "Slide 4" }).getBoundingClientRect().top).toBe(100);
+      expect(mockKeepElementInView).not.toHaveBeenCalled();
+    } finally {
+      geometrySpy?.mockRestore();
+      jest.useRealTimers();
+      window.requestAnimationFrame = originalRequestFrame;
+      window.cancelAnimationFrame = originalCancelFrame;
+    }
   });
 
   it("does not scroll when slides are added below the selected slide", () => {
@@ -897,6 +926,11 @@ describe("ItemSlides", () => {
   });
 
   it("scrolls to an intentionally clicked slide, including on mobile", () => {
+    setFreeSlides([
+      { id: "slide-1", name: "First slide" },
+      { id: "slide-2", name: "Second slide" },
+      { id: "slide-3", name: "Third slide" },
+    ]);
     mockControllerInfoValue.isMobile = true;
     mockDispatch.mockImplementation((action) => {
       if (typeof action === "function") {
@@ -910,13 +944,23 @@ describe("ItemSlides", () => {
     renderAncestorItemSlides();
     mockKeepElementInView.mockClear();
 
-    fireEvent.click(screen.getByRole("button", { name: "Section 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Second slide" }));
 
     expect(mockKeepElementInView).toHaveBeenCalledWith(
       expect.objectContaining({
         child: expect.objectContaining({ id: "item-slide-1" }),
         parent: expect.objectContaining({ id: "item-slides-container" }),
         shouldScrollToCenter: true,
+      }),
+    );
+
+    mockKeepElementInView.mockClear();
+    fireEvent.keyDown(window, { key: " " });
+
+    expect(mockState.undoable.present.item.selectedSlide).toBe(2);
+    expect(mockKeepElementInView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        child: expect.objectContaining({ id: "item-slide-2" }),
       }),
     );
   });

@@ -15,15 +15,24 @@ jest.mock("../../hooks/useCachedMediaUrl", () => ({
   useResolvedCachedMediaUrl: (url?: string) => url,
 }));
 jest.mock("../../hooks/useLocalImageUrl", () => ({
-  useLocalImageUrl: (reference?: { id?: string }) =>
-    reference?.id === "asset-1"
-      ? {
-          isLocalImage: true,
-          isOwner: true,
-          status: "ready",
-          url: "blob:asset-1",
-        }
-      : { isLocalImage: false, isOwner: false, status: "not-local" },
+  useLocalImageUrl: (reference?: { id?: string }) => {
+    if (reference?.id === "asset-1") {
+      return {
+        isLocalImage: true,
+        isOwner: true,
+        status: "ready",
+        url: "blob:asset-1",
+      };
+    }
+    if (reference?.id === "asset-2") {
+      return {
+        isLocalImage: true,
+        isOwner: false,
+        status: "unavailable",
+      };
+    }
+    return { isLocalImage: false, isOwner: false, status: "not-local" };
+  },
 }));
 jest.mock("../../hooks/useLocalVideoFileUrl", () => ({
   useLocalVideoFileUrl: () => ({ isLocalVideoFile: false, isOwner: false, status: "not-local" }),
@@ -89,6 +98,38 @@ describe("StaticSlideThumbnail", () => {
     },
   );
 
+  it("keeps a capture still while marking a remote live source unavailable", () => {
+    render(
+      <StaticSlideThumbnail
+        slide={makeSlide({
+          mediaSource: {
+            kind: "local-video-input",
+            sourceId: "remote-camera-with-still",
+            label: "Main camera",
+            ownerDeviceId: "source-device",
+            ownerLabel: "Booth PC",
+          },
+        })}
+        itemType="song"
+        previewMode="projector"
+        localVideoInputThumbnailUrl="blob:camera-thumbnail"
+      />,
+    );
+
+    expect(screen.getByTestId("static-video-input-thumbnail")).toHaveAttribute(
+      "src",
+      "blob:camera-thumbnail",
+    );
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "data-local-source-status-size",
+      "indicator",
+    );
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "aria-label",
+      "Local source on another device · Video input · Main camera · Available on Booth PC",
+    );
+  });
+
   it("renders text and remote image stills without mounting DisplayWindow machinery", () => {
     render(
       <StaticSlideThumbnail
@@ -108,6 +149,106 @@ describe("StaticSlideThumbnail", () => {
     );
     expect(queryRenderedVideo()).toBeNull();
   });
+
+  it.each([
+    ["projector", "bg-black/90"],
+    ["monitor", "bg-black/90"],
+    ["stream", "bg-transparent"],
+  ] as const)(
+    "identifies a capture source from another device in %s thumbnails",
+    (previewMode, expectedStatusBackground) => {
+      const slide = makeSlide({
+        mediaSource: {
+          kind: "local-video-input",
+          sourceId: `remote-${previewMode}`,
+          label: "Main camera",
+          ownerDeviceId: "source-device",
+          ownerLabel: "Booth PC",
+        },
+      });
+
+      render(
+        <StaticSlideThumbnail
+          slide={slide}
+          itemType="song"
+          previewMode={previewMode}
+        />,
+      );
+
+      expect(screen.getByText("Local source on another device")).toBeInTheDocument();
+      expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveClass(expectedStatusBackground);
+      expect(queryRenderedVideo()).toBeNull();
+    },
+  );
+
+  it.each([
+    [false, "monitor-preview-single-slide-layout"],
+    [true, "monitor-preview-next-slide-layout"],
+  ] as const)(
+    "shows unavailable local image status in the monitor %s layout",
+    (useNextSlideLayout, expectedLayoutTestId) => {
+      const slide = makeSlide({
+        boxes: [
+          {
+            id: "background",
+            width: 100,
+            height: 100,
+            background: "",
+            words: "",
+            mediaInfo: {
+              type: "image",
+              path: "",
+              createdAt: "",
+              updatedAt: "",
+              format: "png",
+              height: 1080,
+              width: 1920,
+              name: "Welcome",
+              publicId: "welcome",
+              localImage: {
+                id: "asset-2",
+                ownerDeviceId: "source-device",
+                ownerLabel: "Booth PC",
+                fileName: "Welcome.png",
+                contentType: "image/png",
+                storagePolicy: "local-only",
+              },
+            },
+          },
+          {
+            id: "text",
+            width: 80,
+            height: 30,
+            x: 10,
+            y: 30,
+            words: "Hello worship",
+          },
+        ],
+      });
+      const settings = {
+        ...resolveDisplaySettings(undefined, undefined, "monitor"),
+        showBackground: true,
+        showNextSlide: useNextSlideLayout,
+      };
+
+      render(
+        <StaticSlideThumbnail
+          slide={slide}
+          monitorSlide={slide}
+          nextSlide={makeSlide()}
+          itemType="song"
+          previewMode="monitor"
+          monitorSettings={settings}
+          scaleFactor={0.2}
+        />,
+      );
+
+      expect(screen.getByText("Local source on another device")).toBeInTheDocument();
+      expect(screen.getByText("Local image · Welcome.png")).toBeInTheDocument();
+      expect(screen.getByTestId(expectedLayoutTestId)).toBeInTheDocument();
+    },
+  );
 
   it("uses a video poster or still and keeps stream free text lightweight", () => {
     const { rerender } = render(

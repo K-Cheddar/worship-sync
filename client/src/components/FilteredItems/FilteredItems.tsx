@@ -7,7 +7,7 @@ import React, {
 } from "react";
 import { useDispatch, useSelector } from "../../hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { FilePlus, Search, Tag, WholeWord } from "lucide-react";
+import { FilePlus, Search, Tag, Trash2, WholeWord } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import Button from "../Button/Button";
@@ -299,7 +299,6 @@ const FilteredItems = ({
   }, [docsById, filteredList, showLibraryControls, sortDirection, sortOverride]);
   const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null);
-  const [selectionMode, setSelectionMode] = useState(false);
   const [selectionState, setSelectionState] = useState({
     scopeKey: "",
     ids: new Set<string>(),
@@ -494,7 +493,6 @@ const FilteredItems = ({
 
   useEffect(() => {
     if (showSelectionControls) return;
-    setSelectionMode(false);
     setSelectionState({ scopeKey: selectionScopeKey, ids: new Set<string>() });
   }, [selectionScopeKey, showSelectionControls]);
 
@@ -978,7 +976,7 @@ const FilteredItems = ({
       addButtonLabel={addButtonLabel}
       useDetailsGrid={useDetailsGrid}
       libraryColumns={showLibraryControls}
-      selectionMode={selectionMode && showSelectionControls}
+      selectionMode={showSelectionControls}
       selected={selectedItemIds.has(item._id)}
       onSelectionChange={(selected) => updateSelection(item._id, selected)}
       auditDisplay={showLibraryControls ? getItemLibraryAuditDisplay(docsById.get(item._id)) : undefined}
@@ -1157,58 +1155,6 @@ const FilteredItems = ({
           ))}
         </div>
       ) : null}
-      {showLibraryControls ? (
-        <section className="mb-3 flex w-full flex-wrap items-end justify-end gap-3" aria-label="Library tools">
-          {showSelectionControls ? (
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-              <Button
-                type="button"
-                variant="tertiary"
-                aria-pressed={selectionMode}
-                disabled={deletionBusy}
-                onClick={() => {
-                  if (selectionMode) {
-                    setSelectionMode(false);
-                    setSelectionState({ scopeKey: selectionScopeKey, ids: new Set<string>() });
-                  } else {
-                    setSelectionMode(true);
-                  }
-                }}
-              >
-                {selectionMode ? "Done selecting" : "Select items"}
-              </Button>
-              {selectionMode ? (
-                <>
-                  <Checkbox
-                    label="Select all results"
-                    checked={selectAllChecked}
-                    disabled={deletionBusy || !searchResultsAreCurrent || filteredList.length === 0}
-                    onCheckedChange={(checked) => setSelectionState({
-                      scopeKey: selectionScopeKey,
-                      ids: checked
-                        ? new Set(filteredList.map((item) => item._id))
-                        : new Set<string>(),
-                    })}
-                    className="min-h-8"
-                  />
-                  <span className="text-sm text-gray-300" role="status" aria-live="polite">
-                    {selectedResults.length} selected
-                  </span>
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    color="red"
-                    disabled={deletionBusy || !searchResultsAreCurrent || selectedResults.length === 0}
-                    onClick={requestBulkDeletion}
-                  >
-                    Delete selected
-                  </Button>
-                </>
-              ) : null}
-            </div>
-          ) : null}
-        </section>
-      ) : null}
       {deletionProgressMessage ? (
         <p className="mb-2 text-sm text-cyan-200" role="status" aria-live="polite">
           {deletionProgressMessage}
@@ -1310,8 +1256,8 @@ const FilteredItems = ({
         {showLibraryControls && !isLoading ? (
           <div
             className={cn(
-              "mx-1 grid items-center gap-1 overflow-y-hidden border-b border-gray-700 bg-gray-950 px-4 py-1.5 text-gray-300 [scrollbar-gutter:stable] sm:mx-2",
-              selectionMode && showSelectionControls
+              "mx-1 grid items-center gap-1 overflow-y-hidden border-b border-gray-700 bg-gray-950 px-4 py-1 text-gray-300 [scrollbar-gutter:stable] sm:mx-2",
+              showSelectionControls
                 ? FILTERED_LIBRARY_SELECTION_GRID_COLUMNS
                 : FILTERED_LIBRARY_GRID_COLUMNS,
             )}
@@ -1323,11 +1269,25 @@ const FilteredItems = ({
             role="group"
             aria-label="Sort library results by column"
           >
-            {selectionMode && showSelectionControls ? <span aria-hidden="true" /> : null}
+            {showSelectionControls ? (
+              <Checkbox
+                label="Select all results"
+                hideLabel
+                checked={selectAllChecked}
+                disabled={deletionBusy || !searchResultsAreCurrent || filteredList.length === 0}
+                onCheckedChange={(checked) => setSelectionState({
+                  scopeKey: selectionScopeKey,
+                  ids: checked
+                    ? new Set(filteredList.map((item) => item._id))
+                    : new Set<string>(),
+                })}
+                className="col-start-1 row-start-1 justify-self-center"
+              />
+            ) : null}
             <span
               className={cn(
                 "col-start-1 flex items-center justify-center",
-                selectionMode && showSelectionControls && "col-start-2",
+                showSelectionControls && "col-start-2",
               )}
               role="img"
               aria-label="Type"
@@ -1353,7 +1313,31 @@ const FilteredItems = ({
               direction={sortOverride === "updatedBy" ? sortDirection : undefined}
               onClick={() => changeLibrarySort("updatedBy")}
             />
-            <span aria-hidden="true" />
+            {showSelectionControls ? (
+              <div
+                className="col-start-3 col-span-3 row-start-2 flex min-w-0 items-center justify-end gap-2 md:col-start-6 md:col-span-1 md:row-start-1 md:gap-3"
+                role="group"
+                aria-label="Selected item actions"
+              >
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  color="red"
+                  className={cn(
+                    "min-h-7 whitespace-nowrap",
+                    selectedResults.length === 0 && "invisible",
+                  )}
+                  padding="px-2 py-1"
+                  svg={Trash2}
+                  disabled={deletionBusy || !searchResultsAreCurrent || selectedResults.length === 0}
+                  onClick={requestBulkDeletion}
+                >
+                  Delete selected ({selectedResults.length})
+                </Button>
+              </div>
+            ) : (
+              <span aria-hidden="true" />
+            )}
           </div>
         ) : null}
         <div

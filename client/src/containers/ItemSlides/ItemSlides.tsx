@@ -751,12 +751,14 @@ const ItemSlidesContent = () => {
   slidesRef.current = slides;
   const itemIdentityRef = useRef(itemIdentity);
   itemIdentityRef.current = itemIdentity;
+  /** Changes only for intentional navigation, not structural slide updates. */
   const [selectedSlideScrollRequest, setSelectedSlideScrollRequest] =
     useState(0);
   const scrollAnimationFramesRef = useRef<number[]>([]);
   const scrollGenerationRef = useRef(0);
-  const pendingScrollAnchorRef = useRef<{
+  const scrollAnchorSnapshotRef = useRef<{
     itemIdentity: string;
+    orderKey: string;
     anchors: Array<{ slideId: string; top: number }>;
   } | null>(null);
 
@@ -803,6 +805,43 @@ const ItemSlidesContent = () => {
   const renderedSlideOrderKey = renderedSlides
     .map((slide) => slide.id)
     .join("\u0000");
+  const captureVisibleSlideAnchor = useCallback(() => {
+    if (isCollapsedContinuous) {
+      scrollAnchorSnapshotRef.current = null;
+      return;
+    }
+    const parentElement = document.getElementById("item-slides-container");
+    if (!parentElement) return;
+    const parentRect = parentElement.getBoundingClientRect();
+    const slideElements = Array.from(
+      parentElement.querySelectorAll<HTMLElement>("[data-slide-id]"),
+    );
+    // Grid rows follow DOM order, so locate the viewport with logarithmic reads.
+    let low = 0;
+    let high = slideElements.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (slideElements[middle].getBoundingClientRect().bottom <= parentRect.top) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+
+    const anchors: Array<{ slideId: string; top: number }> = [];
+    for (let index = low; index < slideElements.length; index += 1) {
+      const element = slideElements[index];
+      const rect = element.getBoundingClientRect();
+      if (rect.top >= parentRect.bottom) break;
+      const slideId = element.dataset.slideId;
+      if (slideId && rect.bottom > parentRect.top) {
+        anchors.push({ slideId, top: rect.top - parentRect.top });
+      }
+    }
+    scrollAnchorSnapshotRef.current = anchors.length
+      ? { itemIdentity, orderKey: renderedSlideOrderKey, anchors }
+      : null;
+  }, [isCollapsedContinuous, itemIdentity, renderedSlideOrderKey]);
   const monitorPreviewSlides = useMemo(() => {
     if (
       effectivePreviewMode !== "monitor" ||
@@ -843,21 +882,19 @@ const ItemSlidesContent = () => {
   }, [isCollapsedContinuous, slides]);
 
   useLayoutEffect(() => {
+    cancelPendingSlideScroll();
     if (isCollapsedContinuous) {
-      pendingScrollAnchorRef.current = null;
+      scrollAnchorSnapshotRef.current = null;
       return;
     }
 
-    const pendingAnchor = pendingScrollAnchorRef.current;
-    if (pendingAnchor && pendingAnchor.itemIdentity !== itemIdentity) {
-      pendingScrollAnchorRef.current = null;
-    } else if (
-      pendingAnchor &&
-      slideOrderKey === renderedSlideOrderKey
-    ) {
+    const snapshot = scrollAnchorSnapshotRef.current;
+    if (snapshot && snapshot.itemIdentity !== itemIdentity) {
+      scrollAnchorSnapshotRef.current = null;
+    } else if (snapshot && slideOrderKey === renderedSlideOrderKey) {
       const parentElement = document.getElementById("item-slides-container");
       const currentSlides = renderedSlidesRef.current;
-      const survivingAnchor = pendingAnchor.anchors.find((anchor) =>
+      const survivingAnchor = snapshot.anchors.find((anchor) =>
         currentSlides.some((slide) => slide.id === anchor.slideId),
       );
       const anchorIndex = survivingAnchor
@@ -877,36 +914,17 @@ const ItemSlidesContent = () => {
           parentElement.scrollTop += scrollAdjustment;
         }
       }
-      pendingScrollAnchorRef.current = null;
     }
-
-    return () => {
-      cancelPendingSlideScroll();
-      if (isCollapsedContinuous) return;
-      if (pendingScrollAnchorRef.current?.itemIdentity === itemIdentity) return;
-
-      const parentElement = document.getElementById("item-slides-container");
-      if (!parentElement) return;
-      const parentRect = parentElement.getBoundingClientRect();
-      const anchors = renderedSlidesRef.current.flatMap((slide, index) => {
-        const element = document.getElementById(`item-slide-${index}`);
-        if (!element) return [];
-        const rect = element.getBoundingClientRect();
-        if (rect.bottom <= parentRect.top || rect.top >= parentRect.bottom) {
-          return [];
-        }
-        return [{ slideId: slide.id, top: rect.top - parentRect.top }];
-      });
-      if (anchors.length > 0) {
-        pendingScrollAnchorRef.current = { itemIdentity, anchors };
-      }
-    };
+    captureVisibleSlideAnchor();
   }, [
     cancelPendingSlideScroll,
+    captureVisibleSlideAnchor,
     isCollapsedContinuous,
+    isLoading,
     isMobile,
     itemIdentity,
     renderedSlideOrderKey,
+    slides,
     slideOrderKey,
   ]);
 
@@ -2320,6 +2338,7 @@ const ItemSlidesContent = () => {
           ref={setSlidesContainerRef}
           tabIndex={0}
           id="item-slides-container"
+          onScroll={captureVisibleSlideAnchor}
           className={cn(slidesListClassName, "flex-1 min-h-0 content-start")}
         >
           <SortableContext

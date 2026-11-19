@@ -89,10 +89,8 @@ describe("ControllerLoadingOverlay", () => {
     expect(screen.getByText("Preparing your workspace…")).toBeInTheDocument();
     expect(screen.getByText("Database sync: 42%")).toBeInTheDocument();
     expect(screen.getByTestId("controller-loading-overlay")).toHaveClass(
-      "bg-homepage-canvas",
-    );
-    expect(screen.getByTestId("controller-loading-overlay")).not.toHaveClass(
-      "bg-homepage-canvas/90",
+      "bg-homepage-canvas/85",
+      "backdrop-blur-[2px]",
     );
     expect(jest.getTimerCount()).toBe(2);
 
@@ -131,6 +129,13 @@ describe("ControllerLoadingOverlay", () => {
     act(() => jest.advanceTimersByTime(4500));
     expect(screen.getAllByText("Getting everything in place…")).toHaveLength(2);
     expect(jest.getTimerCount()).toBe(2);
+  });
+
+  it("keeps the initial bootstrap screen fully opaque", () => {
+    render(<BootstrapLoadingScreen />);
+
+    expect(screen.getByRole("main")).toHaveClass("bg-homepage-canvas");
+    expect(screen.getByRole("main")).not.toHaveClass("bg-homepage-canvas/85");
   });
 
   it("keeps the logo and message clock continuous through stalled, failed, and retrying states", () => {

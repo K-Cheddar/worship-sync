@@ -128,6 +128,37 @@ describe("LeftPanelButton", () => {
     expect(screen.getByText("Welcome Slides")).toBeInTheDocument();
   });
 
+  it("keeps an unavailable local-image indicator visible on the active row", () => {
+    mockUseLocalImageUrl.mockReturnValue({
+      isLocalImage: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+
+    render(
+      <LeftPanelButton
+        isSelected={false}
+        title="Welcome Slides"
+        type="free"
+        id="list-1"
+        isActive
+        timerText="12:34"
+        image="local-image://asset-1"
+        localImage={{
+          id: "asset-1",
+          ownerDeviceId: "another-device",
+          ownerLabel: "Booth PC",
+          fileName: "welcome.png",
+          contentType: "image/png",
+          storagePolicy: "local-only",
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Unavailable");
+    expect(screen.getByText("12:34")).toBeInTheDocument();
+  });
+
   it("hides unresolved local-video-file backgrounds to avoid CSP violations", () => {
     render(
       <LeftPanelButton

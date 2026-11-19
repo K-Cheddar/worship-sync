@@ -2,7 +2,7 @@ import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import type { MediaFolder, MediaType } from "../types";
 import { normalizeMediaDoc } from "../utils/mediaDocUtils";
 
-export type MediaLoadStatus = "idle" | "loading" | "ready" | "error";
+export type MediaLoadStatus = "idle" | "loading" | "waiting" | "ready" | "error";
 
 export type MediaState = {
   list: MediaType[];
@@ -20,7 +20,7 @@ const initialState: MediaState = {
 
 export const isMediaLoadSettled = (
   media: Pick<MediaState, "isInitialized" | "loadStatus">,
-) => media.isInitialized || media.loadStatus === "error";
+) => media.isInitialized || media.loadStatus === "waiting" || media.loadStatus === "error";
 
 export const mediaItemsSlice = createSlice({
   name: "media",
@@ -92,18 +92,12 @@ export const mediaItemsSlice = createSlice({
       const index = state.list.findIndex((row) => row.id === item.id);
       if (index < 0) state.list.push(item as MediaType);
       else state.list[index] = item as MediaType;
-      state.isInitialized = true;
-      state.loadStatus = "ready";
     },
     removeMediaItemFromRemote: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => item.id !== action.payload);
-      state.isInitialized = true;
-      state.loadStatus = "ready";
     },
     updateMediaFoldersFromRemote: (state, action: PayloadAction<MediaFolder[]>) => {
       state.folders = action.payload;
-      state.isInitialized = true;
-      state.loadStatus = "ready";
     },
     removeItemFromMediaList: (state, action: PayloadAction<string>) => {
       state.list = state.list.filter((item) => item.id !== action.payload);

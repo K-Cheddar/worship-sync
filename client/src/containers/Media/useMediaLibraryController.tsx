@@ -517,8 +517,9 @@ export function useMediaLibraryController({
   const [moveSelectKey, setMoveSelectKey] = useState(0);
 
   const isMediaLoading = Boolean(
-    db && (mediaLoadStatus === "idle" || mediaLoadStatus === "loading"),
+    db && (mediaLoadStatus === "idle" || mediaLoadStatus === "loading" || mediaLoadStatus === "waiting"),
   );
+  const isMediaWaitingForSync = mediaLoadStatus === "waiting";
   const hasMediaLoadError = mediaLoadStatus === "error";
   const isMediaReadOnly = !mediaStoreInitialized;
 
@@ -4252,6 +4253,7 @@ export function useMediaLibraryController({
     refreshCanvaVideo,
     cleanupCanvaAsset,
     isMediaLoading,
+    isMediaWaitingForSync,
     hasMediaLoadError,
     isMediaReadOnly,
     searchTerm,

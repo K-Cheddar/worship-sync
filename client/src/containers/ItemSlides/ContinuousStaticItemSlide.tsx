@@ -9,6 +9,7 @@ import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import type { ResolvedDisplaySettings } from "../../utils/displaySettings";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { isLocalImageUrl } from "../../utils/localImageAssets";
+import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
 
 type ContinuousStaticItemSlideProps = {
   slide: ItemSlideType;
@@ -61,6 +62,13 @@ const ContinuousStaticItemSlide = ({
       ? localVideoInputThumbnail.thumbnail
       : undefined
   );
+  const localVideoInputPreviewUnavailable = localVideoThumbnailUrl
+    ? undefined
+    : getLocalVideoInputPreviewStatus(
+        slide.mediaSource?.kind === "local-video-input"
+          ? slide.mediaSource
+          : undefined,
+      );
   const freeSectionNumber =
     itemType === "free" ? getFreeSectionNumber(slide) : null;
   const displayName =
@@ -139,8 +147,18 @@ const ContinuousStaticItemSlide = ({
         <LocalVideoInputSlideBadge
           label={slide.mediaSource.label}
           captureKind={slide.mediaSource.captureKind}
-          variant={localVideoThumbnailUrl ? "indicator" : "overlay"}
-          className={localVideoThumbnailUrl ? "!bottom-2 !left-2 !right-auto !max-w-[65%]" : undefined}
+          variant={
+            localVideoThumbnailUrl || localVideoInputPreviewUnavailable
+              ? "indicator"
+              : "overlay"
+          }
+          className={
+            localVideoThumbnailUrl
+              ? "!bottom-2 !left-2 !right-auto !max-w-[65%]"
+              : localVideoInputPreviewUnavailable
+                ? "!bottom-2 !left-2 !right-auto !max-w-[65%] !z-40"
+                : undefined
+          }
         />
       ) : null}
     </li>

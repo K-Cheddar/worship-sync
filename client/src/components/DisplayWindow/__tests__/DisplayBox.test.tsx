@@ -217,11 +217,77 @@ describe("DisplayBox", () => {
         showBackground
         index={0}
         showLocalSourceStatus
+        statusScaleFactor={0.25}
       />,
     );
-    expect(screen.getByText("Local source on another device")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toHaveStyle({
+      fontSize: "120px",
+    });
     expect(screen.getByText("Local image · Welcome.png")).toBeInTheDocument();
     expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
+  });
+
+  it("keeps a usable remote image fallback ahead of an unavailable local warning", () => {
+    setLocalImageResolution({
+      isLocalImage: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+    const fallbackBox = {
+      ...localImageBox,
+      background: "https://cdn.example.test/welcome.png",
+    };
+
+    render(
+      <DisplayBox
+        box={fallbackBox}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveAttribute(
+      "src",
+      "https://cdn.example.test/welcome.png",
+    );
+    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
+  });
+
+  it("keeps loading distinct and respects a display that hides the background", () => {
+    setLocalImageResolution({
+      isLocalImage: true,
+      isOwner: true,
+      status: "loading",
+    });
+    const { rerender } = render(
+      <DisplayBox
+        box={localImageBox}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.getByText("Loading local image")).toBeInTheDocument();
+    expect(screen.queryByText("Local image unavailable")).not.toBeInTheDocument();
+
+    setLocalImageResolution({
+      isLocalImage: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+    rerender(
+      <DisplayBox
+        box={localImageBox}
+        width={100}
+        showBackground={false}
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("shows unavailable local video files only in an opted-in preview", () => {

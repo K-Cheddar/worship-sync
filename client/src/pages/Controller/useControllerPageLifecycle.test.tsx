@@ -21,8 +21,11 @@ import {
 import { overlaySlice } from "../../store/overlaySlice";
 import { overlaysSlice } from "../../store/overlaysSlice";
 import { markServicePlanningPlanPreviewStale } from "../../store/servicePlanningImportSlice";
-import { initiateMediaFromDoc } from "../../store/mediaSlice";
-import { loadMediaLibrary as readMediaLibrary } from "../../utils/mediaDocUtils";
+import { initiateMediaFromDoc, isMediaLoadSettled } from "../../store/mediaSlice";
+import {
+  loadMediaLibrary as readMediaLibrary,
+  requireMediaLibraryV2,
+} from "../../utils/mediaDocUtils";
 import { ActiveControllerProvider } from "../../context/activeController";
 import { useControllerPageLifecycle } from "./useControllerPageLifecycle";
 import { useGlobalBroadcast } from "../../hooks/useGlobalBroadcast";
@@ -34,7 +37,10 @@ import Overlays from "../../containers/Overlays/Overlays";
 import type { ItemContentOwner, OverlayInfo } from "../../types";
 import { createOutlineMoveIntent } from "../../utils/outlineSync";
 import { persistServiceListItems } from "../../utils/persistServiceListField";
-import { beginContentDatabaseSession } from "../../utils/contentReplicationActivity";
+import {
+  beginContentDatabaseSession,
+  recordVerifiedInitialContentReplication,
+} from "../../utils/contentReplicationActivity";
 
 jest.mock("../../containers/Overlays/OverlayEditor", () => () => null);
 jest.mock("../../containers/Overlays/ExistingOverlaysDrawer", () => () => null);
@@ -54,8 +60,10 @@ jest.mock("../../hooks/useGlobalBroadcast", () => ({
 }));
 
 jest.mock("../../context/toastContext", () => ({
-  useToast: () => ({ showToast: jest.fn() }),
+  useToast: () => ({ showToast: mockShowToast }),
 }));
+
+const mockShowToast = jest.fn();
 
 jest.mock("../../utils/controllerBootstrapDocs", () => ({
   loadOrCreatePreferencesBundle: jest.fn().mockResolvedValue({
@@ -67,6 +75,7 @@ jest.mock("../../utils/controllerBootstrapDocs", () => ({
 }));
 
 jest.mock("../../utils/mediaDocUtils", () => ({
+  normalizeMediaDoc: jest.requireActual("../../utils/mediaDocUtils").normalizeMediaDoc,
   loadMediaLibrary: jest.fn().mockResolvedValue({ list: [], folders: [] }),
   requireMediaLibraryV2: jest.fn().mockResolvedValue(undefined),
   parseMediaReplicationDoc: jest.requireActual("../../utils/mediaDocUtils").parseMediaReplicationDoc,
@@ -125,6 +134,8 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     jest.mocked(useGlobalBroadcast).mockClear();
     jest.mocked(getOverlaysByIds).mockReset().mockResolvedValue([]);
     jest.mocked(readMediaLibrary).mockReset().mockResolvedValue({ list: [], folders: [] });
+    jest.mocked(requireMediaLibraryV2).mockReset().mockResolvedValue(undefined);
+    mockShowToast.mockClear();
   });
 
   it.each([50, 100])("preserves newly created Bible and heading documents while outline references are pending (progress %s)", async (initialProgress) => {
@@ -1403,6 +1414,167 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     expect(store.getState().media.list).toEqual([]);
   });
 
+  it("waits for first replication, then loads automatically after schema and media documents arrive", async () => {
+    const db = new PouchDB(`media-first-pull-${Date.now()}-${Math.random()}`);
+    const updater = new EventTarget();
+    const actualMediaDocUtils = jest.requireActual<typeof import("../../utils/mediaDocUtils")>("../../utils/mediaDocUtils");
+    jest.mocked(readMediaLibrary).mockImplementation((database) => actualMediaDocUtils.loadMediaLibrary(database));
+    let bootstrapReady = false;
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater, bootstrapReady } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </Provider>
+    );
+    const view = renderHook(() => useControllerPageLifecycle(), { wrapper });
+
+    try {
+      await waitFor(() => expect(store.getState().media.loadStatus).toBe("waiting"));
+      expect(store.getState().media.isInitialized).toBe(false);
+      expect(isMediaLoadSettled(store.getState().media)).toBe(true);
+      expect(readMediaLibrary).not.toHaveBeenCalled();
+      expect(mockShowToast).not.toHaveBeenCalled();
+
+      const earlyItem = {
+        _id: "media-item:arrived-early",
+        docType: "mediaItem",
+        id: "arrived-early",
+        name: "Early media",
+        type: "image",
+        background: "early.jpg",
+      };
+      const folder = { id: "folder", name: "Folder", parentId: null };
+      await db.put(earlyItem as never);
+      await db.put({ _id: "media-folders", docType: "mediaFolders", folders: [folder] } as never);
+      await db.put({ _id: "media-library-meta", docType: "mediaLibraryMeta", schemaVersion: 2 } as never);
+      const lateItem = {
+        _id: "media-item:arrived-late",
+        docType: "mediaItem",
+        id: "arrived-late",
+        name: "Late media",
+        type: "image",
+        background: "late.jpg",
+      };
+      await db.put(lateItem as never);
+      act(() => updater.dispatchEvent(new CustomEvent("update", {
+        detail: [earlyItem, { _id: "media-folders", folders: [folder] }, { _id: "media-library-meta", schemaVersion: 2 }, lateItem],
+      })));
+      expect(store.getState().media.isInitialized).toBe(false);
+      expect(store.getState().media.loadStatus).toBe("waiting");
+
+      bootstrapReady = true;
+      view.rerender();
+      await waitFor(() => expect(store.getState().media.loadStatus).toBe("ready"));
+      expect(store.getState().media.list.map((item: { id: string }) => item.id)).toEqual([
+        "arrived-early",
+        "arrived-late",
+      ]);
+      expect(store.getState().media.folders).toEqual([folder]);
+      expect(mockShowToast).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      await db.destroy();
+    }
+  });
+
+  it("loads a previously verified local library while offline", async () => {
+    const db = new PouchDB(`media-offline-cache-${Date.now()}-${Math.random()}`);
+    const item = {
+      _id: "media-item:cached",
+      docType: "mediaItem",
+      id: "cached",
+      name: "Cached media",
+      type: "image",
+      background: "cached.jpg",
+    };
+    try {
+      await db.bulkDocs([
+        { _id: "media-library-meta", docType: "mediaLibraryMeta", schemaVersion: 2 },
+        item,
+        { _id: "media-folders", docType: "mediaFolders", folders: [] },
+      ] as never);
+      await recordVerifiedInitialContentReplication(db, db.name);
+      const actualMediaDocUtils = jest.requireActual<typeof import("../../utils/mediaDocUtils")>("../../utils/mediaDocUtils");
+      jest.mocked(readMediaLibrary).mockImplementation((database) => actualMediaDocUtils.loadMediaLibrary(database));
+
+      renderHook(() => useControllerPageLifecycle(), {
+        wrapper: ({ children }) => (
+          <Provider store={store}>
+            <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+              <ControllerInfoContext.Provider value={{ db, cloud: {}, bootstrapReady: false } as any}>
+                {children}
+              </ControllerInfoContext.Provider>
+            </GlobalInfoContext.Provider>
+          </Provider>
+        ),
+      });
+
+      await waitFor(() => expect(store.getState().media.loadStatus).toBe("ready"));
+      expect(store.getState().media.list).toEqual([
+        expect.objectContaining({ id: "cached", name: "Cached media" }),
+      ]);
+      expect(store.getState().media.isInitialized).toBe(true);
+      expect(mockShowToast).not.toHaveBeenCalled();
+    } finally {
+      await db.destroy();
+    }
+  });
+
+  it("fails closed on an unreadable media snapshot after replication is ready", async () => {
+    const db = { ...createDb({}), name: "media-unreadable" };
+    jest.mocked(readMediaLibrary).mockRejectedValueOnce(new Error("local database read failed"));
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+            <ControllerInfoContext.Provider value={{ db, cloud: {}, bootstrapReady: true } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    await waitFor(() => expect(store.getState().media.loadStatus).toBe("error"));
+    expect(store.getState().media.isInitialized).toBe(false);
+    expect(mockShowToast).toHaveBeenCalledTimes(1);
+    expect(mockShowToast).toHaveBeenCalledWith(
+      "Could not load the media library. Reload the page before making media changes.",
+      "error",
+    );
+  });
+
+  it("reports a genuinely missing schema after initial replication is complete", async () => {
+    const db = new PouchDB(`media-missing-schema-${Date.now()}-${Math.random()}`);
+    const actualMediaDocUtils = jest.requireActual<typeof import("../../utils/mediaDocUtils")>("../../utils/mediaDocUtils");
+    jest.mocked(requireMediaLibraryV2).mockImplementation(actualMediaDocUtils.requireMediaLibraryV2);
+
+    try {
+      renderHook(() => useControllerPageLifecycle(), {
+        wrapper: ({ children }) => (
+          <Provider store={store}>
+            <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+              <ControllerInfoContext.Provider value={{ db, cloud: {}, bootstrapReady: true } as any}>
+                {children}
+              </ControllerInfoContext.Provider>
+            </GlobalInfoContext.Provider>
+          </Provider>
+        ),
+      });
+
+      await waitFor(() => expect(store.getState().media.loadStatus).toBe("error"));
+      expect(store.getState().media.isInitialized).toBe(false);
+      expect(readMediaLibrary).not.toHaveBeenCalled();
+      expect(mockShowToast).toHaveBeenCalledTimes(1);
+    } finally {
+      await db.destroy();
+    }
+  });
+
   it("re-reads the media library when an item replicates during its initial read", async () => {
     const initialRead = deferred<{ list: any[]; folders: any[] }>();
     const readStarted = deferred<void>();
@@ -1440,7 +1612,97 @@ describe("useControllerPageLifecycle selected outline loading", () => {
     });
 
     expect(readMediaLibrary).toHaveBeenCalledTimes(2);
-    expect(store.getState().media.list).toEqual(latest.list);
+    expect(store.getState().media.list).toEqual([
+      { id: "replicated", name: "Replicated item", folderId: null },
+    ]);
+  });
+
+  it("bounds snapshot rereads and overlays every newer item and folder change", async () => {
+    const reads = Array.from({ length: 3 }, () => deferred<{ list: any[]; folders: any[] }>());
+    let readCount = 0;
+    jest.mocked(readMediaLibrary).mockImplementation(() => reads[readCount++].promise);
+    const waitForReadCount = (expected: number) =>
+      waitFor(() => expect(readCount).toBe(expected));
+    const db = { ...createDb({}), name: "media-continuous-replication" };
+    const updater = new EventTarget();
+
+    renderHook(() => useControllerPageLifecycle(), {
+      wrapper: ({ children }) => (
+        <Provider store={store}>
+          <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+            <ControllerInfoContext.Provider value={{ db, cloud: {}, bootstrapReady: true, updater } as any}>
+              {children}
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </Provider>
+      ),
+    });
+
+    for (let attempt = 0; attempt < reads.length; attempt += 1) {
+      await waitForReadCount(attempt + 1);
+      const currentName = `Replicated ${attempt + 1}`;
+      const currentFolder = { id: "folder", name: `Folder ${attempt + 1}`, parentId: null };
+      act(() => updater.dispatchEvent(new CustomEvent("update", {
+        detail: [
+          { _id: "media-item:item", id: "item", docType: "mediaItem", name: currentName },
+          { _id: "media-folders", folders: [currentFolder] },
+        ],
+      })));
+      await act(async () => {
+        reads[attempt].resolve({
+          list: [{ id: "item", name: `Stale ${attempt + 1}` }],
+          folders: [{ id: "folder", name: `Stale folder ${attempt + 1}`, parentId: null }],
+        });
+        await reads[attempt].promise;
+      });
+    }
+
+    await waitFor(() => expect(store.getState().media.loadStatus).toBe("ready"));
+    expect(readCount).toBe(3);
+    expect(store.getState().media.list).toEqual([
+      { id: "item", name: "Replicated 3", folderId: null },
+    ]);
+    expect(store.getState().media.folders).toEqual([
+      { id: "folder", name: "Folder 3", parentId: null },
+    ]);
+  });
+
+  it("ignores an older media read after switching churches", async () => {
+    const oldRead = deferred<{ list: any[]; folders: any[] }>();
+    const oldDb = { ...createDb({}), name: "media-old-church" };
+    const newDb = { ...createDb({}), name: "media-new-church" };
+    jest.mocked(readMediaLibrary)
+      .mockImplementationOnce(() => oldRead.promise)
+      .mockResolvedValueOnce({ list: [{ id: "new", name: "New church media" }], folders: [] } as any);
+    const updater = new EventTarget();
+    let db = oldDb;
+    let churchId = "old-church";
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={{ access: "full", churchId } as any}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, bootstrapReady: true, updater } as any}>
+            {children}
+          </ControllerInfoContext.Provider>
+        </GlobalInfoContext.Provider>
+      </Provider>
+    );
+    const view = renderHook(() => useControllerPageLifecycle(), { wrapper });
+
+    await waitFor(() => expect(readMediaLibrary).toHaveBeenCalledTimes(1));
+    db = newDb;
+    churchId = "new-church";
+    view.rerender();
+    await waitFor(() => expect(store.getState().media.list).toEqual([
+      { id: "new", name: "New church media", folderId: null },
+    ]));
+
+    await act(async () => {
+      oldRead.resolve({ list: [{ id: "old", name: "Old church media" }], folders: [] });
+      await oldRead.promise;
+    });
+    expect(store.getState().media.list).toEqual([
+      { id: "new", name: "New church media", folderId: null },
+    ]);
   });
 
   it("ignores stale legacy aggregate media replication", async () => {
@@ -1466,7 +1728,9 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       detail: [{ _id: "media", list: [{ id: "stale", name: "Stale v1 item" }], folders: [] }],
     })));
 
-    expect(store.getState().media.list).toEqual(currentV2List);
+    expect(store.getState().media.list).toEqual([
+      { id: "current", name: "Current v2 item", folderId: null },
+    ]);
   });
 
   it("applies v2 item add/update/delete and folder replication after the marker", () => {

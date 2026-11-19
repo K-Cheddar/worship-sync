@@ -167,6 +167,9 @@ jest.mock("../LocalVideoInputView", () => ({
     captureEnabled,
     receiveHighQuality,
     showErrors,
+    showLocalSourceStatus,
+    statusSize,
+    statusScaleFactor,
     transparentBackground,
     volume,
     onPaintReadyChange,
@@ -177,6 +180,9 @@ jest.mock("../LocalVideoInputView", () => ({
     captureEnabled?: boolean;
     receiveHighQuality?: boolean;
     showErrors?: boolean;
+    showLocalSourceStatus?: boolean;
+    statusSize?: string;
+    statusScaleFactor?: number;
     transparentBackground?: boolean;
     volume?: number;
     onPaintReadyChange?: (ready: boolean) => void;
@@ -196,6 +202,9 @@ jest.mock("../LocalVideoInputView", () => ({
         data-play-audio={playAudio ? "true" : "false"}
         data-capture-enabled={captureEnabled ? "true" : "false"}
         data-high-quality={receiveHighQuality ? "true" : "false"}
+        data-local-source-status={showLocalSourceStatus ? "true" : "false"}
+        data-local-source-status-size={statusSize}
+        data-local-source-status-scale={statusScaleFactor}
         data-show-errors={showErrors ? "true" : "false"}
         data-transparent-background={transparentBackground ? "true" : "false"}
         data-volume={String(volume ?? "")}
@@ -635,7 +644,7 @@ describe("DisplayWindow core paths", () => {
     jest.useRealTimers();
   });
 
-  it("enables local-source status only for an explicitly opted-in editor preview", () => {
+  it("limits local-source diagnostics to explicitly opted-in editor and preview windows", () => {
     const { rerender } = render(
       <DisplayWindow
         displayType="editor"
@@ -659,6 +668,98 @@ describe("DisplayWindow core paths", () => {
       "data-local-source-status",
       "false",
     );
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[baseBox]}
+        showLocalSourceStatus
+        videoPreloadRole="preview"
+      />,
+    );
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-local-source-status",
+      "true",
+    );
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[baseBox]}
+        showLocalSourceStatus
+        videoPreloadRole="output"
+      />,
+    );
+    expect(screen.getByTestId("display-box")).toHaveAttribute(
+      "data-local-source-status",
+      "false",
+    );
+  });
+
+  it("scales remote capture diagnostics in preview cards and suppresses them on outputs", () => {
+    const props = {
+      displayType: "stream" as const,
+      boxes: [baseBox],
+      localVideoInput: {
+        sourceId: "remote-source",
+        deviceLabel: "Main camera",
+        ownerDeviceId: "remote-device-for-preview-test",
+        ownerLabel: "Booth PC",
+      },
+      showLocalSourceStatus: true,
+    };
+    const { rerender } = render(
+      <DisplayWindow {...props} videoPreloadRole="preview" />,
+    );
+
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-local-source-status",
+      "true",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-local-source-status-size",
+      "canvas",
+    );
+
+    rerender(<DisplayWindow {...props} videoPreloadRole="output" />);
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-local-source-status",
+      "false",
+    );
+  });
+
+  it("uses saved capture ownership when a preview has no local binding", () => {
+    const source = {
+      kind: "local-video-input" as const,
+      sourceId: "remote-camera",
+      label: "Main camera",
+      ownerDeviceId: "remote-device-for-preview-test",
+      ownerLabel: "Booth PC",
+    };
+    const { rerender } = render(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[baseBox]}
+        showLocalSourceStatus
+        videoPreloadRole="preview"
+        localVideoInputPreviewSource={source}
+      />,
+    );
+
+    expect(screen.getByTestId("preview-local-video-input-status")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toBeInTheDocument();
+    expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
+
+    rerender(
+      <DisplayWindow
+        displayType="projector"
+        boxes={[baseBox]}
+        showLocalSourceStatus
+        videoPreloadRole="output"
+        localVideoInputPreviewSource={source}
+      />,
+    );
+    expect(screen.queryByTestId("preview-local-video-input-status")).not.toBeInTheDocument();
   });
 
   it("renders monitor mode through MonitorView with next-slide and clock/timer flags", () => {
@@ -2135,6 +2236,38 @@ describe("DisplayWindow core paths", () => {
     );
     expect(screen.getByTestId("display-box")).toBeInTheDocument();
     expect(screen.getByTestId("projector-clock-timer")).toBeInTheDocument();
+  });
+
+  it("scales remote source status hosted in the full-frame preview lane", () => {
+    const props = {
+      displayType: "projector" as const,
+      boxes: [baseBox],
+      localVideoInput: {
+        sourceId: "remote-source",
+        deviceLabel: "Main camera",
+        ownerDeviceId: "remote-device-for-preview-test",
+        ownerLabel: "Booth PC",
+      },
+      showLocalSourceStatus: true,
+    };
+    const { rerender } = render(
+      <DisplayWindow {...props} videoPreloadRole="preview" />,
+    );
+
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-local-source-status",
+      "true",
+    );
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-local-source-status-size",
+      "canvas",
+    );
+
+    rerender(<DisplayWindow {...props} videoPreloadRole="output" />);
+    expect(screen.getByTestId("local-video-input-view")).toHaveAttribute(
+      "data-local-source-status",
+      "false",
+    );
   });
 
   it("keeps monitor chrome and next-slide content around local video", () => {

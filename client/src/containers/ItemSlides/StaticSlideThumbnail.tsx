@@ -19,6 +19,8 @@ import {
   type ResolvedDisplaySettings,
 } from "../../utils/displaySettings";
 import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
+import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
+import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
 
 type StaticSlideThumbnailProps = {
   slide: ItemSlideType;
@@ -87,6 +89,11 @@ const StaticSlideThumbnail = ({
   const displayType = isStreamFormat ? "stream" : "slide";
   const profile = resolveDisplayRenderProfile(displayType, slide.boxes);
   const formatted = getFormattedTextDisplayInfo(slide, itemType);
+  const localVideoInputStatus = getLocalVideoInputPreviewStatus(
+    slide.mediaSource?.kind === "local-video-input"
+      ? slide.mediaSource
+      : undefined,
+  );
   return (
     <div
       className={`relative aspect-video w-full overflow-hidden overflow-anywhere border border-gray-500 text-white ${
@@ -132,6 +139,8 @@ const StaticSlideThumbnail = ({
               showBackground={
                 profile.supportsBackground || Boolean(localVideoInputThumbnailUrl)
               }
+              showLocalSourceStatus={profile.supportsBackground}
+              statusScaleFactor={scaleFactor}
               index={index}
               paintBackground={!(localVideoInputThumbnailUrl && index === 0)}
               timerInfo={timerInfo}
@@ -170,6 +179,17 @@ const StaticSlideThumbnail = ({
           ))
         )}
       </div>
+      {localVideoInputStatus ? (
+        <LocalSourceStatus
+          {...localVideoInputStatus}
+          {...(localVideoInputThumbnailUrl
+            ? { variant: "indicator" as const }
+            : {
+                size: "preview" as const,
+                transparentBackground: isStreamFormat,
+              })}
+        />
+      ) : null}
     </div>
   );
 };

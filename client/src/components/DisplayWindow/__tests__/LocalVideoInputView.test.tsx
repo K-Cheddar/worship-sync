@@ -1036,6 +1036,27 @@ describe("LocalVideoInputView", () => {
     expect(mockAcquireWarmCapture).not.toHaveBeenCalled();
   });
 
+  it("shows source ownership in preview cards even when capture errors are suppressed", () => {
+    mockGetOrCreateDeviceId.mockReturnValue("controller-device");
+    render(
+      <LocalVideoInputView
+        input={{ ...input, ownerDeviceId: "remote-device", ownerLabel: "Booth PC" }}
+        captureEnabled={false}
+        showErrors={false}
+        showLocalSourceStatus
+        statusSize="canvas"
+        statusScaleFactor={0.25}
+      />,
+    );
+
+    expect(screen.getByText("Local source on another device")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toHaveStyle({
+      fontSize: "120px",
+    });
+    expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
+    expect(mockAcquireWarmCapture).not.toHaveBeenCalled();
+  });
+
   it("keeps screen-share labeling in its remote-owned status", () => {
     mockGetOrCreateDeviceId.mockReturnValue("remote-device");
     render(

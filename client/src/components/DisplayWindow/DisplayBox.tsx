@@ -26,6 +26,7 @@ import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 import LocalSourceStatus from "./LocalSourceStatus";
 import { shouldSkipDisplayTextAnimation } from "./utils";
+import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
 
 const DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS = 650;
 
@@ -112,6 +113,8 @@ type DisplayBoxProps = {
   paintForeground?: boolean;
   /** Explicitly enabled only for operator previews. */
   showLocalSourceStatus?: boolean;
+  /** Scale of the fixed reference canvas, used to keep status text readable. */
+  statusScaleFactor?: number;
 };
 
 const DisplayBox = ({
@@ -135,6 +138,7 @@ const DisplayBox = ({
   paintBackground = true,
   paintForeground = true,
   showLocalSourceStatus = false,
+  statusScaleFactor = 1,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline | null>(null);
@@ -173,12 +177,12 @@ const DisplayBox = ({
   const videoPlaceholderImage =
     localVideoThumbnail.url || box.mediaInfo?.placeholderImage;
   const rawImage = isVideoBg ? videoPlaceholderImage : background;
+  const localImage = useLocalImageUrl(box.mediaInfo?.localImage);
   const shouldShowBackground = Boolean(
     paintBackground &&
       showBackground &&
-      (background || (isVideoBg && rawImage)),
+      (background || (isVideoBg && rawImage) || localImage.isLocalImage),
   );
-  const localImage = useLocalImageUrl(box.mediaInfo?.localImage);
   const prevIsVideoBg = prevBox?.mediaInfo?.type === "video";
   let prevRawImage = prevBox?.background;
   if (prevIsVideoBg) {
@@ -219,11 +223,16 @@ const DisplayBox = ({
   const currentImageCandidate = resolvedCachedImage ?? cachedImage ?? rawImage;
   const currentTransitionImage =
     managedImageForCurrentIdentity ?? currentImageCandidate;
+  const rawImageFallback = isLocalMediaReferenceUrl(rawImage)
+    ? undefined
+    : cachedImage;
   let displayImage = isTransitionManaged
     ? currentTransitionImage
     : deferredRemoteImage;
   if (localImage.isLocalImage) {
-    displayImage = localImage.url;
+    displayImage =
+      localImage.url ??
+      (localImage.status === "unavailable" ? rawImageFallback : undefined);
   } else if (localVideoThumbnail.url) {
     displayImage = localVideoThumbnail.url;
   }
@@ -572,11 +581,15 @@ const DisplayBox = ({
           />
         )}
       {shouldShowBackground &&
-        (localImage.isLocalImage && localImage.status === "unavailable" ? (
+        (localImage.isLocalImage &&
+        localImage.status === "unavailable" &&
+        !displayImage ? (
           showLocalSourceStatus ? (
             <div style={{ opacity: initialBackgroundOpacity }}>
               <LocalSourceStatus
                 sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
+                size="canvas"
+                scaleFactor={statusScaleFactor}
                 ownerLabel={
                   localImage.isOwner
                     ? undefined
@@ -594,6 +607,18 @@ const DisplayBox = ({
                 }
               />
             </div>
+          ) : null
+        ) : localImage.isLocalImage &&
+          localImage.status === "loading" &&
+          !displayImage ? (
+          showLocalSourceStatus ? (
+            <LocalSourceStatus
+              sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
+              heading="Loading local image"
+              state="loading"
+              size="canvas"
+              scaleFactor={statusScaleFactor}
+            />
           ) : null
         ) : displayImage ? (
           <img
@@ -621,9 +646,12 @@ const DisplayBox = ({
       showBackground &&
       box.mediaInfo?.localVideoFile &&
       localVideoDisplay.isLocalVideoFile &&
-      localVideoDisplay.status === "unavailable" ? (
+      localVideoDisplay.status === "unavailable" &&
+      (!videoUrl || isLocalMediaReferenceUrl(videoUrl)) ? (
         <LocalSourceStatus
           sourceLabel={`Local video · ${box.mediaInfo.localVideoFile.fileName || "Background"}`}
+          size="canvas"
+          scaleFactor={statusScaleFactor}
           ownerLabel={
             localVideoDisplay.isOwner
               ? undefined
