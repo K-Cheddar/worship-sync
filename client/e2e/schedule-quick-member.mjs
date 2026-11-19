@@ -79,7 +79,7 @@ try {
     );
     await page.mouse.wheel(0, 480);
     await page.waitForFunction(() => {
-      const list = document.querySelector<HTMLElement>("[data-testid='schedule-assignment-options']");
+      const list = document.querySelector("[data-testid='schedule-assignment-options']");
       return Boolean(list && list.scrollTop > 0);
     });
     await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));

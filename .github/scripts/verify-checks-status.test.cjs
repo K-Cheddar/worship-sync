@@ -28,6 +28,27 @@ test("all PRs and manual runs use four ordinary Jest shards and the stable aggre
   for (const job of jobs) assert.match(required, new RegExp(`^\\s*${job},?$`, "m"));
 });
 
+test("the unauthenticated schedule browser fixture runs in a required Chromium job and failures reach the aggregate", () => {
+  const serverJobStart = workflow.indexOf("  server_tests:\n");
+  const serverJobEnd = workflow.indexOf("\n  lint_typecheck:", serverJobStart);
+  assert.ok(serverJobStart >= 0 && serverJobEnd > serverJobStart, "the existing Server tests job must remain present");
+  const serverJob = workflow.slice(serverJobStart, serverJobEnd);
+  const chromiumStep = serverJob.indexOf("name: Install Chromium for browser integration");
+  const fixtureStep = serverJob.indexOf("name: Run unauthenticated schedule quick-member browser fixture");
+  assert.ok(chromiumStep >= 0 && fixtureStep > chromiumStep, "the fixture must reuse the required job Chromium setup");
+  assert.ok(serverJob.includes("run: npm run test:e2e:schedule-quick-member --prefix client"));
+
+  const aggregate = workflow.split("  checks:\n")[1];
+  const required = aggregate?.split("needs:")[1]?.split("runs-on:")[0] || "";
+  assert.ok(required.includes("server_tests,"), "the fixture job must feed the stable required aggregate");
+
+  const results = Object.fromEntries(jobs.map((job) => [job, { result: "success" }]));
+  results.server_tests.result = "failure";
+  const failure = runChecker(results);
+  assert.equal(failure.status, 1, failure.stdout);
+  assert.match(failure.stderr, /server_tests: failure/);
+});
+
 test("aggregate checker passes every required job without coverage", () => {
   const result = runChecker(Object.fromEntries(jobs.map((job) => [job, { result: "success" }])));
   assert.equal(result.status, 0, result.stderr);

@@ -35,15 +35,39 @@ const notLocalVideoFileResolution: LocalVideoFileResolution = {
   status: "not-local",
   url: undefined,
 };
-let currentLocalVideoFileResolution = notLocalVideoFileResolution;
+let currentLocalVideoDisplayResolution = notLocalVideoFileResolution;
+let currentLocalVideoThumbnailResolution = notLocalVideoFileResolution;
 const mockUseLocalVideoFileUrl = jest.fn(
-  (value: unknown, _purpose?: unknown): LocalVideoFileResolution =>
-    value ? currentLocalVideoFileResolution : notLocalVideoFileResolution,
+  (value: unknown, purpose?: unknown): LocalVideoFileResolution =>
+    value
+      ? purpose === "thumbnail"
+        ? currentLocalVideoThumbnailResolution
+        : currentLocalVideoDisplayResolution
+      : notLocalVideoFileResolution,
 );
 const setLocalVideoFileResolution = (value: LocalVideoFileResolution) => {
-  currentLocalVideoFileResolution = value;
-  mockUseLocalVideoFileUrl.mockImplementation((reference: unknown) =>
-    reference ? currentLocalVideoFileResolution : notLocalVideoFileResolution,
+  currentLocalVideoDisplayResolution = value;
+  currentLocalVideoThumbnailResolution = value;
+  mockUseLocalVideoFileUrl.mockImplementation((reference: unknown, purpose?: unknown) =>
+    reference
+      ? purpose === "thumbnail"
+        ? currentLocalVideoThumbnailResolution
+        : currentLocalVideoDisplayResolution
+      : notLocalVideoFileResolution,
+  );
+};
+const setLocalVideoFileResolutions = (
+  display: LocalVideoFileResolution,
+  thumbnail: LocalVideoFileResolution,
+) => {
+  currentLocalVideoDisplayResolution = display;
+  currentLocalVideoThumbnailResolution = thumbnail;
+  mockUseLocalVideoFileUrl.mockImplementation((reference: unknown, purpose?: unknown) =>
+    reference
+      ? purpose === "thumbnail"
+        ? currentLocalVideoThumbnailResolution
+        : currentLocalVideoDisplayResolution
+      : notLocalVideoFileResolution,
   );
 };
 const mockUseGSAPDependencies = jest.fn();
@@ -381,6 +405,51 @@ describe("DisplayBox", () => {
     expect(screen.getByAltText("Main")).toHaveAttribute(
       "src",
       "https://cdn.example.com/video-still.jpg",
+    );
+  });
+
+  it("keeps an unavailable video's saved still off live output and on its compact slide thumbnail", () => {
+    const savedStill = "https://cdn.example.com/video-still.jpg";
+    setLocalVideoFileResolutions(
+      {
+        isLocalVideoFile: true,
+        isOwner: false,
+        status: "unavailable",
+      },
+      {
+        isLocalVideoFile: true,
+        isOwner: false,
+        status: "ready",
+        url: savedStill,
+      },
+    );
+    const box = {
+      ...localVideoBox,
+      mediaInfo: { ...localVideoBox.mediaInfo!, placeholderImage: savedStill },
+    };
+    const { rerender } = render(
+      <DisplayBox box={box} width={100} showBackground index={0} />,
+    );
+
+    const liveBlackFallback = screen.getByTestId("unavailable-local-video-black-screen");
+    expect(liveBlackFallback).toBeVisible();
+    expect(liveBlackFallback).toHaveClass("bg-black");
+    expect(screen.queryByTestId("display-box-local-video-thumbnail")).not.toBeInTheDocument();
+
+    rerender(
+      <DisplayBox
+        box={box}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+        localSourceStatusSize="thumbnail"
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-local-video-thumbnail")).toHaveAttribute(
+      "src",
+      savedStill,
     );
   });
 

@@ -1345,6 +1345,8 @@ listenerMiddleware.startListening({
       itemSlice.actions.setSectionLoading,
       itemSlice.actions.setHasPendingUpdate,
       itemSlice.actions.setRemoteUpdateReason,
+      // Reporting a failed save changes only status; it must not authorize a retry.
+      itemSlice.actions.setItemPersistenceError,
       // Live timer ticks reconcile runtime state without creating authored item writes.
       // If an authored timer edit is pending, these echoes must not keep resetting its debounce.
       itemSlice.actions.syncLiveTimerInfo,
@@ -2362,6 +2364,7 @@ listenerMiddleware.startListening({
             const latestState = listenerApi.getState() as RootState;
             const latestItem = latestState.undoable.present.item;
             const cachedDoc = [
+              ...latestState.allDocs.allSongDocs,
               ...latestState.allDocs.allFreeFormDocs,
               ...latestState.allDocs.allTimerDocs,
               ...latestState.allDocs.allBibleDocs,

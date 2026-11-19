@@ -3743,6 +3743,46 @@ describe("item content integrity investigation", () => {
     diagnostics.mockRestore();
   });
 
+  it("stops autosave after persistent failures until Retry or a real edit", async () => {
+    const { docs, select, edit, tick, db, store, itemSlice, commit } = setup();
+    let failWrites = true;
+    db.put.mockImplementation(async (document: Fixture) => {
+      if (failWrites) throw Object.assign(new Error("storage unavailable"), { status: 500 });
+      return commit(document);
+    });
+
+    select("song-A");
+    edit("Draft retained after failure");
+    await tick();
+
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(store.getState().undoable.present.item).toMatchObject({
+      name: "Draft retained after failure",
+      hasPendingUpdate: true,
+    });
+    expect(store.getState().undoable.present.item.itemPersistenceError).not.toBeNull();
+
+    await jest.advanceTimersByTimeAsync(6_000);
+    await flushListenerEffects();
+    expect(db.put).toHaveBeenCalledTimes(1);
+    expect(docs.get("song-A")?.name).toBe("song-A");
+
+    failWrites = false;
+    store.dispatch(itemSlice.actions.retryItemSave());
+    await flushListenerEffects();
+    await tick();
+
+    expect(db.put).toHaveBeenCalledTimes(2);
+    expect(docs.get("song-A")?.name).toBe("Draft retained after failure");
+    expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    expect(store.getState().undoable.present.item.itemPersistenceError).toBeNull();
+
+    edit("Later user edit");
+    await tick();
+    expect(db.put).toHaveBeenCalledTimes(3);
+    expect(docs.get("song-A")?.name).toBe("Later user edit");
+  });
+
   it("preserves the remote revision when a second client writes between get and put", async () => {
     const { docs, select, edit, tick, db, commit, store } = setup();
     const diagnostics = jest.spyOn(console, "debug").mockImplementation(() => undefined);

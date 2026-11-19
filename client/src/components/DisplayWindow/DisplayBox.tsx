@@ -252,7 +252,10 @@ const DisplayBox = ({
     displayImage =
       localImage.url ??
       (localImage.status === "unavailable" ? rawImageFallback : undefined);
-  } else if (localVideoThumbnail.url) {
+  } else if (
+    localVideoThumbnail.url &&
+    !(unavailableLocalVideo && localSourceStatusSize !== "thumbnail")
+  ) {
     displayImage = localVideoThumbnail.url;
   }
   const [decodedImage, setDecodedImage] = useState<ManagedImage>();
