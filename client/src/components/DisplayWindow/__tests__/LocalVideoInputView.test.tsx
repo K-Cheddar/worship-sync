@@ -1051,7 +1051,7 @@ describe("LocalVideoInputView", () => {
 
     expect(screen.getByText("Local source on another device")).toBeInTheDocument();
     expect(screen.getByText("Local source on another device")).toHaveStyle({
-      fontSize: "120px",
+      fontSize: "152px",
     });
     expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
     expect(mockAcquireWarmCapture).not.toHaveBeenCalled();

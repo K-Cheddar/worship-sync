@@ -16,8 +16,28 @@ describe("LocalSourceStatus", () => {
       "canvas",
     );
     expect(screen.getByText("Local source on another device")).toHaveStyle({
-      fontSize: "120px",
+      fontSize: "152px",
     });
+  });
+
+  it("keeps thumbnail warnings readable while fitting the scaled thumbnail", () => {
+    render(
+      <LocalSourceStatus
+        sourceLabel="Local image · Welcome.png"
+        ownerLabel="Booth PC"
+        size="thumbnail"
+        scaleFactor={0.2}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "data-local-source-status-size",
+      "thumbnail",
+    );
+    expect(screen.getByText("Local source on another device")).toHaveStyle({
+      fontSize: "70px",
+    });
+    expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
   });
 
   it("shows compact indicators with accessible source details and no filesystem path", () => {

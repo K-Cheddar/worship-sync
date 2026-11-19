@@ -1790,6 +1790,8 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               <LocalVideoInputSlideBadge
                 label={slides[selectedSlide].mediaSource.label}
                 captureKind={slides[selectedSlide].mediaSource.captureKind}
+                unavailable={Boolean(editorLocalVideoInputStatus)}
+                ownerLabel={editorLocalVideoInputStatus?.ownerLabel}
                 variant="banner"
                 className="z-40"
                 size="md"

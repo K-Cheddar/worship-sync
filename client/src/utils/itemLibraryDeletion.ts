@@ -82,6 +82,7 @@ export async function deleteLibraryItemWithProgress({
       if (!db) throw new Error("The item database is not available.");
       if (item.type === "song") {
         progress.deletedDocument = await deleteSong(db, item._id);
+        progress.documentDeleted = true;
       } else {
         const document = await db.get(item._id) as DBItem;
         assertSessionCanContinue();
@@ -90,8 +91,10 @@ export async function deleteLibraryItemWithProgress({
         }
         progress.deletedDocument = document;
         await db.remove(document as PouchDB.Core.RemoveDocument);
+        // Record the completed PouchDB write before checking whether the
+        // controller session changed while its response was in flight.
+        progress.documentDeleted = true;
       }
-      progress.documentDeleted = true;
       assertSessionCanContinue();
     } catch (error) {
       fail(progress, "saved item", error);
@@ -156,6 +159,7 @@ export async function deleteLibraryItemWithProgress({
     progress.songAudioUpdated = true;
   }
 
+  assertSessionCanContinue();
   progress.complete = true;
   progress.failedStep = undefined;
   return progress;

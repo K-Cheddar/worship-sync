@@ -2,6 +2,7 @@ import type { DBItem, ServiceItem } from "../types";
 import {
   formatItemAuditDate,
   getItemLibraryAuditDisplay,
+  getItemLibrarySourceIndices,
   parseItemAuditDate,
   sortItemLibraryResults,
 } from "./itemLibraryPresentation";
@@ -11,6 +12,27 @@ const item = (id: string, name: string, matchRank = 0): ServiceItem & { matchRan
 });
 
 describe("item library audit presentation and sorting", () => {
+  it("preserves original row action indices after sorting, including duplicate IDs, in one pass", () => {
+    const source = Array.from({ length: 20_000 }, (_, index) => ({
+      _id: index === 20 ? "duplicate-id" : `item-${index}`,
+      name: `Item ${String(20_000 - index).padStart(5, "0")}`,
+    }));
+    source[21] = { ...source[21], _id: "duplicate-id" };
+    const sorted = [...source].sort((left, right) => left.name.localeCompare(right.name));
+    const sourceWithoutLinearLookup = new Proxy(source, {
+      get(target, property, receiver) {
+        if (property === "indexOf") throw new Error("Repeated linear lookup is not allowed.");
+        return Reflect.get(target, property, receiver);
+      },
+    });
+    const indices = getItemLibrarySourceIndices(sourceWithoutLinearLookup);
+
+    expect(indices.size).toBe(source.length);
+    expect(indices.get(sorted[0])).toBe(source.length - 1);
+    expect(indices.get(sorted[9])).toBe(source.length - 10);
+    expect(indices.get(source[20])).toBe(20);
+    expect(indices.get(source[21])).toBe(21);
+  });
   it("formats valid dates locally and renders missing or invalid audit values with a dash", () => {
     const timestamp = "2026-11-18T02:30:00.000Z";
     expect(formatItemAuditDate(timestamp)).toBe(

@@ -39,6 +39,7 @@ Automatic identification and imported-plan Closest matches remain on conservativ
 - **Import suggestions:** Preserve title-based Closest matches; use improved retrieval in the explicit Search library action. This preserves the identity-resolution workflow. Approved in the planning response, October 24, 2026.
 - **Stable identity and hydration:** Use cached document titles and saved IDs for custom slides. The October 26 storage request supersedes index-only title retrieval. Explicitly authorized by this task and the controller-content-viewing contract.
 - **Audit, sorting, selection, and deletion:** Display available item-document update fields in Type, Name, Updated, Updated by order, with a dash for unavailable history; offer clickable local sorting and permission-gated bulk deletion with explicit open-outline cleanup. Clear selection on search or type-filter changes and keep saved outlines independent. Authorized by the current request and follow-up direction, November 18, 2026.
+- **Deletion recovery lifetime:** Once confirmed, deletion progress and retry actions belong to the shared Activity provider, so they survive item-library route changes in the current renderer. Each retry stays bound to the originating database, church, user, session, and outline; unresolved work warns before leaving the renderer. Progress is in memory, so a full renderer restart does not promise recovery. No durable deletion-job schema is introduced. Authorized by the code-review fix request, November 18, 2026.
 
 ## Important scenarios and regression evidence
 
@@ -49,6 +50,8 @@ Automatic identification and imported-plan Closest matches remain on conservativ
 | Different sections/arrangements | Combined coverage; best real passage; no invented cross-section phrase | songSearchUtils |
 | Duplicate custom names / document-only library | Correct saved ID's content and current document title | songSearchUtils; FilteredItems; SongReferencePicker |
 | Rapid typing / library replacement / drawer close | Results and highlights share their query; latest document content; existing reset behavior | FilteredItems; SongReferencePicker; AddSongSectionsDrawer |
+| Sorted library row action / large result set | Row actions use the original source index by item identity; constructing rows does not scan the result array once per item | itemLibraryPresentation; FilteredItems |
+| Deletion cleanup fails / route change / identity change | Activity retains retry metadata through navigation, retries only unfinished steps, and pauses writes when the captured owner changes | itemLibraryDeletion; FilteredItems; TransferProvider |
 | Manual lyric hit during import | Manual result does not become automatic identity evidence | findServicePlanningSongMatch |
 
 ## Implementation references and audit observations

@@ -1,14 +1,22 @@
 import { Box } from "../../types";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
-import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
-import LocalSourceStatus from "./LocalSourceStatus";
+import {
+  isUnavailableLocalVideoFile,
+  useLocalVideoFileUrl,
+} from "../../hooks/useLocalVideoFileUrl";
+import LocalSourceStatus, {
+  getUnavailableLocalVideoStatusProps,
+} from "./LocalSourceStatus";
+import type { LocalSourceStatusSize } from "./LocalSourceStatus";
 import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
 
 type MonitorBandBackgroundProps = {
   box?: Box;
   showLocalSourceStatus?: boolean;
   scaleFactor?: number;
+  statusSize?: LocalSourceStatusSize;
+  localVideoThumbnailUrl?: string;
 };
 
 /**
@@ -23,6 +31,8 @@ const MonitorBandBackground = ({
   box,
   showLocalSourceStatus = false,
   scaleFactor = 1,
+  statusSize = "canvas",
+  localVideoThumbnailUrl,
 }: MonitorBandBackgroundProps) => {
   const isVideoBg = box?.mediaInfo?.type === "video";
   // Video backgrounds show their still frame here; a playing video behind the
@@ -32,13 +42,24 @@ const MonitorBandBackground = ({
     : box?.background;
   const localImage = useLocalImageUrl(box?.mediaInfo?.localImage);
   const localVideo = useLocalVideoFileUrl(box?.mediaInfo?.localVideoFile);
-  const cachedImage = useCachedMediaUrl(rawImage);
-  const displayImage = localImage.isLocalImage
-    ? localImage.url ??
-      (localImage.status === "unavailable" && !isLocalMediaReferenceUrl(rawImage)
-        ? cachedImage
-        : undefined)
-    : cachedImage;
+  const unavailableLocalVideo = isUnavailableLocalVideoFile(localVideo);
+  const suppressUnavailableVideoStill =
+    unavailableLocalVideo && statusSize !== "thumbnail";
+  const cachedImage = useCachedMediaUrl(
+    suppressUnavailableVideoStill ? undefined : rawImage,
+  );
+  const displayImage =
+    suppressUnavailableVideoStill
+      ? undefined
+      : localVideoThumbnailUrl ||
+        (localImage.isLocalImage
+          ? localImage.url ??
+            ((localImage.status === "unavailable" ||
+              localImage.status === "loading") &&
+            !isLocalMediaReferenceUrl(rawImage)
+              ? cachedImage
+              : undefined)
+          : cachedImage);
   const unavailableImage =
     showLocalSourceStatus &&
     localImage.isLocalImage &&
@@ -47,12 +68,32 @@ const MonitorBandBackground = ({
   const unavailableVideo =
     showLocalSourceStatus &&
     isVideoBg &&
+    unavailableLocalVideo &&
+    (!box?.mediaInfo?.background ||
+      isLocalMediaReferenceUrl(box.mediaInfo.background));
+  const loadingImage =
+    showLocalSourceStatus &&
+    localImage.isLocalImage &&
+    localImage.status === "loading" &&
+    !displayImage;
+  const loadingVideo =
+    showLocalSourceStatus &&
+    isVideoBg &&
     localVideo.isLocalVideoFile &&
-    localVideo.status === "unavailable" &&
+    localVideo.status === "loading" &&
+    !displayImage &&
     (!box?.mediaInfo?.background ||
       isLocalMediaReferenceUrl(box.mediaInfo.background));
 
-  if (!displayImage && !unavailableImage && !unavailableVideo) return null;
+  if (
+    !displayImage &&
+    !unavailableImage &&
+    !unavailableVideo &&
+    !loadingImage &&
+    !loadingVideo
+  ) {
+    return null;
+  }
 
   // Negative z sits above the layout's black base but behind the bands, which
   // are in normal flow and would otherwise be painted over.
@@ -66,6 +107,11 @@ const MonitorBandBackground = ({
           aria-hidden
         >
           <img
+            data-testid={
+              localVideoThumbnailUrl
+                ? "monitor-band-video-thumbnail"
+                : undefined
+            }
             className="monitor-band-background h-full w-full absolute object-cover"
             src={displayImage}
             alt=""
@@ -79,17 +125,36 @@ const MonitorBandBackground = ({
           ownerLabel={localImage.isOwner ? undefined : box?.mediaInfo?.localImage?.ownerLabel}
           heading={localImage.isOwner ? "Local image unavailable" : undefined}
           detail={localImage.isOwner ? "Open this item on this device and choose Relink." : undefined}
-          size="canvas"
+          size={statusSize}
+          scaleFactor={scaleFactor}
+          className="pointer-events-none"
+        />
+      ) : loadingImage ? (
+        <LocalSourceStatus
+          sourceLabel={`Local image · ${box?.mediaInfo?.localImage?.fileName || "Background"}`}
+          heading="Loading local image"
+          state="loading"
+          size={statusSize}
+          scaleFactor={scaleFactor}
+          className="pointer-events-none"
+        />
+      ) : loadingVideo ? (
+        <LocalSourceStatus
+          sourceLabel={`Local video · ${box?.mediaInfo?.localVideoFile?.fileName || "Background"}`}
+          heading="Loading local video"
+          state="loading"
+          size={statusSize}
           scaleFactor={scaleFactor}
           className="pointer-events-none"
         />
       ) : unavailableVideo ? (
         <LocalSourceStatus
-          sourceLabel={`Local video · ${box?.mediaInfo?.localVideoFile?.fileName || "Background"}`}
-          ownerLabel={localVideo.isOwner ? undefined : box?.mediaInfo?.localVideoFile?.ownerLabel}
-          heading={localVideo.isOwner ? "Local video unavailable" : undefined}
-          detail={localVideo.isOwner ? "Open Media on this device and relink the file." : undefined}
-          size="canvas"
+          {...getUnavailableLocalVideoStatusProps(
+            box?.mediaInfo?.localVideoFile,
+            localVideo.isOwner,
+            box?.mediaInfo?.name,
+          )}
+          size={statusSize}
           scaleFactor={scaleFactor}
           className="pointer-events-none"
         />

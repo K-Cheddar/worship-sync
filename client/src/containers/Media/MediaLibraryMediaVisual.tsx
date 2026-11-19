@@ -74,15 +74,15 @@ const MediaLibraryMediaVisual = ({
         {mediaItem.localVideoInput ? (
           <span
             className="pointer-events-none absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 rounded bg-black/75 px-1.5 py-1 text-[10px] font-semibold text-white shadow"
-            title="Live video input"
-            aria-label="Live video input"
+            title={localVideoInputStatus ? "Unavailable on this device" : "Live video input"}
+            aria-label={localVideoInputStatus ? "Video input unavailable on this device" : "Live video input"}
           >
             {isMediaLibraryDesktopShare(mediaItem) ? (
               <MonitorUp className="size-3" aria-hidden />
             ) : (
               <Video className="size-3" aria-hidden />
             )}
-            Live input
+            {localVideoInputStatus ? "Unavailable" : "Live input"}
           </span>
         ) : null}
         {localVideoInputStatus ? (

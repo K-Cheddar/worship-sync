@@ -155,6 +155,7 @@ import {
 } from "../../context/thumbnailPreviewMode";
 import { useStaticThumbnailScaleFactor } from "./staticThumbnailGeometry";
 import { getControllerOutputs } from "../../utils/controllerProfiles";
+import { requestSelectedSlideNavigation } from "../../store/slideNavigationSlice";
 
 /** Keep capture warm while the display window takes over the stream. */
 const LOCAL_VIDEO_TRANSMIT_HANDOFF_MS = 5_000;
@@ -291,6 +292,9 @@ const ItemSlidesContent = () => {
     backgroundTargetRangeAnchorId,
     mobileBackgroundTargetSelectMode: mobileBgSelectModeRaw,
   } = useSelector((state: RootState) => state.undoable.present.item);
+  const selectedSlideScrollRequest = useSelector(
+    (state: RootState) => state.slideNavigation.selectedSlideScrollRequest,
+  );
 
   const dispatch = useDispatch();
 
@@ -751,9 +755,6 @@ const ItemSlidesContent = () => {
   slidesRef.current = slides;
   const itemIdentityRef = useRef(itemIdentity);
   itemIdentityRef.current = itemIdentity;
-  /** Changes only for intentional navigation, not structural slide updates. */
-  const [selectedSlideScrollRequest, setSelectedSlideScrollRequest] =
-    useState(0);
   const scrollAnimationFramesRef = useRef<number[]>([]);
   const scrollGenerationRef = useRef(0);
   const scrollAnchorSnapshotRef = useRef<{
@@ -1034,7 +1035,7 @@ const ItemSlidesContent = () => {
       const prevSelected = selectedSlideRef.current;
       if (!options?.presentationOnly) {
         dispatch(setSelectedSlide(index));
-        setSelectedSlideScrollRequest((request) => request + 1);
+        dispatch(requestSelectedSlideNavigation());
       }
       const slide = presentationSlides[index];
       if (slide?.mediaSource?.kind === "local-video-input") {

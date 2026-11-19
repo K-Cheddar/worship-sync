@@ -45,11 +45,29 @@ it("exposes Download Video only when the desktop caller provides the native acti
   expect(onDownloadVideo).toHaveBeenCalledTimes(1);
 });
 
-it("offers Link local video as a separate action when native linking is available", async () => {
+it("shows one Add files action and keeps the requested source order", async () => {
   const user = userEvent.setup();
-  const onLinkVideo = jest.fn();
-  render(<MemoryRouter><TransferProvider><MediaSourceAddMenu onLinkVideo={onLinkVideo} /></TransferProvider></MemoryRouter>);
+  const onDownloadVideo = jest.fn();
+  const onAddMedia = jest.fn();
+  const onAddVideoInput = jest.fn();
+  const onAddScreenShare = jest.fn();
+  const onImportFromCanva = jest.fn();
+  render(<MemoryRouter><TransferProvider><MediaSourceAddMenu
+    onDownloadVideo={onDownloadVideo}
+    onAddMedia={onAddMedia}
+    onAddVideoInput={onAddVideoInput}
+    onAddScreenShare={onAddScreenShare}
+    onImportFromCanva={onImportFromCanva}
+  /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Add media" }));
-  await user.click(screen.getByRole("menuitem", { name: "Link local video" }));
-  expect(onLinkVideo).toHaveBeenCalledTimes(1);
+  const items = screen.getAllByRole("menuitem");
+  expect(items.map((item) => item.textContent?.trim())).toEqual([
+    "Download Video",
+    "Add files",
+    "Add video input",
+    "Add screen or window",
+    "Import from Canva",
+  ]);
+  expect(screen.getByRole("menuitem", { name: "Add files" })).toBeInTheDocument();
+  expect(screen.queryByRole("menuitem", { name: /Link local video/i })).not.toBeInTheDocument();
 });

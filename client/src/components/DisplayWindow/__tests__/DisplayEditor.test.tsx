@@ -559,10 +559,14 @@ describe("DisplayEditor", () => {
         box={{ ...videoBox, words: "owner unavailable" }}
         width={960}
         index={0}
+        scaleFactor={0.25}
         showLocalSourceStatus
       />,
     );
     expect(screen.getByText("Local video · welcome.mp4")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toHaveStyle({
+      fontSize: "152px",
+    });
     expect(screen.getByText("Available on Streaming Computer")).toBeInTheDocument();
 
     mockLocalVideoResolution = {

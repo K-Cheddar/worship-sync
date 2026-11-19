@@ -505,14 +505,21 @@ jest.mock("../MediaUploadInput", () => {
     __esModule: true,
     default: ReactLib.forwardRef(
       (
-        _props: Record<string, never>,
+        props: Record<string, any>,
         ref: React.Ref<{ openModal: () => void; openModalWithFiles: (files: File[]) => void }>,
       ) => {
         ReactLib.useImperativeHandle(ref, () => ({
           openModal: mockOpenModal,
           openModalWithFiles: mockOpenModal,
         }));
-        return null;
+        return props.onLinkVideo ? (
+          <button
+            type="button"
+            onClick={() => void props.onLinkVideo(new File(["video"], "sermon.mp4", { type: "video/mp4" }), "sermon.mp4")}
+          >
+            test-link-selected-video
+          </button>
+        ) : null;
       },
     ),
   };
@@ -3301,23 +3308,25 @@ describe("Media", () => {
     }
   });
 
-  it("does not add a native linked selection to the church activated while its picker was open", async () => {
+  it("does not add a selected linked video to the church activated while it is being checked", async () => {
     let selected!: (value: { assetId: string } | undefined) => void;
-    const linkLocalVideoFile = jest.fn(() => new Promise((resolve) => { selected = resolve; }));
+    const linkSelectedLocalVideoFile = jest.fn(() => new Promise((resolve) => { selected = resolve; }));
     const deleteLocalAsset = jest.fn(async () => true);
-    Object.defineProperty(window, "electronAPI", { configurable: true, value: { linkLocalVideoFile, deleteLocalAsset } });
+    Object.defineProperty(window, "electronAPI", { configurable: true, value: { linkSelectedLocalVideoFile, deleteLocalAsset } });
     const create = jest.spyOn(localMediaImport, "createLocalMediaFromLinkedVideo");
     globalFireDbInfo.churchId = "church-1";
     try {
       await renderMedia();
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: "Add media" }));
-      await user.click(screen.getByRole("menuitem", { name: "Link local video" }));
-      expect(screen.getByText(/choose a video file to link/i)).toHaveAttribute("role", "status");
+      await user.click(screen.getByRole("menuitem", { name: "Add files" }));
+      expect(mockOpenModal).toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "test-link-selected-video" }));
+      expect(screen.getByText(/checking video file/i)).toHaveAttribute("role", "status");
       globalFireDbInfo.churchId = "church-2";
       await act(async () => { selected({ assetId: "unadopted-native-selection" }); });
       await waitFor(() => expect(deleteLocalAsset).toHaveBeenCalledWith("unadopted-native-selection"));
-      expect(screen.queryByText(/choose a video file to link/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/checking video file/i)).not.toBeInTheDocument();
       expect(create).not.toHaveBeenCalled();
       expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ payload: expect.objectContaining({ id: "unadopted-native-selection" }) }));
     } finally {
@@ -3326,7 +3335,88 @@ describe("Media", () => {
     }
   });
 
-  it("shows linking progress through validation and confirmed Media Library persistence", async () => {
+  it("finishes a confirmed linked-video operation against its original library after route unmount", async () => {
+    let selected!: (value: any) => void;
+    const asset = {
+      assetId: "linked-video-after-unmount",
+      kind: "video",
+      storageMode: "linked",
+      fileName: "sermon.mp4",
+      contentType: "video/mp4",
+      size: 100,
+      contentHash: "a".repeat(64),
+      createdAt: "2026-11-17T12:00:00.000Z",
+      updatedAt: "2026-11-17T12:00:00.000Z",
+      url: "worshipsync-media://asset/linked-video-after-unmount",
+    };
+    const media = {
+      ...makeBaseState().media.list[0],
+      id: asset.assetId,
+      publicId: asset.assetId,
+      name: "sermon.mp4",
+      type: "video",
+      localVideoFile: {
+        id: asset.assetId,
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: asset.fileName,
+        contentType: asset.contentType,
+        storagePolicy: "local-only",
+        storageMode: "linked",
+      },
+    } as any;
+    const persistence = deferred<{ ok: true }>();
+    const linkSelectedLocalVideoFile = jest.fn(() => new Promise((resolve) => { selected = resolve; }));
+    const deleteLocalAsset = jest.fn(async () => true);
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { linkSelectedLocalVideoFile, deleteLocalAsset },
+    });
+    const mediaImportSpy = jest.spyOn(localMediaImport, "createLocalMediaFromLinkedVideo")
+      .mockResolvedValue(media);
+    mockLoadMediaLibrary.mockResolvedValue({ list: [media], folders: [] });
+    mockFlushMediaLibraryDocToPouch.mockReturnValueOnce(persistence.promise);
+    const originalDb = { name: "church-1" } as unknown as PouchDB.Database;
+    mockDispatch.mockImplementation((action: any) => {
+      if (action?.type === "media/addItemToMediaList") {
+        mockState = { ...mockState, media: { ...mockState.media, list: [...mockState.media.list, action.payload] } };
+      }
+      return action;
+    });
+    globalFireDbInfo.churchId = "church-1";
+    try {
+      const { view } = await renderMedia({ dbOverride: originalDb as unknown as Record<string, unknown> });
+      setGlobalContentDatabase(originalDb, { databaseKey: "link-unmount", churchId: "church-1" });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "Add media" }));
+      await user.click(screen.getByRole("menuitem", { name: "Add files" }));
+      await user.click(screen.getByRole("button", { name: "test-link-selected-video" }));
+      view.unmount();
+
+      await act(async () => { selected(asset); });
+      await waitFor(() => expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledWith(
+        originalDb,
+        expect.arrayContaining([expect.objectContaining({ id: asset.assetId })]),
+        expect.any(Array),
+        expect.any(Function),
+        expect.any(Object),
+        expect.objectContaining({ canPersist: expect.any(Function) }),
+      ));
+      await act(async () => { persistence.resolve({ ok: true }); });
+
+      await waitFor(() => expect(mockLoadMediaLibrary).toHaveBeenCalledWith(originalDb));
+      expect(deleteLocalAsset).not.toHaveBeenCalled();
+      expect(mockShowToast).not.toHaveBeenCalledWith(expect.anything(), "success");
+    } finally {
+      setGlobalContentDatabase(undefined);
+      globalFireDbInfo.churchId = "church-1";
+      mockDispatch.mockReset();
+      mediaImportSpy.mockRestore();
+      delete (window as { electronAPI?: unknown }).electronAPI;
+    }
+  });
+
+  it("shows linking progress through validation and confirmed Media Library persistence from Add files", async () => {
     let selected!: (value: any) => void;
     const asset = {
       assetId: "linked-video-progress",
@@ -3357,10 +3447,10 @@ describe("Media", () => {
     } as any;
     const validation = deferred<typeof media>();
     const persistence = deferred<{ ok: true }>();
-    const linkLocalVideoFile = jest.fn(() => new Promise((resolve) => { selected = resolve; }));
+    const linkSelectedLocalVideoFile = jest.fn(() => new Promise((resolve) => { selected = resolve; }));
     Object.defineProperty(window, "electronAPI", {
       configurable: true,
-      value: { linkLocalVideoFile, deleteLocalAsset: jest.fn(async () => true) },
+      value: { linkSelectedLocalVideoFile, deleteLocalAsset: jest.fn(async () => true) },
     });
     const mediaImportSpy = jest.spyOn(localMediaImport, "createLocalMediaFromLinkedVideo")
       .mockReturnValue(validation.promise as never);
@@ -3378,13 +3468,14 @@ describe("Media", () => {
       setGlobalContentDatabase(originalDb, { databaseKey: "link-progress", churchId: "church-1" });
       const user = userEvent.setup();
       await user.click(screen.getByRole("button", { name: "Add media" }));
-      await user.click(screen.getByRole("menuitem", { name: "Link local video" }));
-      expect(screen.getByText(/choose a video file to link/i)).toHaveAttribute("role", "status");
+      await user.click(screen.getByRole("menuitem", { name: "Add files" }));
+      await user.click(screen.getByRole("button", { name: "test-link-selected-video" }));
+      expect(linkSelectedLocalVideoFile).toHaveBeenCalledWith("church-1", expect.any(File));
       await act(async () => { selected(asset); });
-      expect(await screen.findByText(/validating video file/i)).toHaveAttribute("aria-busy", "true");
+      expect(await screen.findByText(/validating playback/i)).toHaveAttribute("aria-busy", "true");
 
       await act(async () => { validation.resolve(media); });
-      expect(await screen.findByText(/saving video to the media library/i)).toHaveAttribute("aria-busy", "true");
+      expect(await screen.findByText(/completing media library registration/i)).toHaveAttribute("aria-busy", "true");
       expect(mockFlushMediaLibraryDocToPouch).toHaveBeenCalledWith(
         originalDb,
         expect.arrayContaining([expect.objectContaining({ id: asset.assetId })]),
@@ -3394,8 +3485,8 @@ describe("Media", () => {
         expect.objectContaining({ canPersist: expect.any(Function) }),
       );
       await act(async () => { persistence.resolve({ ok: true }); });
-      await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith("Video linked to the Media Library.", "success"));
-      expect(screen.queryByText(/saving video to the media library/i)).not.toBeInTheDocument();
+      await waitFor(() => expect(mockShowToast).toHaveBeenCalledWith("Video added to the Media Library.", "success"));
+      expect(screen.queryByText(/completing media library registration/i)).not.toBeInTheDocument();
     } finally {
       setGlobalContentDatabase(undefined);
       globalFireDbInfo.churchId = "church-1";

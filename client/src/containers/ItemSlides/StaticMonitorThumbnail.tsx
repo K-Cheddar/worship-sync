@@ -14,6 +14,7 @@ import MonitorDisplayBox from "../../components/DisplayWindow/MonitorDisplayBox"
 import VerseDisplay from "../../components/DisplayWindow/VerseDisplay";
 import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
 import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 
 type StaticMonitorThumbnailProps = {
   slide: ItemSlideType;
@@ -56,6 +57,12 @@ const StaticMonitorThumbnail = ({
     slide.mediaSource?.kind === "local-video-input"
       ? slide.mediaSource
       : undefined,
+  );
+  const localVideoThumbnail = useLocalVideoFileUrl(
+    showNextSlide && settings.showBackground
+      ? monitorSlide.boxes[0]?.mediaInfo?.localVideoFile
+      : undefined,
+    "thumbnail",
   );
   const contentHeight = showClockTimer
     ? REFERENCE_HEIGHT - MONITOR_BAND_CLOCK_TIMER_PX
@@ -161,6 +168,8 @@ const StaticMonitorThumbnail = ({
                 box={monitorSlide.boxes[0]}
                 showLocalSourceStatus
                 scaleFactor={scaleFactor}
+                statusSize="thumbnail"
+                localVideoThumbnailUrl={localVideoThumbnail.url}
               />
             ) : null}
             <div
@@ -248,6 +257,8 @@ const StaticMonitorThumbnail = ({
                     index={index}
                     showLocalSourceStatus={settings.showBackground}
                     statusScaleFactor={scaleFactor}
+                    localSourceStatusSize="thumbnail"
+                    allowLocalVideoThumbnailGeneration
                     timerInfo={timerInfo}
                     paintBackground={
                       !(localVideoInputThumbnailUrl && index === 0)
@@ -265,7 +276,7 @@ const StaticMonitorThumbnail = ({
           {...localVideoInputStatus}
           {...(localVideoInputThumbnailUrl
             ? { variant: "indicator" as const }
-            : { size: "preview" as const })}
+            : { size: "thumbnail" as const, scaleFactor: 1 })}
         />
       ) : null}
     </div>

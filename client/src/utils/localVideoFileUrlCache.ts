@@ -1,5 +1,6 @@
 import {
   getLocalVideoFile,
+  getLocalVideoFileThumbnail,
   getOrCreateLocalVideoFileThumbnail,
   subscribeLocalVideoFileChanges,
 } from "./localVideoFileAssets";
@@ -17,8 +18,18 @@ const cache = new Map<string, CacheEntry>();
 const thumbnailCache = new Map<string, CacheEntry>();
 const RELEASE_GRACE_MS = 10_000;
 
-const cacheKey = (assetId: string, contentRevision?: string) =>
-  JSON.stringify([assetId, contentRevision || "legacy"]);
+const cacheKey = (
+  assetId: string,
+  contentRevision?: string,
+  allowThumbnailGeneration?: boolean,
+) =>
+  JSON.stringify([
+    assetId,
+    contentRevision || "legacy",
+    ...(allowThumbnailGeneration === undefined
+      ? []
+      : [allowThumbnailGeneration]),
+  ]);
 
 const createEntry = (assetId: string): CacheEntry => {
   const entry: CacheEntry = {
@@ -63,7 +74,10 @@ const dispose = (
   if (entry.url && entry.shouldRevoke) URL.revokeObjectURL(entry.url);
 };
 
-const createThumbnailEntry = (assetId: string): CacheEntry => {
+const createThumbnailEntry = (
+  assetId: string,
+  allowGeneration: boolean,
+): CacheEntry => {
   const entry: CacheEntry = {
     promise: Promise.resolve(undefined),
     references: 0,
@@ -71,7 +85,9 @@ const createThumbnailEntry = (assetId: string): CacheEntry => {
     disposed: false,
   };
   entry.promise = (async () => {
-    const stored = await getOrCreateLocalVideoFileThumbnail(assetId);
+    const stored = allowGeneration
+      ? await getOrCreateLocalVideoFileThumbnail(assetId)
+      : await getLocalVideoFileThumbnail(assetId);
     if (!stored?.blob) return undefined;
     const url = URL.createObjectURL(stored.blob);
     if (entry.disposed) {
@@ -89,8 +105,9 @@ const acquireFromCache = (
   assetId: string,
   contentRevision: string | undefined,
   create: (assetId: string) => CacheEntry,
+  allowThumbnailGeneration?: boolean,
 ) => {
-  const key = cacheKey(assetId, contentRevision);
+  const key = cacheKey(assetId, contentRevision, allowThumbnailGeneration);
   let entry = store.get(key);
   if (!entry) {
     entry = create(assetId);
@@ -125,12 +142,14 @@ export const acquireLocalVideoFileUrl = (
 export const acquireLocalVideoFileThumbnailUrl = (
   assetId: string,
   contentRevision?: string,
+  allowGeneration = true,
 ) =>
   acquireFromCache(
     thumbnailCache,
     assetId,
     contentRevision,
-    createThumbnailEntry,
+    (id) => createThumbnailEntry(id, allowGeneration),
+    allowGeneration,
   );
 
 export const peekLocalVideoFileUrl = (
@@ -141,7 +160,9 @@ export const peekLocalVideoFileUrl = (
 export const peekLocalVideoFileThumbnailUrl = (
   assetId: string,
   contentRevision?: string,
-) => thumbnailCache.get(cacheKey(assetId, contentRevision))?.url;
+  allowGeneration = true,
+) =>
+  thumbnailCache.get(cacheKey(assetId, contentRevision, allowGeneration))?.url;
 
 const invalidateCache = (
   store: Map<string, CacheEntry>,

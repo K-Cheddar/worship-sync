@@ -57,6 +57,7 @@ import { bibleSlice } from "./bibleSlice";
 import { isMonitorShowingTimerCountdownSlide } from "../utils/monitorTimerPresentation";
 import { itemListSlice } from "./itemListSlice";
 import { itemLibraryUiSlice } from "./itemLibraryUiSlice";
+import { slideNavigationSlice } from "./slideNavigationSlice";
 import { createItemSlice } from "./createItemSlice";
 import { preferencesSlice } from "./preferencesSlice";
 import { itemListsSlice } from "./itemListsSlice";
@@ -69,7 +70,7 @@ import {
   globalBroadcastRef,
 } from "../context/controllerInfo";
 import { globalFireDbInfo, globalHostId } from "../context/globalInfo";
-import { ref, set, get, runTransaction, update } from "firebase/database";
+import { ref, set, runTransaction, update } from "firebase/database";
 import {
   BibleDisplayInfo,
   BoardPostStreamInfo,
@@ -279,10 +280,11 @@ const cleanObject = (obj: Object) =>
   JSON.parse(JSON.stringify(obj, (_, val) => (val === undefined ? null : val)));
 
 const writePendingTimersToStorageAndFirebase = async (
-  state: RootState,
   scope: { db: typeof globalFireDbInfo.db; churchId: string | undefined; canWriteTimers: boolean },
+  getLatestState: () => RootState,
 ): Promise<boolean> => {
-  const { timers, shouldUpdateTimers } = state.timers;
+  const latestState = getLatestState();
+  const { timers, shouldUpdateTimers } = latestState.timers;
   if (!shouldUpdateTimers) return false;
 
   const ownTimers = timers.filter((timer) => timer.hostId === globalHostId);
@@ -307,11 +309,35 @@ const writePendingTimersToStorageAndFirebase = async (
   );
 
   try {
-    const snapshot = await get(timersRef);
-    const currentTimers = Array.isArray(snapshot.val()) ? snapshot.val() : [];
-    const mergedTimers = mergeTimers(currentTimers, ownTimers, globalHostId);
-
-    await Promise.resolve(set(timersRef, cleanObject(mergedTimers)));
+    let invalidData = false;
+    let authorizationLost = false;
+    let latestTimerState: RootState["timers"] | undefined;
+    const transaction = await runTransaction(timersRef, (remoteValue: unknown) => {
+      if (
+        globalFireDbInfo.db !== scope.db ||
+        globalFireDbInfo.churchId !== scope.churchId ||
+        globalFireDbInfo.writeCapabilities?.timers !== true
+      ) {
+        authorizationLost = true;
+        return undefined;
+      }
+      const currentState = getLatestState();
+      if (!currentState.timers.shouldUpdateTimers) return undefined;
+      if (remoteValue != null && !Array.isArray(remoteValue)) {
+        invalidData = true;
+        return undefined;
+      }
+      latestTimerState = currentState.timers;
+      const currentTimers = (remoteValue ?? []) as TimerInfo[];
+      const currentOwnTimers = currentState.timers.timers.filter(
+        (timer) => timer.hostId === globalHostId,
+      );
+      return cleanObject(mergeTimers(currentTimers, currentOwnTimers, globalHostId));
+    }, { applyLocally: false });
+    if (invalidData) throw new Error("Shared timer data is invalid.");
+    if (authorizationLost) throw new Error("The timer sync session or permission changed before the write committed.");
+    if (!transaction.committed) return false;
+    if (!latestTimerState || getLatestState().timers !== latestTimerState) return false;
   } catch (error) {
     logFirebaseOperationFailure("timer_sync", timersRef.toString(), error, {
       churchId: scope.churchId,
@@ -920,6 +946,7 @@ const excludedActions: string[] = [
   itemSlice.actions.setSectionLoading.toString(),
   itemSlice.actions.setItemFormatting.toString(),
   itemSlice.actions.setSelectedSlide.toString(),
+  slideNavigationSlice.actions.requestSelectedSlideNavigation.toString(),
   itemSlice.actions.setIsLyricsEditorOpen.toString(),
   itemSlice.actions.setHasPendingUpdate.toString(),
   itemSlice.actions.setRemoteUpdateReason.toString(),
@@ -3510,13 +3537,20 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     if (globalFireDbInfo.churchId !== churchScope.churchId) return;
+    const timerStateAtWrite = (listenerApi.getState() as RootState).timers.timers;
 
     const didWriteRemote = await writePendingTimersToStorageAndFirebase(
-      listenerApi.getState() as RootState,
       churchScope,
+      () => listenerApi.getState() as RootState,
     );
 
-    if (didWriteRemote && globalFireDbInfo.churchId === churchScope.churchId) {
+    if (
+      didWriteRemote &&
+      globalFireDbInfo.db === churchScope.db &&
+      globalFireDbInfo.churchId === churchScope.churchId &&
+      (listenerApi.getState() as RootState).timers.timers ===
+        timerStateAtWrite
+    ) {
       listenerApi.dispatch(timersSlice.actions.setShouldUpdateTimers(false));
     }
   },
@@ -5629,6 +5663,7 @@ const combinedReducers = combineReducers({
   presentation: presentationSlice.reducer,
   bible: bibleSlice.reducer,
   itemLibraryUi: itemLibraryUiSlice.reducer,
+  slideNavigation: slideNavigationSlice.reducer,
   createItem: createItemSlice.reducer,
   allDocs: allDocsSlice.reducer,
   timers: timersSlice.reducer,
@@ -6109,6 +6144,7 @@ const itemOwnerTransitionMiddleware: Middleware = (api) => (next) => (action: an
 
   if (
     itemSlice.actions.setSelectedSlide.match(action) ||
+    slideNavigationSlice.actions.requestSelectedSlideNavigation.match(action) ||
     itemSlice.actions._setSelectedArrangement.match(action) ||
     action.type === "@@redux-undo/UNDO" ||
     action.type === "@@redux-undo/REDO" ||

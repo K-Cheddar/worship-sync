@@ -140,13 +140,14 @@ const ItemSlide = ({
       ? localVideoInputThumbnail.thumbnail
       : undefined
   );
+  const localVideoInputStatus = getLocalVideoInputPreviewStatus(
+    slide.mediaSource?.kind === "local-video-input"
+      ? slide.mediaSource
+      : undefined,
+  );
   const localVideoInputPreviewUnavailable = localVideoThumbnailUrl
     ? undefined
-    : getLocalVideoInputPreviewStatus(
-        slide.mediaSource?.kind === "local-video-input"
-          ? slide.mediaSource
-          : undefined,
-      );
+    : localVideoInputStatus;
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
       state.undoable.present.item.backgroundTargetSlideIds ?? EMPTY_SLIDE_IDS,
@@ -460,6 +461,8 @@ const ItemSlide = ({
           <LocalVideoInputSlideBadge
             label={slide.mediaSource.label}
             captureKind={slide.mediaSource.captureKind}
+            unavailable={Boolean(localVideoInputStatus)}
+            ownerLabel={localVideoInputStatus?.ownerLabel}
             variant={
               localVideoThumbnailUrl || localVideoInputPreviewUnavailable
                 ? "indicator"

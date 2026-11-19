@@ -28,7 +28,9 @@ import DisplayParticipantOverlay from "./DisplayParticipantOverlay";
 import DisplayStbOverlay from "./DisplayStbOverlay";
 import DisplayQrCodeOverlay from "./DisplayQrCodeOverlay";
 import DisplayEditor, { DisplayEditorChangeInfo } from "./DisplayEditor";
-import LocalSourceStatus from "./LocalSourceStatus";
+import LocalSourceStatus, {
+  getUnavailableLocalVideoStatusProps,
+} from "./LocalSourceStatus";
 import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
 import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
@@ -61,7 +63,10 @@ import {
   logVideoCue,
 } from "../../utils/videoBackgroundPlayback";
 import LocalVideoInputLayer from "./LocalVideoInputLayer";
-import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import {
+  isUnavailableLocalVideoFile,
+  useLocalVideoFileUrl,
+} from "../../hooks/useLocalVideoFileUrl";
 import DisplayBoxTransitionStage, {
   type DisplayBoxTransitionSnapshot,
   type LaneMediaPlaybackOptions,
@@ -1243,16 +1248,22 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     // Determine the active background video (if any) from boxes
     const { videoBox, rawDesiredVideoUrl } = useMemo(() => {
-      if (!shouldPlayVideo || !showBackground)
+      // Stream keeps slide backgrounds transparent, but still resolves a
+      // selected local-file video so an unavailable source can blank its item
+      // layer without affecting the separate overlay lane.
+      if (!shouldPlayVideo || (!showBackground && !isStream))
         return { videoBox: undefined, rawDesiredVideoUrl: undefined };
       const videoBox = boxes.find(
-        (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background,
+        (b) =>
+          b.mediaInfo?.type === "video" &&
+          b.mediaInfo?.background &&
+          (showBackground || b.mediaInfo.localVideoFile),
       );
       return {
         videoBox,
         rawDesiredVideoUrl: videoBox?.mediaInfo?.background,
       };
-    }, [boxes, showBackground, shouldPlayVideo]);
+    }, [boxes, isStream, showBackground, shouldPlayVideo]);
     const videoMediaKey = useMemo(
       () => getVideoBackgroundMediaKey(videoBox?.mediaInfo),
       [videoBox?.mediaInfo],
@@ -1291,6 +1302,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const localVideoFile = useLocalVideoFileUrl(
       videoBox?.mediaInfo?.localVideoFile,
     );
+    const unavailableLocalVideo =
+      isUnavailableLocalVideoFile(localVideoFile);
     const isCloudPlaybackPending = Boolean(
       videoBox?.mediaInfo?.localVideoFile?.preferCloudPlayback &&
         !videoBox.mediaInfo.localVideoFile.cloudUrl,
@@ -1876,6 +1889,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                   pointerEvents: showStreamItemContent ? "auto" : "none",
                 }}
               >
+                {unavailableLocalVideo ? (
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 bg-black"
+                    data-testid="unavailable-local-video-black-screen"
+                  />
+                ) : null}
                 {currentStreamTextLayer}
                 {prevStreamTextLayer}
                 <DisplayStreamBible
@@ -2035,18 +2055,16 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           {isStream &&
           localSourceStatusEnabled &&
           !overlayPreviewMode &&
-          showBackground &&
           localVideoContentVisible &&
-          localVideoFile.isLocalVideoFile &&
-          localVideoFile.status === "unavailable" ? (
+          unavailableLocalVideo ? (
             <LocalSourceStatus
-              sourceLabel={`Local video · ${videoBox?.mediaInfo?.localVideoFile?.fileName || "Background"}`}
-              ownerLabel={localVideoFile.isOwner ? undefined : videoBox?.mediaInfo?.localVideoFile?.ownerLabel}
-              heading={localVideoFile.isOwner ? "Local video unavailable" : undefined}
-              detail={localVideoFile.isOwner ? "Open Media on this device and relink the file." : undefined}
+              {...getUnavailableLocalVideoStatusProps(
+                videoBox?.mediaInfo?.localVideoFile,
+                localVideoFile.isOwner,
+                videoBox?.mediaInfo?.name,
+              )}
               size="canvas"
               scaleFactor={scaleFactor}
-              transparentBackground
               testId="preview-local-video-file-status"
             />
           ) : null}

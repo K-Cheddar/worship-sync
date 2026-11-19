@@ -6,6 +6,7 @@ import { PresentationControllerModeProvider } from "../../context/presentationCo
 import { ThumbnailPreviewModeProvider } from "../../context/thumbnailPreviewMode";
 import { ToastContext } from "../../context/toastContext";
 import * as localVideoCapturePool from "../../utils/localVideoCapturePool";
+import { requestSelectedSlideNavigation, slideNavigationSlice } from "../../store/slideNavigationSlice";
 
 const mockDispatch: jest.Mock = jest.fn((action) => {
   if (typeof action === "function") return action(mockDispatch, () => ({
@@ -317,6 +318,7 @@ describe("ItemSlides", () => {
     });
 
     mockState = {
+      slideNavigation: { selectedSlideScrollRequest: 0 },
       undoable: {
         present: {
           item: {
@@ -821,6 +823,12 @@ describe("ItemSlides", () => {
       if (action?.type === "item/setSelectedSlide") {
         mockState.undoable.present.item.selectedSlide = action.payload;
       }
+      if (action?.type === "slideNavigation/requestSelectedSlideNavigation") {
+        mockState.slideNavigation = slideNavigationSlice.reducer(
+          mockState.slideNavigation,
+          action,
+        );
+      }
       return action;
     });
 
@@ -939,12 +947,16 @@ describe("ItemSlides", () => {
       if (action?.type === "item/setSelectedSlide") {
         mockState.undoable.present.item.selectedSlide = action.payload;
       }
+      if (action?.type === "slideNavigation/requestSelectedSlideNavigation") {
+        mockState.slideNavigation = slideNavigationSlice.reducer(mockState.slideNavigation, action);
+      }
       return action;
     });
-    renderAncestorItemSlides();
+    const view = renderAncestorItemSlides();
     mockKeepElementInView.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: "Second slide" }));
+    view.rerender(ancestorItemSlidesTree());
 
     expect(mockKeepElementInView).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -956,6 +968,7 @@ describe("ItemSlides", () => {
 
     mockKeepElementInView.mockClear();
     fireEvent.keyDown(window, { key: " " });
+    view.rerender(ancestorItemSlidesTree());
 
     expect(mockState.undoable.present.item.selectedSlide).toBe(2);
     expect(mockKeepElementInView).toHaveBeenCalledWith(
@@ -988,6 +1001,31 @@ describe("ItemSlides", () => {
     expect(mockKeepElementInView).toHaveBeenCalledWith(
       expect.objectContaining({
         child: expect.objectContaining({ id: "item-slide-1" }),
+      }),
+    );
+  });
+
+  it("reveals a slide selected by external controller navigation", () => {
+    setFreeSlides([
+      { id: "slide-1", name: "First slide" },
+      { id: "slide-2", name: "Second slide" },
+      { id: "slide-3", name: "Third slide" },
+    ]);
+    const view = renderAncestorItemSlides();
+    mockKeepElementInView.mockClear();
+
+    mockState.undoable.present.item.selectedSlide = 2;
+    mockState.slideNavigation = slideNavigationSlice.reducer(
+      mockState.slideNavigation,
+      requestSelectedSlideNavigation(),
+    );
+    view.rerender(ancestorItemSlidesTree());
+
+    expect(mockKeepElementInView).toHaveBeenCalledWith(
+      expect.objectContaining({
+        child: expect.objectContaining({ id: "item-slide-2" }),
+        parent: expect.objectContaining({ id: "item-slides-container" }),
+        shouldScrollToCenter: true,
       }),
     );
   });

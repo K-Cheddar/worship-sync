@@ -151,6 +151,98 @@ describe("native video downloader IPC authorization", () => {
     expect(unauthorizedSelect).not.toHaveBeenCalled();
   });
 
+  it("links the File selected in Add files through the authorized controller and local asset store", async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const ipcMain = {
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        handlers.set(channel, handler),
+    } as unknown as IpcMain;
+    const selectedPath = "C:\\Users\\Operator\\Videos\\welcome.mp4";
+    const linkFile = jest.fn(async (input: {
+      assetId: string;
+      workspaceId: string;
+      kind: "video";
+      sourcePath: string;
+      fileName: string;
+      contentType: string;
+    }) => ({
+      assetId: input.assetId,
+      workspaceId: input.workspaceId,
+      kind: input.kind,
+      fileName: input.fileName,
+      contentType: input.contentType,
+      size: 100,
+      contentHash: "a".repeat(64),
+      storageMode: "linked" as const,
+      createdAt: "2026-11-05T12:00:00.000Z",
+      updatedAt: "2026-11-05T12:00:00.000Z",
+    }));
+    const selectVideoFile = jest.fn(async () => undefined);
+    const assertControllerSender = jest.fn();
+    registerVideoDownloaderIpc({
+      ipcMain,
+      assertControllerSender,
+      getDownloader: () => null,
+      getLocalAssetStore: () => ({ linkFile }) as never,
+      getPreferencesStore: () => null,
+      selectVideoFile,
+      selectVideoDirectory: jest.fn(async () => undefined),
+      isDirectoryAvailable: jest.fn(async () => false),
+    });
+    const event = { sender: { id: 1 } } as unknown as IpcMainInvokeEvent;
+
+    const linked = (await handlers.get("link-selected-local-video-file")!(event, {
+      workspaceId: "church-1",
+      sourcePath: selectedPath,
+    })) as { assetId: string; storageMode: string; url: string };
+
+    expect(assertControllerSender).toHaveBeenCalledWith(event.sender);
+    expect(selectVideoFile).not.toHaveBeenCalled();
+    expect(linkFile).toHaveBeenCalledWith(expect.objectContaining({
+      workspaceId: "church-1",
+      kind: "video",
+      sourcePath: selectedPath,
+      fileName: "welcome.mp4",
+      contentType: "video/mp4",
+    }));
+    expect(linked).toMatchObject({ storageMode: "linked" });
+    expect(linked.url).toContain(linked.assetId);
+  });
+
+  it("rejects unsupported selected files and unauthorized File selections", async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>();
+    const ipcMain = {
+      handle: (channel: string, handler: (...args: unknown[]) => unknown) =>
+        handlers.set(channel, handler),
+    } as unknown as IpcMain;
+    const linkFile = jest.fn();
+    const selectVideoFile = jest.fn(async () => undefined);
+    registerVideoDownloaderIpc({
+      ipcMain,
+      assertControllerSender: (sender) => {
+        if (sender.id !== 1) throw new Error("controller only");
+      },
+      getDownloader: () => null,
+      getLocalAssetStore: () => ({ linkFile }) as never,
+      getPreferencesStore: () => null,
+      selectVideoFile,
+      selectVideoDirectory: jest.fn(async () => undefined),
+      isDirectoryAvailable: jest.fn(async () => false),
+    });
+    const event = { sender: { id: 1 } } as unknown as IpcMainInvokeEvent;
+
+    await expect(handlers.get("link-selected-local-video-file")!(event, {
+      workspaceId: "church-1",
+      sourcePath: "C:\\Users\\Operator\\Videos\\notes.txt",
+    })).rejects.toThrow("supported video");
+    await expect(handlers.get("link-selected-local-video-file")!(
+      { sender: { id: 2 } } as unknown as IpcMainInvokeEvent,
+      { workspaceId: "church-1", sourcePath: "C:\\Users\\Operator\\Videos\\welcome.mp4" },
+    )).rejects.toThrow("controller only");
+    expect(linkFile).not.toHaveBeenCalled();
+    expect(selectVideoFile).not.toHaveBeenCalled();
+  });
+
   it("streams a registered video by asset id and rejects renderer-supplied paths", async () => {
     const handlers = new Map<string, (...args: unknown[]) => unknown>();
     const ipcMain = {

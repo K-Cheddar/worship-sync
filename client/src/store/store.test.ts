@@ -7157,8 +7157,11 @@ describe("store module", () => {
   it("keeps timer writes pending while Firebase is unavailable and flushes them after reconnect", async () => {
     let storeModule: any;
     let timersSliceModule: any;
-    const setMock = jest.fn();
-    const getMock = jest.fn(() => Promise.resolve({ val: () => [] }));
+    let transactionValue: unknown;
+    const runTransactionMock = jest.fn(async (_ref: unknown, update: (current: unknown) => unknown) => {
+      transactionValue = update([]);
+      return { committed: true, snapshot: { val: () => transactionValue } };
+    });
     const refMock = jest.fn((_db: unknown, path: string) => path);
     const globalFireDbInfo = {
       db: undefined as unknown,
@@ -7178,8 +7181,7 @@ describe("store module", () => {
       }));
       jest.doMock("firebase/database", () => ({
         ref: refMock,
-        set: setMock,
-        get: getMock,
+        runTransaction: runTransactionMock,
       }));
 
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -7210,7 +7212,7 @@ describe("store module", () => {
     await waitForListenerDelay();
 
     expect(localStorage.getItem("timerInfo")).toContain("timer-1");
-    expect(setMock).not.toHaveBeenCalled();
+    expect(runTransactionMock).not.toHaveBeenCalled();
     expect(store.getState().timers.shouldUpdateTimers).toBe(true);
 
     globalFireDbInfo.db = "firebase-db";
@@ -7221,13 +7223,13 @@ describe("store module", () => {
       "firebase-db",
       "churches/church-main/data/timers",
     );
-    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
-      expect.objectContaining({
-        id: "timer-1",
-        hostId: "host-123",
-        status: "running",
-        time: 100,
-      }),
+    expect(runTransactionMock).toHaveBeenCalledWith(
+      "churches/church-main/data/timers",
+      expect.any(Function),
+      { applyLocally: false },
+    );
+    expect(transactionValue).toEqual([
+      expect.objectContaining({ id: "timer-1", hostId: "host-123", status: "running", time: 100 }),
     ]);
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
   });
@@ -7249,12 +7251,11 @@ describe("store module", () => {
       showMinutesOnly: false,
       time: 200,
     };
-    const setMock = jest.fn();
-    const getMock = jest.fn(() =>
-      Promise.resolve({
-        val: () => [remoteTimer],
-      }),
-    );
+    let transactionValue: unknown;
+    const runTransactionMock = jest.fn(async (_ref: unknown, update: (current: unknown) => unknown) => {
+      transactionValue = update([remoteTimer]);
+      return { committed: true, snapshot: { val: () => transactionValue } };
+    });
     const refMock = jest.fn((_db: unknown, path: string) => path);
     const globalFireDbInfo = {
       db: undefined as unknown,
@@ -7274,8 +7275,7 @@ describe("store module", () => {
       }));
       jest.doMock("firebase/database", () => ({
         ref: refMock,
-        set: setMock,
-        get: getMock,
+        runTransaction: runTransactionMock,
       }));
 
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -7309,7 +7309,7 @@ describe("store module", () => {
     store.dispatch(timersSlice.actions.flushPendingTimerWrites());
     await waitForListenerDelay();
 
-    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
+    expect(transactionValue).toEqual([
       expect.objectContaining({
         id: "timer-1",
         hostId: "remote-host",
@@ -7320,13 +7320,72 @@ describe("store module", () => {
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
   });
 
+  it("recomputes timer merges after a Firebase transaction retries with concurrent changes", async () => {
+    let storeModule: any;
+    let timersSliceModule: any;
+    const remoteBefore = [
+      { id: "remote-edit", hostId: "remote-host", name: "Original", time: 20 },
+    ];
+    const remoteAfter = [
+      { id: "remote-edit", hostId: "remote-host", name: "Edited elsewhere", time: 21 },
+      { id: "remote-created", hostId: "other-host", name: "New timer", time: 1 },
+    ];
+    let committedValue: unknown;
+    const runTransactionMock = jest.fn(async (_ref: unknown, update: (current: unknown) => unknown) => {
+      const firstAttempt = update(remoteBefore);
+      expect(firstAttempt).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "remote-edit", name: "Original" }),
+      ]));
+      committedValue = update(remoteAfter);
+      return { committed: true, snapshot: { val: () => committedValue } };
+    });
+    const refMock = jest.fn((_db: unknown, path: string) => path);
+    const globalFireDbInfo = {
+      db: "firebase-db",
+      database: "main",
+      churchId: "church-main",
+      writeCapabilities: { presentation: true, timers: true, serviceRuntime: true, serviceManagement: true },
+    };
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({ globalDb: undefined, globalBroadcastRef: undefined }));
+      jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo, globalHostId: "host-123" }));
+      jest.doMock("firebase/database", () => ({ ref: refMock, runTransaction: runTransactionMock }));
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+    });
+
+    const store = storeModule.default;
+    const { timersSlice } = timersSliceModule;
+    store.dispatch(timersSlice.actions.addTimer({
+      id: "local-timer",
+      hostId: "host-123",
+      name: "Local timer",
+      timerType: "timer",
+      status: "stopped",
+      isActive: false,
+      countdownTime: "00:05",
+      duration: 5,
+      remainingTime: 5,
+      showMinutesOnly: false,
+      time: 30,
+    }));
+    await waitForListenerDelay();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(committedValue).toEqual([
+      ...remoteAfter,
+      expect.objectContaining({ id: "local-timer", hostId: "host-123" }),
+    ]);
+    expect(store.getState().timers.shouldUpdateTimers).toBe(false);
+  });
+
   it("removes this host's last timer from localStorage and Firebase", async () => {
     let storeModule: any;
     let timersSliceModule: any;
-    const setMock = jest.fn();
-    const getMock = jest.fn(() =>
-      Promise.resolve({
-        val: () => [
+    const initialRemoteTimers = [
           {
             id: "timer-1",
             hostId: "host-123",
@@ -7353,9 +7412,12 @@ describe("store module", () => {
             endTime: new Date(0).toISOString(),
             showMinutesOnly: false,
           },
-        ],
-      }),
-    );
+        ];
+    let transactionValue: unknown;
+    const runTransactionMock = jest.fn(async (_ref: unknown, update: (current: unknown) => unknown) => {
+      transactionValue = update(initialRemoteTimers);
+      return { committed: true, snapshot: { val: () => transactionValue } };
+    });
     const refMock = jest.fn((_db: unknown, path: string) => path);
     const removeItemSpy = jest.spyOn(Storage.prototype, "removeItem");
 
@@ -7375,8 +7437,7 @@ describe("store module", () => {
       }));
       jest.doMock("firebase/database", () => ({
         ref: refMock,
-        set: setMock,
-        get: getMock,
+        runTransaction: runTransactionMock,
       }));
 
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -7424,12 +7485,11 @@ describe("store module", () => {
     await waitForListenerDelay();
 
     expect(removeItemSpy).toHaveBeenCalledWith("timerInfo");
-    expect(getMock).toHaveBeenCalled();
     expect(refMock).toHaveBeenCalledWith(
       "firebase-db",
       "churches/church-main/data/timers",
     );
-    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
+    expect(transactionValue).toEqual([
       expect.objectContaining({
         id: "timer-2",
         hostId: "remote-host",

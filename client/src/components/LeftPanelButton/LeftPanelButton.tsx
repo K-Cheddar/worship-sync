@@ -197,11 +197,12 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
             />
           )}
           {!thumbnailSrc && localThumbnailStatus ? (
-            <LocalSourceStatus
-              {...localThumbnailStatus}
-              variant="indicator"
-              className="!static !max-w-none"
-            />
+            <div
+              data-testid="local-thumbnail-placeholder"
+              className="relative aspect-video w-12 max-w-[20%] shrink-0 overflow-hidden rounded bg-black"
+            >
+              <LocalSourceStatus {...localThumbnailStatus} variant="thumbnail" />
+            </div>
           ) : null}
           {isActive && (
             <span className="shrink-0 rounded-lg bg-black/55 px-2 py-1 text-xs font-semibold tabular-nums text-white">

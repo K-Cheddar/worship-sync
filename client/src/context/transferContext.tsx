@@ -9,7 +9,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { Activity, Minus } from "lucide-react";
+import { Activity, Minus, X } from "lucide-react";
 import Button from "../components/Button/Button";
 import Modal from "../components/Modal/Modal";
 import { TransferProgress } from "../components/TransferProgress/TransferProgress";
@@ -18,6 +18,10 @@ import { formatCanvaImportError } from "../utils/canvaImportError";
 import { getActivitySummary, getMediaTransferOverview, getTransferOverview, type Transfer } from "./transferModel";
 import { uploadChurchResource } from "../api/auth";
 import type { ChurchResource } from "../types/churchResource";
+import type PouchDB from "pouchdb-browser";
+import { ControllerInfoContext } from "./controllerInfo";
+import { globalFireDbInfo, GlobalInfoContext } from "./globalInfo";
+import { getContentDatabaseSessionToken } from "../utils/contentReplicationActivity";
 
 type CanvaStatus = "queued" | "exporting" | "processing" | "finalizing" | "completed" | "partial" | "failed" | "cancelled";
 type CanvaPageState = {
@@ -127,8 +131,24 @@ type TransferContextValue = {
   enqueueMediaDeletion: (job: MediaDeletionQueueJob) => MediaDeletionQueueControl | null;
 };
 
+export type DeletionSessionIdentity = {
+  db: PouchDB.Database | undefined;
+  database: string;
+  churchId: string;
+  userId: string;
+  sessionKind: string | null;
+  loginState: string;
+  access: string;
+  firebaseDb: typeof globalFireDbInfo.db;
+  firebaseChurchId: string;
+  canWriteTimers: boolean;
+  contentSessionToken: symbol | null;
+};
+
 type TransferActionsValue = Omit<TransferContextValue, "transfers" | "isMinimized" | "minimizeTransfers" | "restoreTransfers" | "registerActivityHost"> & {
   getTransfer: (id: string) => Transfer | undefined;
+  getCurrentDeletionSessionIdentity: () => DeletionSessionIdentity;
+  updateDeletionSessionIdentity: (identity: Pick<DeletionSessionIdentity, "db" | "contentSessionToken">) => void;
 };
 
 const TransferContext = createContext<TransferContextValue | null>(null);
@@ -233,27 +253,44 @@ const TransferPanel = ({ transfers, isMinimized, hasLocalActivityHost, onMinimiz
   runTransferAction: TransferContextValue["runTransferAction"];
 }) => {
   const [confirmation, setConfirmation] = useState<{ transfer: Transfer; action: NonNullable<Transfer["actions"]>[number] } | null>(null);
+  const [isDismissingActivity, setIsDismissingActivity] = useState(false);
   const summary = getActivitySummary(transfers);
   if (!transfers.length) return null;
+  const hasPendingActivityAction = transfers.some((transfer) => transfer.actions?.some((action) => action.pending));
+  const canDismissActivity = summary.activeCount === 0 && !hasPendingActivityAction;
   const showFallback = isMinimized && !hasLocalActivityHost;
+  const dismissActivity = async () => {
+    if (isDismissingActivity) return;
+    setIsDismissingActivity(true);
+    try {
+      await Promise.allSettled(transfers.map((transfer) => runTransferAction(transfer.id, "dismiss")));
+    } finally {
+      setIsDismissingActivity(false);
+    }
+  };
   return (
     <>
       {showFallback ? <button type="button" aria-label={`Show ${summary.label}`} data-testid="global-activity-fallback" onClick={onRestore} className="fixed bottom-4 right-4 z-[80] flex cursor-pointer items-center gap-2 rounded-lg border border-gray-600 bg-gray-900 px-3 py-2 text-sm font-semibold text-white shadow-2xl shadow-black/50 transition-colors duration-150 hover:bg-gray-800 motion-reduce:transition-none"><Activity size={16} aria-hidden data-testid="activity-icon" className={activityAccentClass(summary.accent)} />{summary.label}</button> : null}
       <aside aria-label="Activity" aria-hidden={isMinimized || undefined} data-testid="activity-panel" className={`fixed bottom-4 right-4 z-[80] origin-bottom-right transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-lg border border-gray-600 bg-gray-900 text-white shadow-2xl ${isMinimized ? "pointer-events-none scale-95 opacity-0" : "scale-100 opacity-100"}`}>
         <div className="flex items-center justify-between border-b border-gray-700 px-3 py-2">
           <h2 className="flex items-center gap-2 text-sm font-semibold"><Activity size={16} aria-hidden data-testid="activity-icon" className={activityAccentClass(summary.accent)} />{summary.label}</h2>
-          <Button variant="tertiary" svg={Minus} title="Minimize activity" aria-label="Minimize activity" onClick={onMinimize} />
+          {canDismissActivity
+            ? <Button variant="tertiary" svg={X} title={isDismissingActivity ? "Dismissing activity" : "Dismiss activity"} aria-label={isDismissingActivity ? "Dismissing activity" : "Dismiss activity"} aria-busy={isDismissingActivity} disabled={isDismissingActivity} onClick={() => void dismissActivity()} />
+            : <Button variant="tertiary" svg={Minus} title="Minimize activity" aria-label="Minimize activity" onClick={onMinimize} />}
         </div>
         <ul className="max-h-[min(60vh,28rem)] space-y-2 overflow-y-auto p-2">
-          {transfers.map((transfer) => <li key={transfer.id} className="rounded-md bg-gray-800 p-3">
-            <TransferProgress transfer={transfer} variant="card" onResultAction={(key) => void runTransferAction(transfer.id, key)} />
-            {transfer.actions?.length ? <div className="mt-2 flex flex-wrap gap-2">
-              {transfer.actions.map((action) => <Button key={action.key} variant="tertiary" disabled={action.pending} onClick={() => {
-                if (action.confirmation) setConfirmation({ transfer, action });
-                else void runTransferAction(transfer.id, action.key);
-              }}>{action.label}</Button>)}
-            </div> : null}
-          </li>)}
+          {transfers.map((transfer) => {
+            const actions = transfer.actions?.filter((action) => !canDismissActivity || action.key !== "dismiss");
+            return <li key={transfer.id} className="rounded-md bg-gray-800 p-3">
+              <TransferProgress transfer={transfer} variant="card" onResultAction={(key) => void runTransferAction(transfer.id, key)} />
+              {actions?.length ? <div className="mt-2 flex flex-wrap gap-2">
+                {actions.map((action) => <Button key={action.key} variant="tertiary" disabled={action.pending} onClick={() => {
+                  if (action.confirmation) setConfirmation({ transfer, action });
+                  else void runTransferAction(transfer.id, action.key);
+                }}>{action.label}</Button>)}
+              </div> : null}
+            </li>;
+          })}
         </ul>
       </aside>
       <Modal isOpen={Boolean(confirmation) && !isMinimized} onClose={() => setConfirmation(null)} title={confirmation?.action.confirmation?.title || "Confirm activity action"} description={confirmation?.action.confirmation?.description} size="sm">
@@ -289,6 +326,56 @@ const TransferTaskbarProgress = ({ transfers }: { transfers: Transfer[] }) => {
 };
 
 export const TransferProvider = ({ children }: { children: ReactNode }) => {
+  const controllerInfo = useContext(ControllerInfoContext);
+  const globalInfo = useContext(GlobalInfoContext);
+  const deletionSessionIdentityRef = useRef<DeletionSessionIdentity>({
+    db: undefined,
+    database: "",
+    churchId: "",
+    userId: "",
+    sessionKind: null,
+    loginState: "idle",
+    access: "none",
+    firebaseDb: undefined,
+    firebaseChurchId: "",
+    canWriteTimers: false,
+    contentSessionToken: null,
+  });
+  const databaseName = globalInfo?.database ?? "";
+  const currentDeletionIdentity = deletionSessionIdentityRef.current;
+  deletionSessionIdentityRef.current = {
+    db: controllerInfo ? controllerInfo.db : currentDeletionIdentity.db,
+    database: databaseName,
+    churchId: globalInfo?.churchId ?? "",
+    userId: globalInfo?.userId ?? "",
+    sessionKind: globalInfo?.sessionKind ?? null,
+    loginState: globalInfo?.loginState ?? "idle",
+    access: globalInfo?.access ?? "none",
+    firebaseDb: globalFireDbInfo.db,
+    firebaseChurchId: globalFireDbInfo.churchId,
+    canWriteTimers: globalFireDbInfo.writeCapabilities.timers,
+    contentSessionToken: controllerInfo
+      ? controllerInfo.db ? getContentDatabaseSessionToken(controllerInfo.db.name) : null
+      : currentDeletionIdentity.contentSessionToken,
+  };
+  const getCurrentDeletionSessionIdentity = useCallback(
+    () => ({
+      ...deletionSessionIdentityRef.current,
+      firebaseDb: globalFireDbInfo.db,
+      firebaseChurchId: globalFireDbInfo.churchId,
+      canWriteTimers: globalFireDbInfo.writeCapabilities.timers,
+    }),
+    [],
+  );
+  const updateDeletionSessionIdentity = useCallback(
+    (identity: Pick<DeletionSessionIdentity, "db" | "contentSessionToken">) => {
+      deletionSessionIdentityRef.current = {
+        ...deletionSessionIdentityRef.current,
+        ...identity,
+      };
+    },
+    [],
+  );
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const transfersRef = useRef(transfers);
   transfersRef.current = transfers;
@@ -735,7 +822,7 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => () => actionHandlers.current.clear(), []);
 
   useEffect(() => {
-    const active = transfers.some((item) => item.blocksUnload && (item.status === "queued" || item.status === "active"));
+    const active = transfers.some((item) => item.blocksUnload);
     if (!active) return;
     const onBeforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
     window.addEventListener("beforeunload", onBeforeUnload);
@@ -762,7 +849,9 @@ export const TransferProvider = ({ children }: { children: ReactNode }) => {
     runTransferAction,
     enqueueMediaDeletion,
     getTransfer: (id: string) => transfersRef.current.find((transfer) => transfer.id === id),
-  }), [startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction, enqueueMediaDeletion]);
+    getCurrentDeletionSessionIdentity,
+    updateDeletionSessionIdentity,
+  }), [startCanvaTransfer, startResourceUpload, registerResourceUploadListener, updateTransfer, removeTransfer, registerTransferAction, runTransferAction, enqueueMediaDeletion, getCurrentDeletionSessionIdentity, updateDeletionSessionIdentity]);
   return <TransferActionsContext.Provider value={actionValue}><TransferContext.Provider value={value}>{children}<TransferTaskbarProgress transfers={transfers} /><TransferPanel transfers={transfers} isMinimized={isMinimized} hasLocalActivityHost={activityHostCount > 0} onMinimize={minimizeTransfers} onRestore={restoreTransfers} runTransferAction={runTransferAction} /></TransferContext.Provider></TransferActionsContext.Provider>;
 };
 

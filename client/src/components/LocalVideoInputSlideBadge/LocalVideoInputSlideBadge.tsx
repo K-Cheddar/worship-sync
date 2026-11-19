@@ -22,6 +22,9 @@ type LocalVideoInputSlideBadgeProps = {
   className?: string;
   /** Larger icon/copy for the editor stage; compact for thumbnails. */
   size?: "sm" | "md";
+  /** The source cannot be previewed on this device. */
+  unavailable?: boolean;
+  ownerLabel?: string;
 };
 
 /**
@@ -36,11 +39,17 @@ const LocalVideoInputSlideBadge = ({
   coverTitleBar = false,
   className,
   size = "sm",
+  unavailable = false,
+  ownerLabel,
 }: LocalVideoInputSlideBadgeProps) => {
   const kindLabel = getLocalVideoInputKindLabel(captureKind);
   const trimmedLabel = label.trim() || kindLabel;
   const isMd = size === "md";
-  const ariaLabel = `${kindLabel}: ${trimmedLabel}`;
+  const ariaLabel = [
+    `${kindLabel}: ${trimmedLabel}`,
+    unavailable ? "Unavailable on this device" : undefined,
+    ownerLabel && `Available on ${ownerLabel}`,
+  ].filter(Boolean).join(" · ");
   const Icon = isDesktopCaptureKind(captureKind) ? MonitorUp : Video;
 
   if (variant === "banner") {
@@ -64,7 +73,9 @@ const LocalVideoInputSlideBadge = ({
           )}
           title={trimmedLabel}
         >
-          <span className="font-semibold text-white/80">{kindLabel}:</span>{" "}
+          <span className="font-semibold text-white/80">
+            {unavailable ? `Unavailable · ${kindLabel}` : kindLabel}:
+          </span>{" "}
           {trimmedLabel}
         </span>
       </div>
@@ -84,7 +95,9 @@ const LocalVideoInputSlideBadge = ({
       >
         <Icon className="size-3.5 shrink-0" aria-hidden />
         <span className="truncate text-[10px] font-medium">
-          Live input · {trimmedLabel}
+          {unavailable
+            ? `Unavailable · ${kindLabel} · ${trimmedLabel}`
+            : `Live input · ${trimmedLabel}`}
         </span>
       </div>
     );
@@ -112,6 +125,11 @@ const LocalVideoInputSlideBadge = ({
       >
         {kindLabel}
       </span>
+      {unavailable ? (
+        <span className="rounded bg-black/70 px-2 py-0.5 text-[10px] font-semibold">
+          Unavailable here
+        </span>
+      ) : null}
       <span
         className={cn(
           "max-w-[90%] truncate font-medium",

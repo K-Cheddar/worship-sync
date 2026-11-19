@@ -280,7 +280,9 @@ describe("MediaLibraryGridMediaTile", () => {
       "src",
       "blob:thumbnail-1",
     );
-    expect(screen.getByLabelText("Live video input")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Video input unavailable on this device"),
+    ).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Unavailable");
   });
 

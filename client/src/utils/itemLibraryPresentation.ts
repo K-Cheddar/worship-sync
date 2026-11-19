@@ -8,6 +8,15 @@ export type ItemLibraryAuditDisplay = {
   updatedBy: string;
 };
 
+/** Map displayed result objects back to their first index in the unsorted source list. */
+export const getItemLibrarySourceIndices = <T,>(items: readonly T[]): ReadonlyMap<T, number> => {
+  const indices = new Map<T, number>();
+  items.forEach((item, index) => {
+    if (!indices.has(item)) indices.set(item, index);
+  });
+  return indices;
+};
+
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 const isoDatePattern = /^(\d{4})-(\d{2})-(\d{2})(?:T.*)?$/;
 const localDateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });

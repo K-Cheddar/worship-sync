@@ -103,6 +103,8 @@ const LaneFullFrameMedia = ({
   const localVideoThumbnail = useLocalVideoFileUrl(
     fileVideoBox?.mediaInfo?.localVideoFile,
     "thumbnail",
+    0,
+    false,
   );
   const fallbackSrc =
     localVideoThumbnail.url ||

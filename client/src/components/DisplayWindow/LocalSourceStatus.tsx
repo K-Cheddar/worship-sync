@@ -1,5 +1,22 @@
 import { CircleAlert, LoaderCircle } from "lucide-react";
 
+export type LocalSourceStatusSize = "compact" | "thumbnail" | "preview" | "canvas";
+
+export const getUnavailableLocalVideoStatusProps = (
+  reference: { fileName?: string; ownerLabel?: string } | undefined,
+  isOwner: boolean,
+  title?: string,
+) => ({
+  sourceLabel: `Local video · ${reference?.fileName || title || "Background"}`,
+  ownerLabel: isOwner ? undefined : reference?.ownerLabel,
+  heading: isOwner
+    ? "Local video unavailable"
+    : "Local video unavailable on this device",
+  detail: isOwner
+    ? "Open Media on this device and relink the file."
+    : "Source is local to another device",
+});
+
 type LocalSourceStatusProps = {
   sourceLabel: string;
   ownerLabel?: string;
@@ -7,9 +24,9 @@ type LocalSourceStatusProps = {
   detail?: string;
   transparentBackground?: boolean;
   state?: "loading" | "unavailable";
-  /** `canvas` compensates for the fixed 1920x1080 surface's parent scale. */
-  size?: "compact" | "preview" | "canvas";
-  variant?: "overlay" | "indicator";
+  /** `canvas` and `thumbnail` compensate for the fixed surface's parent scale. */
+  size?: LocalSourceStatusSize;
+  variant?: "overlay" | "indicator" | "thumbnail";
   indicatorLabel?: string;
   scaleFactor?: number;
   className?: string;
@@ -18,8 +35,11 @@ type LocalSourceStatusProps = {
 
 const BASE_SIZES = {
   compact: { gap: 5, padding: 8, icon: 18, heading: 14, source: 12, detail: 11 },
+  // This version is rendered within the scaled 1920x1080 thumbnail canvas.
+  // Its content is scaled back up, but remains short enough to fit a tile.
+  thumbnail: { gap: 3, padding: 5, icon: 18, heading: 14, source: 11, detail: 10 },
   preview: { gap: 10, padding: 20, icon: 28, heading: 22, source: 15, detail: 14 },
-  canvas: { gap: 12, padding: 28, icon: 40, heading: 30, source: 18, detail: 16 },
+  canvas: { gap: 10, padding: 20, icon: 44, heading: 38, source: 22, detail: 18 },
 } as const;
 
 /** Shared operator status for local media and capture sources that cannot preview here. */
@@ -38,7 +58,10 @@ const LocalSourceStatus = ({
   testId,
 }: LocalSourceStatusProps) => {
   const sizing = BASE_SIZES[size];
-  const scale = size === "canvas" ? Math.max(scaleFactor, 0.02) : 1;
+  const scale =
+    size === "canvas" || size === "thumbnail"
+      ? Math.max(scaleFactor, 0.02)
+      : 1;
   const StatusIcon = state === "loading" ? LoaderCircle : CircleAlert;
   const sourceParts = sourceLabel.split(" · ");
   const sourceName = sourceParts[sourceParts.length - 1];
@@ -69,6 +92,29 @@ const LocalSourceStatus = ({
         />
         <span className="truncate text-[10px] font-semibold">
           {state === "loading" ? "Loading preview" : indicatorLabel}
+        </span>
+      </div>
+    );
+  }
+
+  if (variant === "thumbnail") {
+    const label = [resolvedHeading, safeSourceLabel, ownerLabel && `Available on ${ownerLabel}`, detail]
+      .filter(Boolean)
+      .join(" · ");
+    return (
+      <div
+        className={`pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-0.5 overflow-hidden rounded bg-black/85 px-1 text-white shadow ${className}`}
+        role="status"
+        aria-label={label}
+        title={label}
+        data-local-source-status-size="thumbnail-indicator"
+      >
+        <StatusIcon
+          aria-hidden
+          className={`size-3.5 shrink-0 text-neutral-200 ${state === "loading" ? "animate-spin" : ""}`}
+        />
+        <span className="max-w-full truncate text-[9px] font-semibold leading-tight">
+          {state === "loading" ? "Loading" : indicatorLabel}
         </span>
       </div>
     );

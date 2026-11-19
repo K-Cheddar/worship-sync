@@ -290,6 +290,7 @@ export interface ElectronAPI {
   getLocalAsset: (assetId: string) => Promise<ElectronLocalAsset | undefined>;
   deleteLocalAsset: (assetId: string) => Promise<boolean>;
   linkLocalVideoFile: (workspaceId: string) => Promise<ElectronLocalAsset | undefined>;
+  linkSelectedLocalVideoFile: (workspaceId: string, file: File) => Promise<ElectronLocalAsset>;
   notifyLocalVideoAssetChanged: (assetId: string, contentHash: string) => Promise<boolean>;
   onLocalVideoAssetChanged: (callback: (assetId: string) => void) => () => void;
   getLocalVideoRelinkStatus: (assetId: string, candidateId: string) => Promise<{ status: "pending" | "committed" | "superseded" | "missing"; asset?: ElectronLocalAsset }>;

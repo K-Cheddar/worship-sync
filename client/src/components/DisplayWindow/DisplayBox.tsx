@@ -23,8 +23,14 @@ import {
   useResolvedCachedMediaUrl,
 } from "../../hooks/useCachedMediaUrl";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
-import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
-import LocalSourceStatus from "./LocalSourceStatus";
+import {
+  isUnavailableLocalVideoFile,
+  useLocalVideoFileUrl,
+} from "../../hooks/useLocalVideoFileUrl";
+import LocalSourceStatus, {
+  getUnavailableLocalVideoStatusProps,
+} from "./LocalSourceStatus";
+import type { LocalSourceStatusSize } from "./LocalSourceStatus";
 import { shouldSkipDisplayTextAnimation } from "./utils";
 import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
 
@@ -115,6 +121,9 @@ type DisplayBoxProps = {
   showLocalSourceStatus?: boolean;
   /** Scale of the fixed reference canvas, used to keep status text readable. */
   statusScaleFactor?: number;
+  localSourceStatusSize?: LocalSourceStatusSize;
+  /** Static controller previews may backfill; live output only reads a saved still. */
+  allowLocalVideoThumbnailGeneration?: boolean;
 };
 
 const DisplayBox = ({
@@ -139,6 +148,8 @@ const DisplayBox = ({
   paintForeground = true,
   showLocalSourceStatus = false,
   statusScaleFactor = 1,
+  localSourceStatusSize = "canvas",
+  allowLocalVideoThumbnailGeneration = false,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline | null>(null);
@@ -149,6 +160,8 @@ const DisplayBox = ({
   // the raw form never matches, so the placeholder stayed painted at full
   // opacity over a video that was playing fine underneath it.
   const localVideoDisplay = useLocalVideoFileUrl(box.mediaInfo?.localVideoFile);
+  const unavailableLocalVideo =
+    isVideoBg && isUnavailableLocalVideoFile(localVideoDisplay);
   const resolvedVideoUrl = localVideoDisplay.isLocalVideoFile
     ? localVideoDisplay.url
     : videoUrl;
@@ -169,13 +182,19 @@ const DisplayBox = ({
   const localVideoThumbnail = useLocalVideoFileUrl(
     box.mediaInfo?.localVideoFile,
     "thumbnail",
+    0,
+    allowLocalVideoThumbnailGeneration,
   );
   const prevLocalVideoThumbnail = useLocalVideoFileUrl(
     prevBox?.mediaInfo?.localVideoFile,
     "thumbnail",
+    0,
+    allowLocalVideoThumbnailGeneration,
   );
   const videoPlaceholderImage =
-    localVideoThumbnail.url || box.mediaInfo?.placeholderImage;
+    unavailableLocalVideo && localSourceStatusSize !== "thumbnail"
+      ? undefined
+      : localVideoThumbnail.url || box.mediaInfo?.placeholderImage;
   const rawImage = isVideoBg ? videoPlaceholderImage : background;
   const localImage = useLocalImageUrl(box.mediaInfo?.localImage);
   const shouldShowBackground = Boolean(
@@ -383,6 +402,7 @@ const DisplayBox = ({
     !shouldShowBackground ||
     shouldImageBeHidden ||
     localImage.status === "unavailable" ||
+    unavailableLocalVideo ||
     Boolean(displayImage && isImageReadyToPaint);
 
   useEffect(() => {
@@ -580,6 +600,13 @@ const DisplayBox = ({
             src={previousDisplayImage}
           />
         )}
+      {shouldShowBackground && unavailableLocalVideo && !showLocalSourceStatus ? (
+        <div
+          aria-hidden
+          className="absolute inset-0 bg-black"
+          data-testid="unavailable-local-video-black-screen"
+        />
+      ) : null}
       {shouldShowBackground &&
         (localImage.isLocalImage &&
         localImage.status === "unavailable" &&
@@ -588,7 +615,7 @@ const DisplayBox = ({
             <div style={{ opacity: initialBackgroundOpacity }}>
               <LocalSourceStatus
                 sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
-                size="canvas"
+                size={localSourceStatusSize}
                 scaleFactor={statusScaleFactor}
                 ownerLabel={
                   localImage.isOwner
@@ -616,13 +643,18 @@ const DisplayBox = ({
               sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
               heading="Loading local image"
               state="loading"
-              size="canvas"
+              size={localSourceStatusSize}
               scaleFactor={statusScaleFactor}
             />
           ) : null
         ) : displayImage ? (
           <img
             ref={backgroundImageRef}
+            data-testid={
+              box.mediaInfo?.localVideoFile
+                ? "display-box-local-video-thumbnail"
+                : undefined
+            }
             className={cn(
               "display-box-background h-full w-full absolute",
               box.shouldKeepAspectRatio && "object-contain",
@@ -646,25 +678,30 @@ const DisplayBox = ({
       showBackground &&
       box.mediaInfo?.localVideoFile &&
       localVideoDisplay.isLocalVideoFile &&
-      localVideoDisplay.status === "unavailable" &&
+      localVideoDisplay.status === "loading" &&
       (!videoUrl || isLocalMediaReferenceUrl(videoUrl)) ? (
         <LocalSourceStatus
           sourceLabel={`Local video · ${box.mediaInfo.localVideoFile.fileName || "Background"}`}
-          size="canvas"
+          heading="Loading local video"
+          state="loading"
+          size={localSourceStatusSize}
           scaleFactor={statusScaleFactor}
-          ownerLabel={
-            localVideoDisplay.isOwner
-              ? undefined
-              : box.mediaInfo.localVideoFile.ownerLabel
-          }
-          heading={
-            localVideoDisplay.isOwner ? "Local video unavailable" : undefined
-          }
-          detail={
-            localVideoDisplay.isOwner
-              ? "Open Media on this device and relink the file."
-              : undefined
-          }
+        />
+      ) : null}
+      {showLocalSourceStatus &&
+      isVideoBg &&
+      showBackground &&
+      box.mediaInfo?.localVideoFile &&
+      unavailableLocalVideo &&
+      (!videoUrl || isLocalMediaReferenceUrl(videoUrl)) ? (
+        <LocalSourceStatus
+          {...getUnavailableLocalVideoStatusProps(
+            box.mediaInfo.localVideoFile,
+            localVideoDisplay.isOwner,
+            box.mediaInfo.name,
+          )}
+          size={localSourceStatusSize}
+          scaleFactor={statusScaleFactor}
         />
       ) : null}
       {paintForeground ? (

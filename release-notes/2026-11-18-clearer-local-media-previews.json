@@ -1,0 +1,7 @@
+{
+  "id": "clearer-local-media-previews",
+  "date": "2026-11-18",
+  "type": "fixed",
+  "title": "Clearer local media previews",
+  "description": "Local videos show saved stills in previews. When a live output device cannot access a file, its display shows black and controller previews identify the unavailable source."
+}

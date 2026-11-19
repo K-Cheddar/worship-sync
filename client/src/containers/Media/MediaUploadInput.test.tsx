@@ -1,5 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { useRef } from "react";
 import { MemoryRouter } from "react-router-dom";
+import userEvent from "@testing-library/user-event";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import MediaUploadInput from "./MediaUploadInput";
@@ -19,6 +21,7 @@ import type { MuxUploadResult } from "./MediaUploadInput.types";
 import { convertCloudinaryImageToLocalWebp } from "./utils/cloudinaryUpload";
 import { TransferProvider } from "../../context/transferContext";
 import { MediaAddControl } from "./MediaAddControl";
+import { MediaSourceAddMenu } from "./MediaSourceAddMenu";
 import { deleteChurchMuxAsset } from "../../api/providerStorage";
 import { deleteLocalImage } from "../../utils/localImageAssets";
 import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
@@ -60,6 +63,7 @@ jest.mock("./utils/fileUtils", () => ({
 }));
 
 jest.mock("./localMediaImport", () => ({
+  ...jest.requireActual("./localMediaImport"),
   createLocalMediaFromFile: jest.fn(),
 }));
 
@@ -153,6 +157,7 @@ const renderUploadInput = (
   onLocalMediaAdded = jest.fn(),
   extra?: { isGuestSession?: boolean },
   onUploadComplete?: () => void,
+  onLinkVideo?: (file: File, displayName: string) => void | Promise<void>,
 ) =>
   render(
     <TransferProvider>
@@ -165,6 +170,7 @@ const renderUploadInput = (
           <MediaUploadInput
             onLocalMediaAdded={onLocalMediaAdded}
             onUploadComplete={onUploadComplete}
+            onLinkVideo={onLinkVideo}
           />
         </GlobalInfoContext.Provider>
       </ControllerInfoContext.Provider>
@@ -233,6 +239,156 @@ describe("MediaUploadInput", () => {
     });
     expect(onLocalMediaAdded).toHaveBeenCalled();
     await waitFor(() => expect(onUploadComplete).toHaveBeenCalledTimes(1));
+  });
+
+  it("defaults to Copy in Electron and uses the existing managed import flow", async () => {
+    mockDetectFileType.mockReturnValue("video");
+    const linkSelectedLocalVideoFile = jest.fn();
+    (window as any).electronAPI.linkSelectedLocalVideoFile = linkSelectedLocalVideoFile;
+    const onLocalMediaAdded = jest.fn();
+    const onLinkVideo = jest.fn();
+    renderUploadInput(onLocalMediaAdded, undefined, undefined, onLinkVideo);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    const file = new File(["video"], "clip.mp4", { type: "video/mp4" });
+    fireEvent.change(screen.getByLabelText(/Media Files/i), { target: { files: [file] } });
+    expect(screen.getByRole("radio", { name: /Copy into WorshipSync \(recommended\)/i })).toBeChecked();
+    expect(screen.getByText(/Keep a copy in WorshipSync so the video remains available/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("switch", { name: /Upload to cloud/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Add (1 file)" }));
+    await waitFor(() => expect(mockedCreateLocalMedia).toHaveBeenCalledWith(
+      file,
+      "church-1",
+      "local-only",
+      { allowCloudPlaybackFallback: false },
+    ));
+    expect(onLinkVideo).not.toHaveBeenCalled();
+    expect(linkSelectedLocalVideoFile).not.toHaveBeenCalled();
+    expect(onLocalMediaAdded).toHaveBeenCalled();
+  });
+
+  it("routes a selected video through the existing linked-video handler without a second picker", async () => {
+    mockDetectFileType.mockReturnValue("video");
+    const linkSelectedLocalVideoFile = jest.fn();
+    (window as any).electronAPI.linkSelectedLocalVideoFile = linkSelectedLocalVideoFile;
+    const onLinkVideo = jest.fn().mockResolvedValue(undefined);
+    const onLocalMediaAdded = jest.fn();
+    renderUploadInput(onLocalMediaAdded, undefined, undefined, onLinkVideo);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    const file = new File(["video"], "clip.mp4", { type: "video/mp4" });
+    fireEvent.change(screen.getByLabelText(/Media Files/i), { target: { files: [file] } });
+    fireEvent.click(screen.getByRole("radio", { name: /Link to original file/i }));
+    expect(localStorage.getItem("worshipsync_local_video_import_method")).toBe("link");
+    fireEvent.click(screen.getByRole("button", { name: "Link video" }));
+
+    await waitFor(() => expect(onLinkVideo).toHaveBeenCalledWith(file, "clip.mp4"));
+    expect(mockedCreateLocalMedia).not.toHaveBeenCalled();
+    expect(onLocalMediaAdded).not.toHaveBeenCalled();
+    expect(linkSelectedLocalVideoFile).not.toHaveBeenCalled();
+  });
+
+  it("keeps image imports managed when one video in a mixed selection is linked", async () => {
+    mockDetectFileType.mockImplementation((file) => file.type.startsWith("video/") ? "video" : "image");
+    (window as any).electronAPI.linkSelectedLocalVideoFile = jest.fn();
+    const onLinkVideo = jest.fn().mockResolvedValue(undefined);
+    const onLocalMediaAdded = jest.fn();
+    renderUploadInput(onLocalMediaAdded, undefined, undefined, onLinkVideo);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    const image = new File(["image"], "slide.png", { type: "image/png" });
+    const video = new File(["video"], "clip.mp4", { type: "video/mp4" });
+    fireEvent.change(screen.getByLabelText(/Media Files/i), { target: { files: [image, video] } });
+    fireEvent.click(screen.getByRole("radio", { name: /Link to original file/i }));
+    fireEvent.click(screen.getByRole("switch", { name: /Upload images to cloud/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Add 1 image and link video" }));
+
+    await waitFor(() => expect(onLinkVideo).toHaveBeenCalledWith(video, "clip.mp4"));
+    await waitFor(() => expect(mockedCreateLocalMedia).toHaveBeenCalledTimes(1));
+    expect(mockedCreateLocalMedia).toHaveBeenCalledWith(image, "church-1", "local-only", {
+      allowCloudPlaybackFallback: false,
+    });
+    expect(onLocalMediaAdded).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores a remembered Link choice only when a video is selected", async () => {
+    localStorage.setItem("worshipsync_local_video_import_method", "link");
+    (window as any).electronAPI.linkSelectedLocalVideoFile = jest.fn();
+    renderUploadInput(jest.fn(), undefined, undefined, jest.fn());
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    expect(screen.queryByRole("radio", { name: /Link to original file/i })).not.toBeInTheDocument();
+    mockDetectFileType.mockReturnValue("video");
+    fireEvent.change(screen.getByLabelText(/Media Files/i), {
+      target: { files: [new File(["video"], "clip.mp4", { type: "video/mp4" })] },
+    });
+
+    expect(screen.getByRole("radio", { name: /Link to original file/i })).toBeChecked();
+    expect(screen.queryByRole("switch", { name: /Upload to cloud/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps browser uploads on Copy even when this browser has a saved Link value", async () => {
+    localStorage.setItem("worshipsync_local_video_import_method", "link");
+    (window as any).electronAPI = undefined;
+    mockDetectFileType.mockReturnValue("video");
+    const onLinkVideo = jest.fn();
+    renderUploadInput(jest.fn(), undefined, undefined, onLinkVideo);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    const file = new File(["video"], "clip.mp4", { type: "video/mp4" });
+    fireEvent.change(screen.getByLabelText(/Media Files/i), { target: { files: [file] } });
+    expect(screen.queryByRole("radio", { name: /Link to original file/i })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("switch", { name: /Upload to cloud/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Add (1 file)" }));
+
+    await waitFor(() => expect(mockedCreateLocalMedia).toHaveBeenCalledWith(
+      file,
+      "church-1",
+      "local-only",
+      { allowCloudPlaybackFallback: false },
+    ));
+    expect(onLinkVideo).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Add files entry point single and creates no item when the picker is canceled", async () => {
+    const onLinkVideo = jest.fn();
+    (window as any).electronAPI.linkSelectedLocalVideoFile = jest.fn();
+    const onLocalMediaAdded = jest.fn();
+    const AddFilesHarness = () => {
+      const inputRef = useRef<MediaUploadInputRef | null>(null);
+      return <>
+        <MediaSourceAddMenu onAddMedia={() => inputRef.current?.openModal()} />
+        <MediaUploadInput
+          ref={inputRef}
+          showButton={false}
+          onLocalMediaAdded={onLocalMediaAdded}
+          onLinkVideo={onLinkVideo}
+        />
+      </>;
+    };
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <TransferProvider>
+          <ControllerInfoContext.Provider value={{ isGuestSession: false } as never}>
+            <GlobalInfoContext.Provider value={{ churchId: "church-1" } as never}>
+              <AddFilesHarness />
+            </GlobalInfoContext.Provider>
+          </ControllerInfoContext.Provider>
+        </TransferProvider>
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Add media" }));
+    await user.click(screen.getByRole("menuitem", { name: "Add files" }));
+    expect(screen.getByRole("dialog", { name: "Upload Media" })).toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: /Link to original file/i })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText(/Media Files/i), { target: { files: [] } });
+
+    expect(mockedCreateLocalMedia).not.toHaveBeenCalled();
+    expect(onLinkVideo).not.toHaveBeenCalled();
+    expect(onLocalMediaAdded).not.toHaveBeenCalled();
   });
 
   it("normalizes native video upload progress for the shared transfer panel", async () => {

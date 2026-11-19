@@ -1,10 +1,12 @@
 import React, {
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
+import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../../hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { FilePlus, Search, Tag, Trash2, WholeWord } from "lucide-react";
@@ -20,8 +22,10 @@ import {
   removeItemFromListById,
 } from "../../store/itemListSlice";
 import type { DBItem, ServiceItem } from "../../types";
+import type { RootState } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
-import { globalFireDbInfo, GlobalInfoContext } from "../../context/globalInfo";
+import { GlobalInfoContext } from "../../context/globalInfo";
+import { useOptionalTransferActions, type DeletionSessionIdentity } from "../../context/transferContext";
 import { useControllerBasePath } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
 import FilteredItem from "./FilteredItem";
@@ -34,9 +38,7 @@ import {
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { initialCreateItemState, setCreateItem } from "../../store/createItemSlice";
-import { ref, get, set } from "firebase/database";
 import { deleteTimer } from "../../store/timersSlice";
-import { getChurchDataPath } from "../../utils/firebasePaths";
 import { alternatingAdminListRowBg } from "../../utils/listRowStripes";
 import { cn } from "../../utils/cnHelper";
 import { searchLrclibTracks } from "../../api/lrclib";
@@ -57,6 +59,8 @@ import {
   getLibraryItemVirtualKey,
 } from "./filteredItemsVirtualRowHeight";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import { getContentDatabaseSessionToken } from "../../utils/contentReplicationActivity";
+import { removeFirebaseTimerWithTransaction } from "../../utils/firebaseTimerDeletion";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 import type { LibraryFilter } from "../../store/itemLibraryUiSlice";
 import Checkbox from "../Checkbox/Checkbox";
@@ -67,9 +71,10 @@ import {
 import {
   createItemLibraryDeletionProgress,
   deleteLibraryItemWithProgress,
-  type ItemLibraryDeletionProgress,
 } from "../../utils/itemLibraryDeletion";
+import type { Transfer } from "../../context/transferModel";
 import {
+  getItemLibrarySourceIndices,
   getItemLibraryAuditDisplay,
   sortItemLibraryResults,
   type ItemLibrarySortDirection,
@@ -138,16 +143,11 @@ type FilteredItemsVirtualRow =
   | { kind: "external"; candidate: NormalizedLrclibTrack }
   | { kind: "library"; item: filteredItemsListType; libraryIndex: number };
 
-type DeleteConfirmation = { kind: "single" | "bulk"; items: ServiceItem[]; owner: DeletionOwner };
-type DeletionOwner = {
-  db: PouchDB.Database | undefined;
-  churchId: string;
-  userId?: string;
-  sessionKind?: string | null;
-  firebaseDb: typeof globalFireDbInfo.db;
-  firebaseChurchId: string;
+type DeleteConfirmation = { kind: "single" | "bulk"; items: ServiceItem[]; owner: DeletionOwner | null };
+type DeletionOwner = DeletionSessionIdentity & {
   outlineOwnerKey?: string;
   outlineId?: string;
+  outlineSession: number;
 };
 
 const SORT_DIRECTION_DEFAULT: Record<ItemLibrarySortField, ItemLibrarySortDirection> = {
@@ -193,6 +193,8 @@ const FilteredItems = ({
   className,
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
+  const transferActions = useOptionalTransferActions();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
@@ -297,6 +299,10 @@ const FilteredItems = ({
     if (!showLibraryControls || sortOverride === null) return filteredList;
     return sortItemLibraryResults(filteredList, docsById, sortOverride, sortDirection);
   }, [docsById, filteredList, showLibraryControls, sortDirection, sortOverride]);
+  const librarySourceIndices = useMemo(
+    () => getItemLibrarySourceIndices(filteredList),
+    [filteredList],
+  );
   const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null);
   const [selectionState, setSelectionState] = useState({
@@ -307,14 +313,7 @@ const FilteredItems = ({
   const selectedItemIds = selectionState.scopeKey === selectionScopeKey
     ? selectionState.ids
     : new Set<string>();
-  const [deletionBusy, setDeletionBusy] = useState(false);
-  const [deletionProgressMessage, setDeletionProgressMessage] = useState("");
   const [deletionNotice, setDeletionNotice] = useState("");
-  const [deletionErrors, setDeletionErrors] = useState<Record<string, string>>({});
-  const [pendingCleanupRows, setPendingCleanupRows] = useState<ItemLibraryDeletionProgress[]>([]);
-  const deletionProgressByIdRef = useRef(new Map<string, ItemLibraryDeletionProgress>());
-  const deletionOwnerByIdRef = useRef(new Map<string, DeletionOwner>());
-  const deleteInFlightRef = useRef(false);
 
   const [showWords, setShowWords] = useState(false);
   const [isSearchLoading, setIsSearchLoading] = useState(false);
@@ -356,7 +355,7 @@ const FilteredItems = ({
     }
 
     orderedFilteredList.forEach((item) => {
-      rows.push({ kind: "library", item, libraryIndex: filteredList.indexOf(item) });
+      rows.push({ kind: "library", item, libraryIndex: librarySourceIndices.get(item) ?? -1 });
     });
 
     return rows;
@@ -367,6 +366,7 @@ const FilteredItems = ({
     externalSearchError,
     externalSearchResults,
     filteredList,
+    librarySourceIndices,
     orderedFilteredList,
   ]);
 
@@ -450,29 +450,17 @@ const FilteredItems = ({
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access, churchId, userId, sessionKind } = useContext(GlobalInfoContext) || {};
+  useEffect(() => {
+    transferActions?.updateDeletionSessionIdentity({
+      db,
+      contentSessionToken: db ? getContentDatabaseSessionToken(db.name) : null,
+    });
+  }, [db, transferActions]);
   const { mode } = usePresentationControllerMode();
   const canMutateLibrary = !isViewOnlyAccess(access);
   const allowDelete = (showDelete ?? canMutateLibrary) && mode === "edit";
   const outlineOwnerKey = useSelector((state) => state.undoable?.present?.itemList?.outlineOwnerKey);
   const outlineId = useSelector((state) => state.undoable?.present?.itemList?.loadedOutlineId);
-  const currentOperationContextRef = useRef({
-    db,
-    churchId: churchId ?? "",
-    userId,
-    sessionKind,
-    allowDelete,
-    outlineOwnerKey,
-    outlineId,
-  });
-  currentOperationContextRef.current = {
-    db,
-    churchId: churchId ?? "",
-    userId,
-    sessionKind,
-    allowDelete,
-    outlineOwnerKey,
-    outlineId,
-  };
   const showSelectionControls = showLibraryControls && allowDelete && !isLoading;
   const allowCreateAndExternal = showCreateAndExternal ?? canMutateLibrary;
   /** Attach mode always shows the primary action even for view-only library access. */
@@ -525,48 +513,58 @@ const FilteredItems = ({
     listScrollRef.current?.scrollTo?.({ top: 0 });
   }, [debouncedSearchValue, searchItems]);
 
-  const captureDeletionOwner = (): DeletionOwner => {
-    const firebaseDb = globalFireDbInfo.db && globalFireDbInfo.churchId === (churchId ?? "")
-      ? globalFireDbInfo.db
+  const captureDeletionOwner = (): DeletionOwner | null => {
+    const identity = transferActions?.getCurrentDeletionSessionIdentity();
+    if (!identity || !allowDelete || identity.db !== db || identity.churchId !== (churchId ?? "") ||
+      identity.userId !== (userId ?? "") || identity.sessionKind !== (sessionKind ?? null)) return null;
+    const firebaseDb = identity.firebaseDb && identity.firebaseChurchId === identity.churchId
+      ? identity.firebaseDb
       : undefined;
     return {
-      db,
-      churchId: churchId ?? "",
-      userId,
-      sessionKind,
+      ...identity,
       firebaseDb,
-      firebaseChurchId: firebaseDb ? globalFireDbInfo.churchId : "",
+      firebaseChurchId: firebaseDb ? identity.firebaseChurchId : "",
+      contentSessionToken: db ? getContentDatabaseSessionToken(db.name) : null,
       outlineOwnerKey,
       outlineId,
+      outlineSession: store.getState().allDocs?.session ?? 0,
     };
   };
 
-  const isDeletionOwnerCurrent = (owner: DeletionOwner) => {
-    const current = currentOperationContextRef.current;
+  const isDeletionOwnerCurrent = useCallback((owner: DeletionOwner) => {
+    const current = transferActions?.getCurrentDeletionSessionIdentity();
+    if (!current || isViewOnlyAccess(current.access as never)) return false;
     if (
-      !current.allowDelete ||
       current.db !== owner.db ||
+      current.database !== owner.database ||
       current.churchId !== owner.churchId ||
       current.userId !== owner.userId ||
       current.sessionKind !== owner.sessionKind ||
-      current.outlineOwnerKey !== owner.outlineOwnerKey ||
-      current.outlineId !== owner.outlineId
+      current.loginState !== owner.loginState ||
+      current.contentSessionToken !== owner.contentSessionToken
     ) return false;
     if (owner.firebaseDb && (
-      globalFireDbInfo.db !== owner.firebaseDb ||
-      globalFireDbInfo.churchId !== owner.firebaseChurchId
+      current.firebaseDb !== owner.firebaseDb ||
+      current.firebaseChurchId !== owner.firebaseChurchId
     )) return false;
-    return true;
-  };
+    const state = store.getState();
+    return state.allDocs?.session === owner.outlineSession &&
+      state.undoable?.present?.itemList?.outlineOwnerKey === owner.outlineOwnerKey &&
+      state.undoable?.present?.itemList?.loadedOutlineId === owner.outlineId;
+  }, [store, transferActions]);
 
   const createDeletionOwnerError = (owner: DeletionOwner) => {
-    const current = currentOperationContextRef.current;
-    if (!current.allowDelete) return "You no longer have permission to delete items. Refresh your access and try again.";
-    if (current.db !== owner.db || current.churchId !== owner.churchId ||
-      current.userId !== owner.userId || current.sessionKind !== owner.sessionKind) {
+    const current = transferActions?.getCurrentDeletionSessionIdentity();
+    if (!current || isViewOnlyAccess(current.access as never)) return "You no longer have permission to complete this deletion. Refresh your access and try again.";
+    if (current.db !== owner.db || current.database !== owner.database || current.churchId !== owner.churchId ||
+      current.userId !== owner.userId || current.sessionKind !== owner.sessionKind ||
+      current.loginState !== owner.loginState || current.contentSessionToken !== owner.contentSessionToken) {
       return "Your session changed before deletion finished. Return to the original session and retry cleanup.";
     }
-    if (current.outlineOwnerKey !== owner.outlineOwnerKey || current.outlineId !== owner.outlineId) {
+    const state = store.getState();
+    if (state.allDocs?.session !== owner.outlineSession ||
+      state.undoable?.present?.itemList?.outlineOwnerKey !== owner.outlineOwnerKey ||
+      state.undoable?.present?.itemList?.loadedOutlineId !== owner.outlineId) {
       return "The open outline changed before deletion finished. Return to the original outline and retry cleanup.";
     }
     return "The shared database session changed before cleanup finished. Return to the original session and retry.";
@@ -576,12 +574,15 @@ const FilteredItems = ({
     if (!deleteConfirmation) return;
     const currentIds = new Set(listForFilter.map((item) => item._id));
     const owner = deleteConfirmation.owner;
+    if (!owner) {
+      setDeleteConfirmation(null);
+      return;
+    }
     const ownerStillCurrent = allowDelete && db === owner.db &&
       (churchId ?? "") === owner.churchId && userId === owner.userId &&
       sessionKind === owner.sessionKind && outlineOwnerKey === owner.outlineOwnerKey &&
       outlineId === owner.outlineId &&
-      (!owner.firebaseDb || (globalFireDbInfo.db === owner.firebaseDb &&
-        globalFireDbInfo.churchId === owner.firebaseChurchId));
+      isDeletionOwnerCurrent(owner);
     if (!ownerStillCurrent ||
       deleteConfirmation.items.some((item) => !currentIds.has(item._id))) {
       setDeleteConfirmation(null);
@@ -591,12 +592,14 @@ const FilteredItems = ({
     churchId,
     db,
     deleteConfirmation,
+    isDeletionOwnerCurrent,
     listForFilter,
     mode,
     outlineId,
     outlineOwnerKey,
     sessionKind,
     userId,
+    transferActions,
   ]);
 
   const getDeletionMessage = (error: unknown) => {
@@ -605,7 +608,7 @@ const FilteredItems = ({
       return "This song uses the V2 format and can't be deleted yet.";
     }
     if (/not available/i.test(message)) return message;
-    if (/session changed|original outline|shared database/i.test(message)) return message;
+    if (/session|original outline|shared database/i.test(message)) return message;
     if (/permission|unauthorized|forbidden|\b403\b/i.test(message)) {
       return "You no longer have permission to complete this deletion. Refresh your access and try again.";
     }
@@ -614,17 +617,6 @@ const FilteredItems = ({
     }
     if (/saved item has changed/i.test(message)) return message;
     return "Could not complete this deletion. Check the connection and try again.";
-  };
-
-  const setPendingCleanup = (progress: ItemLibraryDeletionProgress) => {
-    setPendingCleanupRows((current) => [
-      ...current.filter((entry) => entry.item._id !== progress.item._id),
-      progress,
-    ]);
-  };
-
-  const clearPendingCleanup = (id: string) => {
-    setPendingCleanupRows((current) => current.filter((entry) => entry.item._id !== id));
   };
 
   const updateSelection = (id: string, selected: boolean) => {
@@ -646,148 +638,168 @@ const FilteredItems = ({
   else if (someResultsSelected) selectAllChecked = "indeterminate";
   const searchResultsAreCurrent = !isSearchLoading && filteredSearchValue === searchValue;
 
-  const runDeletion = async (items: ServiceItem[], confirmedOwner?: DeletionOwner) => {
-    if (deleteInFlightRef.current || !items.length) return;
-    deleteInFlightRef.current = true;
-    setDeletionBusy(true);
-    setDeletionNotice("");
-    let completedCount = 0;
-    let persistedDeleteCount = 0;
-    let failedCount = 0;
-    let pausedForSessionChange = false;
-
-    try {
-      for (let index = 0; index < items.length; index += 1) {
-        const item = items[index];
-        let progress = deletionProgressByIdRef.current.get(item._id);
-        if (!progress) {
-          progress = createItemLibraryDeletionProgress(item);
-          deletionProgressByIdRef.current.set(item._id, progress);
-        }
-        let owner = deletionOwnerByIdRef.current.get(item._id);
-        if (!owner) {
-          owner = confirmedOwner ?? captureDeletionOwner();
-          deletionOwnerByIdRef.current.set(item._id, owner);
-        }
-        setDeletionProgressMessage(`Deleting ${index + 1} of ${items.length}: ${item.name}`);
-
-        try {
-          await deleteLibraryItemWithProgress({
-            db: owner.db,
-            progress,
-            assertSessionCanContinue: () => {
-              if (!isDeletionOwnerCurrent(owner!)) throw new Error(createDeletionOwnerError(owner!));
-            },
-            isOriginalOutlineOpen: () => {
-              const current = currentOperationContextRef.current;
-              return current.outlineOwnerKey === owner!.outlineOwnerKey &&
-                current.outlineId === owner!.outlineId;
-            },
-            removeItemFromOpenOutline: () => dispatch(removeItemFromListById(item._id)),
-            clearUndoHistory: () => dispatch(ActionCreators.clearHistory()),
-            removeTimerFromStore: () => dispatch(deleteTimer(item._id)),
-            removeTimerFromLocalStorage: () => {
-              const storedValue = localStorage.getItem("timerInfo") || "[]";
-              const storedTimers: unknown = JSON.parse(storedValue);
-              if (!Array.isArray(storedTimers)) throw new Error("Saved timer storage is invalid.");
-              const updatedTimers = storedTimers.filter((timer) =>
-                typeof timer !== "object" || timer === null || !("id" in timer) || timer.id !== item._id,
-              );
-              localStorage.setItem("timerInfo", JSON.stringify(updatedTimers));
-            },
-            removeTimerFromFirebase: owner.firebaseDb
-              ? async () => {
-                const timersRef = ref(
-                  owner!.firebaseDb!,
-                  getChurchDataPath(owner!.firebaseChurchId, "timers"),
-                );
-                const snapshot = await get(timersRef);
-                if (!isDeletionOwnerCurrent(owner!)) throw new Error(createDeletionOwnerError(owner!));
-                const storedTimers: unknown = snapshot.val() ?? [];
-                if (!Array.isArray(storedTimers)) throw new Error("Shared timer data is invalid.");
+  const startDeletionActivity = (items: ServiceItem[], owner: DeletionOwner) => {
+    if (!transferActions || !items.length) return;
+    const uniqueItems = [...new Map(items.map((item) => [item._id, item])).values()];
+    const entries = uniqueItems.map((item) => ({
+      item,
+      progress: createItemLibraryDeletionProgress(item),
+      status: "queued" as "queued" | "active" | "complete" | "failed",
+      error: undefined as string | undefined,
+    }));
+    const transferId = `item-library-deletion-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let running = false;
+    let unregisterRetry: (() => void) | undefined;
+    const buildTransfer = (): Transfer => {
+      const completedCount = entries.filter((entry) => entry.progress.complete).length;
+      const unfinishedCount = entries.length - completedCount;
+      const activeEntry = entries.find((entry) => entry.status === "active");
+      const errors = entries.flatMap((entry) => entry.error ? [`${entry.item.name}: ${entry.error}`] : []);
+      const status: Transfer["status"] = unfinishedCount === 0
+        ? "complete"
+        : running
+          ? "active"
+          : completedCount > 0
+            ? "partial"
+            : "failed";
+      return {
+        id: transferId,
+        type: "Item library deletion",
+        name: entries.length === 1 ? entries[0].item.name : `${entries.length} library items`,
+        status,
+        progress: entries.length ? (completedCount / entries.length) * 100 : 100,
+        phase: {
+          key: status,
+          label: status === "complete" ? "Deletion complete" : running ? "Deleting library items" : "Deletion needs attention",
+          ...(running ? { current: completedCount + 1, total: entries.length } : {}),
+        },
+        detail: activeEntry
+          ? `Deleting ${activeEntry.item.name}`
+          : status === "complete"
+            ? `${completedCount} ${completedCount === 1 ? "item deleted" : "items deleted"}`
+            : `${completedCount} of ${entries.length} deleted; ${unfinishedCount} need attention`,
+        ...(errors.length ? { error: { message: errors.join(" ") } } : {}),
+        files: entries.map((entry, index) => ({
+          id: `${transferId}-${index}`,
+          name: entry.item.name,
+          status: entry.progress.complete ? "complete" as const : entry.status,
+          progress: entry.progress.complete ? 100 : entry.status === "active" ? 0 : null,
+          ...(entry.error ? { error: entry.error } : {}),
+        })),
+        blocksUnload: unfinishedCount > 0,
+        actions: unfinishedCount > 0
+          ? [{ key: "retry-deletion", label: running ? "Retrying deletion..." : "Retry unfinished deletion", pending: running }]
+          : [{ key: "dismiss", label: "Dismiss" }],
+      };
+    };
+    const publish = () => transferActions.updateTransfer(buildTransfer());
+    const retry = async () => {
+      if (running) return;
+      running = true;
+      publish();
+      try {
+        for (const entry of entries) {
+          if (entry.progress.complete) continue;
+          entry.status = "active";
+          entry.error = undefined;
+          publish();
+          try {
+            await deleteLibraryItemWithProgress({
+              db: owner.db,
+              progress: entry.progress,
+              assertSessionCanContinue: () => {
+                if (!isDeletionOwnerCurrent(owner)) throw new Error(createDeletionOwnerError(owner));
+              },
+              isOriginalOutlineOpen: () => {
+                const state = store.getState();
+                return state.undoable?.present?.itemList?.outlineOwnerKey === owner.outlineOwnerKey &&
+                  state.undoable?.present?.itemList?.loadedOutlineId === owner.outlineId;
+              },
+              removeItemFromOpenOutline: () => store.dispatch(removeItemFromListById(entry.item._id)),
+              clearUndoHistory: () => store.dispatch(ActionCreators.clearHistory()),
+              removeTimerFromStore: () => store.dispatch(deleteTimer(entry.item._id)),
+              removeTimerFromLocalStorage: () => {
+                const storedValue = localStorage.getItem("timerInfo") || "[]";
+                const storedTimers: unknown = JSON.parse(storedValue);
+                if (!Array.isArray(storedTimers)) throw new Error("Saved timer storage is invalid.");
                 const updatedTimers = storedTimers.filter((timer) =>
-                  typeof timer !== "object" || timer === null || !("id" in timer) || timer.id !== item._id,
+                  typeof timer !== "object" || timer === null || !("id" in timer) || timer.id !== entry.item._id,
                 );
-                await set(timersRef, updatedTimers);
-              }
-              : undefined,
-            removeSongAudio: owner.churchId
-              ? async (document) => {
-                await deleteSongAudioWithRetry({
-                  churchId: owner!.churchId,
-                  songId: item._id,
-                  audio: document.songAudio!,
-                });
-              }
-              : undefined,
-          });
-          deletionProgressByIdRef.current.delete(item._id);
-          deletionOwnerByIdRef.current.delete(item._id);
-          setDeletionErrors((current) => {
-            const next = { ...current };
-            delete next[item._id];
-            return next;
-          });
-          clearPendingCleanup(item._id);
-          updateSelection(item._id, false);
-          completedCount += 1;
-          persistedDeleteCount += 1;
-        } catch (error) {
-          const message = getDeletionMessage(error);
-          setDeletionErrors((current) => ({ ...current, [item._id]: message }));
-          failedCount += 1;
-          if (progress.documentDeleted) {
-            updateSelection(item._id, false);
-            setPendingCleanup(progress);
-            persistedDeleteCount += 1;
-          } else {
-            deletionProgressByIdRef.current.delete(item._id);
-            deletionOwnerByIdRef.current.delete(item._id);
+                localStorage.setItem("timerInfo", JSON.stringify(updatedTimers));
+              },
+              removeTimerFromFirebase: owner.firebaseDb
+                ? () => removeFirebaseTimerWithTransaction({
+                  db: owner.firebaseDb!,
+                  churchId: owner.firebaseChurchId,
+                  timerId: entry.item._id,
+                  isAuthorized: () => isDeletionOwnerCurrent(owner) &&
+                    transferActions.getCurrentDeletionSessionIdentity().canWriteTimers,
+                })
+                : undefined,
+              removeSongAudio: owner.churchId
+                ? async (document) => {
+                  await deleteSongAudioWithRetry({
+                    churchId: owner.churchId,
+                    songId: entry.item._id,
+                    audio: document.songAudio!,
+                  });
+                }
+                : undefined,
+            });
+            entry.status = "complete";
+          } catch (error) {
+            entry.status = "failed";
+            entry.error = getDeletionMessage(error);
           }
-          if (!isDeletionOwnerCurrent(owner)) {
-            pausedForSessionChange = true;
-            break;
-          }
+          publish();
+          if (!isDeletionOwnerCurrent(owner)) break;
         }
+      } finally {
+        running = false;
+        publish();
+        if (entries.every((entry) => entry.progress.complete)) unregisterRetry?.();
       }
+    };
 
-      const selectedCount = items.length;
-      if (pausedForSessionChange) {
-        setDeletionNotice("Deletion paused because the session or permission changed. Remaining items are still selected.");
-      } else if (failedCount === 0) {
-        setDeletionNotice(`Deleted ${completedCount} ${completedCount === 1 ? "item" : "items"}.`);
-      } else {
-        const deletedText = persistedDeleteCount
-          ? `Deleted ${persistedDeleteCount} of ${selectedCount} ${selectedCount === 1 ? "item" : "items"}. `
-          : "No items were deleted. ";
-        setDeletionNotice(`${deletedText}${failedCount} ${failedCount === 1 ? "item needs" : "items need"} attention. See the item details below.`);
-      }
-    } finally {
-      setDeletionProgressMessage("");
-      setDeletionBusy(false);
-      setDeleteConfirmation(null);
-      deleteInFlightRef.current = false;
-    }
-  };
-
-  const retryPendingCleanup = (progress: ItemLibraryDeletionProgress) => {
-    void runDeletion([progress.item]);
+    transferActions.updateTransfer(buildTransfer());
+    unregisterRetry = transferActions.registerTransferAction(transferId, "retry-deletion", retry);
+    setDeleteConfirmation(null);
+    setDeletionNotice("Deletion started. Progress and any required cleanup are available in Activity.");
+    void retry();
   };
 
   const requestSingleDeletion = (item: ServiceItem) => {
     setDeletionNotice("");
-    setDeleteConfirmation({ kind: "single", items: [item], owner: captureDeletionOwner() });
+    const owner = captureDeletionOwner();
+    if (!owner) {
+      setDeletionNotice("Deletion is unavailable until the original session and Activity provider are ready.");
+      return;
+    }
+    setDeleteConfirmation({ kind: "single", items: [item], owner });
   };
 
   const requestBulkDeletion = () => {
     if (!showSelectionControls || !searchResultsAreCurrent || selectedResults.length === 0) return;
     setDeletionNotice("");
-    setDeleteConfirmation({ kind: "bulk", items: selectedResults, owner: captureDeletionOwner() });
+    const owner = captureDeletionOwner();
+    if (!owner) {
+      setDeletionNotice("Deletion is unavailable until the original session and Activity provider are ready.");
+      return;
+    }
+    setDeleteConfirmation({ kind: "bulk", items: selectedResults, owner });
   };
 
   const confirmDeletion = () => {
     if (!deleteConfirmation) return;
-    void runDeletion(deleteConfirmation.items, deleteConfirmation.owner);
+    const owner = deleteConfirmation.owner;
+    if (!owner || !isDeletionOwnerCurrent(owner)) {
+      setDeleteConfirmation(null);
+      setDeletionNotice(owner
+        ? createDeletionOwnerError(owner)
+        : "Deletion is unavailable until the original session and Activity provider are ready.");
+      return;
+    }
+    startDeletionActivity(deleteConfirmation.items, owner);
   };
 
   const changeSearchValue = (value: string) => {
@@ -1052,10 +1064,7 @@ const FilteredItems = ({
   const confirmationItemName = deleteConfirmation?.kind === "bulk"
     ? `${confirmationItemCount} selected ${confirmationItemCount === 1 ? "item" : "items"}`
     : deleteConfirmation?.items[0]?.name;
-  const deleteWarning = deletionBusy
-    ? deletionProgressMessage || "Deleting selected items..."
-    : "This is permanent. Matching occurrences will be removed from the open outline and undo history will be cleared. Other saved outlines remain separate.";
-  const itemNameById = new Map(listForFilter.map((item) => [item._id, item.name]));
+  const deleteWarning = "This is permanent. Matching occurrences will be removed from the open outline and undo history will be cleared. Other saved outlines remain separate.";
 
   return (
     <div
@@ -1073,8 +1082,6 @@ const FilteredItems = ({
         message="Delete"
         warningMessage={deleteWarning}
         confirmText={deleteConfirmation?.kind === "bulk" ? "Delete selected" : "Delete Forever"}
-        isConfirming={deletionBusy}
-        confirmingLabel="Deleting..."
       />
       <ViewSongSectionsDrawer
         song={viewSongDoc}
@@ -1155,52 +1162,10 @@ const FilteredItems = ({
           ))}
         </div>
       ) : null}
-      {deletionProgressMessage ? (
-        <p className="mb-2 text-sm text-cyan-200" role="status" aria-live="polite">
-          {deletionProgressMessage}
-        </p>
-      ) : null}
       {deletionNotice ? (
         <p className="mb-2 text-sm text-gray-200" role="status" aria-live="polite">
           {deletionNotice}
         </p>
-      ) : null}
-      {Object.keys(deletionErrors).length > 0 ? (
-        <div className="mb-2 rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm" role="alert">
-          <p className="font-medium text-amber-200">Items that need attention</p>
-          <ul className="mt-1 space-y-1 text-amber-100">
-            {Object.entries(deletionErrors).map(([id, message]) => (
-              <li key={id}>
-                <span className="font-medium">{itemNameById.get(id) ?? pendingCleanupRows.find((row) => row.item._id === id)?.item.name ?? id}:</span> {message}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {pendingCleanupRows.length > 0 ? (
-        <section className="mb-2 rounded border border-amber-500/30 bg-amber-500/5 px-3 py-2" aria-label="Deletion cleanup to retry">
-          <h3 className="text-sm font-medium text-amber-200">Cleanup still needs attention</h3>
-          <ul className="mt-1 space-y-2">
-            {pendingCleanupRows.map((progress) => {
-              const owner = deletionOwnerByIdRef.current.get(progress.item._id);
-              const canRetry = Boolean(owner && allowDelete && isDeletionOwnerCurrent(owner));
-              return (
-                <li key={progress.item._id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
-                  <span className="text-amber-100">{progress.item.name}</span>
-                  <Button
-                    type="button"
-                    variant="tertiary"
-                    disabled={deletionBusy || !canRetry}
-                    onClick={() => retryPendingCleanup(progress)}
-                    aria-label={`Retry cleanup for ${progress.item.name}`}
-                  >
-                    Retry cleanup
-                  </Button>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
       ) : null}
       {allowCreateAndExternal ? (
         <div className="mb-2 flex flex-col gap-3">
@@ -1274,7 +1239,7 @@ const FilteredItems = ({
                 label="Select all results"
                 hideLabel
                 checked={selectAllChecked}
-                disabled={deletionBusy || !searchResultsAreCurrent || filteredList.length === 0}
+                disabled={!searchResultsAreCurrent || filteredList.length === 0}
                 onCheckedChange={(checked) => setSelectionState({
                   scopeKey: selectionScopeKey,
                   ids: checked
@@ -1329,7 +1294,7 @@ const FilteredItems = ({
                   )}
                   padding="px-2 py-1"
                   svg={Trash2}
-                  disabled={deletionBusy || !searchResultsAreCurrent || selectedResults.length === 0}
+                  disabled={!searchResultsAreCurrent || selectedResults.length === 0}
                   onClick={requestBulkDeletion}
                 >
                   Delete selected ({selectedResults.length})

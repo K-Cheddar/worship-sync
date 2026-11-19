@@ -35,7 +35,20 @@ jest.mock("../../hooks/useLocalImageUrl", () => ({
   },
 }));
 jest.mock("../../hooks/useLocalVideoFileUrl", () => ({
-  useLocalVideoFileUrl: () => ({ isLocalVideoFile: false, isOwner: false, status: "not-local" }),
+  isUnavailableLocalVideoFile: (resolution: { status: string }) =>
+    resolution.status === "unavailable",
+  useLocalVideoFileUrl: (reference?: { id?: string }, purpose?: string) =>
+    reference?.id === "local-video"
+      ? {
+          isLocalVideoFile: true,
+          isOwner: true,
+          status: "ready",
+          url:
+            purpose === "thumbnail"
+              ? "blob:local-video-thumbnail"
+              : "worshipsync-media://asset/local-video",
+        }
+      : { isLocalVideoFile: false, isOwner: false, status: "not-local" },
 }));
 jest.mock("../../components/DisplayWindow/TimerDisplay", () => ({
   __esModule: true,
@@ -68,6 +81,83 @@ const makeSlide = (overrides: Partial<ItemSlideType> = {}) =>
   }) as ItemSlideType;
 
 describe("StaticSlideThumbnail", () => {
+  it.each(["projector", "monitor", "stream"] as const)(
+    "renders a local video still in %s static previews without video playback",
+    (previewMode) => {
+      const slide = makeSlide();
+      slide.boxes[0].shouldKeepAspectRatio = true;
+      slide.boxes[0].mediaInfo = {
+        type: "video",
+        background: "local-video-file://local-video",
+        localVideoFile: {
+          id: "local-video",
+          ownerDeviceId: "device-1",
+          ownerLabel: "Booth PC",
+          fileName: "welcome.mov",
+          contentType: "video/quicktime",
+          storagePolicy: "local-only",
+        },
+      } as MediaType;
+
+      render(
+        <StaticSlideThumbnail
+          slide={slide}
+          itemType="song"
+          previewMode={previewMode}
+          monitorSettings={{
+            ...resolveDisplaySettings(undefined, undefined, "monitor"),
+            showBackground: true,
+          }}
+        />,
+      );
+
+      const thumbnail = screen.getByTestId(
+        previewMode === "stream"
+          ? "static-local-video-thumbnail"
+          : "display-box-local-video-thumbnail",
+      );
+      expect(thumbnail).toHaveAttribute("src", "blob:local-video-thumbnail");
+      expect(thumbnail).toHaveClass("object-contain");
+      expect(queryRenderedVideo()).toBeNull();
+    },
+  );
+
+  it("shows the same local video still behind the Monitor next-slide bands", () => {
+    const slide = makeSlide();
+    slide.boxes[0].mediaInfo = {
+      type: "video",
+      background: "local-video-file://local-video",
+      localVideoFile: {
+        id: "local-video",
+        ownerDeviceId: "device-1",
+        ownerLabel: "Booth PC",
+        fileName: "welcome.mov",
+        contentType: "video/quicktime",
+        storagePolicy: "local-only",
+      },
+    } as MediaType;
+
+    render(
+      <StaticSlideThumbnail
+        slide={slide}
+        nextSlide={makeSlide()}
+        itemType="song"
+        previewMode="monitor"
+        monitorSettings={{
+          ...resolveDisplaySettings(undefined, undefined, "monitor"),
+          showBackground: true,
+          showNextSlide: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("monitor-band-video-thumbnail")).toHaveAttribute(
+      "src",
+      "blob:local-video-thumbnail",
+    );
+    expect(queryRenderedVideo()).toBeNull();
+  });
+
   it.each(["projector", "stream", "monitor"] as const)(
     "uses the captured input still in %s previews without video playback",
     (previewMode) => {
@@ -128,6 +218,10 @@ describe("StaticSlideThumbnail", () => {
       "aria-label",
       "Local source on another device · Video input · Main camera · Available on Booth PC",
     );
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "data-local-source-status-size",
+      "indicator",
+    );
   });
 
   it("renders text and remote image stills without mounting DisplayWindow machinery", () => {
@@ -178,6 +272,10 @@ describe("StaticSlideThumbnail", () => {
       expect(screen.getByText("Local source on another device")).toBeInTheDocument();
       expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
       expect(screen.getByRole("status")).toHaveClass(expectedStatusBackground);
+      expect(screen.getByRole("status")).toHaveAttribute(
+        "data-local-source-status-size",
+        "thumbnail",
+      );
       expect(queryRenderedVideo()).toBeNull();
     },
   );
@@ -197,6 +295,7 @@ describe("StaticSlideThumbnail", () => {
             background: "",
             words: "",
             mediaInfo: {
+              id: "asset-2",
               type: "image",
               path: "",
               createdAt: "",
@@ -206,6 +305,8 @@ describe("StaticSlideThumbnail", () => {
               width: 1920,
               name: "Welcome",
               publicId: "welcome",
+              background: "local-image://asset-2",
+              thumbnail: "local-image://asset-2",
               localImage: {
                 id: "asset-2",
                 ownerDeviceId: "source-device",
@@ -246,6 +347,10 @@ describe("StaticSlideThumbnail", () => {
 
       expect(screen.getByText("Local source on another device")).toBeInTheDocument();
       expect(screen.getByText("Local image · Welcome.png")).toBeInTheDocument();
+      expect(screen.getByRole("status")).toHaveAttribute(
+        "data-local-source-status-size",
+        "thumbnail",
+      );
       expect(screen.getByTestId(expectedLayoutTestId)).toBeInTheDocument();
     },
   );

@@ -107,7 +107,7 @@ test("invokes producer-neutral actions and unregisters handlers cleanly", async 
   expect(screen.queryByText("Generic work")).not.toBeInTheDocument();
 });
 
-test("dismisses completed Canva transfers through their registered action", async () => {
+test("dismisses completed Canva transfers from the Activity header", async () => {
   const user = userEvent.setup();
   const DismissHarness = () => {
     const { startCanvaTransfer } = useTransfers();
@@ -120,7 +120,10 @@ test("dismisses completed Canva transfers through their registered action", asyn
   render(<MemoryRouter><TransferProvider><DismissHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Import dismissible deck" }));
   expect(await screen.findByText("Dismissible deck")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(screen.getByRole("button", { name: "Dismiss activity" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Minimize activity" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Dismiss activity" }));
   expect(screen.queryByText("Dismissible deck")).not.toBeInTheDocument();
 });
 
@@ -178,7 +181,8 @@ test("uses attention counts and amber Activity state for failed work", async () 
   expect(await screen.findByRole("heading", { name: "Activity · 1 needs attention" })).toBeInTheDocument();
   expect(screen.queryByText("Activity · 0 active")).not.toBeInTheDocument();
   expect(screen.getByTestId("activity-icon")).toHaveClass("text-amber-300");
-  expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Dismiss activity" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
 });
 
 test("combines active and attention counts in the Activity header", async () => {

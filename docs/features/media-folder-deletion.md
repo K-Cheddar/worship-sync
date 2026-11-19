@@ -16,6 +16,11 @@ Queue and Cancellation,”** confirms these behaviors:
   earlier job. Accepted jobs run one at a time in request order.
 - Activity tracks each accepted job. Closing or minimizing Activity does not
   stop or discard the work.
+- Activity keeps its minimize control while any displayed job is queued or
+  active. Once all displayed jobs are settled and no action is pending, the
+  header X dismisses the finished entries through their existing Dismiss
+  handlers. Other recovery actions remain available until the operator
+  dismisses the activity.
 - A queued job can be cancelled before it starts. An active job can be cancelled
   only at a checkpoint where remaining work can stop without leaving media,
   folder, or reference data inconsistent. Cancellation never restores work

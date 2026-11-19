@@ -587,6 +587,20 @@ const DisplayEditorComponent = ({
       isVideoBg &&
       box.mediaInfo?.localVideoFile &&
       localVideoDisplay.isLocalVideoFile &&
+      localVideoDisplay.status === "loading" &&
+      (!videoUrl || isLocalMediaReferenceUrl(videoUrl)) ? (
+        <LocalSourceStatus
+          sourceLabel={`Local video · ${box.mediaInfo.localVideoFile.fileName || "Background"}`}
+          heading="Loading local video"
+          state="loading"
+          size="canvas"
+          scaleFactor={scaleFactor}
+        />
+      ) : null}
+      {showLocalSourceStatus &&
+      isVideoBg &&
+      box.mediaInfo?.localVideoFile &&
+      localVideoDisplay.isLocalVideoFile &&
       localVideoDisplay.status === "unavailable" &&
       (!videoUrl || isLocalMediaReferenceUrl(videoUrl)) ? (
         <LocalSourceStatus

@@ -74,7 +74,7 @@ describe("ItemSlide media insertion zones", () => {
     mockUseDroppable.mockClear();
   });
 
-  it("keeps the live-input badge visible above a remote-source warning", () => {
+  it("marks the source unavailable while keeping its name and owner accessible", () => {
     render(
       <ul>
         <ItemSlide
@@ -106,7 +106,11 @@ describe("ItemSlide media insertion zones", () => {
     );
 
     const badge = screen.getByTestId("local-video-input-slide-badge");
-    expect(badge).toHaveTextContent("Live input · Main camera");
+    expect(badge).toHaveTextContent("Unavailable · Video input · Main camera");
+    expect(badge).toHaveAttribute(
+      "aria-label",
+      "Video input: Main camera · Unavailable on this device · Available on Booth PC",
+    );
     expect(badge).toHaveClass("!z-40");
   });
 
@@ -224,7 +228,9 @@ describe("ItemSlide media insertion zones", () => {
     );
     expect(first.boxes[0].background).toBe("");
     expect(second.boxes[0].background).toBe("");
-    expect(screen.getAllByText("Live input · Main camera")).toHaveLength(2);
+    expect(
+      screen.getAllByText("Unavailable · Video input · Main camera"),
+    ).toHaveLength(2);
   });
 
   it.each([
@@ -267,6 +273,9 @@ describe("ItemSlide media insertion zones", () => {
     expect(screen.getByText(status, { exact: true })).toBeVisible();
     const inputBadge = screen.getByTestId("local-video-input-slide-badge");
     expect(inputBadge).toBeVisible();
+    expect(inputBadge).toHaveTextContent(
+      "Unavailable · Video input · Main camera",
+    );
     expect(inputBadge).toHaveClass("!left-2", "!right-auto");
   });
 

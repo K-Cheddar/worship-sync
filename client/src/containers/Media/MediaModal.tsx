@@ -208,7 +208,6 @@ type MediaModalProps = {
   onAddScreenShare?: () => void;
   onRelinkVideoInput?: (media: MediaType) => void;
   onRelinkLocalVideoFile?: (media: MediaType) => void;
-  onLinkVideo?: () => void;
   onImportFromCanva?: (sourceMedia?: MediaType) => void;
   /** When true, adding media is blocked (library still loading or failed). */
   mediaUploadDisabled?: boolean;
@@ -252,7 +251,6 @@ const MediaModal = ({
   onAddScreenShare,
   onRelinkVideoInput,
   onRelinkLocalVideoFile,
-  onLinkVideo,
   onImportFromCanva,
   mediaUploadDisabled = false,
   isGuestSession = false,
@@ -320,7 +318,6 @@ const MediaModal = ({
       onAddVideoInput={onAddVideoInput}
       onAddScreenShare={onAddScreenShare}
       onImportFromCanva={onImportFromCanva ? () => onImportFromCanva() : undefined}
-      onLinkVideo={onLinkVideo}
       mediaUploadDisabled={mediaUploadDisabled}
       isGuestSession={isGuestSession}
     />
