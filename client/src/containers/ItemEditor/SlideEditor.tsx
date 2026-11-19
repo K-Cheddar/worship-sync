@@ -26,6 +26,7 @@ import {
 } from "../../utils/itemTypeMaps";
 import { itemSectionBgColorMap } from "../../utils/slideColorMap";
 import DisplayWindow from "../../components/DisplayWindow/DisplayWindow";
+import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
 import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadge/LocalVideoInputSlideBadge";
 import { useDispatch, useSelector } from "../../hooks";
 import {
@@ -42,6 +43,7 @@ import {
   applyOwnedContentMutation,
   setRestoreFocusToBox,
   setHasPendingUpdate,
+  retryItemSave,
 } from "../../store/itemSlice";
 import {
   flushPendingItemMutations,
@@ -109,6 +111,7 @@ import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import {
   buildLocalVideoInputPresentation,
+  getLocalVideoInputPreviewStatus,
 } from "../../utils/localVideoInput";
 import type { LocalVideoThumbnailFrame } from "../../utils/localVideoInputThumbnail";
 import {
@@ -179,6 +182,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     hasRemoteUpdate,
     remoteUpdateReason,
     pendingSongV2Conflicts,
+    itemPersistenceError,
     hasPendingUpdate,
     songMetadata,
     songLinks,
@@ -286,6 +290,7 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
   } | null>(null);
   const cursorPositionsRef = useRef<Record<number, number>>({});
   const remoteUpdateToastIdRef = useRef<string | null>(null);
+  const itemSaveErrorToastIdRef = useRef<string | null>(null);
   const isEditorMountedRef = useRef(true);
   const [isReformatting, setIsReformatting] = useState(false);
   const itemTypeLabel = useMemo(() => getItemTypeLabel(type), [type]);
@@ -417,6 +422,48 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
       if (remoteUpdateToastIdRef.current && removeToast) {
         removeToast(remoteUpdateToastIdRef.current);
         remoteUpdateToastIdRef.current = null;
+      }
+    };
+  }, [removeToast]);
+
+  useEffect(() => {
+    if (!itemPersistenceError) {
+      if (itemSaveErrorToastIdRef.current && removeToast) {
+        removeToast(itemSaveErrorToastIdRef.current);
+        itemSaveErrorToastIdRef.current = null;
+      }
+      return;
+    }
+    if (itemSaveErrorToastIdRef.current || !showToast || !removeToast) return;
+
+    itemSaveErrorToastIdRef.current = showToast({
+      message: "Couldn't save your changes. Your draft is still open.",
+      variant: "error",
+      persist: true,
+      showCloseButton: false,
+      children: (toastId) => (
+        <div className="mt-2 flex gap-2">
+          <Button
+            variant="primary"
+            className="text-sm"
+            onClick={() => {
+              dispatch(retryItemSave());
+              removeToast(toastId);
+              itemSaveErrorToastIdRef.current = null;
+            }}
+          >
+            Retry save
+          </Button>
+        </div>
+      ),
+    });
+  }, [dispatch, itemPersistenceError, removeToast, showToast]);
+
+  useEffect(() => {
+    return () => {
+      if (itemSaveErrorToastIdRef.current && removeToast) {
+        removeToast(itemSaveErrorToastIdRef.current);
+        itemSaveErrorToastIdRef.current = null;
       }
     };
   }, [removeToast]);
@@ -1309,14 +1356,17 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     slides[selectedSlide]?.mediaSource?.kind === "local-video-input"
       ? slides[selectedSlide].mediaSource
       : undefined;
-  const editorLocalVideoInput = useMemo(() => {
-    if (!selectedSlideMediaSource) return undefined;
-    return buildLocalVideoInputPresentation(
-      selectedSlideMediaSource,
-      getOrCreateDeviceId(),
-      getTrustedDeviceLabel(),
-    );
-  }, [selectedSlideMediaSource]);
+  const editorLocalVideoInputStatus = getLocalVideoInputPreviewStatus(
+    selectedSlideMediaSource,
+  );
+  const editorLocalVideoInput =
+    selectedSlideMediaSource && !editorLocalVideoInputStatus
+      ? buildLocalVideoInputPresentation(
+          selectedSlideMediaSource,
+          getOrCreateDeviceId(),
+          getTrustedDeviceLabel(),
+        )
+      : undefined;
   const videoInputCaptureMode: LocalVideoCaptureMode =
     selectedSlideMediaSource?.captureKind === "screen" ||
       selectedSlideMediaSource?.captureKind === "window"
@@ -1730,11 +1780,20 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
               localVideoInput={editorLocalVideoInput}
               canCaptureLocalVideo={Boolean(editorLocalVideoInput)}
             />
+            {editorLocalVideoInputStatus ? (
+              <LocalSourceStatus
+                {...editorLocalVideoInputStatus}
+                size="preview"
+              />
+            ) : null}
             {slides[selectedSlide]?.mediaSource?.kind === "local-video-input" ? (
               <LocalVideoInputSlideBadge
                 label={slides[selectedSlide].mediaSource.label}
                 captureKind={slides[selectedSlide].mediaSource.captureKind}
+                unavailable={Boolean(editorLocalVideoInputStatus)}
+                ownerLabel={editorLocalVideoInputStatus?.ownerLabel}
                 variant="banner"
+                className="z-40"
                 size="md"
               />
             ) : null}

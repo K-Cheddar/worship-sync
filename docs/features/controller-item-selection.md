@@ -8,6 +8,7 @@ Selecting an outline item activates its current cached document in Redux. The ex
 ## Product decisions
 - Individual item URLs are no longer supported. Legacy item URLs redirect to their own workspace root without decoding or reconstructing selection.
 - Cached mouse/touch, arrow-key and continuous-scroll selection is synchronous, performs no document reads, and never turns item loading on. Actual library/settings sections retain navigation.
+- Slide-grid scrolling follows intentional navigation: opening or switching items and clicking, keyboard-selecting, or programmatically navigating to a slide reveals it. Slide additions, deletions, reorders, and synchronized structural edits preserve the visible scroll anchor without treating selection-index adjustments as navigation. Continuous outline mode keeps its own scrolling behavior.
 - `_id` identifies the document; `listId` identifies its outline occurrence. Reselecting and switching occurrences preserve unsaved document content and unresolved conflicts.
 - Shift, Ctrl/Cmd, long press and selection-only actions do not activate an item. Library Add and read-only View details retain their established behavior. Explicit item creation/open actions select the actual occurrence in Redux.
 - Initial entry restores only an established occurrence after outline/cache initialization. Missing or temporarily unavailable selection does not choose a replacement. Church resets and auxiliary controller scopes retain isolation.
@@ -30,6 +31,8 @@ Selecting an outline item activates its current cached document in Redux. The ex
 - Thumbnail rendering and virtualization are outside this change.
 
 Approval sources for these decisions: the October 26, 2026 request to remove item routing and make presentation selection instant; the October 27, 2026 request to fix cross-device outline synchronization risks; and the October 28, 2026 requests to use the winning ItemLists revision without operator-facing historical branch review, keep outline selection local, restore pending registry edits after navigation, and load standalone Current Service previews before the controller initializes. Adjacent contracts: [content viewing](controller-content-viewing.md), [song conflicts](song-audio-conflicts.md), [countdowns](service-countdowns.md).
+
+The slide-grid scroll behavior above is confirmed by the November 18, 2026 request to keep the operator's viewport stable during structural edits while retaining scroll-to-selection for intentional navigation.
 
 Draft retention and actionable retry/keep-current actions for genuine current-session registry edits are additionally authorized by the October 28, 2026 request. The November 11, 2026 outline revision conflict strategy request supersedes historical outline-content review during normal operation, while preserving protection for active overlapping edits.
 

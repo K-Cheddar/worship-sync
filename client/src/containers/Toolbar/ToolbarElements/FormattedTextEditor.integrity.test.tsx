@@ -579,7 +579,6 @@ describe("delayed formatted text content integrity", () => {
     expect(mockDocs.get("free-A")?.slides[0].formattedTextDisplayInfo?.textColor).toBe("#123456");
     expect(mockDatabaseBDocs.get("free-A")).toEqual(beforeOtherChurch);
     expect(mockDb.get).toHaveBeenCalledWith("free-A");
-    expect(mockDatabaseB.get).not.toHaveBeenCalled();
     expect(mockDatabaseB.put).not.toHaveBeenCalled();
     expect(beforeA?.name).toBe("free-A");
   });

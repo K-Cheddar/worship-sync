@@ -8,7 +8,7 @@ import {
 import { cn } from "@/utils/cnHelper";
 
 export const SERVICE_OCCURRENCE_GRID_CLASS_NAME =
-  "grid w-full max-w-[90rem] grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-2";
+  "grid w-full grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-2";
 
 export type ServiceOccurrenceCardDateParts = {
   weekday: string;

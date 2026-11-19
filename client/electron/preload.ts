@@ -194,6 +194,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
     ipcRenderer.invoke("get-local-asset", assetId),
   linkLocalVideoFile: (workspaceId: string) =>
     ipcRenderer.invoke("link-local-video-file", { workspaceId }),
+  linkSelectedLocalVideoFile: (workspaceId: string, file: File) =>
+    ipcRenderer.invoke("link-selected-local-video-file", {
+      workspaceId,
+      sourcePath: webUtils.getPathForFile(file),
+    }),
   commitRelinkLocalVideoFile: (assetId: string, candidateId: string) =>
     ipcRenderer.invoke("commit-relink-local-video-file", { assetId, candidateId }),
   getLocalVideoRelinkStatus: (assetId: string, candidateId: string) =>

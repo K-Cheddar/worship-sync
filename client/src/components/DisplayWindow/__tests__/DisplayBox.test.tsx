@@ -93,6 +93,8 @@ jest.mock("../../../hooks/useLocalImageUrl", () => ({
 jest.mock("../../../hooks/useLocalVideoFileUrl", () => ({
   useLocalVideoFileUrl: (value: unknown, purpose?: unknown) =>
     mockUseLocalVideoFileUrl(value, purpose),
+  isUnavailableLocalVideoFile: (resolution: LocalVideoFileResolution) =>
+    resolution.isLocalVideoFile && resolution.status === "unavailable",
 }));
 
 jest.mock("../TimerDisplay", () => ({
@@ -217,11 +219,77 @@ describe("DisplayBox", () => {
         showBackground
         index={0}
         showLocalSourceStatus
+        statusScaleFactor={0.25}
       />,
     );
-    expect(screen.getByText("Local source on another device")).toBeInTheDocument();
+    expect(screen.getByText("Local source on another device")).toHaveStyle({
+      fontSize: "152px",
+    });
     expect(screen.getByText("Local image · Welcome.png")).toBeInTheDocument();
     expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
+  });
+
+  it("keeps a usable remote image fallback ahead of an unavailable local warning", () => {
+    setLocalImageResolution({
+      isLocalImage: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+    const fallbackBox = {
+      ...localImageBox,
+      background: "https://cdn.example.test/welcome.png",
+    };
+
+    render(
+      <DisplayBox
+        box={fallbackBox}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveAttribute(
+      "src",
+      "https://cdn.example.test/welcome.png",
+    );
+    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
+  });
+
+  it("keeps loading distinct and respects a display that hides the background", () => {
+    setLocalImageResolution({
+      isLocalImage: true,
+      isOwner: true,
+      status: "loading",
+    });
+    const { rerender } = render(
+      <DisplayBox
+        box={localImageBox}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.getByText("Loading local image")).toBeInTheDocument();
+    expect(screen.queryByText("Local image unavailable")).not.toBeInTheDocument();
+
+    setLocalImageResolution({
+      isLocalImage: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+    rerender(
+      <DisplayBox
+        box={localImageBox}
+        width={100}
+        showBackground={false}
+        index={0}
+        showLocalSourceStatus
+      />,
+    );
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 
   it("shows unavailable local video files only in an opted-in preview", () => {
@@ -245,10 +313,79 @@ describe("DisplayBox", () => {
       />,
     );
     expect(screen.getByText("Local video · Welcome.mp4")).toBeInTheDocument();
+    expect(
+      screen.getByText("Local video unavailable on this device"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Source is local to another device"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
   });
 
+  it("clears an unavailable local video still and releases output paint readiness", () => {
+    const onPaintReadyChange = jest.fn();
+    setLocalVideoFileResolution({
+      isLocalVideoFile: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+
+    render(
+      <DisplayBox
+        box={{
+          ...localVideoBox,
+          mediaInfo: {
+            ...localVideoBox.mediaInfo!,
+            placeholderImage: "https://cdn.example.com/video-still.jpg",
+          },
+        }}
+        width={100}
+        showBackground
+        index={0}
+        onPaintReadyChange={onPaintReadyChange}
+      />,
+    );
+
+    expect(
+      screen.getByTestId("unavailable-local-video-black-screen"),
+    ).toBeInTheDocument();
+    expect(screen.queryByAltText("Main")).not.toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(onPaintReadyChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("keeps the saved still in compact slide thumbnails", () => {
+    setLocalVideoFileResolution({
+      isLocalVideoFile: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+
+    render(
+      <DisplayBox
+        box={{
+          ...localVideoBox,
+          mediaInfo: {
+            ...localVideoBox.mediaInfo!,
+            placeholderImage: "https://cdn.example.com/video-still.jpg",
+          },
+        }}
+        width={100}
+        showBackground
+        index={0}
+        showLocalSourceStatus
+        localSourceStatusSize="thumbnail"
+      />,
+    );
+
+    expect(screen.getByAltText("Main")).toHaveAttribute(
+      "src",
+      "https://cdn.example.com/video-still.jpg",
+    );
+  });
+
   it("does not mark a loading or cloud-backed local video as unavailable", () => {
+    const onPaintReadyChange = jest.fn();
     setLocalVideoFileResolution({
       isLocalVideoFile: true,
       isOwner: true,
@@ -261,9 +398,12 @@ describe("DisplayBox", () => {
         showBackground
         index={0}
         showLocalSourceStatus
+        onPaintReadyChange={onPaintReadyChange}
       />,
     );
-    expect(screen.queryByText("Local source on another device")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading local video")).toBeInTheDocument();
+    expect(screen.queryByText("Local video unavailable")).not.toBeInTheDocument();
+    expect(onPaintReadyChange).toHaveBeenLastCalledWith(false);
 
     setLocalVideoFileResolution({
       isLocalVideoFile: false,

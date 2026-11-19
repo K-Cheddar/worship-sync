@@ -32,6 +32,8 @@ type VideoBackgroundControlsProps = {
   onSendModeChange: (mode: VideoBackgroundSendMode) => void;
   loop: boolean;
   onLoopChange: (loop: boolean) => void;
+  /** Hide per-slide Loop and send-mode settings while retaining transport controls. */
+  showPlaybackPreferences?: boolean;
   showSendMode?: boolean;
   className?: string;
 };
@@ -52,6 +54,7 @@ const VideoBackgroundControls = ({
   onSendModeChange,
   loop,
   onLoopChange,
+  showPlaybackPreferences = true,
   showSendMode = true,
   className,
 }: VideoBackgroundControlsProps) => {
@@ -267,57 +270,59 @@ const VideoBackgroundControls = ({
           {formatVideoClock(duration)}
         </span>
       </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1">
-        <Toggle
-          label="Loop"
-          icon={Repeat}
-          value={loop}
-          className="shrink-0"
-          labelClassName="text-xs"
-          onChange={(nextLoop) => {
-            onLoopChange(nextLoop);
-            if (!syncLive) return;
-            // Rebase with the old loop policy before changing it: a clip that
-            // has wrapped must keep its current frame when looping is disabled.
-            dispatch(updateVideoPlayback({
-              videoPlayback: buildVideoPlaybackCue({
-                mediaKey,
-                positionSeconds: transportPosition,
-                paused: isPaused,
-                applySeek: false,
-                loop: nextLoop,
-                // Without duration we cannot wrap the live clock. Let each
-                // output keep its actual playhead, just as for cue-less sends.
-                loopOnly: liveCue && duration > 0 ? undefined : true,
-                hasLiveClock: Boolean(liveCue),
-                preserveOutputPosition: Boolean(syncLive && liveCue && duration <= 0),
-              }),
-              outputIds: syncOutputIds,
-            }));
-          }}
-        />
-      {showSendMode ? <>
-        <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-gray-300">
-          On send
-        </span>
-        <SegmentedControl
-          ariaLabel="What the video does when this slide is sent"
-          variant="compact"
-          value={sendMode}
-          onChange={onSendModeChange}
-          options={SEND_MODE_OPTIONS}
-        />
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button variant="tertiary" svg={Info} aria-label="About video send behavior" className="md:hidden shrink-0" />
-          </PopoverTrigger>
-          <PopoverContent align="end" className="w-64 max-w-[calc(100vw-2rem)] text-xs">{sendModeHint}</PopoverContent>
-        </Popover>
-        <p className="hidden md:block min-w-0 flex-1 text-[11px] leading-snug text-gray-400">
-          {sendModeHint}
-        </p>
-      </> : null}
-      </div>
+      {showPlaybackPreferences ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 px-1">
+          <Toggle
+            label="Loop"
+            icon={Repeat}
+            value={loop}
+            className="shrink-0"
+            labelClassName="text-xs"
+            onChange={(nextLoop) => {
+              onLoopChange(nextLoop);
+              if (!syncLive) return;
+              // Rebase with the old loop policy before changing it: a clip that
+              // has wrapped must keep its current frame when looping is disabled.
+              dispatch(updateVideoPlayback({
+                videoPlayback: buildVideoPlaybackCue({
+                  mediaKey,
+                  positionSeconds: transportPosition,
+                  paused: isPaused,
+                  applySeek: false,
+                  loop: nextLoop,
+                  // Without duration we cannot wrap the live clock. Let each
+                  // output keep its actual playhead, just as for cue-less sends.
+                  loopOnly: liveCue && duration > 0 ? undefined : true,
+                  hasLiveClock: Boolean(liveCue),
+                  preserveOutputPosition: Boolean(syncLive && liveCue && duration <= 0),
+                }),
+                outputIds: syncOutputIds,
+              }));
+            }}
+          />
+          {showSendMode ? <>
+            <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wide text-gray-300">
+              On send
+            </span>
+            <SegmentedControl
+              ariaLabel="What the video does when this slide is sent"
+              variant="compact"
+              value={sendMode}
+              onChange={onSendModeChange}
+              options={SEND_MODE_OPTIONS}
+            />
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="tertiary" svg={Info} aria-label="About video send behavior" className="md:hidden shrink-0" />
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-64 max-w-[calc(100vw-2rem)] text-xs">{sendModeHint}</PopoverContent>
+            </Popover>
+            <p className="hidden md:block min-w-0 flex-1 text-[11px] leading-snug text-gray-400">
+              {sendModeHint}
+            </p>
+          </> : null}
+        </div>
+      ) : null}
     </div>
   );
 };

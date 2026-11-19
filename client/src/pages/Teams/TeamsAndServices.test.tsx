@@ -5701,7 +5701,7 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
+    expect(screen.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Draft");
     await user.click(screen.getByRole("button", { name: /Send schedule/i }));
     expect(screen.getByText(/Publish this Draft to make it visible to teammates/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Publish & Continue" })).toBeInTheDocument();
@@ -5709,7 +5709,7 @@ describe("Teams", () => {
 
     await user.click(screen.getByRole("button", { name: "Publish & Continue" }));
     await waitFor(() => expect(mockPublishTeamSchedule).toHaveBeenCalledWith("church-1", draft.scheduleId));
-    expect(await screen.findByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
+    expect(await screen.findByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Published");
     expect(await screen.findByText(/Email 1 person on this schedule\?/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Review volunteers for text messages/i })).toBeInTheDocument();
     expect(mockSendTeamSchedule).not.toHaveBeenCalled();
@@ -5722,7 +5722,7 @@ describe("Teams", () => {
 
     await user.click(screen.getByRole("button", { name: "Unpublish" }));
     await waitFor(() => expect(mockUnpublishTeamSchedule).toHaveBeenCalledWith("church-1", draft.scheduleId));
-    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
+    expect(screen.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Draft");
   });
 
   it("offers Publish & Copy Link for a Draft and mints the link only after publishing", async () => {
@@ -5765,7 +5765,7 @@ describe("Teams", () => {
     expect(mockPublishTeamSchedule.mock.invocationCallOrder[0]).toBeLessThan(
       mockGetTeamSchedulePublicLink.mock.invocationCallOrder[0],
     );
-    expect(await screen.findByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
+    expect(await screen.findByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Published");
     expect(screen.queryByRole("dialog", { name: "Schedule published" })).not.toBeInTheDocument();
   });
 
@@ -5824,7 +5824,7 @@ describe("Teams", () => {
     });
     renderTeams();
     await waitForScheduleGrid();
-    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
+    expect(screen.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Published");
     await user.click(screen.getByRole("button", { name: "More schedule actions" }));
     Object.defineProperty(window.navigator, "clipboard", {
       configurable: true,
@@ -5945,8 +5945,8 @@ describe("Teams", () => {
     await waitForScheduleGrid();
     await user.click(screen.getByRole("button", { name: "Publish" }));
 
-    await screen.findByRole("status", { name: "Schedule publication status" });
-    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Draft");
+    await screen.findByRole("status", { name: "Schedule lifecycle status" });
+    expect(screen.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Draft");
     expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled();
     expect(await screen.findByText("The Team is archived.")).toBeInTheDocument();
   });
@@ -5960,7 +5960,7 @@ describe("Teams", () => {
     renderTeams();
     await waitForScheduleGrid();
 
-    expect(screen.getByRole("status", { name: "Schedule publication status" })).toHaveTextContent("Published");
+    expect(screen.getByRole("status", { name: "Schedule lifecycle status" })).toHaveTextContent("Published");
     expect(screen.getByRole("button", { name: /Send schedule/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "More schedule actions" }));
     expect(screen.getByRole("menuitem", { name: "Copy view-only link" })).toBeInTheDocument();

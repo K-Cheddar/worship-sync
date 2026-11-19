@@ -13,6 +13,8 @@ import {
   createLocalMediaFromFile,
   createLocalMediaFromDownloadedVideo,
   createLocalMediaFromLinkedVideo,
+  getRememberedLocalVideoImportMethod,
+  rememberLocalVideoImportMethod,
   LocalImagePlaybackError,
 } from "./localMediaImport";
 
@@ -271,5 +273,22 @@ describe("createLocalMediaFromFile", () => {
     expect(mockedSaveLocalVideoFile.mock.calls[0][1]).toMatchObject({ deferThumbnail: true });
     expect(mockedSaveLocalVideoFile.mock.calls[0][1]?.thumbnailBlob).toBeUndefined();
     expect(media.id).toBe(asset.assetId);
+  });
+});
+
+describe("remembered local video import method", () => {
+  beforeEach(() => localStorage.clear());
+
+  it("defaults to Copy when no valid device preference exists", () => {
+    expect(getRememberedLocalVideoImportMethod()).toBe("copy");
+    localStorage.setItem("worshipsync_local_video_import_method", "unknown");
+    expect(getRememberedLocalVideoImportMethod()).toBe("copy");
+  });
+
+  it("restores the explicitly selected method from this device", () => {
+    rememberLocalVideoImportMethod("link");
+    expect(getRememberedLocalVideoImportMethod()).toBe("link");
+    rememberLocalVideoImportMethod("copy");
+    expect(getRememberedLocalVideoImportMethod()).toBe("copy");
   });
 });

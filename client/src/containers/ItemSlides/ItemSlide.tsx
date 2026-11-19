@@ -21,6 +21,7 @@ import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import type { ResolvedDisplaySettings } from "../../utils/displaySettings";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { isLocalImageUrl } from "../../utils/localImageAssets";
+import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
 
 /** Stable empty list: a fresh [] re-renders every slide on any action. */
 const EMPTY_SLIDE_IDS: string[] = [];
@@ -139,6 +140,14 @@ const ItemSlide = ({
       ? localVideoInputThumbnail.thumbnail
       : undefined
   );
+  const localVideoInputStatus = getLocalVideoInputPreviewStatus(
+    slide.mediaSource?.kind === "local-video-input"
+      ? slide.mediaSource
+      : undefined,
+  );
+  const localVideoInputPreviewUnavailable = localVideoThumbnailUrl
+    ? undefined
+    : localVideoInputStatus;
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
       state.undoable.present.item.backgroundTargetSlideIds ?? EMPTY_SLIDE_IDS,
@@ -310,6 +319,7 @@ const ItemSlide = ({
         isInDraggedSection && "z-10"
       )}
       id={slideDomId ?? `item-slide-${index}`}
+      data-slide-id={slide.id}
     >
       <MediaSlideInsertTarget
         index={index}
@@ -451,8 +461,20 @@ const ItemSlide = ({
           <LocalVideoInputSlideBadge
             label={slide.mediaSource.label}
             captureKind={slide.mediaSource.captureKind}
-            variant={localVideoThumbnailUrl ? "indicator" : "overlay"}
-            className={localVideoThumbnailUrl ? "!bottom-2 !left-2 !right-auto !max-w-[65%]" : undefined}
+            unavailable={Boolean(localVideoInputStatus)}
+            ownerLabel={localVideoInputStatus?.ownerLabel}
+            variant={
+              localVideoThumbnailUrl || localVideoInputPreviewUnavailable
+                ? "indicator"
+                : "overlay"
+            }
+            className={
+              localVideoThumbnailUrl
+                ? "!bottom-2 !left-2 !right-auto !max-w-[65%]"
+                : localVideoInputPreviewUnavailable
+                  ? "!bottom-2 !left-2 !right-auto !max-w-[65%] !z-40"
+                  : undefined
+            }
           />
         ) : null}
       </div>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BookOpen, Eye, LocateFixed, Maximize2, Mic2, Minimize2, Moon, Music, Radio, RefreshCw, Sun } from "lucide-react";
 import type { ReactNode } from "react";
 import Button from "../components/Button/Button";
@@ -9,7 +9,7 @@ import ProfileImagePreview from "../components/ProfileImagePreview/ProfileImageP
 import Select from "../components/Select/Select";
 import ServicePlanRolePicker from "../components/ServicePlanRolePicker";
 import ServiceFlowRichText from "../components/ServiceFlowRichText/ServiceFlowRichText";
-import { getServiceFlowProgress } from "../services/serviceFlowProgress";
+import { getServiceFlowProgress, type TimedServiceFlowItem } from "../services/serviceFlowProgress";
 import type {
   PublicServiceFlowEquipmentAssignment,
   PublicServiceFlowItem,
@@ -105,7 +105,7 @@ const formatServiceTime = (value: number, timezone: string) =>
     hour: "numeric", minute: "2-digit", timeZone: timezone,
   }).format(new Date(value));
 
-const PublicItemContent = ({
+const PublicItemContent = memo(({
   item,
   theme,
   isGeneralView,
@@ -144,7 +144,9 @@ const PublicItemContent = ({
         ...(item.scriptureRefs || []).map((title) => ({ type: "scripture", title })),
       ];
   return resources.length ? <PublicResourceReferences resources={resources} theme={theme} /> : null;
-};
+});
+
+const MemoizedServiceFlowRichText = memo(ServiceFlowRichText);
 
 const PublicResourceReferences = ({
   resources,
@@ -229,7 +231,7 @@ const normalizePublicBrandHex = (raw: string) => {
  * The detailed link is used by service teams. Keep their scheduled mic
  * handoff beside the running order, without exposing it on the simple link.
  */
-const PublicServingTeamsPanel = ({
+const PublicServingTeamsPanel = memo(({
   teams,
   secondaryColor,
   theme,
@@ -316,7 +318,7 @@ const PublicServingTeamsPanel = ({
       ))}
     </div>
   </aside>
-);
+));
 
 export type ServicePublicViewProps = {
   snapshot: PublicServiceFlowSnapshot;
@@ -409,6 +411,14 @@ const ServicePublicView = ({
     () => getServiceFlowProgress(serviceWithControllerLiveItem, clientNow + serverOffsetMs),
     [clientNow, serverOffsetMs, serviceWithControllerLiveItem],
   );
+  const progressItemsById = useMemo(() => {
+    const indexed = new Map<string, TimedServiceFlowItem>();
+    for (const timed of progress?.items ?? []) {
+      // Match the old Array.find behavior if a malformed snapshot repeats an item ID.
+      if (!indexed.has(timed.item.id)) indexed.set(timed.item.id, timed);
+    }
+    return indexed;
+  }, [progress?.items]);
   const displayedTimeline = useMemo(
     () => getServiceFlowProgress(serviceWithControllerLiveItem, snapshot.serverNowMs),
     [serviceWithControllerLiveItem, snapshot.serverNowMs],
@@ -784,7 +794,7 @@ const ServicePublicView = ({
                   ) : null}
                   <ol className={cn("overflow-hidden rounded-xl border shadow-lg", chrome.list)}>
                     {section.items.map((item) => {
-                      const timed = progress?.items.find((candidate) => candidate.item.id === item.id);
+                      const timed = progressItemsById.get(item.id);
                       const timing = displayedTimesByItemId.get(item.id);
                       const isCurrent = progress?.current?.item.id === item.id;
                       const isPast = Boolean(timed && clientNow + serverOffsetMs >= timed.endsAtMs && !isCurrent);
@@ -880,7 +890,7 @@ const ServicePublicView = ({
                                           Shared notes
                                         </p>
                                       ) : null}
-                                      <ServiceFlowRichText
+                                      <MemoizedServiceFlowRichText
                                         document={item.notes}
                                         className={theme === "light" ? "text-slate-900" : undefined}
                                       />
@@ -891,7 +901,7 @@ const ServicePublicView = ({
                                       <p className={cn("mb-0.5 text-[10px] font-bold uppercase tracking-wide", theme === "light" ? "text-slate-500" : "text-neutral-500")}>
                                         {teamNote.label}{teamNote.scope === "role" ? " role" : ""} notes
                                       </p>
-                                      <ServiceFlowRichText
+                                      <MemoizedServiceFlowRichText
                                         document={teamNote.notes}
                                         className={theme === "light" ? "text-slate-900" : undefined}
                                       />

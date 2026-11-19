@@ -101,4 +101,29 @@ describe("DeleteModal", () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(onConfirm).not.toHaveBeenCalled();
   });
+
+  it("keeps Cancel and Delete enabled before queued work starts", () => {
+    const onClose = jest.fn();
+    const onConfirm = jest.fn();
+
+    render(
+      <DeleteModal
+        isOpen
+        onClose={onClose}
+        onConfirm={onConfirm}
+        title="Delete media"
+        confirmText="Delete"
+      />,
+    );
+
+    const cancelButton = screen.getByRole("button", { name: "Cancel" });
+    const confirmButton = screen.getByRole("button", { name: "Delete" });
+    expect(cancelButton).toBeEnabled();
+    expect(confirmButton).toBeEnabled();
+
+    fireEvent.click(cancelButton);
+    fireEvent.click(confirmButton);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
 });

@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   LayoutGrid,
+  LoaderCircle,
   Maximize,
   MonitorSmartphone,
   X,
@@ -400,28 +401,34 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     ],
   );
 
-  const linkLocalVideo = useCallback(async () => {
+  const linkLocalVideo = useCallback(async (file: File, displayName: string) => {
     const api = window.electronAPI;
-    if (c.isMediaReadOnly || !api?.linkLocalVideoFile) return;
-    const task = beginLocalVideoTask("Choose a video file to link…");
+    if (c.isMediaReadOnly || !api?.linkSelectedLocalVideoFile) return;
+    const task = beginLocalVideoTask("Checking video file…");
     if (!task) return;
     const dbAtStart = globalDb;
     const isOwnerCurrent = () => globalDb === dbAtStart && globalFireDbInfo.churchId === churchId;
+    const canNotify = () =>
+      mountedRef.current &&
+      localVideoTaskRef.current?.id === task.id &&
+      task.scope === localVideoTaskScope &&
+      isOwnerCurrent();
     let assetId: string | undefined;
     let persistenceStarted = false;
     try {
-      const asset = await api.linkLocalVideoFile(churchId);
+      const asset = await api.linkSelectedLocalVideoFile(churchId, file);
       if (!asset) return;
       assetId = asset.assetId;
       if (!isOwnerCurrent()) throw new Error("The active church changed before the video could be linked.");
-      updateLocalVideoTask(task, "Validating video file…");
+      updateLocalVideoTask(task, "Validating playback…");
       const media = await createLocalMediaFromLinkedVideo({
         asset,
         workspaceId: churchId,
+        displayName,
         folderId: c.uploadTargetFolderId,
       });
       if (!isOwnerCurrent()) throw new Error("The active church changed before the video could be linked.");
-      updateLocalVideoTask(task, "Saving video to the Media Library…");
+      updateLocalVideoTask(task, "Completing Media Library registration…");
       const before = reduxStore.getState().media;
       addLocalMedia(media);
       persistenceStarted = true;
@@ -443,8 +450,10 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       if (!persisted.list.some((item) => item.id === media.id && item.localVideoFile?.id === assetId)) {
         throw new Error("The linked video could not be confirmed in the Media Library. Its source was kept.");
       }
-      notifyStorageUsageChanged();
-      showToast("Video linked to the Media Library.", "success");
+      if (canNotify()) {
+        notifyStorageUsageChanged();
+        showToast("Video added to the Media Library.", "success");
+      }
     } catch (error) {
       let mayDiscardAsset = true;
       if (persistenceStarted && assetId && dbAtStart) {
@@ -462,14 +471,14 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
         mayDiscardAsset = false;
       }
       if (assetId && mayDiscardAsset) await deleteLocalVideoFile(assetId).catch(() => undefined);
-      if (isOwnerCurrent() && mountedRef.current) showToast(
+      if (canNotify()) showToast(
         error instanceof Error ? error.message : "Could not link this video file.",
         "error",
       );
     } finally {
       finishLocalVideoTask(task);
     }
-  }, [addLocalMedia, beginLocalVideoTask, churchId, c.isMediaReadOnly, c.uploadTargetFolderId, finishLocalVideoTask, notifyStorageUsageChanged, reduxStore, showToast, updateLocalVideoTask]);
+  }, [addLocalMedia, beginLocalVideoTask, churchId, c.isMediaReadOnly, c.uploadTargetFolderId, finishLocalVideoTask, localVideoTaskScope, notifyStorageUsageChanged, reduxStore, showToast, updateLocalVideoTask]);
 
   const relinkLocalVideoFile = useCallback(async (media: MediaType) => {
     const api = window.electronAPI;
@@ -622,6 +631,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
             {localVideoTask?.scope === localVideoTaskScope ? (
               <p role="status" aria-live="polite" aria-busy="true" className="mr-2 text-xs text-gray-300">
+                <LoaderCircle className="mr-1 inline size-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
                 {localVideoTask.label}
               </p>
             ) : null}
@@ -632,7 +642,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
                 onAddScreenShare={supportsDesktopCapture() ? () => openVideoInputPicker("desktop") : undefined}
                 onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
                 onDownloadVideo={isVideoDownloaderAvailable ? () => setIsVideoDownloadOpen(true) : undefined}
-                onLinkVideo={window.electronAPI?.linkLocalVideoFile ? () => void linkLocalVideo() : undefined}
                 mediaUploadDisabled={c.isMediaReadOnly || isLinkingLocalVideo}
                 isGuestSession={c.isGuestSession}
               />
@@ -652,10 +661,11 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onLocalMediaPatched={(id, patch) =>
             dispatch(updateMediaItemFields({ id, patch }))
           }
+          onLinkVideo={linkLocalVideo}
           showButton={false}
           uploadPreset="bpqu4ma5"
           onUploadComplete={notifyStorageUsageChanged}
-          uploadDisabled={c.isMediaReadOnly}
+          uploadDisabled={c.isMediaReadOnly || isLinkingLocalVideo}
         />
         {isVideoDownloaderAvailable ? (
           <DownloadVideoDialog
@@ -832,6 +842,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           isPanelVariant={c.isPanelVariant}
           isMediaExpanded={c.isMediaExpanded}
           isMediaLoading={c.isMediaLoading}
+          isMediaWaitingForSync={c.isMediaWaitingForSync}
           hasMediaLoadError={c.hasMediaLoadError}
           mediaItemsPerRow={c.mediaItemsPerRow}
           mediaListRef={c.mediaListRef}
@@ -860,7 +871,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           isOpen={c.showDeleteModal}
           onClose={c.handleCancelDelete}
           onConfirm={c.handleConfirmDelete}
-          isConfirming={c.isDeleteInProgress}
           itemName={c.isDeletingMultiple ? undefined : c.mediaToDelete?.name}
           title="Delete Media"
           message={
@@ -928,7 +938,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           }
           onRelinkVideoInput={relinkVideoInput}
           onRelinkLocalVideoFile={relinkLocalVideoFile}
-          onLinkVideo={window.electronAPI?.linkLocalVideoFile ? () => void linkLocalVideo() : undefined}
           onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
           mediaUploadDisabled={c.isMediaReadOnly || isLinkingLocalVideo}
           isGuestSession={c.isGuestSession}

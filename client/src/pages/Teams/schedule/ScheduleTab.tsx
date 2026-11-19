@@ -79,6 +79,7 @@ import {
 import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
 import ScheduleStaffingSummary from "./ScheduleStaffingSummary";
 import ScheduleWorkspaceToolbar, {
+  getScheduleWorkspacePublicationClassName,
   resolveSchedulePublicationStatus,
 } from "./ScheduleWorkspaceToolbar";
 import ScheduleSendScopeNotice from "./ScheduleSendScopeNotice";
@@ -6804,6 +6805,9 @@ const ScheduleTab = ({
   ];
 
   const schedulePublicationStatus = resolveSchedulePublicationStatus(selectedSchedule);
+  const scheduleLifecycleStatus = schedulePublicationStatus || (
+    selectedSchedule?.scheduleId.startsWith("virtual:") ? "virtual" : undefined
+  );
   let publishAndCopyButtonLabel = publishAndCopyLink?.published
     ? publishAndCopyLink.publicUrl ? "Copy link" : "Copy view-only link"
     : "Publish & Copy Link";
@@ -7029,7 +7033,11 @@ const ScheduleTab = ({
               ref={scheduleWorkspaceRef}
               inert={isScheduleActionPending}
               aria-busy={isScheduleActionPending}
-              className={cn(panelClassName, scheduleWorkspacePanelClassName)}
+              className={cn(
+                panelClassName,
+                scheduleWorkspacePanelClassName,
+                getScheduleWorkspacePublicationClassName(schedulePublicationStatus),
+              )}
             >
               <div className="shrink-0">
                 <ScheduleWorkspaceToolbar
@@ -7089,7 +7097,7 @@ const ScheduleTab = ({
                     </Button>
                   ) : null}
                   autoFillMenuItem={scheduleAutoFillMenuItem}
-                  publicationStatus={schedulePublicationStatus}
+                  lifecycleStatus={scheduleLifecycleStatus}
                   isScheduleActionPending={isScheduleActionPending}
                   isPublicationPending={isPublicationPending}
                   onPublicationChange={() => void handleSchedulePublication()}

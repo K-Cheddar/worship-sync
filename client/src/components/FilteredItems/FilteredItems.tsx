@@ -1,16 +1,19 @@
 import React, {
+  useCallback,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
-import { useDispatch } from "../../hooks";
+import { useStore } from "react-redux";
+import { useDispatch, useSelector } from "../../hooks";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { FilePlus, Search, WholeWord } from "lucide-react";
+import { FilePlus, Search, Tag, Trash2, WholeWord } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
 import Button from "../Button/Button";
+import SortableColumnButton from "../SortableColumnButton";
 import Spinner from "../Spinner/Spinner";
 import SongSearchInput from "../SongList/SongSearchInput";
 import DeleteModal from "../Modal/DeleteModal";
@@ -18,9 +21,11 @@ import {
   addItemToItemList,
   removeItemFromListById,
 } from "../../store/itemListSlice";
-import { DBItem, ServiceItem } from "../../types";
+import type { DBItem, ServiceItem } from "../../types";
+import type { RootState } from "../../store/store";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { useOptionalTransferActions, type DeletionSessionIdentity } from "../../context/transferContext";
 import { useControllerBasePath } from "../../context/activeController";
 import { ActionCreators } from "redux-undo";
 import FilteredItem from "./FilteredItem";
@@ -33,17 +38,13 @@ import {
   type NormalizedLrclibTrack,
 } from "../../utils/lrclib";
 import { initialCreateItemState, setCreateItem } from "../../store/createItemSlice";
-import { ref, get, set } from "firebase/database";
-import { globalFireDbInfo } from "../../context/globalInfo";
 import { deleteTimer } from "../../store/timersSlice";
-import { getChurchDataPath } from "../../utils/firebasePaths";
 import { alternatingAdminListRowBg } from "../../utils/listRowStripes";
 import { cn } from "../../utils/cnHelper";
 import { searchLrclibTracks } from "../../api/lrclib";
 import { deleteSongAudioWithRetry } from "../../api/auth";
 import ExternalLyricsResultItem from "./ExternalLyricsResultItem";
 import ViewExternalLyricsDrawer from "./ViewExternalLyricsDrawer";
-import { deleteSong } from "../../utils/songPersistence";
 import {
   EXTERNAL_SECTION_FOOTER_HEIGHT,
   EXTERNAL_SECTION_HEADER_HEIGHT,
@@ -58,8 +59,27 @@ import {
   getLibraryItemVirtualKey,
 } from "./filteredItemsVirtualRowHeight";
 import { isViewOnlyAccess } from "../../utils/accessTiers";
+import { getContentDatabaseSessionToken } from "../../utils/contentReplicationActivity";
+import { removeFirebaseTimerWithTransaction } from "../../utils/firebaseTimerDeletion";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 import type { LibraryFilter } from "../../store/itemLibraryUiSlice";
+import Checkbox from "../Checkbox/Checkbox";
+import {
+  FILTERED_LIBRARY_GRID_COLUMNS,
+  FILTERED_LIBRARY_SELECTION_GRID_COLUMNS,
+} from "./FilteredItem";
+import {
+  createItemLibraryDeletionProgress,
+  deleteLibraryItemWithProgress,
+} from "../../utils/itemLibraryDeletion";
+import type { Transfer } from "../../context/transferModel";
+import {
+  getItemLibrarySourceIndices,
+  getItemLibraryAuditDisplay,
+  sortItemLibraryResults,
+  type ItemLibrarySortDirection,
+  type ItemLibrarySortField,
+} from "../../utils/itemLibraryPresentation";
 
 type FilteredItemsProps = {
   list: ServiceItem[];
@@ -123,6 +143,21 @@ type FilteredItemsVirtualRow =
   | { kind: "external"; candidate: NormalizedLrclibTrack }
   | { kind: "library"; item: filteredItemsListType; libraryIndex: number };
 
+type DeleteConfirmation = { kind: "single" | "bulk"; items: ServiceItem[]; owner: DeletionOwner | null };
+type DeletionOwner = DeletionSessionIdentity & {
+  outlineOwnerKey?: string;
+  outlineId?: string;
+  outlineSession: number;
+};
+
+const SORT_DIRECTION_DEFAULT: Record<ItemLibrarySortField, ItemLibrarySortDirection> = {
+  relevance: "descending",
+  name: "ascending",
+  updatedAt: "descending",
+  createdAt: "descending",
+  updatedBy: "ascending",
+};
+
 const getExternalCandidateKey = (candidate: NormalizedLrclibTrack) =>
   `${candidate.source}:${candidate.geniusId ?? candidate.lrclibId ?? candidate.trackName}:${candidate.artistName}`;
 
@@ -158,9 +193,34 @@ const FilteredItems = ({
   className,
 }: FilteredItemsProps) => {
   const dispatch = useDispatch();
+  const store = useStore<RootState>();
+  const transferActions = useOptionalTransferActions();
   const navigate = useNavigate();
   const controllerBasePath = useControllerBasePath();
   const listScrollRef = useRef<HTMLDivElement | null>(null);
+  const [libraryScrollbarGutterWidth, setLibraryScrollbarGutterWidth] = useState(0);
+
+  useEffect(() => {
+    const scrollElement = listScrollRef.current;
+    if (!scrollElement) return;
+
+    const updateScrollbarGutter = () => {
+      const width = Math.max(0, scrollElement.offsetWidth - scrollElement.clientWidth);
+      setLibraryScrollbarGutterWidth((current) => current === width ? current : width);
+    };
+    updateScrollbarGutter();
+
+    const resizeObserver = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updateScrollbarGutter);
+    resizeObserver?.observe(scrollElement);
+    window.addEventListener("resize", updateScrollbarGutter);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateScrollbarGutter);
+    };
+  }, []);
 
   const effectiveFilter: LibraryFilter =
     type === "all"
@@ -170,6 +230,7 @@ const FilteredItems = ({
         : type === "free"
           ? "free"
           : "timer";
+  const showLibraryControls = type === "all";
   const showExternalSearch = type === "song" || (type === "all" && effectiveFilter === "song");
   const useDetailsGrid =
     type === "song" ||
@@ -207,14 +268,52 @@ const FilteredItems = ({
     return byId;
   }, [allDocs, effectiveFilter, type]);
 
+  const [sortOverride, setSortOverride] = useState<ItemLibrarySortField | null>(null);
+  const [sortDirectionOverride, setSortDirectionOverride] = useState<{
+    field: ItemLibrarySortField;
+    direction: ItemLibrarySortDirection;
+  } | null>(null);
+  const sortField = sortOverride ?? (searchValue.trim() ? "relevance" : "name");
+  const sortDirection = sortDirectionOverride?.field === sortField
+    ? sortDirectionOverride.direction
+    : SORT_DIRECTION_DEFAULT[sortField];
+  const changeLibrarySort = (field: ItemLibrarySortField) => {
+    if (sortOverride !== field) {
+      setSortOverride(field);
+      setSortDirectionOverride({ field, direction: "ascending" });
+      return;
+    }
+    if (sortDirection === "ascending") {
+      setSortDirectionOverride({ field, direction: "descending" });
+      return;
+    }
+    setSortOverride(null);
+    setSortDirectionOverride(null);
+  };
+
   const [{ list: filteredList, query: filteredSearchValue }, setSearchResults] =
     useState({ list: listForFilter as filteredItemsListType[], query: "" });
   const setFilteredList = (list: filteredItemsListType[]) =>
     setSearchResults((previous) => ({ ...previous, list }));
-  const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
-  const [itemToBeDeleted, setItemToBeDeleted] = useState<ServiceItem | null>(
-    null
+  const orderedFilteredList = useMemo(() => {
+    if (!showLibraryControls || sortOverride === null) return filteredList;
+    return sortItemLibraryResults(filteredList, docsById, sortOverride, sortDirection);
+  }, [docsById, filteredList, showLibraryControls, sortDirection, sortOverride]);
+  const librarySourceIndices = useMemo(
+    () => getItemLibrarySourceIndices(filteredList),
+    [filteredList],
   );
+  const [debouncedSearchValue, setDebouncedSearchValue] = useState("");
+  const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null);
+  const [selectionState, setSelectionState] = useState({
+    scopeKey: "",
+    ids: new Set<string>(),
+  });
+  const selectionScopeKey = JSON.stringify([searchValue, effectiveFilter]);
+  const selectedItemIds = selectionState.scopeKey === selectionScopeKey
+    ? selectionState.ids
+    : new Set<string>();
+  const [deletionNotice, setDeletionNotice] = useState("");
 
   const [showWords, setShowWords] = useState(false);
   const [isSearchLoading, setIsSearchLoading] = useState(false);
@@ -255,8 +354,8 @@ const FilteredItems = ({
       }
     }
 
-    filteredList.forEach((item, libraryIndex) => {
-      rows.push({ kind: "library", item, libraryIndex });
+    orderedFilteredList.forEach((item) => {
+      rows.push({ kind: "library", item, libraryIndex: librarySourceIndices.get(item) ?? -1 });
     });
 
     return rows;
@@ -267,6 +366,8 @@ const FilteredItems = ({
     externalSearchError,
     externalSearchResults,
     filteredList,
+    librarySourceIndices,
+    orderedFilteredList,
   ]);
 
   const displayRowKinds = useMemo(
@@ -321,6 +422,8 @@ const FilteredItems = ({
         row.item,
         showWordsRef.current,
         Boolean(songArtistById.get(row.item._id)),
+        showLibraryControls,
+        showLibraryControls && typeof window !== "undefined" && window.innerWidth < 768,
       );
     },
     gap: 0,
@@ -346,10 +449,19 @@ const FilteredItems = ({
     customDocumentById?.type === "free" ? customDocumentById : null;
 
   const { db, isMobile = false } = useContext(ControllerInfoContext) || {};
-  const { access, churchId } = useContext(GlobalInfoContext) || {};
+  const { access, churchId, userId, sessionKind } = useContext(GlobalInfoContext) || {};
+  useEffect(() => {
+    transferActions?.updateDeletionSessionIdentity({
+      db,
+      contentSessionToken: db ? getContentDatabaseSessionToken(db.name) : null,
+    });
+  }, [db, transferActions]);
   const { mode } = usePresentationControllerMode();
   const canMutateLibrary = !isViewOnlyAccess(access);
   const allowDelete = (showDelete ?? canMutateLibrary) && mode === "edit";
+  const outlineOwnerKey = useSelector((state) => state.undoable?.present?.itemList?.outlineOwnerKey);
+  const outlineId = useSelector((state) => state.undoable?.present?.itemList?.loadedOutlineId);
+  const showSelectionControls = showLibraryControls && allowDelete && !isLoading;
   const allowCreateAndExternal = showCreateAndExternal ?? canMutateLibrary;
   /** Attach mode always shows the primary action even for view-only library access. */
   const allowAdd = onAddItem ? true : canMutateLibrary;
@@ -359,6 +471,30 @@ const FilteredItems = ({
       filterAndSortItemsForSearch(list, allDocs, rawSearchValue, filter),
     [list, allDocs, effectiveFilter],
   );
+
+  useEffect(() => {
+    setSelectionState((current) => current.scopeKey === selectionScopeKey
+      ? current
+      : { scopeKey: selectionScopeKey, ids: new Set<string>() });
+    setDeleteConfirmation(null);
+  }, [selectionScopeKey]);
+
+  useEffect(() => {
+    if (showSelectionControls) return;
+    setSelectionState({ scopeKey: selectionScopeKey, ids: new Set<string>() });
+  }, [selectionScopeKey, showSelectionControls]);
+
+  useEffect(() => {
+    const currentIds = new Set(filteredList.map((item) => item._id));
+    setSelectionState((current) => {
+      if (current.scopeKey !== selectionScopeKey) {
+        return { scopeKey: selectionScopeKey, ids: new Set<string>() };
+      }
+      const nextIds = new Set([...current.ids].filter((id) => currentIds.has(id)));
+      if (nextIds.size === current.ids.size) return current;
+      return { ...current, ids: nextIds };
+    });
+  }, [filteredList, selectionScopeKey]);
 
   // Debounced search effect
   useEffect(() => {
@@ -377,81 +513,304 @@ const FilteredItems = ({
     listScrollRef.current?.scrollTo?.({ top: 0 });
   }, [debouncedSearchValue, searchItems]);
 
-  const deleteItem = async (item: ServiceItem) => {
-    setItemToBeDeleted(null);
-    let deletedDoc: DBItem | undefined;
-    if (db) {
+  const captureDeletionOwner = (): DeletionOwner | null => {
+    const identity = transferActions?.getCurrentDeletionSessionIdentity();
+    if (!identity || !allowDelete || identity.db !== db || identity.churchId !== (churchId ?? "") ||
+      identity.userId !== (userId ?? "") || identity.sessionKind !== (sessionKind ?? null)) return null;
+    const firebaseDb = identity.firebaseDb && identity.firebaseChurchId === identity.churchId
+      ? identity.firebaseDb
+      : undefined;
+    return {
+      ...identity,
+      firebaseDb,
+      firebaseChurchId: firebaseDb ? identity.firebaseChurchId : "",
+      contentSessionToken: db ? getContentDatabaseSessionToken(db.name) : null,
+      outlineOwnerKey,
+      outlineId,
+      outlineSession: store.getState().allDocs?.session ?? 0,
+    };
+  };
+
+  const isDeletionOwnerCurrent = useCallback((owner: DeletionOwner) => {
+    const current = transferActions?.getCurrentDeletionSessionIdentity();
+    if (!current || isViewOnlyAccess(current.access as never)) return false;
+    if (
+      current.db !== owner.db ||
+      current.database !== owner.database ||
+      current.churchId !== owner.churchId ||
+      current.userId !== owner.userId ||
+      current.sessionKind !== owner.sessionKind ||
+      current.loginState !== owner.loginState ||
+      current.contentSessionToken !== owner.contentSessionToken
+    ) return false;
+    if (owner.firebaseDb && (
+      current.firebaseDb !== owner.firebaseDb ||
+      current.firebaseChurchId !== owner.firebaseChurchId
+    )) return false;
+    const state = store.getState();
+    return state.allDocs?.session === owner.outlineSession &&
+      state.undoable?.present?.itemList?.outlineOwnerKey === owner.outlineOwnerKey &&
+      state.undoable?.present?.itemList?.loadedOutlineId === owner.outlineId;
+  }, [store, transferActions]);
+
+  const createDeletionOwnerError = (owner: DeletionOwner) => {
+    const current = transferActions?.getCurrentDeletionSessionIdentity();
+    if (!current || isViewOnlyAccess(current.access as never)) return "You no longer have permission to complete this deletion. Refresh your access and try again.";
+    if (current.db !== owner.db || current.database !== owner.database || current.churchId !== owner.churchId ||
+      current.userId !== owner.userId || current.sessionKind !== owner.sessionKind ||
+      current.loginState !== owner.loginState || current.contentSessionToken !== owner.contentSessionToken) {
+      return "Your session changed before deletion finished. Return to the original session and retry cleanup.";
+    }
+    const state = store.getState();
+    if (state.allDocs?.session !== owner.outlineSession ||
+      state.undoable?.present?.itemList?.outlineOwnerKey !== owner.outlineOwnerKey ||
+      state.undoable?.present?.itemList?.loadedOutlineId !== owner.outlineId) {
+      return "The open outline changed before deletion finished. Return to the original outline and retry cleanup.";
+    }
+    return "The shared database session changed before cleanup finished. Return to the original session and retry.";
+  };
+
+  useEffect(() => {
+    if (!deleteConfirmation) return;
+    const currentIds = new Set(listForFilter.map((item) => item._id));
+    const owner = deleteConfirmation.owner;
+    if (!owner) {
+      setDeleteConfirmation(null);
+      return;
+    }
+    const ownerStillCurrent = allowDelete && db === owner.db &&
+      (churchId ?? "") === owner.churchId && userId === owner.userId &&
+      sessionKind === owner.sessionKind && outlineOwnerKey === owner.outlineOwnerKey &&
+      outlineId === owner.outlineId &&
+      isDeletionOwnerCurrent(owner);
+    if (!ownerStillCurrent ||
+      deleteConfirmation.items.some((item) => !currentIds.has(item._id))) {
+      setDeleteConfirmation(null);
+    }
+  }, [
+    allowDelete,
+    churchId,
+    db,
+    deleteConfirmation,
+    isDeletionOwnerCurrent,
+    listForFilter,
+    mode,
+    outlineId,
+    outlineOwnerKey,
+    sessionKind,
+    userId,
+    transferActions,
+  ]);
+
+  const getDeletionMessage = (error: unknown) => {
+    const message = error instanceof Error ? error.message : "";
+    if (/song.*migrated|SONG_V2_DELETION_DEFERRED/i.test(message)) {
+      return "This song uses the V2 format and can't be deleted yet.";
+    }
+    if (/not available/i.test(message)) return message;
+    if (/session|original outline|shared database/i.test(message)) return message;
+    if (/permission|unauthorized|forbidden|\b403\b/i.test(message)) {
+      return "You no longer have permission to complete this deletion. Refresh your access and try again.";
+    }
+    if (/not found|\b404\b/i.test(message)) {
+      return "The saved item could not be found. Refresh the library and try again.";
+    }
+    if (/saved item has changed/i.test(message)) return message;
+    return "Could not complete this deletion. Check the connection and try again.";
+  };
+
+  const updateSelection = (id: string, selected: boolean) => {
+    setSelectionState((current) => {
+      const ids = current.scopeKey === selectionScopeKey
+        ? new Set(current.ids)
+        : new Set<string>();
+      if (selected) ids.add(id);
+      else ids.delete(id);
+      return { scopeKey: selectionScopeKey, ids };
+    });
+  };
+
+  const selectedResults = filteredList.filter((item) => selectedItemIds.has(item._id));
+  const allResultsSelected = selectedResults.length > 0 && selectedResults.length === filteredList.length;
+  const someResultsSelected = selectedResults.length > 0 && !allResultsSelected;
+  let selectAllChecked: boolean | "indeterminate" = false;
+  if (allResultsSelected) selectAllChecked = true;
+  else if (someResultsSelected) selectAllChecked = "indeterminate";
+  const searchResultsAreCurrent = !isSearchLoading && filteredSearchValue === searchValue;
+
+  const startDeletionActivity = (items: ServiceItem[], owner: DeletionOwner) => {
+    if (!transferActions || !items.length) return;
+    const uniqueItems = [...new Map(items.map((item) => [item._id, item])).values()];
+    const entries = uniqueItems.map((item) => ({
+      item,
+      progress: createItemLibraryDeletionProgress(item),
+      status: "queued" as "queued" | "active" | "complete" | "failed",
+      error: undefined as string | undefined,
+    }));
+    const transferId = `item-library-deletion-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    let running = false;
+    let unregisterRetry: (() => void) | undefined;
+    const buildTransfer = (): Transfer => {
+      const completedCount = entries.filter((entry) => entry.progress.complete).length;
+      const unfinishedCount = entries.length - completedCount;
+      const activeEntry = entries.find((entry) => entry.status === "active");
+      const errors = entries.flatMap((entry) => entry.error ? [`${entry.item.name}: ${entry.error}`] : []);
+      const status: Transfer["status"] = unfinishedCount === 0
+        ? "complete"
+        : running
+          ? "active"
+          : completedCount > 0
+            ? "partial"
+            : "failed";
+      return {
+        id: transferId,
+        type: "Item library deletion",
+        name: entries.length === 1 ? entries[0].item.name : `${entries.length} library items`,
+        status,
+        progress: entries.length ? (completedCount / entries.length) * 100 : 100,
+        phase: {
+          key: status,
+          label: status === "complete" ? "Deletion complete" : running ? "Deleting library items" : "Deletion needs attention",
+          ...(running ? { current: completedCount + 1, total: entries.length } : {}),
+        },
+        detail: activeEntry
+          ? `Deleting ${activeEntry.item.name}`
+          : status === "complete"
+            ? `${completedCount} ${completedCount === 1 ? "item deleted" : "items deleted"}`
+            : `${completedCount} of ${entries.length} deleted; ${unfinishedCount} need attention`,
+        ...(errors.length ? { error: { message: errors.join(" ") } } : {}),
+        files: entries.map((entry, index) => ({
+          id: `${transferId}-${index}`,
+          name: entry.item.name,
+          status: entry.progress.complete ? "complete" as const : entry.status,
+          progress: entry.progress.complete ? 100 : entry.status === "active" ? 0 : null,
+          ...(entry.error ? { error: entry.error } : {}),
+        })),
+        blocksUnload: unfinishedCount > 0,
+        actions: unfinishedCount > 0
+          ? [{ key: "retry-deletion", label: running ? "Retrying deletion..." : "Retry unfinished deletion", pending: running }]
+          : [{ key: "dismiss", label: "Dismiss" }],
+      };
+    };
+    const publish = () => transferActions.updateTransfer(buildTransfer());
+    const retry = async () => {
+      if (running) return;
+      running = true;
+      publish();
       try {
-        if (item.type === "song") {
-          deletedDoc = await deleteSong(db, item._id);
-        } else {
-          const persistedDoc = await db.get(item._id);
-          deletedDoc = persistedDoc as DBItem;
-          await db.remove(persistedDoc);
+        for (const entry of entries) {
+          if (entry.progress.complete) continue;
+          entry.status = "active";
+          entry.error = undefined;
+          publish();
+          try {
+            await deleteLibraryItemWithProgress({
+              db: owner.db,
+              progress: entry.progress,
+              assertSessionCanContinue: () => {
+                if (!isDeletionOwnerCurrent(owner)) throw new Error(createDeletionOwnerError(owner));
+              },
+              isOriginalOutlineOpen: () => {
+                const state = store.getState();
+                return state.undoable?.present?.itemList?.outlineOwnerKey === owner.outlineOwnerKey &&
+                  state.undoable?.present?.itemList?.loadedOutlineId === owner.outlineId;
+              },
+              removeItemFromOpenOutline: () => store.dispatch(removeItemFromListById(entry.item._id)),
+              clearUndoHistory: () => store.dispatch(ActionCreators.clearHistory()),
+              removeTimerFromStore: () => store.dispatch(deleteTimer(entry.item._id)),
+              removeTimerFromLocalStorage: () => {
+                const storedValue = localStorage.getItem("timerInfo") || "[]";
+                const storedTimers: unknown = JSON.parse(storedValue);
+                if (!Array.isArray(storedTimers)) throw new Error("Saved timer storage is invalid.");
+                const updatedTimers = storedTimers.filter((timer) =>
+                  typeof timer !== "object" || timer === null || !("id" in timer) || timer.id !== entry.item._id,
+                );
+                localStorage.setItem("timerInfo", JSON.stringify(updatedTimers));
+              },
+              removeTimerFromFirebase: owner.firebaseDb
+                ? () => removeFirebaseTimerWithTransaction({
+                  db: owner.firebaseDb!,
+                  churchId: owner.firebaseChurchId,
+                  timerId: entry.item._id,
+                  isAuthorized: () => isDeletionOwnerCurrent(owner) &&
+                    transferActions.getCurrentDeletionSessionIdentity().canWriteTimers,
+                })
+                : undefined,
+              removeSongAudio: owner.churchId
+                ? async (document) => {
+                  await deleteSongAudioWithRetry({
+                    churchId: owner.churchId,
+                    songId: entry.item._id,
+                    audio: document.songAudio!,
+                  });
+                }
+                : undefined,
+            });
+            entry.status = "complete";
+          } catch (error) {
+            entry.status = "failed";
+            entry.error = getDeletionMessage(error);
+          }
+          publish();
+          if (!isDeletionOwnerCurrent(owner)) break;
         }
-      } catch (error) {
-        console.error("Error deleting library item:", error);
-        return;
+      } finally {
+        running = false;
+        publish();
+        if (entries.every((entry) => entry.progress.complete)) unregisterRetry?.();
       }
+    };
+
+    transferActions.updateTransfer(buildTransfer());
+    unregisterRetry = transferActions.registerTransferAction(transferId, "retry-deletion", retry);
+    setDeleteConfirmation(null);
+    setDeletionNotice("Deletion started. Progress and any required cleanup are available in Activity.");
+    void retry();
+  };
+
+  const requestSingleDeletion = (item: ServiceItem) => {
+    setDeletionNotice("");
+    const owner = captureDeletionOwner();
+    if (!owner) {
+      setDeletionNotice("Deletion is unavailable until the original session and Activity provider are ready.");
+      return;
     }
+    setDeleteConfirmation({ kind: "single", items: [item], owner });
+  };
 
-    dispatch(removeItemFromListById(item._id));
-    dispatch(ActionCreators.clearHistory());
-
-    // If deleting a timer, also delete from Firebase and localStorage
-    if (item.type === "timer") {
-      const timerId = item._id;
-
-      // Delete from Redux store
-      dispatch(deleteTimer(timerId));
-
-      // Delete from localStorage
-      try {
-        const storedTimers = JSON.parse(
-          localStorage.getItem("timerInfo") || "[]"
-        );
-        const filteredTimers = storedTimers.filter(
-          (timer: any) => timer.id !== timerId
-        );
-        localStorage.setItem("timerInfo", JSON.stringify(filteredTimers));
-      } catch (error) {
-        console.error("Error updating localStorage:", error);
-      }
-
-      // Delete from Firebase
-      if (globalFireDbInfo.db && globalFireDbInfo.churchId) {
-        try {
-          const timersRef = ref(
-            globalFireDbInfo.db,
-            getChurchDataPath(globalFireDbInfo.churchId, "timers")
-          );
-
-          const snapshot = await get(timersRef);
-          const currentTimers = snapshot.val() || [];
-
-          // Filter out the deleted timer
-          const updatedTimers = currentTimers.filter(
-            (timer: any) => timer.id !== timerId
-          );
-
-          await set(timersRef, updatedTimers);
-        } catch (error) {
-          console.error("Error deleting timer from Firebase:", error);
-        }
-      }
+  const requestBulkDeletion = () => {
+    if (!showSelectionControls || !searchResultsAreCurrent || selectedResults.length === 0) return;
+    setDeletionNotice("");
+    const owner = captureDeletionOwner();
+    if (!owner) {
+      setDeletionNotice("Deletion is unavailable until the original session and Activity provider are ready.");
+      return;
     }
+    setDeleteConfirmation({ kind: "bulk", items: selectedResults, owner });
+  };
 
-    if (item.type === "song" && churchId && deletedDoc?.songAudio) {
-      try {
-        await deleteSongAudioWithRetry({
-          churchId,
-          songId: item._id,
-          audio: deletedDoc.songAudio,
-        });
-      } catch (error) {
-        console.error("Error cleaning deleted song audio:", error);
-      }
+  const confirmDeletion = () => {
+    if (!deleteConfirmation) return;
+    const owner = deleteConfirmation.owner;
+    if (!owner || !isDeletionOwnerCurrent(owner)) {
+      setDeleteConfirmation(null);
+      setDeletionNotice(owner
+        ? createDeletionOwnerError(owner)
+        : "Deletion is unavailable until the original session and Activity provider are ready.");
+      return;
     }
+    startDeletionActivity(deleteConfirmation.items, owner);
+  };
+
+  const changeSearchValue = (value: string) => {
+    if (value !== searchValue) {
+      setSelectionState({
+        scopeKey: JSON.stringify([value, effectiveFilter]),
+        ids: new Set<string>(),
+      });
+      setDeleteConfirmation(null);
+    }
+    setSearchValue(value);
   };
 
   const updateShowWords = (show: boolean, index?: number) => {
@@ -620,7 +979,7 @@ const FilteredItems = ({
           ? (_item) => onAddItem(_item)
           : (_item) => dispatch(addItemToItemList(_item))
       }
-      setItemToBeDeleted={setItemToBeDeleted}
+      setItemToBeDeleted={requestSingleDeletion}
       searchValue={filteredSearchValue}
       artistName={songArtistById.get(item._id)}
       canMutateLibrary={canMutateLibrary}
@@ -628,6 +987,11 @@ const FilteredItems = ({
       showDelete={allowDelete}
       addButtonLabel={addButtonLabel}
       useDetailsGrid={useDetailsGrid}
+      libraryColumns={showLibraryControls}
+      selectionMode={showSelectionControls}
+      selected={selectedItemIds.has(item._id)}
+      onSelectionChange={(selected) => updateSelection(item._id, selected)}
+      auditDisplay={showLibraryControls ? getItemLibraryAuditDisplay(docsById.get(item._id)) : undefined}
       onViewDetails={
         (item.type === "song" || item.type === "free") &&
         (type !== "all" || effectiveFilter === "all" || effectiveFilter === item.type)
@@ -683,6 +1047,8 @@ const FilteredItems = ({
 
   const changeLibraryFilter = (filter: LibraryFilter) => {
     if (filter === effectiveFilter) return;
+    setSelectionState({ scopeKey: JSON.stringify([searchValue, filter]), ids: new Set<string>() });
+    setDeleteConfirmation(null);
     onLibraryFilterChange?.(filter);
     setSearchResults({ list: searchItems(searchValue, filter), query: searchValue });
     setDebouncedSearchValue(searchValue);
@@ -694,6 +1060,11 @@ const FilteredItems = ({
     type === "all" && effectiveFilter === "all"
       ? `${controllerBasePath}/create`
       : `${controllerBasePath}/create?type=${type === "all" ? effectiveFilter : type}&name=${encodeURI(searchValue)}`;
+  const confirmationItemCount = deleteConfirmation?.items.length ?? 0;
+  const confirmationItemName = deleteConfirmation?.kind === "bulk"
+    ? `${confirmationItemCount} selected ${confirmationItemCount === 1 ? "item" : "items"}`
+    : deleteConfirmation?.items[0]?.name;
+  const deleteWarning = "This is permanent. Matching occurrences will be removed from the open outline and undo history will be cleared. Other saved outlines remain separate.";
 
   return (
     <div
@@ -703,10 +1074,14 @@ const FilteredItems = ({
       )}
     >
       <DeleteModal
-        isOpen={!!itemToBeDeleted}
-        onClose={() => setItemToBeDeleted(null)}
-        onConfirm={() => itemToBeDeleted && deleteItem(itemToBeDeleted)}
-        itemName={itemToBeDeleted?.name}
+        isOpen={!!deleteConfirmation}
+        onClose={() => setDeleteConfirmation(null)}
+        onConfirm={confirmDeletion}
+        itemName={confirmationItemName}
+        title={deleteConfirmation?.kind === "bulk" ? "Delete selected items" : "Confirm Deletion"}
+        message="Delete"
+        warningMessage={deleteWarning}
+        confirmText={deleteConfirmation?.kind === "bulk" ? "Delete selected" : "Delete Forever"}
       />
       <ViewSongSectionsDrawer
         song={viewSongDoc}
@@ -740,7 +1115,7 @@ const FilteredItems = ({
         <SongSearchInput
           value={searchValue}
           disabled={isLoading}
-          onChange={setSearchValue}
+          onChange={changeSearchValue}
           label="Search"
           labelClassName={searchLabelClassName}
           inputClassName={searchInputClassName}
@@ -786,6 +1161,11 @@ const FilteredItems = ({
             </Button>
           ))}
         </div>
+      ) : null}
+      {deletionNotice ? (
+        <p className="mb-2 text-sm text-gray-200" role="status" aria-live="polite">
+          {deletionNotice}
+        </p>
       ) : null}
       {allowCreateAndExternal ? (
         <div className="mb-2 flex flex-col gap-3">
@@ -838,10 +1218,97 @@ const FilteredItems = ({
             <Spinner />
           </div>
         )}
+        {showLibraryControls && !isLoading ? (
+          <div
+            className={cn(
+              "mx-1 grid items-center gap-1 overflow-y-hidden border-b border-gray-700 bg-gray-950 px-4 py-1 text-gray-300 [scrollbar-gutter:stable] sm:mx-2",
+              showSelectionControls
+                ? FILTERED_LIBRARY_SELECTION_GRID_COLUMNS
+                : FILTERED_LIBRARY_GRID_COLUMNS,
+            )}
+            style={
+              libraryScrollbarGutterWidth > 0
+                ? { clipPath: `inset(0 ${libraryScrollbarGutterWidth}px 0 0)` }
+                : undefined
+            }
+            role="group"
+            aria-label="Sort library results by column"
+          >
+            {showSelectionControls ? (
+              <Checkbox
+                label="Select all results"
+                hideLabel
+                checked={selectAllChecked}
+                disabled={!searchResultsAreCurrent || filteredList.length === 0}
+                onCheckedChange={(checked) => setSelectionState({
+                  scopeKey: selectionScopeKey,
+                  ids: checked
+                    ? new Set(filteredList.map((item) => item._id))
+                    : new Set<string>(),
+                })}
+                className="col-start-1 row-start-1 justify-self-center"
+              />
+            ) : null}
+            <span
+              className={cn(
+                "col-start-1 flex items-center justify-center",
+                showSelectionControls && "col-start-2",
+              )}
+              role="img"
+              aria-label="Type"
+              title="Type"
+            >
+              <Tag size={14} aria-hidden="true" />
+            </span>
+            <SortableColumnButton
+              label="Name"
+              ariaLabel={sortOverride === "name" ? `Name, sorted ${sortDirection}` : "Sort by Name"}
+              direction={sortOverride === "name" ? sortDirection : undefined}
+              onClick={() => changeLibrarySort("name")}
+            />
+            <SortableColumnButton
+              label="Updated"
+              ariaLabel={sortOverride === "updatedAt" ? `Updated, sorted ${sortDirection}` : "Sort by Updated"}
+              direction={sortOverride === "updatedAt" ? sortDirection : undefined}
+              onClick={() => changeLibrarySort("updatedAt")}
+            />
+            <SortableColumnButton
+              label="Updated by"
+              ariaLabel={sortOverride === "updatedBy" ? `Updated by, sorted ${sortDirection}` : "Sort by Updated by"}
+              direction={sortOverride === "updatedBy" ? sortDirection : undefined}
+              onClick={() => changeLibrarySort("updatedBy")}
+            />
+            {showSelectionControls ? (
+              <div
+                className="col-start-3 col-span-3 row-start-2 flex min-w-0 items-center justify-end gap-2 md:col-start-6 md:col-span-1 md:row-start-1 md:gap-3"
+                role="group"
+                aria-label="Selected item actions"
+              >
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  color="red"
+                  className={cn(
+                    "min-h-7 whitespace-nowrap",
+                    selectedResults.length === 0 && "invisible",
+                  )}
+                  padding="px-2 py-1"
+                  svg={Trash2}
+                  disabled={!searchResultsAreCurrent || selectedResults.length === 0}
+                  onClick={requestBulkDeletion}
+                >
+                  Delete selected ({selectedResults.length})
+                </Button>
+              </div>
+            ) : (
+              <span aria-hidden="true" />
+            )}
+          </div>
+        ) : null}
         <div
           ref={listScrollRef}
           data-testid="filtered-items-results"
-          className="scrollbar-variable min-h-0 w-full flex-1 overflow-y-auto px-1 sm:px-2"
+          className="scrollbar-variable min-h-0 w-full flex-1 overflow-y-auto px-1 [scrollbar-gutter:stable] sm:px-2"
           role="list"
           aria-busy={isSearchLoading || filteredSearchValue !== searchValue}
           data-search-query={filteredSearchValue}

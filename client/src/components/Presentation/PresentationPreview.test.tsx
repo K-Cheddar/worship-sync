@@ -576,6 +576,37 @@ describe("PresentationPreview", () => {
     );
   });
 
+  it("passes saved capture ownership metadata when no local presentation can be built", () => {
+    const mediaSource = {
+      kind: "local-video-input" as const,
+      sourceId: "remote-camera",
+      label: "Main camera",
+      ownerDeviceId: "remote-device",
+      ownerLabel: "Booth PC",
+    };
+
+    render(
+      <PresentationPreview
+        name="Projector"
+        outputId="projector"
+        info={{
+          ...basePresentation,
+          slide: { mediaSource },
+          localVideoInput: undefined,
+        }}
+        prevInfo={basePresentation}
+        isTransmitting={false}
+        toggleIsTransmitting={jest.fn()}
+        quickLinks={[]}
+        timers={[]}
+      />,
+    );
+
+    expect(mockDisplayWindow).toHaveBeenLastCalledWith(
+      expect.objectContaining({ localVideoInputPreviewSource: mediaSource }),
+    );
+  });
+
   it("keeps DisplayWindow mounted while hidden and only gates expensive playback flags", () => {
     const { rerender } = render(
       <PresentationPreview
@@ -598,6 +629,7 @@ describe("PresentationPreview", () => {
         shouldPlayVideo: true,
         suspendVideoPlayback: true,
         videoPreloadRole: "preview",
+        showLocalSourceStatus: true,
         canCaptureLocalVideo: false,
         directLocalVideoCapture: false,
       }),
@@ -630,6 +662,7 @@ describe("PresentationPreview", () => {
         shouldPlayVideo: true,
         suspendVideoPlayback: false,
         videoPreloadRole: "preview",
+        showLocalSourceStatus: true,
         canCaptureLocalVideo: true,
         directLocalVideoCapture: true,
       }),

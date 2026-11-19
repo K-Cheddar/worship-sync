@@ -8,7 +8,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import Undo from "../containers/Toolbar/ToolbarElements/Undo";
 import { loadSongV2Snapshot } from "../utils/songPersistence";
 import { createSongV2 } from "../utils/songV2Writer";
-import { createNewSlide } from "../utils/slideCreation";
+import { createBox, createNewSlide, createSlideFromMedia, insertSlidesAt } from "../utils/slideCreation";
 import { formatSong } from "../utils/overflow";
 import { getMonitorLayoutForSlides } from "../utils/monitorSlideFormatter";
 import { createOutlineMoveIntent } from "../utils/outlineSync";
@@ -253,7 +253,9 @@ const loadStoreWithItemPersistence = (
 ) => {
   let storeModule: any;
   let itemSliceModule: any;
+  let timersSliceModule: any;
   let songPersistenceModule: any;
+  let pouchAuditModule: any;
   let recoveryStorage: any;
   let deferredMutations!: typeof import("./deferredItemMutations");
   let contentReplicationActivity!: typeof import("../utils/contentReplicationActivity");
@@ -331,7 +333,11 @@ const loadStoreWithItemPersistence = (
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     itemSliceModule = require("./itemSlice");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
+    timersSliceModule = require("./timersSlice");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     songPersistenceModule = require("../utils/songPersistence");
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    pouchAuditModule = require("../utils/pouchAudit");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     deferredMutations = require("./deferredItemMutations");
     // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -344,8 +350,11 @@ const loadStoreWithItemPersistence = (
   return {
     store: storeModule.default,
     itemSlice: itemSliceModule.itemSlice,
+    timersSlice: timersSliceModule.timersSlice,
+    pouchAudit: pouchAuditModule,
     selectControllerItem: selectionModule!.selectControllerItem,
     updateSlides: itemSliceModule.updateSlides,
+    updateBoxes: itemSliceModule.updateBoxes,
     updateSlideVideoBackgroundLoop: itemSliceModule.updateSlideVideoBackgroundLoop,
     updateSlideVideoBackgroundSendMode: itemSliceModule.updateSlideVideoBackgroundSendMode,
     db,
@@ -2510,6 +2519,7 @@ describe("song undo and redo persistence against PouchDB", () => {
 
   it("persists free-item monitor layout edits and slide-driven recalculations to PouchDB", async () => {
     const itemId = `monitor-layout-${Date.now()}-${Math.random()}`;
+    jest.setSystemTime(new Date("2026-11-18T12:00:00.000Z"));
     const database = new PouchDB(itemId, { adapter: "idb" });
     const env = loadStoreWithItemPersistence(new Map<string, any>(), false, database);
     const owner: ItemContentOwner = {
@@ -2545,6 +2555,7 @@ describe("song undo and redo persistence against PouchDB", () => {
     } as any);
     const baseline = await database.get<DBItem>(put.id);
     env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+    env.pouchAudit.setAuditSnapshot({ displayName: "Custom Editor" });
 
     const waitForSavedLayout = async (layout: { currentFontSizePx: number; nextFontSizePx: number }) => {
       const matches = () => {
@@ -2575,7 +2586,12 @@ describe("song undo and redo persistence against PouchDB", () => {
       const layoutOnlyEdit = { currentFontSizePx: 32, nextFontSizePx: 25 };
       env.store.dispatch(env.itemSlice.actions._updateMonitorLayout(layoutOnlyEdit));
       await waitForSavedLayout(layoutOnlyEdit);
+      const firstSavedDocument = await database.get<DBItem>(itemId);
+      expect(firstSavedDocument.createdAt).toBeUndefined();
+      expect(firstSavedDocument.updatedAt).toBe(new Date(Date.now()).toISOString());
+      expect(firstSavedDocument.updatedBy).toBe("Custom Editor");
 
+      jest.setSystemTime(new Date("2026-11-18T12:01:00.000Z"));
       const nextSlides = baseSlides.map((slide) => ({
         ...slide,
         boxes: [slide.boxes[0], { ...slide.boxes[1], words: "A much longer free-form line that changes the monitor sizing calculation" }],
@@ -2583,8 +2599,11 @@ describe("song undo and redo persistence against PouchDB", () => {
       await env.store.dispatch(env.updateSlides({ slides: nextSlides }) as never);
       const calculatedLayout = getMonitorLayoutForSlides(nextSlides as any);
       await waitForSavedLayout(calculatedLayout);
-      expect((await database.get<DBItem>(itemId)).slides?.[0].boxes[1].words)
-        .toContain("much longer");
+      const editedDocument = await database.get<DBItem>(itemId);
+      expect(editedDocument.slides?.[0].boxes[1].words).toContain("much longer");
+      expect(editedDocument.createdAt).toBeUndefined();
+      expect(editedDocument.updatedAt).toBe(new Date(Date.now()).toISOString());
+      expect(editedDocument.updatedBy).toBe("Custom Editor");
 
       env.store.dispatch({ type: "@@redux-undo/UNDO" });
       expect(env.store.getState().undoable.present.item.monitorLayout).toEqual(layoutOnlyEdit);
@@ -2602,6 +2621,88 @@ describe("song undo and redo persistence against PouchDB", () => {
       await redoSave;
       expect((await database.get<DBItem>(itemId)).slides?.[0].boxes[1].words)
         .toContain("much longer");
+    } finally {
+      session.release();
+      env.deferredMutations.setActiveContentDatabase(null);
+      await database.destroy();
+    }
+  });
+
+  it("preserves timer creation audit fields and stamps authored timer edits", async () => {
+    const itemId = `timer-audit-${Date.now()}-${Math.random()}`;
+    jest.setSystemTime(new Date("2026-11-18T13:00:00.000Z"));
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const env = loadStoreWithItemPersistence(new Map<string, any>(), false, database);
+    const owner: ItemContentOwner = {
+      scopeId: `user-a:church-a:${database.name}`,
+      databaseKey: database.name,
+      churchId: "church-a",
+      accountId: "user-a",
+    };
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(database.name);
+    session.markInitialReplicationComplete();
+    env.globalFireDbInfo.churchId = owner.churchId;
+    env.deferredMutations.setActiveContentDatabase(owner, database as never);
+    env.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    jest.runAllTimers();
+
+    const timerInfo = {
+      ...createTimerItem().timerInfo,
+      id: itemId,
+      name: "Persisted Timer",
+      duration: 5,
+      remainingTime: 5,
+      countdownTime: "00:05",
+    };
+    const result = await database.put({
+      ...createTimerItem({ _id: itemId, name: "Persisted Timer", timerInfo }),
+      createdAt: "original-created",
+      createdBy: "Original Creator",
+      updatedAt: "prior-update",
+      updatedBy: "Prior Editor",
+    } as any);
+    const baseline = await database.get<DBItem>(result.id);
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+    await flushListenerEffects();
+    env.store.dispatch(env.timersSlice.actions.syncTimers([baseline.timerInfo!]));
+    await flushListenerEffects();
+    env.pouchAudit.setAuditSnapshot({ displayName: "Timer Editor" });
+
+    try {
+      env.store.dispatch(env.timersSlice.actions.updateTimer({
+        id: itemId,
+        timerInfo: {
+          ...baseline.timerInfo!,
+          duration: 300,
+          remainingTime: 300,
+          countdownTime: "05:00",
+        },
+      }));
+      expect(env.store.getState().timers.timers.find((timer: any) => timer.id === itemId))
+        .toEqual(expect.objectContaining({ duration: 300, countdownTime: "05:00" }));
+      await flushListenerEffects();
+      expect(env.store.getState().undoable.present.item.timerInfo)
+        .toEqual(expect.objectContaining({ duration: 300, countdownTime: "05:00" }));
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await new Promise<void>((resolve) => {
+        let unsubscribe = () => {};
+        const checkSaved = () => {
+          const activeItem = env.store.getState().undoable.present.item;
+          if (activeItem.hasPendingUpdate || activeItem.baseItem?.timerInfo?.duration !== 300) return;
+          unsubscribe();
+          resolve();
+        };
+        unsubscribe = env.store.subscribe(checkSaved);
+        checkSaved();
+      });
+
+      const persisted = await database.get<DBItem>(itemId);
+      expect(persisted.timerInfo).toEqual(expect.objectContaining({ duration: 300, countdownTime: "05:00" }));
+      expect(persisted.createdAt).toBe("original-created");
+      expect(persisted.createdBy).toBe("Original Creator");
+      expect(persisted.updatedAt).toBe(new Date(Date.now()).toISOString());
+      expect(persisted.updatedBy).toBe("Timer Editor");
     } finally {
       session.release();
       env.deferredMutations.setActiveContentDatabase(null);
@@ -2716,8 +2817,614 @@ describe("song undo and redo persistence against PouchDB", () => {
   });
 });
 
-// Characterization tests deliberately assert the current defects. Convert the
-// defect expectations to preservation expectations when the fixes are approved.
+describe("custom item autosave integrity against PouchDB", () => {
+  const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((done) => { resolve = done; });
+    return { promise, resolve };
+  };
+  const media = (id: string) => ({
+    id,
+    name: `Media ${id}`,
+    type: "image" as const,
+    path: `/media/${id}.jpg`,
+    format: "jpg",
+    width: 1920,
+    height: 1080,
+    background: `https://media.test/${id}.jpg`,
+    thumbnail: `https://media.test/${id}-thumb.jpg`,
+    publicId: id,
+    createdAt: "created",
+    updatedAt: "updated",
+  });
+  const makeSlides = () => [
+    createNewSlide({ type: "Section", name: "Section A", words: ["", "Alpha"] }),
+    createNewSlide({ type: "Section", name: "Section B", words: ["", "Bravo"] }),
+  ];
+  const seedItem = async (database: PouchDB.Database, itemId: string, slides = makeSlides()) => {
+    await database.put({
+      _id: itemId,
+      type: "free",
+      docType: "item",
+      name: `Custom ${itemId}`,
+      slides,
+      formattedSections: [],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as any);
+    return database.get<DBItem>(itemId);
+  };
+  const openItem = async (
+    database: PouchDB.Database,
+    itemId: string,
+    accountId = "editor-a",
+  ) => {
+    const env = loadStoreWithItemPersistence(new Map<string, any>(), false, database);
+    const owner: ItemContentOwner = {
+      scopeId: `${accountId}:church-a:${database.name}`,
+      databaseKey: database.name,
+      churchId: "church-a",
+      accountId,
+    };
+    const session = env.contentReplicationActivity.beginContentDatabaseSession(database.name);
+    session.markInitialReplicationComplete();
+    env.globalFireDbInfo.churchId = owner.churchId;
+    env.deferredMutations.setActiveContentDatabase(owner, database as never);
+    env.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    jest.runAllTimers();
+    const baseline = await database.get<DBItem>(itemId).catch(async (error: { status?: number }) => {
+      if (error.status !== 404) throw error;
+      return seedItem(database, itemId);
+    });
+    env.store.dispatch({
+      type: "allDocs/applyItemDocumentChange",
+      payload: { id: itemId, doc: baseline },
+    });
+    env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: owner }));
+    await flushListenerEffects();
+    return {
+      ...env,
+      owner,
+      session,
+      baseline,
+      close: async () => {
+        session.release();
+        env.deferredMutations.setActiveContentDatabase(null);
+        await database.destroy();
+      },
+    };
+  };
+  const waitForSaved = async (
+    env: ReturnType<typeof loadStoreWithItemPersistence>,
+    database: PouchDB.Database,
+    itemId: string,
+    expected: { name?: string; slides?: unknown[] },
+  ) => {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await flushListenerEffects();
+      const persisted = await database.get<DBItem>(itemId);
+      const active = env.store.getState().undoable.present.item;
+      const matches =
+        !active.hasPendingUpdate &&
+        (!expected.name || persisted.name === expected.name) &&
+        (!expected.slides || JSON.stringify(persisted.slides) === JSON.stringify(expected.slides)) &&
+        active.baseItem?._rev === persisted._rev;
+      if (matches) return persisted;
+      await jest.advanceTimersByTimeAsync(25);
+    }
+    throw new Error(`Custom item ${itemId} did not finish saving`);
+  };
+  const waitForItemState = async (
+    env: ReturnType<typeof loadStoreWithItemPersistence>,
+    predicate: (item: ItemState) => boolean,
+    description: string,
+  ) => {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      await flushListenerEffects();
+      const item = env.store.getState().undoable.present.item as ItemState;
+      if (predicate(item)) return item;
+      await jest.advanceTimersByTimeAsync(25);
+    }
+    throw new Error(`Custom item did not reach ${description}`);
+  };
+  const addMediaSlide = (slides: any[], mediaId: string, index = slides.length) =>
+    insertSlidesAt(slides, [createSlideFromMedia(media(mediaId))], index);
+
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
+
+  it("persists one media insertion, ignores metadata-only cache echoes, and reloads the saved slide", async () => {
+    const itemId = `custom-media-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const env = await openItem(database, itemId);
+    try {
+      const slides = addMediaSlide(clone(env.baseline.slides ?? []), "image-one", 1);
+      await env.store.dispatch(env.updateSlides({ slides }) as never);
+
+      const beforeEcho = await database.get<DBItem>(itemId);
+      const echoResult = await database.put({
+        ...beforeEcho,
+        updatedAt: "metadata-only-replication-echo",
+        updatedBy: "same editor",
+      } as any);
+      const echo = await database.get<DBItem>(echoResult.id);
+      env.store.dispatch({
+        type: "allDocs/applyItemDocumentChange",
+        payload: { id: itemId, doc: echo },
+      });
+      await flushListenerEffects();
+      await jest.advanceTimersByTimeAsync(10);
+      await flushListenerEffects();
+
+      expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+      expect(env.store.getState().undoable.present.item.pendingRemoteItem).toBeNull();
+      expect(env.store.getState().undoable.present.item.slides).toEqual(slides);
+
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      const saved = await waitForSaved(env, database, itemId, { slides });
+      const reloaded = await database.get<DBItem>(itemId);
+      expect(reloaded.slides).toEqual(slides);
+      expect(reloaded.slides?.[1].boxes?.[0].mediaInfo?.id).toBe("image-one");
+
+      // Release a delayed own-save cache echo after the acknowledgment.
+      env.store.dispatch({
+        type: "allDocs/applyItemDocumentChange",
+        payload: { id: itemId, doc: saved },
+      });
+      await flushListenerEffects();
+      await jest.advanceTimersByTimeAsync(10);
+      expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+      expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("does not turn a delayed Pouch JSON echo into a conflict while a newer custom draft is open", async () => {
+    const itemId = `custom-json-echo-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const env = await openItem(database, itemId);
+    try {
+      const firstSlides = clone(env.baseline.slides ?? []);
+      firstSlides[0].boxes[0].words = "First saved value";
+      firstSlides[0].boxes[0].mediaInfo = undefined;
+      await env.store.dispatch(env.updateSlides({ slides: firstSlides }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      const firstSaved = await waitForSaved(env, database, itemId, { slides: firstSlides });
+      const delayedEcho = await database.get<DBItem>(itemId);
+      expect(delayedEcho._rev).toBe(firstSaved._rev);
+      expect(Object.prototype.hasOwnProperty.call(delayedEcho.slides?.[0].boxes?.[0], "mediaInfo"))
+        .toBe(false);
+
+      const newerSlides = clone(env.store.getState().undoable.present.item.slides);
+      newerSlides[0].boxes[0].words = "Newer value to keep";
+      await env.store.dispatch(env.updateSlides({ slides: newerSlides }) as never);
+      env.store.dispatch({
+        type: "allDocs/applyItemDocumentChange",
+        payload: { id: itemId, doc: delayedEcho },
+      });
+      await flushListenerEffects();
+
+      const duringNewerEdit = env.store.getState().undoable.present.item;
+      expect(duringNewerEdit.hasRemoteUpdate).toBe(false);
+      expect(duringNewerEdit.hasPendingUpdate).toBe(true);
+      expect(duringNewerEdit.slides[0].boxes[0].words).toBe("Newer value to keep");
+
+      await jest.advanceTimersByTimeAsync(1500);
+      const saved = await waitForSaved(env, database, itemId, { slides: newerSlides });
+      const reloaded = await database.get<DBItem>(itemId);
+      expect(saved.slides).toEqual(newerSlides);
+      expect(reloaded.slides?.[0].boxes?.[0].words).toBe("Newer value to keep");
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("saves a custom box insertion without treating its derived monitor layout as remote", async () => {
+    const itemId = `custom-add-box-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const originalSlides = [{
+      id: "slide-a",
+      name: "Section A",
+      type: "Section",
+      boxes: [{ id: "box-a", words: "Original", width: 100, height: 100 }],
+    }];
+    await seedItem(database, itemId, originalSlides as any);
+    const env = await openItem(database, itemId);
+    try {
+      expect(env.baseline.monitorLayout).toBeUndefined();
+      expect(env.store.getState().undoable.present.item.baseItem?.monitorLayout).toBeDefined();
+
+      const addedBox = createBox({ words: "Added box", width: 75, height: 75, x: 12.5, y: 12.5 });
+      await env.store.dispatch(env.updateBoxes({
+        boxes: [...originalSlides[0].boxes, addedBox],
+      }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      const persisted = await waitForSaved(env, database, itemId, {});
+
+      expect(persisted.slides?.[0].boxes).toHaveLength(2);
+      expect(persisted.slides?.[0].boxes?.[1].words).toBe("Added box");
+      expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+      expect((await database.get<DBItem>(itemId)).slides?.[0].boxes).toHaveLength(2);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("keeps rapid media insertions in order when the first Pouch write is still in flight", async () => {
+    const itemId = `custom-media-rapid-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const env = await openItem(database, itemId);
+    const firstPutStarted = deferred<void>();
+    const releaseFirstPut = deferred<void>();
+    const secondPutStarted = deferred<void>();
+    const releaseSecondPut = deferred<void>();
+    const realPut = database.put.bind(database);
+    let itemPutCount = 0;
+    jest.spyOn(database, "put").mockImplementation(async (document: any) => {
+      if (document._id === itemId && itemPutCount === 0) {
+        itemPutCount += 1;
+        firstPutStarted.resolve();
+        await releaseFirstPut.promise;
+      } else if (document._id === itemId && itemPutCount === 1) {
+        itemPutCount += 1;
+        secondPutStarted.resolve();
+        await releaseSecondPut.promise;
+      }
+      return realPut(document);
+    });
+
+    try {
+      const firstSlides = addMediaSlide(clone(env.baseline.slides ?? []), "image-one");
+      await env.store.dispatch(env.updateSlides({ slides: firstSlides }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      await firstPutStarted.promise;
+
+      const secondSlides = addMediaSlide(clone(env.store.getState().undoable.present.item.slides), "image-two");
+      await env.store.dispatch(env.updateSlides({ slides: secondSlides }) as never);
+      const thirdSlides = addMediaSlide(clone(env.store.getState().undoable.present.item.slides), "image-three");
+      await env.store.dispatch(env.updateSlides({ slides: thirdSlides }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      releaseFirstPut.resolve();
+      await flushListenerEffects();
+      await secondPutStarted.promise;
+
+      // The first save is now acknowledged, but the newer save is still in
+      // flight. Deliver its delayed cache echo while Redux still has the older
+      // baseItem; the acknowledged autosave baseline must prevent a false conflict.
+      const firstSaveEcho = await database.get<DBItem>(itemId);
+      expect(env.store.getState().undoable.present.item.baseItem?._rev).toBe(env.baseline._rev);
+      expect(firstSaveEcho._rev).not.toBe(env.baseline._rev);
+      env.store.dispatch({
+        type: "allDocs/applyItemDocumentChange",
+        payload: { id: itemId, doc: firstSaveEcho },
+      });
+      await flushListenerEffects();
+      expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+      expect(env.store.getState().undoable.present.item.pendingRemoteItem).toBeNull();
+      expect(env.store.getState().undoable.present.item.slides).toEqual(thirdSlides);
+
+      releaseSecondPut.resolve();
+      await flushListenerEffects();
+
+      const persisted = await waitForSaved(env, database, itemId, { slides: thirdSlides });
+      expect(persisted.slides?.map((slide) => slide.boxes?.[0].mediaInfo?.id).filter(Boolean))
+        .toEqual(["image-one", "image-two", "image-three"]);
+    } finally {
+      releaseFirstPut.resolve();
+      releaseSecondPut.resolve();
+      await env.close();
+    }
+  });
+
+  it("re-reads and merges a non-overlapping Pouch revision race", async () => {
+    const itemId = `custom-race-merge-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const env = await openItem(database, itemId);
+    const realPut = database.put.bind(database);
+    let introducedRace = false;
+    jest.spyOn(database, "put").mockImplementation(async (document: any) => {
+      if (document._id === itemId && !introducedRace) {
+        introducedRace = true;
+        const current = await database.get<DBItem>(itemId);
+        await realPut({ ...current, name: "Remote rename" } as any);
+      }
+      return realPut(document);
+    });
+
+    try {
+      const slides = addMediaSlide(clone(env.baseline.slides ?? []), "image-local");
+      await env.store.dispatch(env.updateSlides({ slides }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      const persisted = await waitForSaved(env, database, itemId, {
+        name: "Remote rename",
+        slides,
+      });
+
+      expect(introducedRace).toBe(true);
+      expect(persisted.name).toBe("Remote rename");
+      expect(persisted.slides).toEqual(slides);
+      expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+      expect(env.store.getState().undoable.present.item.itemPersistenceError).toBeNull();
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("keeps an overlapping revision race for review and saves Keep Editing Mine once", async () => {
+    const itemId = `custom-race-conflict-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const env = await openItem(database, itemId);
+    const baseSlides = clone(env.baseline.slides ?? []);
+    const remoteSlides = [...baseSlides, createNewSlide({ type: "Section", name: "Remote", words: ["", "Remote"] })];
+    const localSlides = addMediaSlide(baseSlides, "image-local");
+    const realPut = database.put.bind(database);
+    let introducedRace = false;
+    jest.spyOn(database, "put").mockImplementation(async (document: any) => {
+      if (document._id === itemId && !introducedRace) {
+        introducedRace = true;
+        const current = await database.get<DBItem>(itemId);
+        await realPut({ ...current, slides: remoteSlides } as any);
+      }
+      return realPut(document);
+    });
+
+    try {
+      await env.store.dispatch(env.updateSlides({ slides: localSlides }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      const conflicted = await waitForItemState(
+        env,
+        (item) => !!item.hasRemoteUpdate,
+        "remote conflict review",
+      );
+      expect(conflicted.hasRemoteUpdate).toBe(true);
+      expect(conflicted.hasPendingUpdate).toBe(true);
+      expect(conflicted.slides).toEqual(localSlides);
+      expect(conflicted.pendingRemoteItem?.slides).toEqual(remoteSlides);
+      expect((await database.get<DBItem>(itemId)).slides).toEqual(remoteSlides);
+
+      env.store.dispatch(env.itemSlice.actions.keepLocalItemChanges());
+      await jest.advanceTimersByTimeAsync(1500);
+      const persisted = await waitForSaved(env, database, itemId, { slides: localSlides });
+      expect(persisted.slides).toEqual(localSlides);
+      expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+
+      env.store.dispatch({
+        type: "allDocs/applyItemDocumentChange",
+        payload: { id: itemId, doc: persisted },
+      });
+      await flushListenerEffects();
+      await jest.advanceTimersByTimeAsync(10);
+      expect(env.store.getState().undoable.present.item.hasRemoteUpdate).toBe(false);
+      expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(false);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("preserves a failed draft and lets the operator retry the write", async () => {
+    const itemId = `custom-save-retry-${Date.now()}-${Math.random()}`;
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    const env = await openItem(database, itemId);
+    const before = clone(env.baseline.slides ?? []);
+    const slides = addMediaSlide(before, "image-retry");
+    const realPut = database.put.bind(database);
+    let failed = false;
+    jest.spyOn(database, "put").mockImplementation(async (document: any) => {
+      if (document._id === itemId && !failed) {
+        failed = true;
+        throw Object.assign(new Error("write interrupted"), { status: 500 });
+      }
+      return realPut(document);
+    });
+
+    try {
+      await env.store.dispatch(env.updateSlides({ slides }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      await waitForItemState(
+        env,
+        (item) => item.itemPersistenceError != null,
+        "recoverable save error",
+      );
+
+      expect(failed).toBe(true);
+      expect((await database.get<DBItem>(itemId)).slides).toEqual(before);
+      expect(env.store.getState().undoable.present.item.slides).toEqual(slides);
+      expect(env.store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
+      expect(env.store.getState().undoable.present.item.itemPersistenceError).not.toBeNull();
+
+      env.store.dispatch(env.itemSlice.actions.retryItemSave());
+      await flushListenerEffects();
+      const persisted = await waitForSaved(env, database, itemId, { slides });
+      expect(persisted.slides).toEqual(slides);
+      expect(env.store.getState().undoable.present.item.itemPersistenceError).toBeNull();
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("persists custom rename, reorder, delete, formatting, background, Undo, and Redo", async () => {
+    const itemId = `custom-workflows-${Date.now()}-${Math.random()}`;
+    const initialSlides = [
+      createNewSlide({ type: "Section", name: "One", words: ["", "One"] }),
+      createNewSlide({ type: "Section", name: "Two", words: ["", "Two"] }),
+      createNewSlide({ type: "Section", name: "Three", words: ["", "Three"] }),
+    ];
+    const database = new PouchDB(itemId, { adapter: "idb" });
+    await seedItem(database, itemId, initialSlides);
+    const env = await openItem(database, itemId);
+    const persistSlides = async (slides: any[]) => {
+      await env.store.dispatch(env.updateSlides({ slides }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      return waitForSaved(env, database, itemId, { slides });
+    };
+
+    try {
+      env.store.dispatch(env.itemSlice.actions._setName("Renamed custom item"));
+      await jest.advanceTimersByTimeAsync(1500);
+      await waitForSaved(env, database, itemId, { name: "Renamed custom item" });
+
+      const reordered = [initialSlides[2], initialSlides[0], initialSlides[1]];
+      await persistSlides(reordered);
+      expect((await database.get<DBItem>(itemId)).slides?.map((slide) => slide.name))
+        .toEqual(["Three", "One", "Two"]);
+
+      const deleted = [reordered[0], reordered[2]];
+      await persistSlides(deleted);
+      expect((await database.get<DBItem>(itemId)).slides).toEqual(deleted);
+
+      const formatted = clone(deleted);
+      formatted[1].boxes[1].isBold = true;
+      formatted[1].boxes[1].fontSize = 54;
+      await persistSlides(formatted);
+      expect((await database.get<DBItem>(itemId)).slides?.[1].boxes[1])
+        .toEqual(expect.objectContaining({ isBold: true, fontSize: 54 }));
+
+      const formattedAt = Date.now();
+      jest.setSystemTime(formattedAt + 1000);
+      env.store.dispatch({ type: "@@redux-undo/UNDO" });
+      await jest.advanceTimersByTimeAsync(1500);
+      const undone = await waitForSaved(env, database, itemId, { slides: deleted });
+      expect(undone.slides).toEqual(deleted);
+
+      jest.setSystemTime(formattedAt + 2000);
+      env.store.dispatch({ type: "@@redux-undo/REDO" });
+      await jest.advanceTimersByTimeAsync(1500);
+      const redone = await waitForSaved(env, database, itemId, { slides: formatted });
+      expect(redone.slides).toEqual(formatted);
+
+      const withBackground = clone(formatted);
+      withBackground[0].boxes[0].background = "https://media.test/background.jpg";
+      await persistSlides(withBackground);
+      expect((await database.get<DBItem>(itemId)).slides?.[0].boxes[0].background)
+        .toBe("https://media.test/background.jpg");
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("saves pending edits for item A under A while item B is edited", async () => {
+    const itemIdA = `custom-switch-a-${Date.now()}-${Math.random()}`;
+    const itemIdB = `${itemIdA}-b`;
+    const database = new PouchDB(itemIdA, { adapter: "idb" });
+    const baselineA = await seedItem(database, itemIdA);
+    const baselineB = await seedItem(database, itemIdB);
+    const env = await openItem(database, itemIdA);
+
+    try {
+      const slidesA = addMediaSlide(clone(baselineA.slides ?? []), "image-a");
+      await env.store.dispatch(env.updateSlides({ slides: slidesA }) as never);
+      env.store.dispatch(env.itemSlice.actions.setActiveItem({ ...baselineB, contentOwner: env.owner }));
+      const slidesB = addMediaSlide(clone(baselineB.slides ?? []), "image-b");
+      await env.store.dispatch(env.updateSlides({ slides: slidesB }) as never);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+
+      const persistedA = await database.get<DBItem>(itemIdA);
+      const persistedB = await waitForSaved(env, database, itemIdB, { slides: slidesB });
+      expect(persistedA.slides).toEqual(slidesA);
+      expect(persistedB.slides).toEqual(slidesB);
+      expect(env.store.getState().undoable.present.item._id).toBe(itemIdB);
+    } finally {
+      await env.close();
+    }
+  });
+
+  it("surfaces competing revisions from two real PouchDB replicas without discarding either draft", async () => {
+    jest.useRealTimers();
+    const itemId = `custom-two-controllers-${Date.now()}-${Math.random()}`;
+    const databaseA = new PouchDB(`${itemId}-a`, { adapter: "idb" });
+    const databaseB = new PouchDB(`${itemId}-b`, { adapter: "idb" });
+    const envA = loadStoreWithItemPersistence(new Map<string, any>(), false, databaseA);
+    const envB = loadStoreWithItemPersistence(new Map<string, any>(), false, databaseB);
+    const ownerA: ItemContentOwner = {
+      scopeId: `controller-a:church-a:${databaseA.name}`,
+      databaseKey: databaseA.name,
+      churchId: "church-a",
+      accountId: "controller-a",
+    };
+    const ownerB: ItemContentOwner = {
+      scopeId: `controller-b:church-a:${databaseB.name}`,
+      databaseKey: databaseB.name,
+      churchId: "church-a",
+      accountId: "controller-b",
+    };
+    const sessionA = envA.contentReplicationActivity.beginContentDatabaseSession(databaseA.name);
+    const sessionB = envB.contentReplicationActivity.beginContentDatabaseSession(databaseB.name);
+    const baseline = await seedItem(databaseA, itemId);
+    await databaseA.replicate.to(databaseB);
+    const baseB = await databaseB.get<DBItem>(itemId);
+    envA.globalFireDbInfo.churchId = ownerA.churchId;
+    envB.globalFireDbInfo.churchId = ownerB.churchId;
+    envA.deferredMutations.setActiveContentDatabase(ownerA, databaseA as never);
+    envB.deferredMutations.setActiveContentDatabase(ownerB, databaseB as never);
+    envA.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    envB.store.dispatch({ type: "CREDITS_EDITOR_PAGE_READY" });
+    envA.store.dispatch(envA.itemSlice.actions.setActiveItem({ ...baseline, contentOwner: ownerA }));
+    envB.store.dispatch(envB.itemSlice.actions.setActiveItem({ ...baseB, contentOwner: ownerB }));
+    const localSlidesA = clone(baseline.slides ?? []);
+    localSlidesA[0].boxes[1].words = "Controller A edit";
+    const localSlidesB = clone(baseB.slides ?? []);
+    localSlidesB[0].boxes[1].words = "Controller B edit";
+
+    const waitForRealSave = async (env: ReturnType<typeof loadStoreWithItemPersistence>, db: PouchDB.Database, slides: any[]) => {
+      for (let attempt = 0; attempt < 300; attempt += 1) {
+        await flushListenerEffects();
+        const persisted = await db.get<DBItem>(itemId);
+        const current = env.store.getState().undoable.present.item;
+        if (!current.hasPendingUpdate && JSON.stringify(persisted.slides) === JSON.stringify(slides)) return persisted;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error("Controller item save did not finish");
+    };
+    const waitForBufferedConflict = async (env: ReturnType<typeof loadStoreWithItemPersistence>) => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await flushListenerEffects();
+        if (env.store.getState().undoable.present.item.pendingItemRevisionConflict?.revisions.length) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw new Error("Controller did not receive the Pouch revision conflict");
+    };
+
+    try {
+      await envA.store.dispatch(envA.updateSlides({ slides: localSlidesA }) as never);
+      await envB.store.dispatch(envB.updateSlides({ slides: localSlidesB }) as never);
+      await Promise.all([
+        waitForRealSave(envA, databaseA, localSlidesA),
+        waitForRealSave(envB, databaseB, localSlidesB),
+      ]);
+
+      await databaseA.replicate.to(databaseB);
+      await databaseB.replicate.to(databaseA);
+      const conflictA = await databaseA.get<DBItem & { _conflicts?: string[] }>(itemId, { conflicts: true });
+      const conflictB = await databaseB.get<DBItem & { _conflicts?: string[] }>(itemId, { conflicts: true });
+      expect(conflictA._conflicts?.length).toBeGreaterThan(0);
+      expect(conflictB._conflicts?.length).toBeGreaterThan(0);
+
+      const { _conflicts: _conflictsA, ...visibleA } = conflictA;
+      const { _conflicts: _conflictsB, ...visibleB } = conflictB;
+      envA.store.dispatch({ type: "allDocs/applyItemDocumentChange", payload: { id: itemId, doc: visibleA } });
+      envB.store.dispatch({ type: "allDocs/applyItemDocumentChange", payload: { id: itemId, doc: visibleB } });
+      await Promise.all([waitForBufferedConflict(envA), waitForBufferedConflict(envB)]);
+
+      expect(envA.store.getState().undoable.present.item.slides).toEqual(localSlidesA);
+      expect(envB.store.getState().undoable.present.item.slides).toEqual(localSlidesB);
+      expect(envA.store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+      expect(envB.store.getState().undoable.present.item.hasRemoteUpdate).toBe(true);
+    } finally {
+      sessionA.release();
+      sessionB.release();
+      envA.deferredMutations.setActiveContentDatabase(null);
+      envB.deferredMutations.setActiveContentDatabase(null);
+      await databaseA.destroy();
+      await databaseB.destroy();
+    }
+  });
+});
+
+// Item persistence regressions cover editor intent through PouchDB writes and
+// synchronization events, including the former false-conflict cases.
 describe("item content integrity investigation", () => {
   const fixture = (id: string, type = "song") => createSongDoc({
     _id: id, _rev: "1-original", name: id, type,
@@ -3025,18 +3732,20 @@ describe("item content integrity investigation", () => {
   it("leaves failed writes pending without changing stored content", async () => {
     const { docs, select, edit, tick, db, store } = setup();
     const before = clone([...docs]);
-    const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const diagnostics = jest.spyOn(console, "debug").mockImplementation(() => undefined);
     db.put.mockRejectedValue(Object.assign(new Error("write failed"), { status: 500 }));
     select("song-A"); edit("Failed edit"); await tick();
     expect([...docs]).toEqual(before);
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
-    expect(errors).toHaveBeenCalled();
-    errors.mockRestore();
+    expect(diagnostics).toHaveBeenCalledWith("[item persistence]", expect.objectContaining({
+      event: "write_failed", itemId: "song-A", status: 500, changedFields: ["name"],
+    }));
+    diagnostics.mockRestore();
   });
 
   it("preserves the remote revision when a second client writes between get and put", async () => {
     const { docs, select, edit, tick, db, commit, store } = setup();
-    const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+    const diagnostics = jest.spyOn(console, "debug").mockImplementation(() => undefined);
     const remote = { ...fixture("song-A"), _rev: "2-remote", name: "Remote won" };
     db.put.mockImplementation(async (doc: Fixture) => {
       docs.set("song-A", remote);
@@ -3046,8 +3755,10 @@ describe("item content integrity investigation", () => {
     expect(docs.get("song-A")).toEqual(remote);
     expect(docs.get("song-B")?.name).toBe("song-B");
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
-    expect(errors).toHaveBeenCalled();
-    errors.mockRestore();
+    expect(diagnostics).toHaveBeenCalledWith("[item persistence]", expect.objectContaining({
+      event: "superseded_write_failed", itemId: "song-A", status: 409,
+    }));
+    diagnostics.mockRestore();
   });
 
   it("detects a same-field remote conflict instead of overwriting either edit", async () => {
@@ -3065,9 +3776,12 @@ describe("item content integrity investigation", () => {
     expect(docs.get("song-B")?.name).toBe("song-B");
     expect(store.getState().undoable.present.item.name).toBe("Local edit");
     expect(store.getState().undoable.present.item.hasPendingUpdate).toBe(true);
-    expect(store.getState().undoable.present.item.pendingRemoteItem).toEqual(
-      normalizeItemSlides(remote),
-    );
+    expect(store.getState().undoable.present.item.pendingRemoteItem).toMatchObject({
+      _id: remote._id,
+      name: remote.name,
+      background: remote.background,
+      arrangements: normalizeItemSlides(remote).arrangements,
+    });
   });
 
   it("does not clear a newer pending indicator when an older save completes", async () => {
@@ -6443,8 +7157,11 @@ describe("store module", () => {
   it("keeps timer writes pending while Firebase is unavailable and flushes them after reconnect", async () => {
     let storeModule: any;
     let timersSliceModule: any;
-    const setMock = jest.fn();
-    const getMock = jest.fn(() => Promise.resolve({ val: () => [] }));
+    let transactionValue: unknown;
+    const runTransactionMock = jest.fn(async (_ref: unknown, update: (current: unknown) => unknown) => {
+      transactionValue = update([]);
+      return { committed: true, snapshot: { val: () => transactionValue } };
+    });
     const refMock = jest.fn((_db: unknown, path: string) => path);
     const globalFireDbInfo = {
       db: undefined as unknown,
@@ -6464,8 +7181,7 @@ describe("store module", () => {
       }));
       jest.doMock("firebase/database", () => ({
         ref: refMock,
-        set: setMock,
-        get: getMock,
+        runTransaction: runTransactionMock,
       }));
 
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -6496,7 +7212,7 @@ describe("store module", () => {
     await waitForListenerDelay();
 
     expect(localStorage.getItem("timerInfo")).toContain("timer-1");
-    expect(setMock).not.toHaveBeenCalled();
+    expect(runTransactionMock).not.toHaveBeenCalled();
     expect(store.getState().timers.shouldUpdateTimers).toBe(true);
 
     globalFireDbInfo.db = "firebase-db";
@@ -6507,13 +7223,13 @@ describe("store module", () => {
       "firebase-db",
       "churches/church-main/data/timers",
     );
-    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
-      expect.objectContaining({
-        id: "timer-1",
-        hostId: "host-123",
-        status: "running",
-        time: 100,
-      }),
+    expect(runTransactionMock).toHaveBeenCalledWith(
+      "churches/church-main/data/timers",
+      expect.any(Function),
+      { applyLocally: false },
+    );
+    expect(transactionValue).toEqual([
+      expect.objectContaining({ id: "timer-1", hostId: "host-123", status: "running", time: 100 }),
     ]);
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
   });
@@ -6535,12 +7251,11 @@ describe("store module", () => {
       showMinutesOnly: false,
       time: 200,
     };
-    const setMock = jest.fn();
-    const getMock = jest.fn(() =>
-      Promise.resolve({
-        val: () => [remoteTimer],
-      }),
-    );
+    let transactionValue: unknown;
+    const runTransactionMock = jest.fn(async (_ref: unknown, update: (current: unknown) => unknown) => {
+      transactionValue = update([remoteTimer]);
+      return { committed: true, snapshot: { val: () => transactionValue } };
+    });
     const refMock = jest.fn((_db: unknown, path: string) => path);
     const globalFireDbInfo = {
       db: undefined as unknown,
@@ -6560,8 +7275,7 @@ describe("store module", () => {
       }));
       jest.doMock("firebase/database", () => ({
         ref: refMock,
-        set: setMock,
-        get: getMock,
+        runTransaction: runTransactionMock,
       }));
 
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -6595,7 +7309,7 @@ describe("store module", () => {
     store.dispatch(timersSlice.actions.flushPendingTimerWrites());
     await waitForListenerDelay();
 
-    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
+    expect(transactionValue).toEqual([
       expect.objectContaining({
         id: "timer-1",
         hostId: "remote-host",
@@ -6606,13 +7320,72 @@ describe("store module", () => {
     expect(store.getState().timers.shouldUpdateTimers).toBe(false);
   });
 
+  it("recomputes timer merges after a Firebase transaction retries with concurrent changes", async () => {
+    let storeModule: any;
+    let timersSliceModule: any;
+    const remoteBefore = [
+      { id: "remote-edit", hostId: "remote-host", name: "Original", time: 20 },
+    ];
+    const remoteAfter = [
+      { id: "remote-edit", hostId: "remote-host", name: "Edited elsewhere", time: 21 },
+      { id: "remote-created", hostId: "other-host", name: "New timer", time: 1 },
+    ];
+    let committedValue: unknown;
+    const runTransactionMock = jest.fn(async (_ref: unknown, update: (current: unknown) => unknown) => {
+      const firstAttempt = update(remoteBefore);
+      expect(firstAttempt).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: "remote-edit", name: "Original" }),
+      ]));
+      committedValue = update(remoteAfter);
+      return { committed: true, snapshot: { val: () => committedValue } };
+    });
+    const refMock = jest.fn((_db: unknown, path: string) => path);
+    const globalFireDbInfo = {
+      db: "firebase-db",
+      database: "main",
+      churchId: "church-main",
+      writeCapabilities: { presentation: true, timers: true, serviceRuntime: true, serviceManagement: true },
+    };
+
+    jest.isolateModules(() => {
+      jest.doMock("../context/controllerInfo", () => ({ globalDb: undefined, globalBroadcastRef: undefined }));
+      jest.doMock("../context/globalInfo", () => ({ globalFireDbInfo, globalHostId: "host-123" }));
+      jest.doMock("firebase/database", () => ({ ref: refMock, runTransaction: runTransactionMock }));
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      storeModule = require("./store");
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      timersSliceModule = require("./timersSlice");
+    });
+
+    const store = storeModule.default;
+    const { timersSlice } = timersSliceModule;
+    store.dispatch(timersSlice.actions.addTimer({
+      id: "local-timer",
+      hostId: "host-123",
+      name: "Local timer",
+      timerType: "timer",
+      status: "stopped",
+      isActive: false,
+      countdownTime: "00:05",
+      duration: 5,
+      remainingTime: 5,
+      showMinutesOnly: false,
+      time: 30,
+    }));
+    await waitForListenerDelay();
+
+    expect(runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(committedValue).toEqual([
+      ...remoteAfter,
+      expect.objectContaining({ id: "local-timer", hostId: "host-123" }),
+    ]);
+    expect(store.getState().timers.shouldUpdateTimers).toBe(false);
+  });
+
   it("removes this host's last timer from localStorage and Firebase", async () => {
     let storeModule: any;
     let timersSliceModule: any;
-    const setMock = jest.fn();
-    const getMock = jest.fn(() =>
-      Promise.resolve({
-        val: () => [
+    const initialRemoteTimers = [
           {
             id: "timer-1",
             hostId: "host-123",
@@ -6639,9 +7412,12 @@ describe("store module", () => {
             endTime: new Date(0).toISOString(),
             showMinutesOnly: false,
           },
-        ],
-      }),
-    );
+        ];
+    let transactionValue: unknown;
+    const runTransactionMock = jest.fn(async (_ref: unknown, update: (current: unknown) => unknown) => {
+      transactionValue = update(initialRemoteTimers);
+      return { committed: true, snapshot: { val: () => transactionValue } };
+    });
     const refMock = jest.fn((_db: unknown, path: string) => path);
     const removeItemSpy = jest.spyOn(Storage.prototype, "removeItem");
 
@@ -6661,8 +7437,7 @@ describe("store module", () => {
       }));
       jest.doMock("firebase/database", () => ({
         ref: refMock,
-        set: setMock,
-        get: getMock,
+        runTransaction: runTransactionMock,
       }));
 
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -6710,12 +7485,11 @@ describe("store module", () => {
     await waitForListenerDelay();
 
     expect(removeItemSpy).toHaveBeenCalledWith("timerInfo");
-    expect(getMock).toHaveBeenCalled();
     expect(refMock).toHaveBeenCalledWith(
       "firebase-db",
       "churches/church-main/data/timers",
     );
-    expect(setMock).toHaveBeenCalledWith("churches/church-main/data/timers", [
+    expect(transactionValue).toEqual([
       expect.objectContaining({
         id: "timer-2",
         hostId: "remote-host",

@@ -32,7 +32,7 @@ describe("AppPageShell icon color", () => {
     const title = screen.getByRole("heading", { name: "My schedule" });
     const titleIcon = title.querySelector("svg");
     expect(titleIcon?.parentElement).toHaveClass("text-teal-300");
-    expect(title.parentElement?.parentElement?.parentElement).toHaveClass("py-3");
+    expect(title.parentElement?.parentElement?.parentElement).toHaveClass("h-[48px]", "py-0");
   });
 
   it("keeps its legacy orange icon color when omitted", () => {

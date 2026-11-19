@@ -1,9 +1,13 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useState, type ReactElement } from "react";
+import DisplayBox from "../DisplayBox";
 import DisplayBoxTransitionStage, {
   type DisplayBoxTransitionSnapshot,
   type LaneRenderMediaOptions,
 } from "../DisplayBoxTransitionStage";
+import type { Box, MediaType } from "../../../types";
+import type { LocalImageResolution } from "../../../hooks/useLocalImageUrl";
+import type { LocalVideoFileResolution } from "../../../hooks/useLocalVideoFileUrl";
 import { NONE_LANE_BACKGROUND_MEDIA } from "../laneBackgroundMedia";
 import { requestElectronMediaSurfaceDiagnostics } from "../../../utils/electronMediaSurfaceDiagnostics";
 
@@ -22,6 +26,17 @@ const mockTimeline = {
   kill: jest.fn(),
 };
 const mockGsapSet = jest.fn();
+const mockNotLocalImageResolution: LocalImageResolution = {
+  isLocalImage: false,
+  isOwner: false,
+  status: "not-local",
+};
+const mockNotLocalVideoResolution: LocalVideoFileResolution = {
+  isLocalVideoFile: false,
+  isOwner: false,
+  status: "not-local",
+};
+let mockLocalVideoResolution = mockNotLocalVideoResolution;
 
 jest.mock("gsap", () => ({
   __esModule: true,
@@ -93,6 +108,51 @@ jest.mock("../LaneFullFrameMedia", () => ({
       />
     );
   },
+}));
+jest.mock("@gsap/react", () => ({
+  useGSAP: (callback: () => void, config?: { dependencies?: unknown[] }) => {
+    const React = jest.requireActual("react");
+    const previousDependencies = React.useRef(
+      undefined as unknown[] | undefined,
+    );
+    React.useLayoutEffect(() => {
+      const dependencies = config?.dependencies ?? [];
+      const haveDependenciesChanged =
+        !previousDependencies.current ||
+        previousDependencies.current.length !== dependencies.length ||
+        dependencies.some(
+          (dependency, dependencyIndex) =>
+            !Object.is(
+              dependency,
+              previousDependencies.current?.[dependencyIndex],
+            ),
+        );
+      if (!haveDependenciesChanged) return;
+      previousDependencies.current = dependencies;
+      callback();
+    });
+  },
+}));
+jest.mock("../../../hooks/useCachedMediaUrl", () => ({
+  useCachedMediaUrl: (url?: string) => url,
+  useResolvedCachedMediaUrl: (url?: string) => url,
+}));
+jest.mock("../../../hooks/useLocalImageUrl", () => ({
+  useLocalImageUrl: () => mockNotLocalImageResolution,
+}));
+jest.mock("../../../hooks/useLocalVideoFileUrl", () => ({
+  useLocalVideoFileUrl: (value: unknown) =>
+    value ? mockLocalVideoResolution : mockNotLocalVideoResolution,
+  isUnavailableLocalVideoFile: (resolution: LocalVideoFileResolution) =>
+    resolution.isLocalVideoFile && resolution.status === "unavailable",
+}));
+jest.mock("../TimerDisplay", () => ({
+  __esModule: true,
+  default: () => <span data-testid="timer-display-mock" />,
+}));
+jest.mock("../NowDisplay", () => ({
+  __esModule: true,
+  default: () => <span data-testid="now-display-mock" />,
 }));
 
 const oldSnapshot: DisplayBoxTransitionSnapshot = {
@@ -189,6 +249,72 @@ const statefulRenderLane = (
     />
   ) : null;
 
+const unavailableLocalVideoBox: Box = {
+  id: "unavailable-local-video",
+  words: "",
+  width: 100,
+  height: 100,
+  fontSize: 40,
+  brightness: 100,
+  topMargin: 0,
+  sideMargin: 0,
+  x: 0,
+  y: 0,
+  background: "local-video-file://video-1",
+  fontColor: "#fff",
+  shouldKeepAspectRatio: false,
+  transparent: false,
+  excludeFromOverflow: false,
+  align: "center",
+  slideIndex: 0,
+  label: "Background",
+  isBold: false,
+  isItalic: false,
+  mediaInfo: {
+    id: "video-1",
+    type: "video",
+    background: "local-video-file://video-1",
+    placeholderImage: "https://cdn.example.com/video-still.jpg",
+    localVideoFile: {
+      id: "video-1",
+      ownerDeviceId: "another-device",
+      ownerLabel: "Booth PC",
+      fileName: "Sunday.mp4",
+      contentType: "video/mp4",
+      storagePolicy: "local-only",
+    },
+  } as MediaType,
+};
+
+const priorContentBox: Box = {
+  ...unavailableLocalVideoBox,
+  id: "prior-content",
+  words: "Previous live content",
+  background: "https://cdn.example.com/previous.jpg",
+  mediaInfo: undefined,
+};
+
+const renderDisplayBoxLane = (
+  snapshot: DisplayBoxTransitionSnapshot,
+  isPrevious: boolean,
+  reportPaintReady: (index: number, ready: boolean) => void,
+  laneMedia: LaneRenderMediaOptions,
+) =>
+  snapshot.boxes.map((box, index) => (
+    <DisplayBox
+      key={`${isPrevious ? "prev" : "current"}-${box.id}`}
+      box={box as Box}
+      width={100}
+      showBackground
+      index={index}
+      isTransitionManaged
+      isPrev={isPrevious}
+      paintBackground={laneMedia.paintBackground}
+      paintForeground={laneMedia.paintForeground}
+      onPaintReadyChange={(ready) => reportPaintReady(index, ready)}
+    />
+  ));
+
 describe("DisplayBoxTransitionStage", () => {
   let presentedFrameCount = 0;
   const originalLoad = HTMLMediaElement.prototype.load;
@@ -210,6 +336,7 @@ describe("DisplayBoxTransitionStage", () => {
     presentedFrameCount = 0;
     mockTimelineComplete = undefined;
     mockTimelineCompletions.length = 0;
+    mockLocalVideoResolution = mockNotLocalVideoResolution;
     mockMediaReady = true;
     mockLiveMediaReady = true;
     mockReadinessByMedia.clear();
@@ -249,6 +376,57 @@ describe("DisplayBoxTransitionStage", () => {
     } else {
       Reflect.deleteProperty(HTMLVideoElement.prototype, "requestVideoFrameCallback");
     }
+  });
+
+  it("removes prior live content after an unavailable local video is ready to paint black", async () => {
+    mockLocalVideoResolution = {
+      isLocalVideoFile: true,
+      isOwner: false,
+      status: "unavailable",
+    };
+    const prior: DisplayBoxTransitionSnapshot = {
+      key: "prior-content::1000",
+      boxes: [priorContentBox],
+      backgroundMedia: NONE_LANE_BACKGROUND_MEDIA,
+    };
+    const unavailable: DisplayBoxTransitionSnapshot = {
+      key: "unavailable-video::2000",
+      boxes: [unavailableLocalVideoBox],
+      backgroundMedia: NONE_LANE_BACKGROUND_MEDIA,
+    };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={prior}
+        shouldAnimate
+        renderLane={renderDisplayBoxLane}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={unavailable}
+        shouldAnimate
+        renderLane={renderDisplayBoxLane}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+        "data-transition-phase",
+        "animating",
+      );
+    });
+    expect(screen.getByText("Previous live content")).toBeInTheDocument();
+    expect(
+      screen.getAllByTestId("unavailable-local-video-black-screen"),
+    ).not.toHaveLength(0);
+
+    act(() => mockTimelineCompletions.at(-1)?.());
+
+    expect(screen.queryByText("Previous live content")).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("unavailable-local-video-black-screen"),
+    ).toBeInTheDocument();
   });
 
   it("uses the direct video lane for Electron transmit previews", () => {

@@ -4,6 +4,7 @@ import { ControllerProfile } from "./controllerProfiles";
 import {
   buildShouldSendToForController,
   getSelectedSendTargetIds,
+  getSendTargetRestriction,
   getSendTargetIdsForType,
   sendsNowhere,
   shouldSendToType,
@@ -28,6 +29,121 @@ const sendTo = (overrides: Partial<ShouldSendTo> = {}): ShouldSendTo => ({
   monitor: true,
   stream: true,
   ...overrides,
+});
+
+const builtInOutputs: DisplayOutput[] = [
+  { id: "projector", type: "projector", name: "Projector", order: 0, enabled: true },
+  { id: "monitor", type: "monitor", name: "Monitor", order: 1, enabled: true },
+  { id: "stream", type: "stream", name: "Stream", order: 2, enabled: true },
+];
+
+describe("getSendTargetRestriction", () => {
+  it("returns no indicator when every applicable display is selected", () => {
+    expect(getSendTargetRestriction(sendTo(), builtInOutputs)).toBeNull();
+  });
+
+  it.each(["projector", "monitor", "stream"] as const)(
+    "names the %s display when it is disabled",
+    (type) => {
+      const result = getSendTargetRestriction(
+        sendTo({ [type]: false }),
+        builtInOutputs,
+      );
+
+      expect(result?.label).toBe(
+        `${type === "projector" ? "Projector" : type === "monitor" ? "Monitor" : "Stream"} off`,
+      );
+      expect(result?.tooltip).toContain("Not sent to");
+    },
+  );
+
+  it("summarizes multiple exclusions as the only selected display", () => {
+    const result = getSendTargetRestriction(
+      sendTo({ projector: false, monitor: false, stream: true }),
+      builtInOutputs,
+    );
+
+    expect(result).toEqual({
+      label: "Stream only",
+      tooltip:
+        "Sent to Stream. Not sent to Projector, Monitor. Click to change Send To settings.",
+    });
+  });
+
+  it("reports when no applicable display is selected", () => {
+    const result = getSendTargetRestriction(
+      sendTo({ projector: false, monitor: false, stream: false }),
+      builtInOutputs,
+    );
+
+    expect(result?.label).toBe("No displays enabled");
+    expect(result?.tooltip).toContain("not sent to any enabled displays");
+  });
+
+  it("reports named display exclusions while preserving the actual selection", () => {
+    const result = getSendTargetRestriction(
+      sendTo({ outputIds: ["projector", "monitor", "stream"] }),
+      outputs,
+    );
+
+    expect(result).toEqual({
+      label: "Lobby off",
+      tooltip:
+        "Sent to Main, Stage, Stream. Not sent to Lobby. Click to change Send To settings.",
+    });
+  });
+
+  it("does not treat retired or out-of-scope displays as applicable", () => {
+    const retiredOutputs = outputs.map((output) =>
+      output.id === "out_lobby" ? { ...output, enabled: false } : output,
+    );
+
+    expect(
+      getSendTargetRestriction(
+        sendTo(),
+        retiredOutputs,
+        presentationDefault,
+      ),
+    ).toBeNull();
+
+    expect(
+      getSendTargetRestriction(
+        sendTo({ outputIds: ["projector", "monitor", "stream"] }),
+        outputs,
+        controller(),
+      ),
+    ).toBeNull();
+  });
+
+  it("uses auxiliary controller defaults when resolving its effective route", () => {
+    const auxOutputs = [
+      ...outputs,
+      {
+        id: "out_stream",
+        type: "stream" as const,
+        name: "Stream Aux",
+        order: 4,
+        enabled: true,
+      },
+    ];
+    const profile = controller({
+      outputIds: ["out_lobby", "out_stream"],
+      defaultSendOutputIds: ["out_lobby"],
+    });
+
+    expect(
+      getSendTargetRestriction(sendTo(), auxOutputs, profile),
+    ).toMatchObject({
+      label: "Lobby only",
+      tooltip: expect.stringContaining("Not sent to Stream Aux"),
+    });
+  });
+
+  it("returns no restriction when the controller has no applicable displays", () => {
+    expect(
+      getSendTargetRestriction(sendTo(), outputs, controller({ outputIds: [] })),
+    ).toBeNull();
+  });
 });
 
 describe("getSendTargetIdsForType", () => {

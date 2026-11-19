@@ -68,12 +68,17 @@ import {
   setInitialItemList,
   updateItemListsFromRemote,
 } from "../../store/itemListsSlice";
-import Spinner from "../../components/Spinner/Spinner";
 import { useStuckDbProgress } from "../../hooks/useStuckDbProgress";
 import {
   DbStartupConnectionFailedPanel,
   DbStartupStuckRecoveryPanel,
 } from "../../components/ControllerPageShell/DbProgressStartupRecoveryUi";
+import {
+  BOOTSTRAP_LOADING_MESSAGES,
+  RotatingLoadingMessage,
+  STUCK_LOADING_MESSAGES,
+  WorshipSyncLoadingContent,
+} from "../../components/LoadingScreenPresentation";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
 import {
@@ -176,7 +181,7 @@ const CreditsEditor = ({
   const dbProgressValue = dbProgress ?? 0;
   const isConnectionFailed = connectionStatus?.status === "failed";
   const isStartupStuck = useStuckDbProgress(dbProgressValue, isConnectionFailed);
-  const { churchId, firebaseDb, user, access } = useContext(GlobalInfoContext) || {};
+  const { churchId, firebaseDb, access } = useContext(GlobalInfoContext) || {};
   const canEditCredits = !isViewOnlyAccess(access);
   const dispatch = useDispatch();
 
@@ -790,7 +795,7 @@ const CreditsEditor = ({
     >
       {!embeddedInOverlayController && (
         <div className="min-h-0">
-          <div className="flex w-full flex-col gap-2 bg-gray-800 px-4 py-2 md:flex-row md:items-center md:gap-2 md:py-1">
+          <div className="flex w-full flex-col gap-2 bg-gray-800 px-2 py-1 md:h-[48px] md:min-h-[48px] md:flex-row md:items-center md:gap-2 md:px-2 md:py-0">
             <div className="flex w-full min-w-0 items-center gap-2">
               <Menu
                 menuItems={creditsMenuItems}
@@ -821,7 +826,7 @@ const CreditsEditor = ({
                 <ActionBar items={actionBarItemDefs} className="min-w-0 flex-1" gap={8} overflowMenuClassName="min-w-48" />
               </div>
               <div className="ml-auto shrink-0">
-                <UserSection />
+                <UserSection variant="compact" />
               </div>
             </div>
             {/* Mobile-only row: Outlines + buttons with overflow */}
@@ -843,42 +848,42 @@ const CreditsEditor = ({
       {!embeddedInOverlayController && dbProgressValue !== 100 && (
         <div
           data-testid="loading-overlay"
-          className="fixed top-0 left-0 z-50 bg-gray-800/85 w-full h-full flex justify-center items-center flex-col text-white text-2xl gap-8"
+          className="fixed inset-0 z-[60] flex h-dvh min-h-0 w-full flex-col items-center justify-center gap-6 bg-homepage-canvas px-4 text-white"
+          aria-busy={!isConnectionFailed}
         >
-          {isConnectionFailed ? (
-            <DbStartupConnectionFailedPanel />
-          ) : isStartupStuck ? (
-            <>
-              <DbStartupStuckRecoveryPanel
-                dbProgress={dbProgressValue}
-                connectionStatus={connectionStatus}
+          <WorshipSyncLoadingContent>
+            {isConnectionFailed ? (
+              <DbStartupConnectionFailedPanel
+                message={connectionStatus?.message}
               />
-              {connectionStatus?.status === "retrying" && (
-                <p className="text-center text-lg text-yellow-400">
-                  Connection failed. Retrying...
-                </p>
-              )}
-              <Spinner />
-            </>
-          ) : (
-            <>
-              <p>
-                Setting up <span className="font-bold">Worship</span>
-                <span className="text-orange-500 font-semibold">Sync</span> for{" "}
-                <span className="font-semibold">{user}</span>
-              </p>
-              {connectionStatus?.status === "retrying" && (
-                <p className="text-center text-lg text-yellow-400">
-                  Connection failed. Retrying...
-                </p>
-              )}
-              <Spinner />
-              <p>
-                Progress:{" "}
-                <span className="text-orange-500">{dbProgressValue}%</span>
-              </p>
-            </>
-          )}
+            ) : (
+              <>
+                <RotatingLoadingMessage
+                  messages={
+                    isStartupStuck
+                      ? STUCK_LOADING_MESSAGES
+                      : BOOTSTRAP_LOADING_MESSAGES
+                  }
+                />
+                {connectionStatus?.status === "retrying" && (
+                  <p className="text-sm text-yellow-300">
+                    Connection failed. Retrying...
+                  </p>
+                )}
+                {!isStartupStuck && dbProgressValue > 0 && (
+                  <p className="text-xs text-gray-400">
+                    Database sync: {dbProgressValue}%
+                  </p>
+                )}
+                {isStartupStuck && (
+                  <DbStartupStuckRecoveryPanel
+                    dbProgress={dbProgressValue}
+                    connectionStatus={connectionStatus}
+                  />
+                )}
+              </>
+            )}
+          </WorshipSyncLoadingContent>
         </div>
       )}
 

@@ -1,0 +1,7 @@
+{
+  "id": "2026-11-18-media-library-startup",
+  "date": "2026-11-18",
+  "type": "fixed",
+  "title": "More reliable Media Library startup",
+  "description": "The Media Library now waits for first-time content sync to finish before loading, and a library verified by a completed sync remains available offline."
+}

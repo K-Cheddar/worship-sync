@@ -49,6 +49,7 @@ import {
   WORSHIPSYNC_SESSION_PARTITION,
 } from "./windowHelpers";
 import { buildAppCspHeader, shouldAttachAppCsp } from "./appCsp";
+import { buildLocalAssetCorsHeaders } from "./localAssetCors";
 import {
   getDisplayWindow,
   setDisplayWindow,
@@ -1210,6 +1211,13 @@ app.whenReady().then(() => {
   const handleLocalAssetRequest = async (request: GlobalRequest) => {
     let fileHandle: FileHandle | undefined;
     try {
+      const corsHeaders = buildLocalAssetCorsHeaders(
+        request.headers.get("origin"),
+        app.isPackaged,
+      );
+      if (request.method === "OPTIONS") {
+        return new Response(null, { status: 204, headers: corsHeaders });
+      }
       const requestUrl = new URL(request.url);
       if (requestUrl.hostname !== "asset") return notFound();
       const encodedAssetId = requestUrl.pathname.replace(/^\//, "");
@@ -1230,6 +1238,7 @@ app.whenReady().then(() => {
       );
       const range = rangeHeader ? parseRange(rangeHeader, fileSize) : null;
       const responseHeaders = new Headers({
+        ...corsHeaders,
         "Accept-Ranges": "bytes",
         "Cache-Control": "no-store",
         "Content-Type": resolved.descriptor.contentType,

@@ -273,6 +273,7 @@ const ScheduleAssignmentPicker = memo(({
   const anchorProxyRef = useRef<HTMLSpanElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const listScrollRef = useRef<HTMLDivElement>(null);
+  const keyboardHighlightScrollRef = useRef<number | null>(null);
   const [anchorRect, setAnchorRect] = useState<DOMRect | null>(null);
   const [menuView, setMenuView] = useState<PickerMenuView>("members");
   const [memberPickerAction, setMemberPickerAction] =
@@ -329,10 +330,22 @@ const ScheduleAssignmentPicker = memo(({
 
   const updateAnchorRect = useCallback(() => {
     if (!anchorEl) {
-      setAnchorRect(null);
+      setAnchorRect((current) => current === null ? current : null);
       return;
     }
-    setAnchorRect(anchorEl.getBoundingClientRect());
+    const nextRect = anchorEl.getBoundingClientRect();
+    setAnchorRect((current) => {
+      if (
+        current &&
+        Math.abs(current.top - nextRect.top) < 0.5 &&
+        Math.abs(current.left - nextRect.left) < 0.5 &&
+        Math.abs(current.width - nextRect.width) < 0.5 &&
+        Math.abs(current.height - nextRect.height) < 0.5
+      ) {
+        return current;
+      }
+      return nextRect;
+    });
   }, [anchorEl]);
 
   useLayoutEffect(() => {
@@ -341,12 +354,25 @@ const ScheduleAssignmentPicker = memo(({
 
   useEffect(() => {
     if (!open || !anchorEl) return undefined;
-    const handleReposition = () => updateAnchorRect();
-    window.addEventListener("scroll", handleReposition, true);
-    window.addEventListener("resize", handleReposition);
+    const ownerWindow = anchorEl.ownerDocument.defaultView;
+    if (!ownerWindow) return undefined;
+    const handleReposition = (event: Event) => {
+      const content = contentRef.current;
+      if (
+        content &&
+        event.target instanceof ownerWindow.Node &&
+        content.contains(event.target)
+      ) {
+        return;
+      }
+      updateAnchorRect();
+    };
+    const handleResize = () => updateAnchorRect();
+    ownerWindow.addEventListener("scroll", handleReposition, true);
+    ownerWindow.addEventListener("resize", handleResize);
     return () => {
-      window.removeEventListener("scroll", handleReposition, true);
-      window.removeEventListener("resize", handleReposition);
+      ownerWindow.removeEventListener("scroll", handleReposition, true);
+      ownerWindow.removeEventListener("resize", handleResize);
     };
   }, [anchorEl, open, updateAnchorRect]);
 
@@ -358,6 +384,7 @@ const ScheduleAssignmentPicker = memo(({
       setActiveSubmenuMemberId(null);
       setActiveSwapRecommendation(null);
       setHighlightedIndex(0);
+      keyboardHighlightScrollRef.current = null;
       setGuestDraft({ guestId: "", name: "", email: "", phone: "", note: "" });
       setAssigningGuest(false);
       setEditingGuest(false);
@@ -787,17 +814,26 @@ const ScheduleAssignmentPicker = memo(({
     );
   };
 
+  const moveKeyboardHighlight = (nextIndex: number) => {
+    if (nextIndex === highlightedIndex) return;
+    keyboardHighlightScrollRef.current = nextIndex;
+    setHighlightedIndex(nextIndex);
+  };
+
   const handleInputKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setHighlightedIndex((current) =>
-        Math.min(current + 1, Math.max(selectableRows.length + matchingGuests.length - 1, 0)),
+      moveKeyboardHighlight(
+        Math.min(
+          highlightedIndex + 1,
+          Math.max(selectableRows.length + matchingGuests.length - 1, 0),
+        ),
       );
       return;
     }
     if (event.key === "ArrowUp") {
       event.preventDefault();
-      setHighlightedIndex((current) => Math.max(current - 1, 0));
+      moveKeyboardHighlight(Math.max(highlightedIndex - 1, 0));
       return;
     }
     if (
@@ -827,7 +863,13 @@ const ScheduleAssignmentPicker = memo(({
     }
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
+  }, [menuView]);
+
+  useLayoutEffect(() => {
+    if (keyboardHighlightScrollRef.current !== highlightedIndex) return;
+    keyboardHighlightScrollRef.current = null;
     const list = listScrollRef.current;
     const highlightedOption = list?.querySelector<HTMLElement>(
       `[data-picker-option-index="${highlightedIndex}"]`,
@@ -840,7 +882,7 @@ const ScheduleAssignmentPicker = memo(({
     } else if (optionBounds.bottom > listBounds.bottom) {
       list.scrollTop += optionBounds.bottom - listBounds.bottom;
     }
-  }, [highlightedIndex, matchingGuests.length, menuView, selectableRows]);
+  }, [highlightedIndex]);
 
   if (!open || !anchorRect) return null;
 
@@ -849,6 +891,7 @@ const ScheduleAssignmentPicker = memo(({
       <PopoverAnchor asChild>
         <span
           ref={anchorProxyRef}
+          data-testid="schedule-assignment-anchor-proxy"
           aria-hidden
           className="pointer-events-none fixed z-40"
           style={{
@@ -875,14 +918,6 @@ const ScheduleAssignmentPicker = memo(({
           menuView === "createMember" ? "w-80 max-w-[calc(100vw-1rem)]" : "max-w-xs w-max",
         )}
         onOpenAutoFocus={(event) => event.preventDefault()}
-        onMouseDown={(event) => {
-          if (
-            menuView !== "createMember" &&
-            !(event.target instanceof HTMLInputElement)
-          ) {
-            event.preventDefault();
-          }
-        }}
       >
         {onClose ? (
           <Button
@@ -913,6 +948,9 @@ const ScheduleAssignmentPicker = memo(({
               value={assignmentQuery}
               onChange={(event) => {
                 onAssignmentQueryChange(event.target.value);
+                setHighlightedIndex(0);
+                keyboardHighlightScrollRef.current = null;
+                if (listScrollRef.current) listScrollRef.current.scrollTop = 0;
                 setMenuView("members");
                 setActiveSubmenuMemberId(null);
                 setActiveSwapRecommendation(null);

@@ -1,4 +1,4 @@
-import { getLocalVideoFile, getOrCreateLocalVideoFileThumbnail, subscribeLocalVideoFileChanges } from "./localVideoFileAssets";
+import { getLocalVideoFile, getLocalVideoFileThumbnail, getOrCreateLocalVideoFileThumbnail, subscribeLocalVideoFileChanges } from "./localVideoFileAssets";
 import {
   acquireLocalVideoFileThumbnailUrl,
   acquireLocalVideoFileUrl,
@@ -8,6 +8,7 @@ import {
 
 jest.mock("./localVideoFileAssets", () => ({
   getLocalVideoFile: jest.fn(),
+  getLocalVideoFileThumbnail: jest.fn(),
   getOrCreateLocalVideoFileThumbnail: jest.fn(),
   subscribeLocalVideoFileChanges: jest.fn(() => jest.fn()),
 }));
@@ -17,6 +18,7 @@ const notifyNativeChange = jest.mocked(subscribeLocalVideoFileChanges).mock.call
 const mockGetOrCreateLocalVideoFileThumbnail = jest.mocked(
   getOrCreateLocalVideoFileThumbnail,
 );
+const mockGetLocalVideoFileThumbnail = jest.mocked(getLocalVideoFileThumbnail);
 
 describe("localVideoFileUrlCache", () => {
   beforeEach(() => {
@@ -49,6 +51,7 @@ describe("localVideoFileUrlCache", () => {
       height: 90,
       createdAt: "2026-08-17T00:00:00.000Z",
     });
+    mockGetLocalVideoFileThumbnail.mockResolvedValue(undefined);
   });
 
   afterEach(() => jest.useRealTimers());
@@ -139,6 +142,20 @@ describe("localVideoFileUrlCache", () => {
     );
     expect(peekLocalVideoFileUrl("video-1", "revision-1")).toBeUndefined();
 
+    lease.release();
+  });
+
+  it("reads saved thumbnails for live surfaces without starting extraction", async () => {
+    const lease = acquireLocalVideoFileThumbnailUrl(
+      "video-live",
+      "revision-live",
+      false,
+    );
+
+    await expect(lease.url).resolves.toBeUndefined();
+    expect(mockGetLocalVideoFileThumbnail).toHaveBeenCalledWith("video-live");
+    expect(mockGetOrCreateLocalVideoFileThumbnail).not.toHaveBeenCalled();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
     lease.release();
   });
 
