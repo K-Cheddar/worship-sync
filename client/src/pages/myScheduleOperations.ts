@@ -5,7 +5,9 @@ export type MyScheduleMember = Pick<TeamRosterMember, "memberId" | "churchId" | 
 export type VolunteerAvailabilityAnswer = "available" | "unavailable";
 export type VolunteerAvailabilityRequest = {
   recipientId: string; formId: string; name: string; responseDeadline: string;
-  availabilityMessage: string; respondedAt: string; submissionId: string; editable: boolean;
+  availabilityMessage: string;
+  /** Server-owned submission metadata; saved answer entries alone do not mean submitted. */
+  respondedAt: string; submissionId: string; editable: boolean;
   occurrences: { occurrenceId: string; name: string; startsAt: string; serviceDate?: string }[];
   availability: Record<string, VolunteerAvailabilityAnswer>;
   /** Dates inside the form scope with no explicit saved answer. */

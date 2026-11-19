@@ -77,7 +77,7 @@ Volunteers could respond to a request through its existing form link, but had
 no consolidated place to review their saved availability requests. My Schedule
 remained focused on assigned services and Time Off.
 
-### After behavior
+### Initial behavior (current editor and groups are defined in Phase 2B-3 below)
 
 - Signed-in volunteers open **My Availability** from the Home launcher at
   `/my-availability`. Accountless volunteers use their existing personal
@@ -108,6 +108,57 @@ recurring serving preferences, positions, profile data, consent, assignments,
 messages, or notification behavior. Recurring availability preferences remain
 deferred because there is no safe volunteer self-service read/write operation
 for them in the existing server contract.
+
+## My Availability response simplification (Phase 2B-3, 2026-11-19)
+
+**Approval source:** Current product-owner request, “Simplify My Availability
+and Correct Request Statuses,” 2026-11-19.
+
+### Before behavior
+
+My Availability used three choices for every service and grouped all open
+requests with unanswered dates under **Needs response**. Saved answer counts
+could look like a submitted response even when the request had never been
+submitted, and closed requests shared the previous-responses group.
+
+### After behavior
+
+- A new request with no saved answers uses positive service checkboxes. Checked
+  means available. Before first submission, a confirmation shows the resulting
+  available and unavailable counts; submitting no checked services asks the
+  volunteer to confirm they are unavailable for all services.
+- For a first response containing partial legacy answers, and for any saved
+  response with unanswered dates, the editor retains the three-state choices.
+  Unanswered dates stay absent from the submitted map unless explicitly changed.
+- Fully answered responses use checkboxes prepopulated from saved available
+  answers. **Edit individual answer states** exposes Available, Unavailable and
+  Not answered so a previously saved answer can be cleared. Checkbox choices
+  are expanded to a complete map only when the volunteer submits.
+- `respondedAt` or `submissionId` from the existing recipient-scoped read is the
+  submission signal. Answer counts, opening the editor and local draft changes
+  do not mark a request submitted. An accepted save response or authoritative
+  read updates the visible status; a failed or uncertain write does not infer
+  completion from an answer-map match alone.
+- Open requests without submission metadata appear under **Needs response**;
+  open requests with submission metadata appear under **Submitted responses**,
+  with unanswered dates called out. Every non-editable request appears under
+  **Closed**, with either **No response submitted** or its saved response
+  summary.
+- Request cards show a compact service-date range, service count, deadline and
+  accurate response summary. Full service names, dates and times remain inside
+  the request and use the church timezone.
+
+### Behavior intentionally unchanged
+
+Both signed-in `/my-availability` and accountless `/s?view=availability` keep
+their existing authorization and recipient scope. Saves still use the complete
+form-scoped availability map and per-occurrence revision snapshot. HTTP 409
+review, uncertain-save reconciliation, dirty-draft preservation, navigation
+protection and closed-request restrictions remain. The three-state backend
+model and Auto-fill interpretation are unchanged. Existing `/a/:token` links,
+public positive-selection checkboxes, submissions and response APIs remain
+compatible. No reminder automation, preference storage or new endpoint is
+introduced.
 
 
 ## Personal credential foundation: Phase 2 contract (2026-10-21)

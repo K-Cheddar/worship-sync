@@ -175,3 +175,23 @@ automatic resubmission. The read includes the validated church service timezone
 for display. Time Off remains in assignment-focused My Schedule. Volunteer
 recurring-availability preferences remain deferred because no safe self-service
 operation exists for them yet.
+
+## My Availability response simplification (Phase 2B-3)
+
+Confirmed by the current product-owner request, “Simplify My Availability and
+Correct Request Statuses,” 2026-11-19. The shared volunteer page now uses
+positive checkboxes for a new, fully unanswered response and confirms the
+available/unavailable totals before the existing submit API is called. An
+explicitly confirmed all-unavailable response is a submission. Existing
+unanswered values remain distinct: mixed or partial data keeps the existing
+Available / Unavailable / Not answered editor, and fully answered responses
+can open that editor to clear a saved answer.
+
+The existing recipient `respondedAt` / `submissionId` metadata determines
+whether a request has been submitted. The page groups requests as **Needs
+response**, **Submitted responses**, or **Closed**; submitted partial responses
+still show unanswered service dates. The existing complete form-scoped map,
+per-occurrence revisions, recipient authorization, and 409 recovery remain the
+write contract. Public `/a/:token` forms keep their original positive-selection
+checkbox meaning and established submission behavior. No new availability
+storage, route, reminder, or dispatch behavior is added.

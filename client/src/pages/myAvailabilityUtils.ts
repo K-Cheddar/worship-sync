@@ -18,20 +18,57 @@ export const getAvailabilityRequestStatus = (
   request: VolunteerAvailabilityRequest,
 ) => {
   if (!request.editable) return "Closed";
+  if (!hasAvailabilityResponseSubmission(request)) return "Not yet submitted";
   const counts = getAvailabilityCounts(request);
-  if (counts.unanswered > 0 && counts.available + counts.unavailable > 0) {
-    return "Partially answered";
-  }
-  if (counts.unanswered > 0) return "Not answered";
-  return "Answered";
+  return counts.unanswered > 0
+    ? `Response submitted · ${counts.unanswered} unanswered`
+    : "Response submitted";
 };
+
+export const hasAvailabilityResponseSubmission = (
+  request: Pick<VolunteerAvailabilityRequest, "respondedAt" | "submissionId">,
+) => Boolean(request.respondedAt || request.submissionId);
+
+export type AvailabilityRequestGroup = "needs-response" | "submitted-responses" | "closed";
 
 export const getAvailabilityRequestGroup = (
   request: VolunteerAvailabilityRequest,
-) =>
-  request.editable && request.unansweredOccurrenceIds.length > 0
-    ? "needs-response"
-    : "previous-responses";
+): AvailabilityRequestGroup => {
+  if (!request.editable) return "closed";
+  return hasAvailabilityResponseSubmission(request)
+    ? "submitted-responses"
+    : "needs-response";
+};
+
+const serviceDateForSummary = (
+  occurrence: VolunteerAvailabilityRequest["occurrences"][number],
+  serviceTimeZone: string | null | undefined,
+) => {
+  const occurrenceIdDate = occurrence.occurrenceId.match(/@((?:\d{4}-\d{2}-\d{2}))$/)?.[1];
+  if (occurrence.serviceDate || occurrenceIdDate) return occurrence.serviceDate || occurrenceIdDate || "";
+  if (!serviceTimeZone || !Number.isFinite(Date.parse(occurrence.startsAt))) return "";
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: serviceTimeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(occurrence.startsAt));
+  const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
+  return `${values.year}-${values.month}-${values.day}`;
+};
+
+export const formatAvailabilityRequestDateRange = (
+  request: VolunteerAvailabilityRequest,
+  serviceTimeZone: string | null | undefined,
+) => {
+  const dates = request.occurrences
+    .map((occurrence) => serviceDateForSummary(occurrence, serviceTimeZone))
+    .filter(Boolean)
+    .sort();
+  if (!dates.length) return "";
+  return formatPlainDateRangeLabel(dates[0], dates[dates.length - 1]);
+};
 
 export const getAvailabilityChoice = (
   availability: VolunteerAvailabilityRequest["availability"],
@@ -48,6 +85,14 @@ export const setAvailabilityChoice = (
   else next[occurrenceId] = choice;
   return next;
 };
+
+/** Materialize checkbox intent only when the volunteer finalizes a response. */
+export const createAvailabilityCheckboxSubmission = (
+  occurrenceIds: string[],
+  availability: VolunteerAvailabilityRequest["availability"],
+): VolunteerAvailabilityRequest["availability"] => Object.fromEntries(
+  occurrenceIds.map((id) => [id, availability[id] === "available" ? "available" : "unavailable"]),
+);
 
 export const formatAvailabilityOccurrence = (
   occurrence: VolunteerAvailabilityRequest["occurrences"][number],

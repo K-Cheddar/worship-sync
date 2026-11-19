@@ -98,6 +98,15 @@ A schedule follows **Virtual → Draft ↔ Published**.
 
 **Approval source:** Current product-owner Phase 2B-1 request, 2026-11-16.
 
+My Availability's later response simplification is confirmed by the current
+product-owner request, 2026-11-19. Submission status comes from the existing
+recipient `respondedAt` / `submissionId` fields, independently of the saved
+occurrence answer map. Unanswered remains unknown until explicitly answered;
+the initial positive-checkbox response maps unchecked dates to unavailable
+only after confirmation. Partially answered legacy data retains three-state
+editing. These presentation and confirmation rules do not change Auto-fill:
+only an explicit unavailable answer excludes a volunteer.
+
 ### Volunteer account identity and church membership
 
 - Signed-in My Schedule resolves identity only from the authenticated account's roster link in the requested church. Names and email addresses are never used to find a roster record.
