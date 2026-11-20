@@ -4,7 +4,7 @@ import { afterEach, test } from "node:test";
 import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { prepareVideoTools } from "./prepare-video-tools.mjs";
+import { extractArchiveWithPowerShell, prepareVideoTools } from "./prepare-video-tools.mjs";
 
 const workspaces = new Set();
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -145,7 +145,7 @@ const fixture = ({ denoFiles = { "deno.exe": denoBytes }, denoArchive, ytdlp = y
     const bytes = await readFile(archive);
     if (process.platform !== "win32") {
       // This keeps the orchestration tests portable; dedicated Windows CI runs
-      // the valid ZIP fixture through the real Expand-Archive implementation.
+      // the valid ZIP fixture through the real PowerShell/.NET ZIP extractor.
       if (bytes.length < 22 || bytes.readUInt32LE(bytes.length - 22) !== 0x06054b50) throw new Error(`${description} ZIP is corrupt.`);
       const entries = description === "Deno" ? denoFiles : {
         "ffmpeg/bin/ffmpeg.exe": ffmpegBytes,
@@ -213,6 +213,18 @@ test("fails closed when PowerShell archive extraction fails", async () => {
   await assert.rejects(prepare(clientRoot, tools), /Deno.*(?:archive extraction failed|ZIP is corrupt)/i);
   assert.equal(tools.calls.extract.length, 1);
   assert.equal(tools.calls.fetch, 1);
+});
+
+test("rejects ZIP entries that try to extract outside the destination", { skip: process.platform !== "win32" }, async () => {
+  const clientRoot = await workspace();
+  const archive = join(clientRoot, "malicious.zip");
+  const destination = join(clientRoot, "extracted");
+  const escapedFile = join(clientRoot, "escaped.txt");
+  await mkdir(destination);
+  await writeFile(archive, createZip({ "../escaped.txt": "outside the destination" }));
+
+  await assert.rejects(extractArchiveWithPowerShell(archive, destination, "malicious"), /archive extraction failed/i);
+  await assert.rejects(readFile(escapedFile), { code: "ENOENT" });
 });
 
 test("rejects corrupted archives by checksum before attempting extraction", async () => {
