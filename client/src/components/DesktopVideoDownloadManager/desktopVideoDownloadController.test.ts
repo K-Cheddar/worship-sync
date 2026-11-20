@@ -244,7 +244,7 @@ describe("desktop video download lifecycle manager", () => {
     expect(harness.transfers.get(`video-download-${jobId}`)?.progress).toBe(58);
   });
 
-  it("derives download percentage from byte totals and preserves byte, speed, and ETA details", () => {
+  it("shows percentage, bytes, speed, and ETA from captured yt-dlp video progress", () => {
     const harness = makeHarness();
     const jobId = harness.start();
 
@@ -252,19 +252,46 @@ describe("desktop video download lifecycle manager", () => {
       jobId,
       stage: "downloading",
       progress: null,
-      downloadedBytes: 184 * 1024 * 1024,
-      totalBytes: 438 * 1024 * 1024,
-      speedBytesPerSecond: 3.2 * 1024 * 1024,
-      etaSeconds: 84,
+      streamId: "137",
+      streamLabel: "Video",
+      downloadedBytes: 784914,
+      totalBytes: 2097152,
+      speedBytesPerSecond: 262012.01993290862,
+      etaSeconds: 5,
     });
 
     expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({
-      progress: 42,
+      progress: 37,
       phase: { label: "Downloading" },
-      detail: expect.stringContaining("Downloaded 184.0 MB of 438.0 MB"),
+      detail: expect.stringContaining("Downloaded 767 KB of 2.0 MB"),
     });
-    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("3.2 MB/s");
-    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("1m 24s remaining");
+    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("256 KB/s");
+    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("5 seconds remaining");
+  });
+
+  it("shows captured unknown-total bytes and speed while keeping progress indeterminate", () => {
+    const harness = makeHarness();
+    const jobId = harness.start();
+
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: null,
+      streamId: "unknown",
+      streamLabel: "Video",
+      downloadedBytes: 523096,
+      speedBytesPerSecond: 131028.5718746678,
+    });
+
+    const transfer = harness.transfers.get(`video-download-${jobId}`);
+    expect(transfer).toMatchObject({
+      status: "active",
+      progress: null,
+      phase: { label: "Downloading" },
+      detail: expect.stringContaining("Downloaded 511 KB"),
+    });
+    expect(transfer?.detail).not.toContain(" of ");
+    expect(transfer?.detail).toContain("128 KB/s");
   });
 
   it("switches separate audio and video progress to an indeterminate overall bar", () => {

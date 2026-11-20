@@ -82,6 +82,33 @@ describe("TransferProgress", () => {
     expect(screen.getByText(/Video 100%.*Audio 20%.*3\.2 MB\/s.*1m 24s remaining/)).toBeInTheDocument();
   });
 
+  it("shows measured video download progress and metrics in Activity", () => {
+    const { rerender } = render(<TransferProgress transfer={{
+      ...base,
+      type: "Media upload",
+      name: "Sermon.mp4",
+      progress: 37,
+      phase: { key: "downloading", label: "Downloading" },
+      detail: "Downloaded 767 KB of 2.0 MB Â· 256 KB/s Â· About 5 seconds remaining",
+    }} variant="card" />);
+
+    expect(screen.getByRole("progressbar", { name: "Sermon.mp4 progress" })).toHaveAttribute("aria-valuenow", "37");
+    expect(screen.getByText("Downloaded 767 KB of 2.0 MB Â· 256 KB/s Â· About 5 seconds remaining")).toBeInTheDocument();
+
+    rerender(<TransferProgress transfer={{
+      ...base,
+      type: "Media upload",
+      name: "Sermon.mp4",
+      progress: null,
+      phase: { key: "downloading", label: "Downloading" },
+      detail: "Downloaded 511 KB Â· 128 KB/s",
+    }} variant="card" />);
+
+    expect(screen.getByRole("progressbar", { name: "Sermon.mp4 progress" })).toHaveAttribute("aria-valuetext", "Downloading, progress unknown");
+    expect(screen.getByRole("progressbar", { name: "Sermon.mp4 progress" })).not.toHaveAttribute("aria-valuenow");
+    expect(screen.getByText("Downloaded 511 KB Â· 128 KB/s")).toBeInTheDocument();
+  });
+
   it("shows partial completion alongside the actual single transfer progress", () => {
     render(<TransferProgress transfer={{ ...base, status: "partial", progress: 70, phase: { key: "partial", label: "Upload completed with errors" } }} variant="card" />);
     expect(screen.getByText("Completed with errors · 70%")).toBeInTheDocument();

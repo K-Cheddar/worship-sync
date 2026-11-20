@@ -583,7 +583,7 @@ export class VideoDownloader extends EventEmitter {
       const args = [
         "--ignore-config", "--no-plugin-dirs", "--no-playlist", "--ies", "youtube",
         "--js-runtimes", `deno:${this.options.denoPath}`,
-        "--no-warnings", "--no-cache-dir", "--newline", "--downloader", "native",
+        "--no-warnings", "--no-cache-dir", "--newline", "--progress", "--downloader", "native",
         "--progress-delta", "0.5",
         "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3",
         "--file-access-retries", "2", "--extractor-retries", "2",
@@ -693,7 +693,7 @@ export class VideoDownloader extends EventEmitter {
           stderrTail = `${stderrTail}${text}`.slice(-16_384);
         }
         const pending = target === "stdout" ? stdoutPending : stderrPending;
-        const lines = `${pending}${text}`.split(/\r?\n/);
+        const lines = `${pending}${text}`.split(/\r\n|\n|\r/);
         const nextPending = lines.pop() ?? "";
         if (target === "stdout") stdoutPending = nextPending;
         else stderrPending = nextPending;

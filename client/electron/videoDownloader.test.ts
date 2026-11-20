@@ -63,6 +63,19 @@ const finishChild = (child: FakeChild, stdout: string | Buffer, code = 0, stderr
   setTimeout(() => child.emit("close", code, null), 0);
 };
 
+const finishChildWithChunks = (
+  child: FakeChild,
+  stdoutChunks: string[],
+  stderrChunks: string[],
+  code = 0,
+) => {
+  stdoutChunks.forEach((chunk) => child.stdout.write(chunk));
+  stderrChunks.forEach((chunk) => child.stderr.write(chunk));
+  child.stdout.end();
+  child.stderr.end();
+  setTimeout(() => child.emit("close", code, null), 0);
+};
+
 type TestInspectionPolicy = {
   command: "yt-dlp";
   stdoutLimitBytes: number;
@@ -105,6 +118,7 @@ describe("VideoDownloader job lifecycle", () => {
   let processArguments: string[][];
   let uploadLookup: SafeHttpLookupAll;
   let downloadStdout: string | undefined;
+  let downloadOutputChunks: { stdout: string[]; stderr: string[] } | undefined;
   let muxResponseStatus: number;
   let muxAutoRespond: boolean;
   let muxRequests: FakeMuxRequest[];
@@ -137,6 +151,7 @@ describe("VideoDownloader job lifecycle", () => {
     processOptions = [];
     processArguments = [];
     downloadStdout = undefined;
+    downloadOutputChunks = undefined;
     muxResponseStatus = 200;
     muxAutoRespond = true;
     muxRequests = [];
@@ -180,7 +195,11 @@ describe("VideoDownloader job lifecycle", () => {
           const file = args[outputIndex].replace("%(ext)s", "mp4");
           mkdirSync(join(root, "downloads"), { recursive: true });
           writeFileSync(file, "fake-mp4");
-          finishChild(child, downloadStdout ?? `WSYNC_PROGRESS:100:200:200\nWSYNC_FILE:${file}\nWSYNC_PROCESSING:started\n`);
+          if (downloadOutputChunks) {
+            finishChildWithChunks(child, downloadOutputChunks.stdout, downloadOutputChunks.stderr);
+          } else {
+            finishChild(child, downloadStdout ?? `WSYNC_PROGRESS:100:200:200\nWSYNC_FILE:${file}\nWSYNC_PROCESSING:started\n`);
+          }
         } else if (!stallDownload) {
           failNextDownload = false;
           finishChild(child, "network error", 1, "network failure");
@@ -264,6 +283,7 @@ describe("VideoDownloader job lifecycle", () => {
     expect(existsSync(downloader.getCompletedFile(jobId).path)).toBe(true);
     expect(processOptions.every((options) => options.shell === false)).toBe(true);
     const downloadArgs = processArguments.find((args) => args.includes("--format"))!;
+    expect(downloadArgs).toContain("--progress");
     expect(downloadArgs).toContain("--js-runtimes");
     expect(downloadArgs).toContain(`deno:${nativeTools.denoPath}`);
     const selector = downloadArgs[downloadArgs.indexOf("--format") + 1];
@@ -595,6 +615,71 @@ describe("VideoDownloader job lifecycle", () => {
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ stage: "downloading", streamId: "137", progress: 50, totalBytes: 4194304 }),
       expect.objectContaining({ stage: "downloading", streamId: "140", streamLabel: "Audio", progress: 50, totalBytes: 2097152 }),
+    ]));
+  });
+
+  it("parses captured yt-dlp output across fragmented Windows lines and completes through processing", async () => {
+    const metadata = await inspect();
+    const jobId = "d2345678-1234-4123-8123-123456789abc";
+    const outputPath = join(root, "downloads", jobId, "video.mp4");
+    mkdirSync(join(root, "downloads", jobId), { recursive: true });
+    writeFileSync(outputPath, "fake-mp4");
+
+    // Captured from the pinned Windows yt-dlp 2026.10.26 executable against
+    // local HTTP fixtures; source URLs and destination paths have been removed.
+    const videoProgress = "WSYNC_PROGRESS:137:avc1.640028:none:784914:2097152:NA:262012.01993290862:5";
+    const audioProgress = "WSYNC_PROGRESS:140:none:mp4a.40.2:261120:524288:NA:261823.13826157174:1";
+    const unknownTotalProgress = "WSYNC_PROGRESS:unknown:avc1.640028:none:523096:NA:NA:131028.5718746678:NA";
+    downloadOutputChunks = {
+      stdout: [
+        videoProgress.slice(0, 17),
+        videoProgress.slice(17, 51),
+        `${videoProgress.slice(51)}\r`,
+        `\n${audioProgress}\r\n${unknownTotalProgress}\r`,
+        `\nWSYNC_FILE:${outputPath}\r\n`,
+      ],
+      stderr: ["WSYNC_PROCESS", "ING:started\r", "\nWSYNC_PROCESSING:finished"],
+    };
+
+    const events: VideoDownloadEvent[] = [];
+    downloader.on("progress", (event) => events.push(event));
+    const completed = waitForStage(events, "complete");
+
+    await downloader.startDownload({ jobId, inspectionId: metadata.inspectionId, quality: 1080 });
+    await completed;
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        stage: "downloading",
+        streamId: "137",
+        streamLabel: "Video",
+        progress: 37,
+        downloadedBytes: 784914,
+        totalBytes: 2097152,
+        speedBytesPerSecond: 262012.01993290862,
+        etaSeconds: 5,
+      }),
+      expect.objectContaining({
+        stage: "downloading",
+        streamId: "140",
+        streamLabel: "Audio",
+        progress: 50,
+        downloadedBytes: 261120,
+        totalBytes: 524288,
+        speedBytesPerSecond: 261823.13826157174,
+        etaSeconds: 1,
+      }),
+      expect.objectContaining({
+        stage: "downloading",
+        streamId: "unknown",
+        progress: null,
+        downloadedBytes: 523096,
+        totalBytes: undefined,
+        speedBytesPerSecond: 131028.5718746678,
+        etaSeconds: undefined,
+      }),
+      expect.objectContaining({ stage: "processing" }),
+      expect.objectContaining({ stage: "complete", progress: 100 }),
     ]));
   });
 
