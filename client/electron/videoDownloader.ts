@@ -20,6 +20,7 @@ import {
   VideoDownloaderCommandError,
   type VideoFailureCategory,
 } from "./videoDownloaderErrors";
+import { MuxUploadUrlValidationError, validateMuxUploadUrl } from "./muxUploadUrl";
 
 export type VideoDownloadEvent = {
   jobId: string;
@@ -78,7 +79,24 @@ const MAX_NATIVE_DIAGNOSTIC_BYTES = 16 * 1024;
 const COMMAND_TERMINATION_GRACE_MS = 5000;
 const MAX_DOWNLOAD_STDOUT_BYTES = 8 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i;
-const MUX_UPLOAD_HOSTS = ["storage.googleapis.com", "upload.mux.com", "uploads.mux.com"];
+const UPLOAD_PROGRESS_INTERVAL_MS = 250;
+
+const safeMuxUploadDiagnostic = (error: unknown) => {
+  if (!(error instanceof Error)) return "No low-level diagnostic was returned.";
+  return error.message
+    .replace(/https?:\/\/\S+/gi, "[URL]")
+    .replace(/\?[^\s"'<>]*/g, "?[redacted]")
+    .replace(/\b(cookie|authorization|token|signature|sig|api[_-]?key|client[_-]?secret)\b\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .replace(/\b[A-Za-z]:\\[^\r\n]+/g, "[path]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 600);
+};
+
+const safeErrorCode = (error: unknown) =>
+  error && typeof error === "object" && "code" in error && typeof error.code === "string"
+    ? error.code.slice(0, 80)
+    : undefined;
 
 type NativeCommandPolicy = {
   command: "yt-dlp" | "ffprobe";
@@ -565,7 +583,7 @@ export class VideoDownloader extends EventEmitter {
       const args = [
         "--ignore-config", "--no-plugin-dirs", "--no-playlist", "--ies", "youtube",
         "--js-runtimes", `deno:${this.options.denoPath}`,
-        "--no-warnings", "--no-cache-dir", "--newline", "--downloader", "native",
+        "--no-warnings", "--no-cache-dir", "--newline", "--progress", "--downloader", "native",
         "--progress-delta", "0.5",
         "--socket-timeout", "30", "--retries", "3", "--fragment-retries", "3",
         "--file-access-retries", "2", "--extractor-retries", "2",
@@ -675,7 +693,7 @@ export class VideoDownloader extends EventEmitter {
           stderrTail = `${stderrTail}${text}`.slice(-16_384);
         }
         const pending = target === "stdout" ? stdoutPending : stderrPending;
-        const lines = `${pending}${text}`.split(/\r?\n/);
+        const lines = `${pending}${text}`.split(/\r\n|\n|\r/);
         const nextPending = lines.pop() ?? "";
         if (target === "stdout") stdoutPending = nextPending;
         else stderrPending = nextPending;
@@ -798,54 +816,157 @@ export class VideoDownloader extends EventEmitter {
     rawUploadUrl: unknown,
     fileSource?: { size: number; createReadStream: () => ReadStream },
   ) {
-    if (typeof rawUploadUrl !== "string" || rawUploadUrl.length > 8192) throw new Error("The cloud upload could not be started.");
-    let uploadUrl: URL;
-    try { uploadUrl = new URL(rawUploadUrl); }
-    catch { throw new Error("The cloud upload could not be started."); }
-    if (uploadUrl.protocol !== "https:" || !MUX_UPLOAD_HOSTS.includes(uploadUrl.hostname) || uploadUrl.username || uploadUrl.password || (uploadUrl.port && uploadUrl.port !== "443")) {
-      throw new Error("The cloud upload address is invalid.");
+    let validatedUpload: Awaited<ReturnType<typeof validateMuxUploadUrl>>;
+    try {
+      validatedUpload = await validateMuxUploadUrl(rawUploadUrl, this.options.lookupAll);
+    } catch (error) {
+      if (error instanceof MuxUploadUrlValidationError) {
+        console.warn("[VideoDownloader] Mux upload URL rejected", {
+          category: error.category,
+          ...(error.hostname ? { hostname: error.hostname } : {}),
+        });
+      }
+      throw error;
     }
-    const validatedUpload = await validateSafeHttpUrl(uploadUrl.toString(), this.options.lookupAll);
     if (record.uploadCancelled || this.jobs.get(jobId) !== record) throw new Error("Upload cancelled.");
-    const size = fileSource?.size ?? (await stat(filePath)).size;
+    let size: number;
+    try {
+      size = fileSource?.size ?? (await stat(filePath)).size;
+    } catch (error) {
+      console.warn("[VideoDownloader] Mux upload source could not be read", {
+        stage: "file-read",
+        category: "file-read-failed",
+        code: safeErrorCode(error),
+        diagnostic: safeMuxUploadDiagnostic(error),
+      });
+      throw new Error("The local video could not be read. Check that it is available and retry.");
+    }
     if (record.uploadCancelled || this.jobs.get(jobId) !== record) throw new Error("Upload cancelled.");
     this.emitProgress({ jobId, stage: "uploading", progress: 0, downloadedBytes: 0, totalBytes: size });
-    const uploadStream = fileSource?.createReadStream() ?? createReadStream(filePath);
+    let uploadStream: ReadStream;
+    try {
+      uploadStream = fileSource?.createReadStream() ?? createReadStream(filePath);
+    } catch (error) {
+      console.warn("[VideoDownloader] Mux upload source could not be read", {
+        stage: "file-read",
+        category: "file-read-failed",
+        code: safeErrorCode(error),
+        diagnostic: safeMuxUploadDiagnostic(error),
+      });
+      throw new Error("The local video could not be read. Check that it is available and retry.");
+    }
     record.uploadStream = uploadStream;
-    const request = (this.options.requestMux ?? requestHttps)(validatedUpload.url, {
-      method: "PUT",
-      headers: { "content-length": String(size), "content-type": "video/mp4" },
-      timeout: 60 * 60 * 1000,
-      lookup: (_hostname, options, callback) => {
-        const address = validatedUpload.address;
-        if (options.all) callback(null, [{ address: address.address, family: address.family }]);
-        else callback(null, address.address, address.family);
-      },
-    });
+    let request: ClientRequest;
+    try {
+      request = (this.options.requestMux ?? requestHttps)(validatedUpload.url, {
+        method: "PUT",
+        headers: { "content-length": String(size), "content-type": "video/mp4" },
+        timeout: 60 * 60 * 1000,
+        lookup: (_hostname, options, callback) => {
+          const address = validatedUpload.address;
+          if (options.all) callback(null, [{ address: address.address, family: address.family }]);
+          else callback(null, address.address, address.family);
+        },
+      });
+    } catch (error) {
+      uploadStream.destroy();
+      record.uploadStream = undefined;
+      console.warn("[VideoDownloader] Mux upload request could not start", {
+        stage: "http-transport",
+        category: "request-creation-failed",
+        hostname: new URL(validatedUpload.url).hostname,
+        code: safeErrorCode(error),
+        diagnostic: safeMuxUploadDiagnostic(error),
+      });
+      throw new Error("The cloud upload connection could not be started. Retry the upload.");
+    }
     record.uploadRequest = request;
-    request.setTimeout(60 * 60 * 1000, () => request.destroy(new Error("Cloud video upload timed out.")));
+    let timedOut = false;
+    request.setTimeout(60 * 60 * 1000, () => {
+      timedOut = true;
+      request.destroy(new Error("Cloud video upload timed out."));
+    });
     let uploaded = 0;
+    let lastProgressAt = Number.NEGATIVE_INFINITY;
+    let lastProgressBytes = -1;
+    const emitUploadProgress = (force = false) => {
+      if (uploaded === lastProgressBytes) return;
+      const now = Date.now();
+      if (!force && now - lastProgressAt < UPLOAD_PROGRESS_INTERVAL_MS) return;
+      lastProgressAt = now;
+      lastProgressBytes = uploaded;
+      this.emitProgress({
+        jobId,
+        stage: "uploading",
+        progress: Math.min(99, Math.round(uploaded / size * 100)),
+        downloadedBytes: uploaded,
+        totalBytes: size,
+      });
+    };
     uploadStream.on("data", (chunk: Buffer) => {
       uploaded += chunk.length;
-      this.emitProgress({ jobId, stage: "uploading", progress: Math.min(99, Math.round(uploaded / size * 100)), downloadedBytes: uploaded, totalBytes: size });
+      emitUploadProgress();
     });
     return new Promise<void>((resolveUpload, reject) => {
       let settled = false;
-      const finish = (error?: Error) => {
+      const finish = (
+        error?: Error,
+        category?: string,
+        statusCode?: number,
+        stage: "file-read" | "http-transport" = "http-transport",
+      ) => {
         if (settled) return;
+        if (record.uploadCancelled) {
+          settled = true;
+          record.uploadRequest = undefined;
+          record.uploadStream = undefined;
+          reject(new Error("Upload cancelled."));
+          return;
+        }
+        if (!error && uploaded !== size) {
+          error = new Error("The local video ended before all bytes were sent.");
+          category = "file-read-failed";
+          stage = "file-read";
+        }
         settled = true;
         record.uploadRequest = undefined;
         record.uploadStream = undefined;
-        if (error) reject(record.uploadCancelled ? new Error("Upload cancelled.") : error);
-        else resolveUpload();
+        if (error) {
+          const failureCategory = category || (timedOut ? "timeout" : "transport-failed");
+          console.warn("[VideoDownloader] Mux upload failed", {
+            stage,
+            category: failureCategory,
+            hostname: new URL(validatedUpload.url).hostname,
+            ...(statusCode ? { statusCode } : {}),
+            code: safeErrorCode(error),
+            diagnostic: safeMuxUploadDiagnostic(error),
+          });
+          reject(stage === "file-read"
+            ? new Error("The local video could not be read. Check that it is available and retry.")
+            : category === "http-rejected"
+              ? new Error(statusCode
+                ? `The cloud service rejected the video upload (HTTP ${statusCode}).`
+                : "The cloud service rejected the video upload.")
+              : timedOut
+                ? new Error("The cloud upload timed out. Check your connection and retry.")
+                : new Error("The cloud upload connection failed. Check your connection and retry."));
+          uploadStream.destroy();
+          if (!request.destroyed) request.destroy();
+          return;
+        }
+        if (uploaded >= size) emitUploadProgress(true);
+        resolveUpload();
       };
       request.once("response", (response) => {
         response.resume();
         if (response.statusCode && response.statusCode >= 200 && response.statusCode < 300) finish();
-        else finish(new Error("The video could not be uploaded to cloud storage."));
+        else finish(new Error(`HTTP ${response.statusCode ?? "unknown"}`), "http-rejected", response.statusCode);
       });
-      request.once("error", (error) => finish(error));
-      uploadStream.once("error", (error) => finish(error));
+      request.once("error", (error) => finish(error, timedOut ? "timeout" : "transport-failed"));
+      uploadStream.once("error", (error) => {
+        if (settled) return;
+        finish(error, "file-read-failed", undefined, "file-read");
+      });
       uploadStream.pipe(request);
     });
   }

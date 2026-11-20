@@ -1,6 +1,7 @@
 import isEqual from "lodash/isEqual";
 import type { ServiceItem } from "../types";
 import generateRandomId from "./generateRandomId";
+import { CLOUDINARY_CLOUD_NAME } from "./cloudinaryConfig";
 
 export type OutlineMergeResult =
   | { kind: "merged"; items: ServiceItem[]; remoteItems: ServiceItem[] }
@@ -81,7 +82,79 @@ const stableRows = (
 const orderedBaseIds = (rows: ServiceItem[], baseIds: Set<string>) =>
   rows.map((row) => row.listId).filter((id) => baseIds.has(id));
 
-const rowEqual = (left: ServiceItem, right: ServiceItem) => isEqual(left, right);
+const normalizePersistedJsonValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => entry === undefined ? null : normalizePersistedJsonValue(entry));
+  }
+  if (value && typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return value;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, normalizePersistedJsonValue(entry)]));
+  }
+  return value;
+};
+
+/** formatItemList uses Cloudinary's default URLGen representation for stored
+ * public IDs. Convert only that exact, untransformed URL shape for comparison;
+ * authored URLs, local media references, and transformed URLs remain distinct. */
+const canonicalBackground = (value: unknown) => {
+  if (typeof value !== "string" || !value.startsWith("https://")) return value;
+  try {
+    const url = new URL(value);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const queryKeys = [...url.searchParams.keys()];
+    if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com" ||
+      url.port || url.username || url.password || url.hash ||
+      segments[0] !== CLOUDINARY_CLOUD_NAME ||
+      segments.length < 5 || segments[1] !== "image" || segments[2] !== "upload" ||
+      segments[3] !== "v1" || queryKeys.length !== 1 || queryKeys[0] !== "_a" ||
+      !url.searchParams.get("_a")) return value;
+    return segments.slice(4).map((segment) => decodeURIComponent(segment)).join("/");
+  } catch {
+    return value;
+  }
+};
+
+const canonicalFieldValue = (key: string, value: unknown) => {
+  const normalized = normalizePersistedJsonValue(value);
+  return key === "background" ? canonicalBackground(normalized) : normalized;
+};
+
+const hasPersistedField = (row: ServiceItem, key: string) =>
+  Object.prototype.hasOwnProperty.call(row, key) &&
+  (row as unknown as Record<string, unknown>)[key] !== undefined;
+
+const rowEqual = (left: ServiceItem, right: ServiceItem) => isEqual(
+  Object.fromEntries(Object.entries(left)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => [key, canonicalFieldValue(key, value)])),
+  Object.fromEntries(Object.entries(right)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => [key, canonicalFieldValue(key, value)])),
+);
+
+export const outlineItemsEqual = (left: ServiceItem[], right: ServiceItem[]) =>
+  left.length === right.length && left.every((row, index) => rowEqual(row, right[index]));
+
+export const outlineBackgroundsEqual = (left: string | undefined, right: string | undefined) =>
+  isEqual(canonicalFieldValue("background", left), canonicalFieldValue("background", right));
+
+export const preserveOutlineBackgroundPresentation = (
+  items: ServiceItem[],
+  displayedItems: ServiceItem[],
+) => {
+  const displayedById = new Map(displayedItems.map((item) => [item.listId, item]));
+  return items.map((item) => {
+    const displayed = displayedById.get(item.listId);
+    if (displayed?.background !== item.background &&
+      outlineBackgroundsEqual(displayed?.background, item.background)) {
+      return { ...item, background: displayed?.background };
+    }
+    return item;
+  });
+};
 
 const mergeRow = (
   base: ServiceItem,
@@ -95,23 +168,30 @@ const mergeRow = (
 
   keys.forEach((key) => {
     if (key === "listId") return;
-    const hadBase = Object.prototype.hasOwnProperty.call(base, key);
-    const hasLocal = Object.prototype.hasOwnProperty.call(local, key);
-    const hasRemote = Object.prototype.hasOwnProperty.call(remote, key);
+    const hadBase = hasPersistedField(base, key);
+    const hasLocal = hasPersistedField(local, key);
+    const hasRemote = hasPersistedField(remote, key);
     const baseValue = (base as unknown as Record<string, unknown>)[key];
     const localValue = (local as unknown as Record<string, unknown>)[key];
     const remoteValue = (remote as unknown as Record<string, unknown>)[key];
-    const localChanged = hadBase !== hasLocal || !isEqual(baseValue, localValue);
-    const remoteChanged = hadBase !== hasRemote || !isEqual(baseValue, remoteValue);
+    const canonicalBaseValue = canonicalFieldValue(key, baseValue);
+    const canonicalLocalValue = canonicalFieldValue(key, localValue);
+    const canonicalRemoteValue = canonicalFieldValue(key, remoteValue);
+    const localChanged = hadBase !== hasLocal || !isEqual(canonicalBaseValue, canonicalLocalValue);
+    const remoteChanged = hadBase !== hasRemote || !isEqual(canonicalBaseValue, canonicalRemoteValue);
 
     if (!localChanged) return;
-    if (remoteChanged && (hasLocal !== hasRemote || !isEqual(localValue, remoteValue))) {
+    if (remoteChanged && (hasLocal !== hasRemote || !isEqual(canonicalLocalValue, canonicalRemoteValue))) {
       const choice = choose?.({
         key: JSON.stringify([local.listId, key]), listId: local.listId,
         field: key, reason: "field", localRow: local, remoteRow: remote,
       });
       if (choice === "remote") return;
       if (!choice) conflict = true;
+    } else if (remoteChanged) {
+      // Both writers reached the same persisted value. Keep the authoritative
+      // remote representation instead of creating a needless format-only write.
+      return;
     }
     if (hasLocal) merged[key] = localValue;
     else delete merged[key];

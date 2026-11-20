@@ -34,6 +34,7 @@ import {
   updateOverlaysByIdFromRemote,
 } from "../../store/overlaysSlice";
 import { formatItemList } from "../../utils/formatItemList";
+import { outlineItemsEqual } from "../../utils/outlineSync";
 import { setMediaCacheMap } from "../../store/mediaCacheMapSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
@@ -391,7 +392,7 @@ export const useControllerPageLifecycle = () => {
               const itemListState = (store.getState() as RootState).undoable.present.itemList;
               if (
                 itemListState.isInitialized && itemListState.loadedOutlineId === update._id &&
-                !_.isEqual(itemListState.syncBaseline, remoteItems)
+                !outlineItemsEqual(itemListState.syncBaseline, remoteItems)
               ) {
                 dispatch(updateItemListFromRemote({
                   outlineId: update._id,

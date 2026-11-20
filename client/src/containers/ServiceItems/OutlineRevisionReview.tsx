@@ -28,7 +28,11 @@ const detail = (row: ServiceItem | undefined, field?: string) => {
   if (!row) return "Remove this row";
   if (field === "name") return row.name;
   if (field === "type") return row.type;
-  return field ? "Keep this setting" : label(row);
+  if (field === "background") return row.background ? "Background changed" : "Background cleared";
+  if (field === "localImage") return row.localImage ? "Local image changed" : "Local image removed";
+  if (field === "localVideoFile") return row.localVideoFile ? "Local video changed" : "Local video removed";
+  if (field === "_id") return "Item changed";
+  return field ? "Item details changed" : label(row);
 };
 
 const positionDescription = (rows: ServiceItem[], movedIds: string[]) => {

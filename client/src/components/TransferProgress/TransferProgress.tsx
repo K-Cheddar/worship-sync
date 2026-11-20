@@ -34,6 +34,7 @@ export const TransferProgress = ({ transfer, variant, onResultAction }: Transfer
   const progress = normalizeProgress(transfer.progress);
   const showAggregateProgress = !transfer.files?.length;
   const failedFiles = transfer.files?.filter((file) => file.status === "failed" || Boolean(file.error)) ?? [];
+  const wrapProgressDetail = transfer.phase?.key === "downloading";
   const hideFailedFilesUntilExpanded = !compact && !summary && failedFiles.length > 3;
   const visibleFiles = hideFailedFilesUntilExpanded && !showFailedFiles
     ? transfer.files?.filter((file) => file.status === "active").slice(0, 2)
@@ -66,7 +67,7 @@ export const TransferProgress = ({ transfer, variant, onResultAction }: Transfer
       <p className={`${compact ? "mt-0.5" : "mt-1"} truncate text-xs text-gray-300`}>
         {phaseText}
       </p>
-      {transfer.detail ? <p className="mt-1 truncate text-xs text-gray-400">{transfer.detail}</p> : null}
+      {transfer.detail ? <p className={`mt-1 text-xs text-gray-400 ${wrapProgressDetail ? "whitespace-normal break-words" : "truncate"}`}>{transfer.detail}</p> : null}
       {showAggregateProgress && transfer.status !== "failed" && transfer.status !== "cancelled" ? (
         <div
           role="progressbar"

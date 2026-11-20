@@ -105,6 +105,7 @@
     "electron:build:mac": "electron-vite build && electron-builder --config electron-builder.config.js --mac",
     "electron:build:linux": "electron-vite build && electron-builder --config electron-builder.config.js --linux",
     "test": "jest --watchAll=false",
+    "test:video-tools:prepare": "node --test scripts/prepare-video-tools.test.mjs",
     "test:coverage": "jest --watchAll=false --coverage",
     "test:watch": "jest",
     "test:e2e:responsive-navigation": "node e2e/run-browser-suite.mjs account-responsive-navigation.mjs",

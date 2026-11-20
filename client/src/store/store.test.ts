@@ -2,6 +2,7 @@ import type { DBItem, ItemContentOwner, ItemState, SongV2Documents } from "../ty
 import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
+import { Cloudinary } from "@cloudinary/url-gen";
 import React from "react";
 import { Provider } from "react-redux";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -12,6 +13,8 @@ import { createBox, createNewSlide, createSlideFromMedia, insertSlidesAt } from 
 import { formatSong } from "../utils/overflow";
 import { getMonitorLayoutForSlides } from "../utils/monitorSlideFormatter";
 import { createOutlineMoveIntent } from "../utils/outlineSync";
+import { formatItemList } from "../utils/formatItemList";
+import { CLOUDINARY_CLOUD_NAME } from "../utils/cloudinaryConfig";
 
 const mockedCrossWindowLocks = new Map<string, Promise<void>>();
 if (typeof navigator !== "undefined") {
@@ -8954,6 +8957,7 @@ describe("item list outline persistence", () => {
   const initializePouchOutlineStore = async (
     database: PouchDB.Database,
     rows: ReturnType<typeof createServiceItem>[],
+    controllerRows = rows,
   ) => {
     await database.put({
       _id: "outline-a",
@@ -8966,7 +8970,7 @@ describe("item list outline persistence", () => {
     env.store.dispatch(env.itemListsSlice.actions.initiateItemLists([
       { _id: "outline-a", name: "Sunday" },
     ]));
-    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: rows }));
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: controllerRows }));
     env.store.dispatch({ type: "CONTROLLER_PAGE_READY" });
     await jest.advanceTimersByTimeAsync(20);
     await flushListenerEffects();
@@ -8975,6 +8979,74 @@ describe("item list outline persistence", () => {
 
   const readPersistedOutlineItems = async (database: PouchDB.Database) =>
     (await database.get<{ items: ReturnType<typeof createServiceItem>[] }>("outline-a")).items;
+
+  it("persists a formatted-row deletion after a remote update through the controller store", async () => {
+    jest.useFakeTimers();
+    const database = new PouchDB(`outline-formatted-controller-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const remoteController = new PouchDB(`outline-formatted-remote-${Date.now()}-${Math.random()}`, { adapter: "idb" });
+    const cloud = new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } });
+    const video = createServiceItem({
+      name: "Sermon video",
+      _id: "video-doc",
+      listId: "video-row",
+      type: "video",
+      background: "media/sermon-thumbnail",
+    });
+    const song = createServiceItem({
+      name: "Opening song",
+      _id: "song-doc",
+      listId: "song-row",
+      background: "media/opening-background",
+      localVideoFile: {
+        id: "local-song-video",
+        ownerDeviceId: "device-a",
+        ownerLabel: "Controller A",
+        fileName: "opening.mp4",
+        contentType: "video/mp4",
+        storagePolicy: "local-only",
+      },
+    });
+    const baseline = [video, song];
+    const formattedBaseline = formatItemList(baseline, cloud);
+    let env: Awaited<ReturnType<typeof initializePouchOutlineStore>> | undefined;
+
+    try {
+      env = await initializePouchOutlineStore(database, baseline, formattedBaseline);
+      await remoteController.replicate.from(database);
+
+      env.store.dispatch(env.itemListSlice.actions.removeItemsFromList(["video-row"]));
+      const remoteDoc = await remoteController.get<any>("outline-a");
+      const remoteSong = { ...song, name: "Opening song updated remotely" };
+      await remoteController.put({ ...remoteDoc, items: [video, remoteSong] });
+      await database.replicate.from(remoteController);
+
+      const latest = await database.get<any>("outline-a");
+      env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({
+        outlineId: "outline-a",
+        items: formatItemList(latest.items, cloud),
+      }));
+      expect(env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"]).toBeUndefined();
+      expect(env.store.getState().undoable.present.itemList.list).toEqual([formatItemList([remoteSong], cloud)[0]]);
+
+      const saved = waitForOutlineState(env.store, [remoteSong], false);
+      await jest.advanceTimersByTimeAsync(1500);
+      await flushListenerEffects();
+      await saved;
+
+      expect(await readPersistedOutlineItems(database)).toEqual([remoteSong]);
+      expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+      expect(env.store.getState().undoable.present.itemList.list[0].background)
+        .toBe(formatItemList([remoteSong], cloud)[0].background);
+      expect((await database.get<any>("outline-a", { conflicts: true }))._conflicts).toBeUndefined();
+
+      await remoteController.replicate.from(database);
+      expect(await readPersistedOutlineItems(remoteController)).toEqual([remoteSong]);
+    } finally {
+      jest.useRealTimers();
+      cleanup();
+      await Promise.all([database.destroy(), remoteController.destroy()]);
+    }
+  });
 
   const waitForOutlineState = async (
     store: any,

@@ -7,7 +7,9 @@ import { useLocalMediaCloudShare } from "./localMediaCloudShare";
 
 const mockDispatch = jest.fn();
 const mockUploadVideo = jest.fn();
+const mockUploadLocalVideo = jest.fn();
 const mockDeleteMuxAsset = jest.fn();
+let mockMediaList: MediaType[] = [];
 const mockClaim = { isCurrent: () => true, setCancel: jest.fn(), release: jest.fn(), failCleanup: jest.fn() };
 const mockTransfers = new Map<string, any>();
 const mockTransferActions = new Map<string, () => void | Promise<void>>();
@@ -23,7 +25,7 @@ const mockActions = {
 };
 
 jest.mock("../../hooks", () => ({ useDispatch: () => mockDispatch }));
-jest.mock("react-redux", () => ({ ...jest.requireActual("react-redux"), useStore: () => ({ getState: () => ({ media: { list: [] } }) }) }));
+jest.mock("react-redux", () => ({ ...jest.requireActual("react-redux"), useStore: () => ({ getState: () => ({ media: { list: mockMediaList } }) }) }));
 jest.mock("../../context/toastContext", () => ({ useToast: () => ({ showToast: jest.fn() }) }));
 jest.mock("../../context/transferContext", () => ({ useOptionalTransferActions: () => mockActions }));
 jest.mock("../../utils/authStorage", () => ({ getOrCreateDeviceId: () => "device-a" }));
@@ -35,7 +37,10 @@ jest.mock("../../utils/localVideoFileAssets", () => ({
     contentType: "video/mp4",
   })),
 }));
-jest.mock("./utils/muxUpload", () => ({ uploadVideoToMux: (...args: unknown[]) => mockUploadVideo(...args) }));
+jest.mock("./utils/muxUpload", () => ({
+  uploadVideoToMux: (...args: unknown[]) => mockUploadVideo(...args),
+  uploadLocalVideoAssetToMux: (...args: unknown[]) => mockUploadLocalVideo(...args),
+}));
 jest.mock("../../api/providerStorage", () => ({
   deleteChurchMuxAsset: (...args: unknown[]) => mockDeleteMuxAsset(...args),
 }));
@@ -78,8 +83,153 @@ const media: MediaType = {
 describe("useLocalMediaCloudShare church scope", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockMediaList = [];
+    mockUploadLocalVideo.mockResolvedValue({
+      playbackId: "playback-local",
+      assetId: "mux-local",
+      playbackUrl: "https://stream.mux.com/playback-local.m3u8",
+      thumbnailUrl: "https://image.mux.com/playback-local/thumbnail.png",
+      name: "clip",
+    });
     mockTransfers.clear();
     mockTransferActions.clear();
+    delete (window as { electronAPI?: unknown }).electronAPI;
+  });
+
+  it("streams a linked local video natively and applies cloud fields to the latest Media Library row", async () => {
+    const hash = "a".repeat(64);
+    const selected = {
+      ...media,
+      localVideoFile: { ...media.localVideoFile!, storageMode: "linked" as const, contentHash: hash, audioEnabled: true },
+    };
+    mockMediaList = [selected];
+    const db = {
+      get: jest.fn(async (id: string) => id === "media-library-meta"
+        ? { schemaVersion: 2 }
+        : { ...selected, _id: `media-item:${media.id}`, docType: "mediaItem" }),
+    } as unknown as PouchDB.Database;
+    const getLocalAsset = jest.fn(async () => ({ contentHash: hash, workspaceId: "church-a" }));
+    const isVideoDownloaderAvailable = jest.fn(async () => true);
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: { getLocalAsset, isVideoDownloaderAvailable, uploadLocalVideoAssetToMux: jest.fn() },
+    });
+    let resolveUpload!: (value: {
+      playbackId: string;
+      assetId: string;
+      playbackUrl: string;
+      thumbnailUrl: string;
+      name: string;
+    }) => void;
+    mockUploadLocalVideo.mockReturnValueOnce(new Promise((resolve) => { resolveUpload = resolve; }));
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as never}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-a" } as never}>{children}</GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    );
+    const { result } = renderHook(() => useLocalMediaCloudShare(), { wrapper });
+    let completion!: Promise<void>;
+    act(() => { completion = result.current.uploadOwnedLocalMedia(selected); });
+    await waitFor(() => expect(mockUploadLocalVideo).toHaveBeenCalledTimes(1));
+
+    mockMediaList = [{
+      ...selected,
+      name: "Current edited title",
+      folderId: "folder-current",
+      localVideoFile: { ...selected.localVideoFile!, audioEnabled: false },
+    }];
+    await act(async () => {
+      resolveUpload({
+        playbackId: "playback-local",
+        assetId: "mux-local",
+        playbackUrl: "https://stream.mux.com/playback-local.m3u8",
+        thumbnailUrl: "https://image.mux.com/playback-local/thumbnail.png",
+        name: "clip",
+      });
+      await completion;
+    });
+
+    expect(isVideoDownloaderAvailable).toHaveBeenCalledTimes(1);
+    expect(mockUploadVideo).not.toHaveBeenCalled();
+    expect(mockUploadLocalVideo).toHaveBeenCalledWith(
+      selected.localVideoFile!.id,
+      "clip.mp4",
+      { churchId: "church-a", mediaId: media.id, title: "clip.mp4" },
+      expect.objectContaining({ onProgress: expect.any(Function), setCancelUpload: expect.any(Function) }),
+    );
+    expect(mockDispatch).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        id: media.id,
+        patch: expect.objectContaining({
+          muxPlaybackId: "playback-local",
+          localVideoFile: expect.objectContaining({ storagePolicy: "local-and-cloud", audioEnabled: false }),
+        }),
+      }),
+    }));
+    expect(mockDeleteMuxAsset).not.toHaveBeenCalled();
+  });
+
+  it("cleans an unregistered Mux result when the linked source changes during upload", async () => {
+    const hash = "a".repeat(64);
+    const selected = {
+      ...media,
+      localVideoFile: { ...media.localVideoFile!, storageMode: "linked" as const, contentHash: hash },
+    };
+    mockMediaList = [selected];
+    const db = {
+      get: jest.fn(async (id: string) => id === "media-library-meta"
+        ? { schemaVersion: 2 }
+        : { ...selected, _id: `media-item:${media.id}`, docType: "mediaItem" }),
+    } as unknown as PouchDB.Database;
+    Object.defineProperty(window, "electronAPI", {
+      configurable: true,
+      value: {
+        getLocalAsset: jest.fn(async () => ({ contentHash: hash, workspaceId: "church-a" })),
+        isVideoDownloaderAvailable: jest.fn(async () => true),
+        uploadLocalVideoAssetToMux: jest.fn(),
+      },
+    });
+    let resolveUpload!: (value: {
+      playbackId: string;
+      assetId: string;
+      playbackUrl: string;
+      thumbnailUrl: string;
+      name: string;
+    }) => void;
+    mockUploadLocalVideo.mockReturnValueOnce(new Promise((resolve) => { resolveUpload = resolve; }));
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControllerInfoContext.Provider value={{ db, isGuestSession: false } as never}>
+        <GlobalInfoContext.Provider value={{ churchId: "church-a" } as never}>{children}</GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    );
+    const { result } = renderHook(() => useLocalMediaCloudShare(), { wrapper });
+    let completion!: Promise<void>;
+    act(() => { completion = result.current.uploadOwnedLocalMedia(selected); });
+    await waitFor(() => expect(mockUploadLocalVideo).toHaveBeenCalledTimes(1));
+
+    mockMediaList = [{
+      ...selected,
+      localVideoFile: { ...selected.localVideoFile!, contentHash: "b".repeat(64) },
+    }];
+    await act(async () => {
+      resolveUpload({
+        playbackId: "playback-local",
+        assetId: "mux-local",
+        playbackUrl: "https://stream.mux.com/playback-local.m3u8",
+        thumbnailUrl: "https://image.mux.com/playback-local/thumbnail.png",
+        name: "clip",
+      });
+      await completion;
+    });
+
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockDeleteMuxAsset).toHaveBeenCalledWith("church-a", "mux-local");
+    expect([...mockTransfers.values()]).toEqual(expect.arrayContaining([expect.objectContaining({
+      files: expect.arrayContaining([expect.objectContaining({
+        status: "failed",
+        error: expect.stringContaining("source changed or was removed"),
+      })]),
+    })]));
   });
 
   it.each(["stale A", "current B"])("does not upload selected %s when Pouch holds B and native still holds A", async (selection) => {

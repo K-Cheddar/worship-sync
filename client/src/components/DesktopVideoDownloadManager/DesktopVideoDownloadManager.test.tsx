@@ -194,16 +194,22 @@ describe("DesktopVideoDownloadManager provider lifetime", () => {
       sendProgress?.({
         jobId,
         stage: "downloading",
-        progress: 50,
-        downloadedBytes: 50,
-        totalBytes: 100,
+        progress: null,
+        streamId: "137",
+        streamLabel: "Video",
+        downloadedBytes: 784914,
+        totalBytes: 2097152,
+        speedBytesPerSecond: 262012.01993290862,
+        etaSeconds: 5,
       });
     });
     const setTaskbarUploadProgress = window.electronAPI
       ?.setTaskbarUploadProgress as jest.Mock;
     await waitFor(() =>
-      expect(setTaskbarUploadProgress).toHaveBeenCalledWith(0.5),
+      expect(setTaskbarUploadProgress).toHaveBeenCalledWith(0.37),
     );
+    expect(await screen.findByText(/Downloaded 767 KB of 2\.0 MB.*256 KB\/s.*5 seconds remaining/)).toBeInTheDocument();
+    expect(screen.getByRole("progressbar", { name: "Test Video.mp4 progress" })).toHaveAttribute("aria-valuenow", "37");
     cleanupVideoDownload.mockRejectedValueOnce(
       new Error("Temporary cleanup failure"),
     );

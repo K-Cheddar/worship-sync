@@ -58,7 +58,7 @@ const config = {
       {
         from: "buildResources/video-tools/win32-x64",
         to: "buildResources/video-tools/win32-x64",
-        filter: ["**/*"],
+        filter: ["**/*", "!.video-tools-manifest.json"],
       },
     ],
     // Icon path relative to buildResources directory

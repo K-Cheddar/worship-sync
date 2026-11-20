@@ -84,7 +84,7 @@ export type DesktopVideoDownloadDependencies = {
   makeJobId?: () => string;
 };
 
-type Stage = "Preparing" | "Downloading" | "Processing" | "Saving" | "Importing" | "Uploading" | "Complete" | "Failed" | "Cancelled";
+type Stage = "Preparing" | "Downloading" | "Processing" | "Saving" | "Importing" | "Creating upload" | "Uploading" | "Registering" | "Complete" | "Failed" | "Cancelled";
 type Runtime = {
   jobId: string;
   transferId: string;
@@ -105,6 +105,7 @@ type Runtime = {
   localMediaRegistered: boolean;
   cloudResult?: MuxUploadResult;
   cloudMediaRegistered: boolean;
+  cloudUploadAttempt: number;
   nativeCleaned: boolean;
   cancelRequested: boolean;
   ownerChanged: boolean;
@@ -121,6 +122,8 @@ type Runtime = {
     downloadedBytes?: number;
     totalBytes?: number;
     progress: number | null;
+    speedBytesPerSecond?: number;
+    etaSeconds?: number;
   }>;
   currentDownloadStreamId?: string;
   progress: number | null;
@@ -176,6 +179,7 @@ export class DesktopVideoDownloadManager {
       temporaryDownloadAvailable: false,
       localMediaRegistered: false,
       cloudMediaRegistered: false,
+      cloudUploadAttempt: 0,
       nativeCleaned: false,
       cancelRequested: false,
       ownerChanged: false,
@@ -204,6 +208,14 @@ export class DesktopVideoDownloadManager {
   handleProgress(event: DesktopVideoDownloadEvent): void | Promise<void> {
     const runtime = this.jobs.get(event.jobId);
     if (!runtime) return;
+    // Upload progress is owned by muxUpload's per-attempt listener and callback.
+    // It may use a different native job ID when uploading a retained asset.
+    if (event.stage === "uploading") return;
+    const measuredProgress = event.progress ?? (
+      event.downloadedBytes !== undefined && event.totalBytes !== undefined && event.totalBytes > 0
+        ? Math.min(99, Math.round(event.downloadedBytes / event.totalBytes * 100))
+        : null
+    );
     if (
       event.downloadedBytes !== undefined || event.totalBytes !== undefined ||
       event.speedBytesPerSecond !== undefined || event.etaSeconds !== undefined
@@ -221,9 +233,9 @@ export class DesktopVideoDownloadManager {
       runtime.currentDownloadStreamId = streamId;
       const previous = runtime.downloadStreams?.[streamId];
       const streamProgress = previous?.progress !== null && previous?.progress !== undefined &&
-        event.progress !== null
-        ? Math.max(previous.progress, event.progress)
-        : event.progress ?? previous?.progress ?? null;
+        measuredProgress !== null
+        ? Math.max(previous.progress, measuredProgress)
+        : measuredProgress ?? previous?.progress ?? null;
       runtime.downloadStreams = {
         ...runtime.downloadStreams,
         [streamId]: {
@@ -231,18 +243,26 @@ export class DesktopVideoDownloadManager {
           downloadedBytes: event.downloadedBytes ?? previous?.downloadedBytes,
           totalBytes: event.totalBytes ?? previous?.totalBytes,
           progress: streamProgress,
+          speedBytesPerSecond: event.speedBytesPerSecond ?? previous?.speedBytesPerSecond,
+          etaSeconds: event.etaSeconds ?? previous?.etaSeconds,
         },
       };
       runtime.progress = Object.keys(runtime.downloadStreams).length > 1
         ? null
         : streamProgress;
     } else {
-      runtime.progress = event.progress;
+      if (event.stage === "downloading" && Object.keys(runtime.downloadStreams ?? {}).length > 1) {
+        runtime.progress = null;
+      } else if (event.stage === "downloading" && measuredProgress !== null) {
+        runtime.progress = runtime.progress === null ? measuredProgress : Math.max(runtime.progress ?? 0, measuredProgress);
+      } else {
+        runtime.progress = measuredProgress;
+      }
     }
+    if (event.stage === "processing") runtime.lastBytes = undefined;
     if (event.stage === "preparing") this.publish(runtime, "active", "Preparing", event.progress);
     if (event.stage === "downloading") this.publish(runtime, "active", "Downloading", runtime.progress);
     if (event.stage === "processing") this.publish(runtime, "active", "Processing", null, "Merging video and audio");
-    if (event.stage === "uploading") this.publish(runtime, "active", "Uploading", event.progress);
     if (event.stage === "complete" && event.result) {
       if (runtime.cancelRequested) {
         void this.cancelJob(runtime, runtime.ownerChanged);
@@ -329,18 +349,28 @@ export class DesktopVideoDownloadManager {
           const amount = stream.downloadedBytes === undefined
             ? ""
             : ` (${friendlyBytes(stream.downloadedBytes)}${stream.totalBytes === undefined ? "" : ` of ${friendlyBytes(stream.totalBytes)}`})`;
-          return `${stream.label}${percent}${amount}`;
+          const streamSpeed = stream.speedBytesPerSecond && stream.speedBytesPerSecond > 0
+            ? `${friendlyBytes(stream.speedBytesPerSecond)}/s`
+            : undefined;
+          const streamEta = stream.etaSeconds !== undefined && stream.etaSeconds >= 0
+            ? `About ${formatEta(stream.etaSeconds)} remaining`
+            : undefined;
+          const streamMetrics = [streamSpeed, streamEta].filter(Boolean).join(" · ");
+          return `${stream.label}${percent}${amount}${streamMetrics ? ` · ${streamMetrics}` : ""}`;
         }).join(" · ")
       : bytes;
-    const metrics = stage === "Downloading"
-      ? [streamBytes, speed, eta].filter(Boolean).join(" · ")
-      : bytes;
+    let metrics = bytes;
+    if (stage === "Downloading") {
+      metrics = streams.length > 1
+        ? streamBytes
+        : [streamBytes, speed, eta].filter(Boolean).join(" · ");
+    }
     const actions = explicitActions ?? (status === "active" || status === "queued"
       ? [{ key: "cancel", label: "Cancel" }]
       : status === "failed"
         ? [
             ...(runtime.cleanupError || runtime.retryMuxCleanup ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
-            { key: "retry", label: runtime.localMediaRegistered && !runtime.cloudMediaRegistered ? "Retry upload" : "Retry" },
+            { key: "retry", label: runtime.cloudResult && !runtime.cloudMediaRegistered ? "Retry registration" : runtime.localMediaRegistered && !runtime.cloudMediaRegistered ? "Retry upload" : "Retry" },
             { key: "dismiss", label: "Dismiss" },
           ]
         : status === "complete"
@@ -471,23 +501,53 @@ export class DesktopVideoDownloadManager {
       if (runtime.uploadToCloud && !runtime.cloudMediaRegistered) {
         if (!runtime.cloudResult) {
           this.assertCurrentOwner(runtime);
-          this.publish(runtime, "active", "Uploading", 0, "Uploading video to WorshipSync");
+          this.publish(runtime, "active", "Creating upload", null, "Preparing cloud upload");
+          const uploadAttempt = ++runtime.cloudUploadAttempt;
+          const isCurrentUploadAttempt = () =>
+            runtime.cloudUploadAttempt === uploadAttempt && !runtime.cancelRequested;
           const source: DesktopVideoUploadSource = runtime.temporaryDownloadAvailable && !runtime.nativeCleaned
             ? { kind: "download-job", jobId: runtime.jobId }
             : runtime.asset?.assetId
               ? { kind: "local-asset", assetId: runtime.asset.assetId }
               : (() => { throw new Error("The downloaded video source is no longer available for upload."); })();
-          const cloudResult = await this.deps.uploadToCloud(
-            source,
-            `${runtime.displayName}.mp4`,
-            { churchId: runtime.owner.churchId, mediaId: runtime.media.id, title: runtime.displayName },
-            {
-              isCancelled: () => runtime.cancelRequested,
-              setCancelUpload: (cancel) => { runtime.cancelCloudUpload = cancel; },
-              onProgress: (progress) => this.publish(runtime, "active", "Uploading", progress),
-              onStatusUpdate: (status) => this.publish(runtime, "active", "Uploading", null, status),
-            },
-          );
+          let cloudResult: MuxUploadResult;
+          try {
+            cloudResult = await this.deps.uploadToCloud(
+              source,
+              `${runtime.displayName}.mp4`,
+              { churchId: runtime.owner.churchId, mediaId: runtime.media.id, title: runtime.displayName },
+              {
+                isCancelled: () => runtime.cancelRequested,
+                setCancelUpload: (cancel) => {
+                  if (runtime.cloudUploadAttempt === uploadAttempt) runtime.cancelCloudUpload = cancel;
+                },
+                onStageUpdate: (stage, message) => {
+                  if (!isCurrentUploadAttempt()) return;
+                  if (stage === "creating" || stage === "processing") runtime.lastBytes = undefined;
+                  const displayStage = stage === "creating" ? "Creating upload" : stage === "uploading" ? "Uploading" : "Processing";
+                  this.publish(runtime, "active", displayStage, stage === "uploading" ? runtime.progress : null, message);
+                },
+                onProgress: (progress) => {
+                  if (!isCurrentUploadAttempt() || runtime.stage !== "Uploading" || !Number.isFinite(progress)) return;
+                  runtime.progress = Math.max(0, Math.min(100, progress));
+                  this.publish(runtime, "active", "Uploading", runtime.progress, runtime.detail);
+                },
+                onStatusUpdate: (status) => {
+                  if (!isCurrentUploadAttempt()) return;
+                  this.publish(
+                    runtime,
+                    "active",
+                    runtime.stage === "Processing" ? "Processing" : "Uploading",
+                    runtime.progress,
+                    status,
+                  );
+                },
+              },
+            );
+          } finally {
+            // A settled attempt cannot publish late events while failed, registering, or during retry.
+            if (runtime.cloudUploadAttempt === uploadAttempt) runtime.cloudUploadAttempt += 1;
+          }
           // The provider asset is now successful and must survive cancellation
           // while its Media Library reference is being persisted.
           runtime.cloudResult = cloudResult;
@@ -495,6 +555,7 @@ export class DesktopVideoDownloadManager {
         }
         this.assertCurrentOwner(runtime);
         const patch = this.deps.buildCloudPatch(runtime.media, runtime.cloudResult, runtime.owner.churchId);
+        this.publish(runtime, "active", "Registering", null, "Adding cloud video to Media Library");
         await this.deps.registerCloudMedia(runtime.media, patch, runtime.owner);
         runtime.media = { ...runtime.media, ...patch };
         runtime.cloudMediaRegistered = true;
@@ -547,10 +608,13 @@ export class DesktopVideoDownloadManager {
         return;
       }
       runtime.error = messageOf(error, "The video could not be imported.");
-      const uploadFailed = failedStage === "Uploading" || (runtime.localMediaRegistered && runtime.uploadToCloud);
+      const registrationFailed = Boolean(runtime.cloudResult && !runtime.cloudMediaRegistered);
+      const uploadFailed = !registrationFailed && (failedStage === "Uploading" || (runtime.localMediaRegistered && runtime.uploadToCloud));
       this.publish(runtime, "failed", "Failed", null,
-        uploadFailed
-          ? "Upload failed. The local video remains available in Media Library."
+        registrationFailed
+          ? "Cloud upload finished, but Media Library registration failed. Retry to finish adding it."
+          : uploadFailed
+            ? "Upload failed. The local video remains available in Media Library."
           : runtime.localMediaRegistered
             ? "Media Library registration needs to be retried."
             : "The finished video remains on this computer. Retry to import it.",
