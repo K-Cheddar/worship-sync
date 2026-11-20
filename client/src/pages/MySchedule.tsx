@@ -20,7 +20,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import AppPageShell from "../components/AppPageShell/AppPageShell";
+import AppWorkspaceShell from "../components/AppPageShell/AppWorkspaceShell";
 import ServiceOccurrenceCard, {
   getServiceOccurrenceCardDateParts,
   SERVICE_OCCURRENCE_GRID_CLASS_NAME,
@@ -58,7 +58,7 @@ import {
   myScheduleServiceGroupKey,
 } from "./myScheduleTimeline";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
-import VolunteerSelfServiceNavigation from "./VolunteerSelfServiceNavigation";
+import VolunteerSelfServiceNavigation, { VolunteerSelfServiceDrawer } from "./VolunteerSelfServiceNavigation";
 import {
   findBlockoutRangeForDate,
   formatBlockoutDateRangeLabel,
@@ -1446,14 +1446,20 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
   );
 
   return (
-    <AppPageShell
+    <AppWorkspaceShell
       title="My schedule"
       {...PAGE_APPEARANCES.mySchedule}
-      showAccountNavigation={!access}
-      contentClassName="max-w-[90rem]"
+      showUserSection={!access}
+      className="max-lg:pb-[calc(57px_+_env(safe-area-inset-bottom))]"
+      toolbarNavigation={access ? <VolunteerSelfServiceDrawer access={access} active="schedule" /> : undefined}
+      workspaceNavigation={access ? undefined : (menuItems, updateReady) => (
+        <VolunteerSelfServiceDrawer access={access} active="schedule" menuItems={menuItems} updateReady={updateReady} />
+      )}
     >
-      <div className="flex w-full flex-col gap-4">
+      <section className="mx-auto flex min-h-0 w-full max-w-[90rem] flex-1 flex-col overflow-hidden border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[11rem_minmax(0,1fr)]">
         <VolunteerSelfServiceNavigation access={access} active="schedule" />
+        <div data-mobile-header-scroll-owner="workspace" className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6">
+        <div className="mx-auto flex w-full flex-col gap-4">
         {status === "loading" ? (
           <MyScheduleLoadingSkeleton showSmsPreferences={Boolean(access)} />
         ) : null}
@@ -1676,8 +1682,10 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
             ) : null}
           </>
         ) : null}
-      </div>
-    </AppPageShell>
+        </div>
+        </div>
+      </section>
+    </AppWorkspaceShell>
   );
 };
 

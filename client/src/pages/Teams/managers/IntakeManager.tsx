@@ -33,6 +33,7 @@ import {
 import type {
   IntakeFormDefaultsResponse,
   TeamIntakeForm,
+  TeamIntakeAvailabilityOccurrence,
   TeamIntakeRecipient,
   TeamIntakeSubmission,
   TeamPosition,
@@ -80,7 +81,10 @@ import {
   isActive,
   memberName,
 } from "../teamsUtils";
-import { getUpcomingAvailabilitySuggestions } from "../intakeAvailabilitySuggestion";
+import {
+  getUpcomingAvailabilitySuggestions,
+  omitRedundantGroupedMemberOccurrences,
+} from "../intakeAvailabilitySuggestion";
 import { buildTeamSchedulePeriod } from "../schedule/teamSchedulePeriod";
 import { loadAvailabilityNotificationHistory } from "../availabilityNotificationHistory";
 import AvailabilityFormWorkspace from "../components/AvailabilityFormWorkspace";
@@ -693,7 +697,11 @@ const IntakeManager = ({
       availabilityOccurrences = [];
     } else if (draft.startDate && draft.endDate && (canCalculateServiceDates || !serviceIds.length)) {
       const occurrences = availabilityForm
-        ? (relevantAvailabilityPeriod?.occurrences || []).filter((occurrence) => {
+        ? omitRedundantGroupedMemberOccurrences(
+          relevantAvailabilityPeriod?.occurrences || [],
+          services.filter((service) => !service.archivedAt),
+          serviceTimeZone,
+        ).filter((occurrence) => {
             const occurrenceServiceIds = occurrence.serviceIds?.length
               ? occurrence.serviceIds
               : [occurrence.serviceId];
@@ -2459,6 +2467,14 @@ const IntakeManager = ({
             timeZone: serviceTimeZone,
           }),
         };
+    const persistedOccurrences = activeSelectedForm.availabilityOccurrences || [];
+    const retainedOccurrenceIds = new Set(omitRedundantGroupedMemberOccurrences(
+      persistedOccurrences,
+      services,
+      serviceTimeZone,
+    ).map(({ occurrenceId }) => occurrenceId));
+    const groupedMemberOccurrencesForReview: TeamIntakeAvailabilityOccurrence[] = persistedOccurrences
+      .filter(({ occurrenceId }) => !retainedOccurrenceIds.has(occurrenceId));
     const rows = getAvailabilityFormProgress({
       members: applicableMembers, positions, teams, recipients: selectedFormRecipients,
       eligibilityByMemberId: smsEligibilityByMemberId, notificationIntents: formNotificationIntents,
@@ -2494,6 +2510,7 @@ const IntakeManager = ({
         canCopyGeneralLink={canEdit && !availabilityOnly}
         linkBusy={recipientBusy || Boolean(recipientActionKey)}
         serviceTimeZone={serviceTimeZone}
+        groupedMemberOccurrencesForReview={groupedMemberOccurrencesForReview}
         sendOpen={showSendForm}
         onSend={openSendForm}
         onEdit={() => openFormEditor(activeSelectedForm)}

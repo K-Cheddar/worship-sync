@@ -9,7 +9,12 @@ import type {
 } from "../../api/authTypes";
 import type { TeamIntakeFormPayload } from "../../api/auth";
 import { serverDate } from "../../utils/serverTime";
-import { calendarDateInTimeZone, generateScheduleOccurrences, getOccurrenceDate } from "../../utils/teamScheduleOccurrences";
+import {
+  calendarDateInTimeZone,
+  generateScheduleOccurrences,
+  getOccurrenceDate,
+  resolveOccurrenceIdentity,
+} from "../../utils/teamScheduleOccurrences";
 import { parsePlainDate } from "../../utils/plainDate";
 import { resolveIntakeFormFields } from "./intakeFormFields";
 import { getUpcomingServiceRange } from "./servicePeriodRange";
@@ -100,6 +105,47 @@ const getServiceIds = (occurrences: TeamScheduleOccurrence[]) =>
   [...new Set(occurrences.flatMap((occurrence) =>
     occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
   ))];
+
+/**
+ * Schedule periods retain unmatched saved rows so their assignment keys stay
+ * visible. A new availability form should use the current grouped occurrence
+ * when that exact group/date contains a preserved standalone member row.
+ * Ambiguous and unresolvable rows remain untouched for administrative review.
+ */
+export const omitRedundantGroupedMemberOccurrences = (
+  occurrences: TeamScheduleOccurrence[],
+  services: TeamService[],
+  timeZone?: string,
+) => {
+  const identityTimeZone = timeZone?.trim() || "UTC";
+  const serviceIdsByGroupId = new Map<string, string[]>();
+  services.forEach((service) => {
+    if (!service.serviceGroupId) return;
+    const serviceIds = serviceIdsByGroupId.get(service.serviceGroupId) || [];
+    serviceIds.push(service.serviceId);
+    serviceIdsByGroupId.set(service.serviceGroupId, serviceIds);
+  });
+  const groupedMembersByDate = new Map<string, Array<Set<string>>>();
+  occurrences.forEach((occurrence) => {
+    const identity = resolveOccurrenceIdentity(occurrence, identityTimeZone);
+    if (!identity?.groupId) return;
+    const key = `${identity.groupId}@${identity.serviceDate}`;
+    const rows = groupedMembersByDate.get(key) || [];
+    rows.push(new Set(serviceIdsByGroupId.get(identity.groupId) || identity.serviceIds));
+    groupedMembersByDate.set(key, rows);
+  });
+
+  const serviceById = new Map(services.map((service) => [service.serviceId, service]));
+  return occurrences.filter((occurrence) => {
+    const identity = resolveOccurrenceIdentity(occurrence, identityTimeZone);
+    if (!identity || identity.groupId || identity.serviceIds.length !== 1) return true;
+    const [serviceId] = identity.serviceIds;
+    const groupId = serviceById.get(serviceId)?.serviceGroupId;
+    if (!groupId) return true;
+    const matchingGroups = groupedMembersByDate.get(`${groupId}@${identity.serviceDate}`) || [];
+    return !(matchingGroups.length === 1 && matchingGroups[0].has(serviceId));
+  });
+};
 
 const getDraftForForm = (
   form: TeamIntakeForm,
@@ -256,7 +302,12 @@ export const getUpcomingAvailabilitySuggestions = ({
     });
     for (let offset = 0; offset < 12; offset += 1) {
       const period = buildTeamSchedulePeriod({ services: activeServices, positions, teamId, schedules, startDate: range.start, endDate: range.end, timeZone });
-      const candidates = period.occurrences
+      const availabilityOccurrences = omitRedundantGroupedMemberOccurrences(
+        period.occurrences,
+        activeServices,
+        timeZone,
+      );
+      const candidates = availabilityOccurrences
         .filter((occurrence) => Date.parse(occurrence.startsAt) > now.getTime());
       const missing = candidates.flatMap((occurrence) => {
         const relevantServiceIds = period.serviceIdsByOccurrence.get(occurrence.occurrenceId) || [occurrence.serviceId];

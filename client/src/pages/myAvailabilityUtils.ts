@@ -2,6 +2,15 @@ import { formatPlainDateRangeLabel } from "./Teams/teamsUtils";
 import type { VolunteerAvailabilityRequest } from "./myScheduleOperations";
 
 export type AvailabilityChoice = "available" | "unavailable" | "not-answered";
+export type AvailabilityOrganizeMode = "byDate" | "byService";
+
+export type AvailabilityOccurrence = VolunteerAvailabilityRequest["occurrences"][number];
+
+export type AvailabilityOccurrenceGroup = {
+  key: string;
+  label: string;
+  occurrences: AvailabilityOccurrence[];
+};
 
 export const getAvailabilityCounts = (request: VolunteerAvailabilityRequest) => {
   const occurrenceIds = request.occurrences.map(({ occurrenceId }) => occurrenceId);
@@ -56,6 +65,74 @@ const serviceDateForSummary = (
   }).formatToParts(new Date(occurrence.startsAt));
   const values = Object.fromEntries(parts.map(({ type, value }) => [type, value]));
   return `${values.year}-${values.month}-${values.day}`;
+};
+
+const occurrenceTime = (occurrence: AvailabilityOccurrence) => {
+  const timestamp = Date.parse(occurrence.startsAt);
+  return Number.isFinite(timestamp) ? timestamp : Number.POSITIVE_INFINITY;
+};
+
+const compareOccurrences = (first: AvailabilityOccurrence, second: AvailabilityOccurrence) =>
+  occurrenceTime(first) - occurrenceTime(second) || first.occurrenceId.localeCompare(second.occurrenceId);
+
+const availabilityOccurrenceIdentity = (occurrenceId: string) => {
+  const separator = occurrenceId.lastIndexOf("@");
+  if (separator <= 0) return "";
+  const suffix = occurrenceId.slice(separator + 1);
+  if (!/^\d{4}-\d{2}-\d{2}(?:T[^@]+)?$/.test(suffix) || !Number.isFinite(Date.parse(suffix))) return "";
+  return occurrenceId.slice(0, separator);
+};
+
+/** Group copied occurrence rows without changing the saved request snapshot. */
+export const organizeAvailabilityOccurrences = ({
+  occurrences,
+  mode,
+  serviceTimeZone,
+}: {
+  occurrences: AvailabilityOccurrence[];
+  mode: AvailabilityOrganizeMode;
+  serviceTimeZone: string | null | undefined;
+}): AvailabilityOccurrenceGroup[] => {
+  const groups = new Map<string, AvailabilityOccurrence[]>();
+
+  occurrences.forEach((occurrence) => {
+    if (mode === "byDate") {
+      const date = serviceDateForSummary(occurrence, serviceTimeZone);
+      const key = date || `date-unavailable:${occurrence.occurrenceId}`;
+      groups.set(key, [...(groups.get(key) || []), occurrence]);
+      return;
+    }
+
+    // Current IDs use either group:<groupId>@<service date> or
+    // <serviceId>@<service date>. Legacy/unparseable IDs remain separate.
+    const identity = availabilityOccurrenceIdentity(occurrence.occurrenceId);
+    const key = identity || `occurrence:${occurrence.occurrenceId}`;
+    groups.set(key, [...(groups.get(key) || []), occurrence]);
+  });
+
+  const result = [...groups.entries()].map(([key, rows]) => {
+    const sortedRows = [...rows].sort(compareOccurrences);
+    const first = sortedRows[0];
+    const serviceDate = serviceDateForSummary(first, serviceTimeZone);
+    return {
+      key,
+      label: mode === "byDate"
+        ? serviceDate ? formatPlainDateRangeLabel(serviceDate, serviceDate) : "Date unavailable"
+        : String(first?.name || "Service").trim() || "Service",
+      occurrences: sortedRows,
+    };
+  });
+
+  return result.sort((first, second) => {
+    if (mode === "byDate") {
+      const firstDate = first.key.startsWith("date-unavailable:") ? "9999-99-99" : first.key;
+      const secondDate = second.key.startsWith("date-unavailable:") ? "9999-99-99" : second.key;
+      return firstDate.localeCompare(secondDate) || first.key.localeCompare(second.key);
+    }
+    const firstTime = occurrenceTime(first.occurrences[0]);
+    const secondTime = occurrenceTime(second.occurrences[0]);
+    return firstTime - secondTime || first.label.localeCompare(second.label) || first.key.localeCompare(second.key);
+  });
 };
 
 export const formatAvailabilityRequestDateRange = (

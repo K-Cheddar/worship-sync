@@ -1,10 +1,12 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { CalendarDays, Clock3 } from "lucide-react";
+import { Clock3 } from "lucide-react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import AppPageShell from "../components/AppPageShell/AppPageShell";
+import AppWorkspaceShell from "../components/AppPageShell/AppWorkspaceShell";
 import Button from "../components/Button/Button";
 import Checkbox from "../components/Checkbox/Checkbox";
 import Modal from "../components/Modal/Modal";
+import SegmentedControl from "../components/SegmentedControl/SegmentedControl";
+import { SERVICE_OCCURRENCE_GRID_CLASS_NAME } from "../components/ServiceOccurrenceCard/ServiceOccurrenceCard";
 import { GlobalInfoContext } from "../context/globalInfo";
 import { useToast } from "../context/toastContext";
 import { getMyVolunteerAvailability, submitMyVolunteerAvailability } from "../api/auth";
@@ -16,7 +18,8 @@ import type {
   VolunteerAvailabilitySave,
   VolunteerAvailabilitySaveResult,
 } from "./myScheduleOperations";
-import VolunteerSelfServiceNavigation from "./VolunteerSelfServiceNavigation";
+import VolunteerSelfServiceNavigation, { VolunteerSelfServiceDrawer } from "./VolunteerSelfServiceNavigation";
+import { PAGE_APPEARANCES } from "./pageAppearances";
 import {
   formatAvailabilityDeadline,
   formatAvailabilityOccurrence,
@@ -27,7 +30,9 @@ import {
   getAvailabilityRequestGroup,
   getAvailabilityRequestStatus,
   hasAvailabilityResponseSubmission,
+  organizeAvailabilityOccurrences,
   setAvailabilityChoice,
+  type AvailabilityOrganizeMode,
   type AvailabilityChoice,
 } from "./myAvailabilityUtils";
 import { getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
@@ -38,6 +43,10 @@ type PendingNavigation =
   | { action: () => void }
   | { historyDelta: number };
 type AnswerMap = VolunteerAvailabilityRequest["availability"];
+const AVAILABILITY_ORGANIZE_OPTIONS = [
+  { value: "byDate" as const, label: "By date" },
+  { value: "byService" as const, label: "By service" },
+];
 
 const copyAnswers = (answers: AnswerMap): AnswerMap => ({ ...answers });
 
@@ -142,6 +151,7 @@ const AvailabilityRequestEditor = ({
     (hasSubmission && savedCounts.total > 0 && savedCounts.available + savedCounts.unavailable === 0);
   const [draft, setDraft] = useState<AnswerMap>(() => copyAnswers(request.availability));
   const [detailedEditing, setDetailedEditing] = useState(startsWithThreeStateData);
+  const [organizeMode, setOrganizeMode] = useState<AvailabilityOrganizeMode>("byDate");
   const [baseline, setBaseline] = useState(() => ({
     answers: copyAnswers(request.availability),
     revisions: { ...request.availabilityRevision },
@@ -162,6 +172,11 @@ const AvailabilityRequestEditor = ({
     () => request.occurrences.map(({ occurrenceId }) => occurrenceId),
     [request.occurrences],
   );
+  const occurrenceGroups = useMemo(() => organizeAvailabilityOccurrences({
+    occurrences: request.occurrences,
+    mode: organizeMode,
+    serviceTimeZone,
+  }), [request.occurrences, organizeMode, serviceTimeZone]);
   const draftForScope = answersForScope(draft, occurrenceIds);
   const baselineAnswersForScope = answersForScope(baseline.answers, occurrenceIds);
   const isDirty = !availabilityMapsMatch(draftForScope, baselineAnswersForScope, occurrenceIds);
@@ -447,7 +462,7 @@ const AvailabilityRequestEditor = ({
 
           {!useThreeStateEditor ? (
             <>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <div className="flex flex-wrap items-end gap-2">
                 <Button
                   type="button"
                   variant="secondary"
@@ -458,29 +473,38 @@ const AvailabilityRequestEditor = ({
                 >
                   Select all
                 </Button>
-                <span className="text-xs text-gray-400">{draftAvailableCount} of {occurrenceIds.length} selected</span>
+                <span className="pb-2 text-xs text-gray-400">{draftAvailableCount} of {occurrenceIds.length} selected</span>
+                <div className="ml-auto flex min-w-[12rem] flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5">
+                  <span className="px-0.5 text-xs font-semibold text-gray-200">Organize</span>
+                  <SegmentedControl ariaLabel="Organize availability services" variant="compact" fullWidth value={organizeMode} onChange={setOrganizeMode} options={AVAILABILITY_ORGANIZE_OPTIONS} />
+                </div>
               </div>
-              <fieldset disabled={!canEdit || isSaving || saving || confirmationOpen} className="space-y-2">
-                {request.occurrences.map((occurrence) => {
-                  const dateTime = formatAvailabilityOccurrence(occurrence, serviceTimeZone);
-                  return (
-                    <Checkbox
-                      key={occurrence.occurrenceId}
-                      checked={draft[occurrence.occurrenceId] === "available"}
-                      onCheckedChange={(checked) => setDraft((current) => setAvailabilityChoice(
-                        current,
-                        occurrence.occurrenceId,
-                        checked ? "available" : "unavailable",
-                      ))}
-                      label={<span className="flex min-w-0 flex-col gap-0.5">
-                        <span className="font-medium">{occurrence.name || "Service"}</span>
-                        <span className="text-xs text-gray-400">{dateTime}</span>
-                      </span>}
-                      aria-label={`${occurrence.name || "Service"} · ${dateTime}`}
-                      className="min-h-12 rounded-md border border-gray-700 bg-gray-900/50 p-3 has-[:checked]:border-teal-400/60 has-[:checked]:bg-teal-950/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-teal-300"
-                    />
-                  );
-                })}
+              <fieldset disabled={!canEdit || isSaving || saving || confirmationOpen} className="space-y-4">
+                <legend className="sr-only">Available services</legend>
+                {occurrenceGroups.map((group) => (
+                  <section key={group.key} aria-label={group.label} className="space-y-2">
+                    <h4 className="text-sm font-semibold text-gray-200">{group.label}</h4>
+                    <ul className={SERVICE_OCCURRENCE_GRID_CLASS_NAME}>
+                      {group.occurrences.map((occurrence) => {
+                        const dateTime = formatAvailabilityOccurrence(occurrence, serviceTimeZone);
+                        return (
+                          <li key={occurrence.occurrenceId} className="min-w-0">
+                            <Checkbox
+                              checked={draft[occurrence.occurrenceId] === "available"}
+                              onCheckedChange={(checked) => setDraft((current) => setAvailabilityChoice(current, occurrence.occurrenceId, checked ? "available" : "unavailable"))}
+                              label={<span className="flex min-w-0 flex-col gap-0.5">
+                                <span className="truncate font-medium">{occurrence.name || "Service"}</span>
+                                <span className="text-xs text-gray-400">{dateTime}</span>
+                              </span>}
+                              aria-label={`${occurrence.name || "Service"} · ${dateTime}`}
+                              className="min-h-[56px] rounded-lg border border-gray-700 bg-gray-900/50 p-2.5 transition-colors has-[:checked]:border-teal-400/60 has-[:checked]:bg-teal-950/40 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-teal-300 sm:p-3"
+                            />
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
+                ))}
               </fieldset>
               {hasSubmission || hasSavedAnswers ? (
                 <Button type="button" variant="textLink" disabled={!canEdit || isSaving || saving || confirmationOpen}
@@ -497,34 +521,53 @@ const AvailabilityRequestEditor = ({
                   Use service checkboxes
                 </Button>
               ) : null}
-              <fieldset disabled={!canEdit || isSaving || saving || confirmationOpen} className="space-y-3">
-                {request.occurrences.map((occurrence) => (
-                  <fieldset key={occurrence.occurrenceId} className="rounded-lg border border-gray-700/80 p-3 sm:p-4">
-                    <legend className="px-1 text-sm font-semibold text-gray-100">
-                      {occurrence.name || "Service"} · {formatAvailabilityOccurrence(occurrence, serviceTimeZone)}
-                    </legend>
-                    <div role="radiogroup" aria-label={"Availability for " + (occurrence.name || "service") +
-                      " on " + formatAvailabilityOccurrence(occurrence, serviceTimeZone)}
-                      className="grid gap-2 pt-2 sm:grid-cols-3">
-                      {([
-                        ["available", "Available"],
-                        ["unavailable", "Unavailable"],
-                        ["not-answered", "Not answered"],
-                      ] as const).map(([choice, label]) => (
-                        <label key={choice} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-gray-700 bg-gray-900/50 px-3 py-2 text-sm text-gray-200 has-[:checked]:border-teal-400/60 has-[:checked]:bg-teal-950/50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-teal-300">
-                          <input
-                            type="radio"
-                            name={"availability-" + request.formId + "-" + occurrence.occurrenceId}
-                            value={choice}
-                            checked={getAvailabilityChoice(draft, occurrence.occurrenceId) === choice}
-                            onChange={() => setDraft((current) => setAvailabilityChoice(current, occurrence.occurrenceId, choice))}
-                            className="size-4 accent-teal-400"
-                          />
-                          {label}
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
+              <div className="flex justify-end">
+                <div className="flex min-w-[12rem] flex-col gap-1 rounded-md border border-gray-700/80 bg-gray-900/70 px-2.5 py-1.5">
+                  <span className="px-0.5 text-xs font-semibold text-gray-200">Organize</span>
+                  <SegmentedControl ariaLabel="Organize availability services" variant="compact" fullWidth value={organizeMode} onChange={setOrganizeMode} options={AVAILABILITY_ORGANIZE_OPTIONS} />
+                </div>
+              </div>
+              <fieldset disabled={!canEdit || isSaving || saving || confirmationOpen} className="space-y-4">
+                <legend className="sr-only">Availability for each service</legend>
+                {occurrenceGroups.map((group) => (
+                  <section key={group.key} aria-label={group.label} className="space-y-2">
+                    <h4 className="text-sm font-semibold text-gray-200">{group.label}</h4>
+                    <ul className={SERVICE_OCCURRENCE_GRID_CLASS_NAME}>
+                      {group.occurrences.map((occurrence) => {
+                        const dateTime = formatAvailabilityOccurrence(occurrence, serviceTimeZone);
+                        return (
+                          <li key={occurrence.occurrenceId} className="min-w-0">
+                            <fieldset className="min-w-0 rounded-lg border border-gray-700/80 bg-gray-900/35 p-2.5 sm:p-3">
+                              <legend className="max-w-full px-1 text-sm font-semibold text-gray-100">
+                                <span className="line-clamp-2">{occurrence.name || "Service"}</span>
+                                <span className="block text-xs font-normal text-gray-400">{dateTime}</span>
+                              </legend>
+                              <div role="radiogroup" aria-label={"Availability for " + (occurrence.name || "service") + " on " + dateTime}
+                                className="grid gap-2 pt-1 sm:grid-cols-3">
+                                {([
+                                  ["available", "Available"],
+                                  ["unavailable", "Unavailable"],
+                                  ["not-answered", "Not answered"],
+                                ] as const).map(([choice, label]) => (
+                                  <label key={choice} className="flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-gray-700 bg-gray-900/50 px-2.5 py-2 text-sm text-gray-200 has-[:checked]:border-teal-400/60 has-[:checked]:bg-teal-950/50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-teal-300">
+                                    <input
+                                      type="radio"
+                                      name={"availability-" + request.formId + "-" + occurrence.occurrenceId}
+                                      value={choice}
+                                      checked={getAvailabilityChoice(draft, occurrence.occurrenceId) === choice}
+                                      onChange={() => setDraft((current) => setAvailabilityChoice(current, occurrence.occurrenceId, choice))}
+                                      className="size-4 accent-teal-400"
+                                    />
+                                    {label}
+                                  </label>
+                                ))}
+                              </div>
+                            </fieldset>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </section>
                 ))}
               </fieldset>
             </>
@@ -836,16 +879,21 @@ const MyAvailabilityView = ({
   const personalSchedulePath = access ? "/s?view=schedule#time-off" : "/my-schedule#time-off";
 
   return (
-    <AppPageShell
+    <AppWorkspaceShell
       title="My Availability"
-      icon={CalendarDays}
-      iconColorClass="text-teal-300"
-      description="Review service-date requests and update your responses."
-      showAccountNavigation={!access}
-      contentClassName="max-w-4xl"
+      {...PAGE_APPEARANCES.myAvailability}
+      showUserSection={!access}
+      className="max-lg:pb-[calc(57px_+_env(safe-area-inset-bottom))]"
+      toolbarNavigation={access ? <VolunteerSelfServiceDrawer access={access} active="availability" /> : undefined}
+      workspaceNavigation={access ? undefined : (menuItems, updateReady) => (
+        <VolunteerSelfServiceDrawer access={access} active="availability" menuItems={menuItems} updateReady={updateReady} />
+      )}
     >
-      <div className="flex w-full flex-col gap-4">
+      <section className="mx-auto flex min-h-0 w-full max-w-[90rem] flex-1 flex-col overflow-hidden border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[11rem_minmax(0,1fr)]">
         <VolunteerSelfServiceNavigation access={access} active="availability" />
+        <div data-mobile-header-scroll-owner="workspace" className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6">
+        <div className="mx-auto flex w-full max-w-[90rem] flex-col gap-4">
+        <p className="text-sm text-gray-400">Review service-date requests and update your responses.</p>
         <div className="space-y-2 text-sm text-gray-300">
           <p>An unanswered date means you haven't responded. It doesn't mean you're unavailable.</p>
           <p>
@@ -947,7 +995,9 @@ const MyAvailabilityView = ({
             onBack={backToRequests}
           />
         ) : null}
-      </div>
+        </div>
+        </div>
+      </section>
 
       <Modal
         isOpen={Boolean(pendingNavigation || blockedBySave)}
@@ -972,7 +1022,7 @@ const MyAvailabilityView = ({
           </>
         )}
       </Modal>
-    </AppPageShell>
+    </AppWorkspaceShell>
   );
 };
 

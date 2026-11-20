@@ -232,6 +232,29 @@ test("availability workspace shows one searchable volunteer list and inline answ
   expect(screen.getByRole("button", { name: `Edit ${form.name}` })).toBeInTheDocument();
 });
 
+test("saved availability forms flag possible group-member overlap for review without changing answers", async () => {
+  const user = userEvent.setup();
+  const duplicateForm: TeamIntakeForm = {
+    ...workspaceForm,
+    availabilityOccurrences: [
+      { occurrenceId: "group:sabbath@2026-10-18", serviceId: "sabbath-worship", name: "Sabbath service & Worship", serviceDate: "2026-10-18", startsAt: "2026-10-18T14:00:00.000Z" },
+      { occurrenceId: "sabbath-music@2026-10-18", serviceId: "sabbath-music", name: "Worship", serviceDate: "2026-10-18", startsAt: "2026-10-18T14:00:00.000Z" },
+    ],
+  };
+  const services: TeamService[] = [
+    { id: "worship-service", serviceId: "sabbath-worship", churchId: "church-1", name: "Sabbath service", timerType: "countdown", reccurence: "one_time", dateTimeISO: "2026-10-18T14:00:00.000Z", serviceGroupId: "sabbath" },
+    { id: "music-service", serviceId: "sabbath-music", churchId: "church-1", name: "Worship", timerType: "countdown", reccurence: "one_time", dateTimeISO: "2026-10-18T14:00:00.000Z", serviceGroupId: "sabbath" },
+  ];
+  renderManager({ forms: [duplicateForm], services });
+
+  await openForm(user);
+
+  expect(screen.getByText("Check matching service dates before editing or resending this request.")).toBeInTheDocument();
+  expect(screen.getByText(/The saved occurrence IDs and volunteer responses have not been changed/)).toBeInTheDocument();
+  expect(screen.getByText("Worship · October 18, 2026")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "View availability by date" })).toBeInTheDocument();
+});
+
 test("volunteer status, team and incomplete-answer filters keep missing responses distinct", async () => {
   const user = userEvent.setup();
   const incomplete = {

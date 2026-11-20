@@ -5,6 +5,7 @@ import {
   getAvailabilityRequestGroup,
   getAvailabilityRequestStatus,
   hasAvailabilityResponseSubmission,
+  organizeAvailabilityOccurrences,
   setAvailabilityChoice,
 } from "./myAvailabilityUtils";
 import type { VolunteerAvailabilityRequest } from "./myScheduleOperations";
@@ -89,4 +90,30 @@ it("only turns unchecked services into unavailable when checkbox intent is final
 it("shows a compact date range from church service dates", () => {
   expect(formatAvailabilityRequestDateRange(makeRequest(), "America/New_York"))
     .toMatch(/November 08, 2026.*November 22, 2026/);
+});
+
+it("organizes availability by church date or stable service identity without merging legacy ids", () => {
+  const occurrences = [
+    { occurrenceId: "group:sabbath@2026-11-22", name: "Sabbath service", startsAt: "2026-11-22T15:00:00.000Z", serviceDate: "2026-11-22" },
+    { occurrenceId: "standalone@legacy-id", name: "Sabbath service", startsAt: "2026-11-08T14:00:00.000Z", serviceDate: "2026-11-08" },
+    { occurrenceId: "group:sabbath@2026-11-08", name: "Sabbath service", startsAt: "2026-11-08T15:00:00.000Z", serviceDate: "2026-11-08" },
+    { occurrenceId: "group:sabbath@2026-11-15", name: "Sabbath service", startsAt: "2026-11-15T15:00:00.000Z", serviceDate: "2026-11-15" },
+  ];
+  const savedOrder = occurrences.map(({ occurrenceId }) => occurrenceId);
+
+  const byDate = organizeAvailabilityOccurrences({ occurrences, mode: "byDate", serviceTimeZone: "America/New_York" });
+  expect(byDate.map(({ key }) => key)).toEqual(["2026-11-08", "2026-11-15", "2026-11-22"]);
+  expect(byDate[0].occurrences.map(({ occurrenceId }) => occurrenceId)).toEqual([
+    "standalone@legacy-id",
+    "group:sabbath@2026-11-08",
+  ]);
+
+  const byService = organizeAvailabilityOccurrences({ occurrences, mode: "byService", serviceTimeZone: "America/New_York" });
+  expect(byService).toHaveLength(2);
+  expect(byService.find(({ key }) => key === "group:sabbath")?.occurrences.map(({ occurrenceId }) => occurrenceId)).toEqual([
+    "group:sabbath@2026-11-08",
+    "group:sabbath@2026-11-15",
+    "group:sabbath@2026-11-22",
+  ]);
+  expect(occurrences.map(({ occurrenceId }) => occurrenceId)).toEqual(savedOrder);
 });

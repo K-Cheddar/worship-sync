@@ -9,6 +9,7 @@ import {
   DropdownMenuTrigger,
 } from "../../../components/ui/DropdownMenu";
 import type { AvailabilityProgressRow } from "../availabilityFormProgress";
+import type { TeamIntakeAvailabilityOccurrence } from "../../../api/authTypes";
 import { formatPlainDateRangeLabel, memberName } from "../teamsUtils";
 import AvailabilityVolunteersList from "./AvailabilityVolunteersList";
 import AvailabilityDateComparison from "./AvailabilityDateComparison";
@@ -32,6 +33,25 @@ const deliveryStatusLabels = {
   failed: "Failed",
 };
 
+const formatReviewOccurrenceDate = (
+  occurrence: TeamIntakeAvailabilityOccurrence,
+  serviceTimeZone: string,
+) => {
+  const occurrenceIdDate = occurrence.occurrenceId.match(/@((?:\d{4}-\d{2}-\d{2}))(?:T[^@]*)?$/)?.[1];
+  const serviceDate = occurrence.serviceDate || occurrenceIdDate;
+  if (serviceDate) return formatPlainDateRangeLabel(serviceDate, serviceDate);
+  const date = new Date(occurrence.startsAt);
+  if (Number.isNaN(date.getTime())) return "Date unavailable";
+  const options: Intl.DateTimeFormatOptions = { month: "long", day: "numeric", year: "numeric" };
+  try {
+    return date.toLocaleDateString(undefined, serviceTimeZone.trim()
+      ? { ...options, timeZone: serviceTimeZone }
+      : options);
+  } catch {
+    return date.toLocaleDateString(undefined, options);
+  }
+};
+
 type Props = {
   rows: AvailabilityProgressRow[];
   sendFlowProps: ComponentProps<typeof AvailabilityFormSendFlow>;
@@ -43,6 +63,7 @@ type Props = {
   canCopyGeneralLink: boolean;
   linkBusy: boolean;
   serviceTimeZone: string;
+  groupedMemberOccurrencesForReview?: TeamIntakeAvailabilityOccurrence[];
   sendOpen: boolean;
   onSend: () => void;
   onEdit: () => void;
@@ -62,6 +83,7 @@ const AvailabilityFormWorkspace = ({
   canCopyGeneralLink,
   linkBusy,
   serviceTimeZone,
+  groupedMemberOccurrencesForReview = [],
   sendOpen,
   onSend,
   onEdit,
@@ -194,6 +216,18 @@ const AvailabilityFormWorkspace = ({
           </div>
         ) : null}
       </header>
+      {groupedMemberOccurrencesForReview.length ? (
+        <div role="alert" className="mt-3 space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-100">
+          <p className="font-semibold">Check matching service dates before editing or resending this request.</p>
+          <p>Current service group data links this individual service date to a combined service date in the saved request. The saved occurrence IDs and volunteer responses have not been changed. Confirm whether the group was in place when this request was issued before editing or sending it again.</p>
+          <ul className="list-disc space-y-1 pl-5 text-amber-50/90">
+            {groupedMemberOccurrencesForReview.map((occurrence) => (
+              <li key={occurrence.occurrenceId}>{occurrence.name || "Service"} · {formatReviewOccurrenceDate(occurrence, serviceTimeZone)}</li>
+            ))}
+          </ul>
+          <p>Review the volunteer answers and send history below before editing or sending another request.</p>
+        </div>
+      ) : null}
       <section
         className="mt-4 rounded-md bg-gray-950/50 px-3 py-3"
         aria-label="Response progress"

@@ -207,6 +207,44 @@ it("uses positive checkboxes for an initial response and confirms the complete s
     .not.toHaveTextContent("November availability");
 });
 
+it("organizes compact availability cards by date or service without changing their response ids", async () => {
+  const user = userEvent.setup();
+  const request = makeRequest({
+    respondedAt: "",
+    submissionId: "",
+    availability: {},
+    unansweredOccurrenceIds: [...ids],
+  });
+  renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([request])), jest.fn()));
+
+  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  expect(screen.getByRole("button", { name: "By date" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getAllByRole("checkbox")).toHaveLength(3);
+  expect(screen.getByRole("heading", { name: "November 08, 2099" })).toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
+  expect(screen.getByRole("checkbox", { name: /Sunday 1/ })).toBeChecked();
+
+  await user.click(screen.getByRole("button", { name: "By service" }));
+  expect(screen.getByRole("heading", { name: "Sunday 1" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: "Sunday 2" })).toBeInTheDocument();
+  expect(screen.getAllByRole("checkbox")).toHaveLength(3);
+  expect(screen.getByRole("checkbox", { name: /Sunday 1/ })).toBeChecked();
+  expect(screen.getByRole("button", { name: "By service" })).toHaveAttribute("aria-pressed", "true");
+  await user.click(screen.getByRole("button", { name: "By date" }));
+  expect(screen.getByRole("checkbox", { name: /Sunday 1/ })).toBeChecked();
+});
+
+it("shows active volunteer destinations in the persistent and mobile navigation", async () => {
+  renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([])), jest.fn()));
+
+  const navigation = await screen.findAllByRole("navigation", { name: "Volunteer pages" });
+  expect(navigation).toHaveLength(2);
+  expect(screen.getAllByRole("link", { name: "My Availability" }).every((link) => link.getAttribute("aria-current") === "page")).toBe(true);
+  expect(screen.getAllByRole("link", { name: "My Schedule" }).every((link) => link.getAttribute("href") === "/s?view=schedule")).toBe(true);
+  expect(navigation[1]).toHaveClass("pb-[env(safe-area-inset-bottom)]");
+  expect(navigation[1]).toHaveClass("lg:hidden");
+});
+
 it("selects every service with one action", async () => {
   const user = userEvent.setup();
   const initial = makeRequest({ respondedAt: "", submissionId: "", availability: {}, unansweredOccurrenceIds: [...ids] });
@@ -666,10 +704,13 @@ it("guards volunteer navigation when a response draft is dirty", async () => {
   await user.click(await screen.findByRole("button", { name: "Open November availability" }));
   await user.click(within(screen.getByRole("radiogroup", { name: /Sunday 1/ }))
     .getByRole("radio", { name: "Unavailable" }));
-  await user.click(screen.getByRole("link", { name: "My Schedule" }));
+  await user.click(screen.getByRole("button", { name: "Open menu" }));
+  const menu = await screen.findByRole("dialog", { name: "Menu" });
+  await user.click(within(menu).getByRole("link", { name: "My Schedule" }));
   expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
   expect(screen.getByTestId("current-location")).toHaveTextContent("/my-availability");
   await user.click(screen.getByRole("button", { name: "Stay" }));
+  await user.click(screen.getByRole("button", { name: "Close" }));
   expect(screen.getByRole("heading", { name: "November availability" })).toBeInTheDocument();
 });
 

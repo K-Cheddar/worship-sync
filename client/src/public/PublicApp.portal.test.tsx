@@ -69,7 +69,8 @@ it("opens My Availability through the existing accountless personal session", as
   await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/session"))).toBe(true));
   expect(await screen.findByText("No availability requests right now.")).toBeInTheDocument();
   expect(screen.getByRole("heading", { name: "My Availability" })).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: "My Schedule" })).toHaveAttribute("href", "/s?view=schedule");
+  expect(screen.getAllByRole("link", { name: "My Schedule" })[0]).toHaveAttribute("href", "/s?view=schedule");
+  expect(screen.getAllByRole("link", { name: "My Availability" })[0]).toHaveAttribute("aria-current", "page");
   expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/availability"))).toBe(true);
   expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/schedule"))).toBe(false);
 });
@@ -125,7 +126,7 @@ it("opens the same My Schedule through the real public providers, including defe
   const user = userEvent.setup();
   render(<PublicApp />);
   await screen.findByRole("button", { name: "Accept remaining assignments" });
-  expect(screen.queryByRole("button", { name: "Open menu" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Time off/i }));
   expect(screen.getByRole("button", { name: /Add single day/i })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Open Sunday Gathering/i }));

@@ -19,11 +19,15 @@ type AppWorkspaceShellProps = {
   churchName?: string | null;
   scrollbarWidth?: string | number;
   toolbarActions?: ReactNode;
+  /** A lightweight navigation control for public workspaces without app menus. */
+  toolbarNavigation?: ReactNode;
   /** Replaces the standard dropdown menu on narrow screens. */
   mobileNavigation?: (menuItems: MenuItemType[]) => ReactNode;
   workspaceNavigation?: (menuItems: MenuItemType[], updateReady: boolean) => ReactNode;
   collapseMobileHeader?: boolean;
   compactMobileToolbar?: boolean;
+  /** Hide signed-in account controls on accountless public workspaces. */
+  showUserSection?: boolean;
   className?: string;
   children: ReactNode;
 };
@@ -270,10 +274,12 @@ const AppWorkspaceShell = ({
   churchName,
   scrollbarWidth,
   toolbarActions,
+  toolbarNavigation,
   mobileNavigation,
   workspaceNavigation,
   collapseMobileHeader = false,
   compactMobileToolbar = false,
+  showUserSection = true,
   className,
   children,
 }: AppWorkspaceShellProps) => {
@@ -310,8 +316,8 @@ const AppWorkspaceShell = ({
           )}
         >
           <div className="flex min-w-0 items-center gap-1 justify-self-start sm:gap-3">
-            <HomeToolbarMenu mobileMenuRenderer={mobileNavigation} menuRenderer={workspaceNavigation} />
-            <h1 data-testid="app-workspace-title" className={cn(
+            {toolbarNavigation ?? <HomeToolbarMenu mobileMenuRenderer={mobileNavigation} menuRenderer={workspaceNavigation} />}
+            <h1 aria-label={title} data-testid="app-workspace-title" className={cn(
               "flex min-w-0 items-center gap-1 truncate text-sm font-semibold sm:gap-2 sm:text-lg",
               compactMobileToolbar && "hidden lg:flex",
               centerTitleOnMobile && "max-sm:absolute max-sm:left-1/2 max-sm:max-w-[45vw] max-sm:-translate-x-1/2",
@@ -355,7 +361,7 @@ const AppWorkspaceShell = ({
             compactMobileToolbar ? "flex-nowrap gap-2 lg:flex-wrap lg:gap-4" : "flex-wrap gap-4",
           )}>
             {toolbarActions}
-            <UserSection variant={compactMobileToolbar ? "responsiveCompact" : "default"} />
+            {showUserSection ? <UserSection variant={compactMobileToolbar ? "responsiveCompact" : "default"} /> : null}
           </div>
         </div>
       </div>

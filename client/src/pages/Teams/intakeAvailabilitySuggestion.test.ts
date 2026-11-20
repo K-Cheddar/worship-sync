@@ -1,7 +1,7 @@
 import type { TeamIntakeForm, TeamPosition, TeamSchedule, TeamScheduleOccurrence, TeamService } from "../../api/authTypes";
 import { generateScheduleOccurrences } from "../../utils/teamScheduleOccurrences";
 import { getServicePlanKey } from "../../utils/servicePlanKeys";
-import { getUpcomingAvailabilitySuggestion, getUpcomingAvailabilitySuggestions } from "./intakeAvailabilitySuggestion";
+import { getUpcomingAvailabilitySuggestion, getUpcomingAvailabilitySuggestions, omitRedundantGroupedMemberOccurrences } from "./intakeAvailabilitySuggestion";
 import { isAvailabilityFocusedForm } from "./intakeFormFields";
 
 const service: TeamService = {
@@ -704,6 +704,108 @@ describe("getUpcomingAvailabilitySuggestion", () => {
     expect(result?.draft).not.toHaveProperty("publicUrl");
     expect(result?.draft).not.toHaveProperty("submissionCount");
   });
+});
+
+it("omits only an unambiguous saved group-member row from new availability dates", () => {
+  const groupedServices: TeamService[] = [
+    { ...service, serviceId: "sabbath-worship", name: "Sabbath service", serviceGroupId: "sabbath", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+    { ...service, serviceId: "sabbath-school", name: "Sabbath school", serviceGroupId: "sabbath", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+  ];
+  const independentService: TeamService = {
+    ...groupedServices[0],
+    serviceId: "independent-sabbath",
+    name: "Sabbath service",
+    serviceGroupId: undefined,
+  };
+  const [groupedOccurrence] = generateScheduleOccurrences({
+    services: groupedServices,
+    serviceIds: groupedServices.map(({ serviceId }) => serviceId),
+    startDate: "2026-11-08",
+    endDate: "2026-11-08",
+    timeZone: "America/New_York",
+  });
+  const legacyMemberOccurrence: TeamScheduleOccurrence = {
+    occurrenceId: "sabbath-worship@2026-11-08",
+    serviceId: "sabbath-worship",
+    name: "Sabbath service",
+    startsAt: groupedOccurrence.startsAt,
+    serviceDate: "2026-11-08",
+  };
+  const independentOccurrence = generateScheduleOccurrences({
+    services: [independentService],
+    serviceIds: [independentService.serviceId],
+    startDate: "2026-11-08",
+    endDate: "2026-11-08",
+    timeZone: "America/New_York",
+  })[0];
+  const savedRows: TeamScheduleOccurrence[] = [groupedOccurrence, legacyMemberOccurrence, independentOccurrence];
+  const originalIds = savedRows.map(({ occurrenceId }) => occurrenceId);
+
+  const result = omitRedundantGroupedMemberOccurrences(
+    savedRows,
+    [...groupedServices, independentService],
+    "America/New_York",
+  );
+
+  expect(result.map(({ occurrenceId }) => occurrenceId)).toEqual([
+    groupedOccurrence.occurrenceId,
+    independentOccurrence.occurrenceId,
+  ]);
+  expect(savedRows.map(({ occurrenceId }) => occurrenceId)).toEqual(originalIds);
+});
+
+it("creates new team availability with the combined occurrence and distinct same-time service", () => {
+  const groupedServices: TeamService[] = [
+    { ...service, serviceId: "sabbath-worship", name: "Sabbath service", serviceGroupId: "sabbath", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+    { ...service, serviceId: "sabbath-second", name: "2nd service", serviceGroupId: "sabbath", positionRequirements: [{ positionId: "vocal", count: 1 }] },
+  ];
+  const independentService: TeamService = {
+    ...groupedServices[0],
+    serviceId: "independent-sabbath",
+    serviceGroupId: undefined,
+  };
+  const legacyId = "sabbath-worship@2026-11-08";
+  const savedSchedule: TeamSchedule = {
+    scheduleId: "worship-november",
+    churchId: "church-1",
+    name: "November schedule",
+    teamId: "worship",
+    startDate: "2026-11-01",
+    endDate: "2026-11-30",
+    serviceIds: [...groupedServices, independentService].map(({ serviceId }) => serviceId),
+    occurrences: [{
+      occurrenceId: legacyId,
+      serviceId: "sabbath-worship",
+      name: "Sabbath service",
+      startsAt: "2026-11-08T10:00:00.000Z",
+      serviceDate: "2026-11-08",
+      positionRequirements: [{ positionId: "vocal", count: 1 }],
+    }],
+    assignments: { [legacyId]: { "vocal::0": { primaryMemberId: "member-1" } } },
+  };
+
+  const suggestion = getUpcomingAvailabilitySuggestion({
+    services: [...groupedServices, independentService],
+    forms: [],
+    positions: [{ positionId: "vocal", churchId: "church-1", teamId: "worship", name: "Vocal" }],
+    teamIds: ["worship"],
+    teamScheduleScope: true,
+    schedules: [savedSchedule],
+    now: new Date("2026-11-01T12:00:00.000Z"),
+    timeZone: "UTC",
+  });
+
+  expect(suggestion?.kind).toBe("create");
+  const novemberEighthIds = suggestion!.draft.availabilityOccurrences
+    .filter(({ serviceDate }) => serviceDate === "2026-11-08")
+    .map(({ occurrenceId }) => occurrenceId)
+    .sort();
+  expect(novemberEighthIds).toEqual([
+    "group:sabbath@2026-11-08",
+    "independent-sabbath@2026-11-08",
+  ]);
+  expect(savedSchedule.occurrences?.map(({ occurrenceId }) => occurrenceId)).toEqual([legacyId]);
+  expect(savedSchedule.assignments[legacyId]["vocal::0"]).toEqual({ primaryMemberId: "member-1" });
 });
 
 describe("team availability coverage", () => {
