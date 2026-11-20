@@ -10,6 +10,7 @@ import {
   pollUploadStatus,
   uploadDownloadedVideoToMux,
   uploadLocalVideoAssetToMux,
+  uploadVideoToMux,
 } from "./muxUpload";
 
 jest.mock("../../../api/providerStorage", () => ({
@@ -28,7 +29,11 @@ class TestXmlHttpRequest {
   responseType = "";
   method = "";
   url = "";
-  upload = { addEventListener: jest.fn() };
+  uploadListeners: Record<string, XhrListener[]> = {};
+  upload = { addEventListener: jest.fn((type: string, listener: XhrListener) => {
+    this.uploadListeners[type] = this.uploadListeners[type] || [];
+    this.uploadListeners[type].push(listener);
+  }) };
   private readonly listeners: Record<string, XhrListener[]> = {};
 
   open = jest.fn((method: string, url: string) => {
@@ -44,6 +49,7 @@ class TestXmlHttpRequest {
   send = jest.fn(() => {
     queueMicrotask(() => {
       if (this.method === "GET") this.response = new Blob(["converted"], { type: "video/mp4" });
+      else this.uploadListeners.progress?.forEach((listener) => listener({ lengthComputable: true, loaded: 4, total: 8 }));
       this.listeners.load?.forEach((listener) => listener({}));
     });
   });
@@ -116,17 +122,28 @@ describe("church-scoped Mux upload and temporary conversion", () => {
   });
 
   it("streams a disk-backed download through the native transport and the existing Mux registration workflow", async () => {
-    const uploadDownloadedVideo = jest.fn().mockResolvedValue(undefined);
+    let progressListener: ((event: { jobId: string; stage: "uploading"; progress: number | null }) => void) | undefined;
+    const unsubscribe = jest.fn();
+    const onVideoDownloadProgress = jest.fn((callback: typeof progressListener) => {
+      progressListener = callback;
+      return unsubscribe;
+    });
+    const uploadDownloadedVideo = jest.fn(async (jobId: string) => {
+      progressListener?.({ jobId, stage: "uploading", progress: 42 });
+    });
+    const onProgress = jest.fn();
     const setCancelUpload = jest.fn();
     window.electronAPI = {
       uploadDownloadedVideoToMux: uploadDownloadedVideo,
+      onVideoDownloadProgress,
+      cancelVideoDownload: jest.fn(async () => true),
     } as unknown as typeof window.electronAPI;
 
     const result = await uploadDownloadedVideoToMux(
       "job-1",
       "Sunday Opener.mp4",
       { churchId: "church-1", mediaId: "media-1", title: "Sunday Opener" },
-      { setCancelUpload },
+      { setCancelUpload, onProgress },
     );
 
     expect(uploadDownloadedVideo).toHaveBeenCalledWith("job-1", "https://upload");
@@ -136,7 +153,43 @@ describe("church-scoped Mux upload and temporary conversion", () => {
       temporary: undefined,
     });
     expect(result).toMatchObject({ playbackId: "playback-1", name: "Sunday Opener" });
+    expect(onProgress).toHaveBeenCalledWith(42);
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(setCancelUpload).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it("cancels an active native upload transport and releases its progress subscription", async () => {
+    let rejectTransport!: (error: Error) => void;
+    const uploadDownloadedVideo = jest.fn(() => new Promise<void>((_resolve, reject) => {
+      rejectTransport = reject;
+    }));
+    const cancelVideoDownload = jest.fn(async () => {
+      rejectTransport(new Error("Upload cancelled."));
+      return true;
+    });
+    const unsubscribe = jest.fn();
+    const onVideoDownloadProgress = jest.fn(() => unsubscribe);
+    let cancelUpload: (() => Promise<void>) | undefined;
+    window.electronAPI = {
+      uploadDownloadedVideoToMux: uploadDownloadedVideo,
+      onVideoDownloadProgress,
+      cancelVideoDownload,
+    } as unknown as typeof window.electronAPI;
+
+    const pendingUpload = uploadDownloadedVideoToMux(
+      "job-2",
+      "Sunday Opener.mp4",
+      { churchId: "church-1", mediaId: "media-1" },
+      { setCancelUpload: (cancel) => { cancelUpload = cancel; } },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(uploadDownloadedVideo).toHaveBeenCalledTimes(1);
+    await expect(cancelUpload?.()).resolves.toBeUndefined();
+    await expect(pendingUpload).rejects.toThrow("Cloud upload cancelled.");
+    expect(cancelVideoDownload).toHaveBeenCalledWith("job-2");
+    expect(mockCancelUpload).toHaveBeenCalledWith("church-1", "upload-1");
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
   });
 
   it("streams a linked local asset through native Mux transport without a renderer File", async () => {
@@ -151,9 +204,11 @@ describe("church-scoped Mux upload and temporary conversion", () => {
       progressListener = callback;
       return unsubscribe;
     });
+    const cancelVideoDownload = jest.fn(async () => true);
     window.electronAPI = {
       uploadLocalVideoAssetToMux: uploadLocalAsset,
       onVideoDownloadProgress,
+      cancelVideoDownload,
     } as unknown as typeof window.electronAPI;
 
     const result = await uploadLocalVideoAssetToMux(
@@ -168,9 +223,21 @@ describe("church-scoped Mux upload and temporary conversion", () => {
       url: "https://upload",
     }));
     expect(onProgress).toHaveBeenCalledWith(42);
-    expect(onProgress).toHaveBeenCalledWith(100);
     expect(unsubscribe).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ playbackId: "playback-1", name: "welcome" });
+  });
+
+  it("reports browser XHR progress without using the native transport", async () => {
+    const xhr = new TestXmlHttpRequest();
+    global.XMLHttpRequest = jest.fn(() => xhr) as unknown as typeof XMLHttpRequest;
+    const onProgress = jest.fn();
+    const file = new File(["video"], "camera.mp4", { type: "video/mp4" });
+
+    await uploadVideoToMux(file, { churchId: "church-1", mediaId: "media-1" }, { onProgress });
+
+    expect(xhr.open).toHaveBeenCalledWith("PUT", "https://upload");
+    expect(xhr.send).toHaveBeenCalledWith(file);
+    expect(onProgress).toHaveBeenCalledWith(50);
   });
 
   it("cleans a newly-created Mux upload without starting disk streaming if cancellation arrived during upload creation", async () => {
@@ -184,7 +251,7 @@ describe("church-scoped Mux upload and temporary conversion", () => {
       "Sunday Opener.mp4",
       { churchId: "church-1", mediaId: "media-1", title: "Sunday Opener" },
       { isCancelled: () => true },
-    )).rejects.toThrow("Upload cancelled");
+    )).rejects.toThrow("Cloud upload cancelled.");
 
     expect(uploadDownloadedVideo).not.toHaveBeenCalled();
     expect(mockCancelUpload).toHaveBeenCalledWith("church-1", "upload-1");
@@ -209,7 +276,7 @@ describe("church-scoped Mux upload and temporary conversion", () => {
     await pollingStarted;
     cancelled = true;
     cancelPolling?.();
-    await expect(conversion).rejects.toThrow("Upload cancelled");
+    await expect(conversion).rejects.toThrow("Cloud upload cancelled.");
     expect(mockDeleteAsset).toHaveBeenCalledWith("church-1", "asset-1");
   });
 });

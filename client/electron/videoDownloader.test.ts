@@ -1,14 +1,50 @@
 import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import { PassThrough, Writable } from "node:stream";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
-import { VideoDownloader, type VideoDownloadEvent } from "./videoDownloader";
+import { parseYtDlpProgressLine, VideoDownloader, type VideoDownloadEvent } from "./videoDownloader";
 import { logVideoFailure } from "./videoDownloaderErrors";
 import type { SafeHttpLookupAll } from "./safeHttp";
 
 type FakeChild = ChildProcess & { stdout: PassThrough; stderr: PassThrough };
+
+class FakeMuxRequest extends Writable {
+  readonly chunks: Buffer[] = [];
+  timeoutCallback?: () => void;
+  readonly setTimeout = jest.fn((_milliseconds: number, callback: () => void) => {
+    this.timeoutCallback = callback;
+    return this;
+  });
+
+  constructor(private readonly responseStatus: number, private readonly autoRespond: boolean) {
+    super({ autoDestroy: false });
+  }
+
+  _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+    this.chunks.push(Buffer.from(chunk));
+    callback();
+  }
+
+  _final(callback: (error?: Error | null) => void) {
+    callback();
+    if (this.autoRespond) setTimeout(() => this.respond(), 0);
+  }
+
+  respond() {
+    const response = new PassThrough() as PassThrough & { statusCode: number };
+    response.statusCode = this.responseStatus;
+    this.emit("response", response);
+    response.end();
+    this.destroy();
+  }
+
+  expire() {
+    this.timeoutCallback?.();
+  }
+}
 
 const fakeChild = (): FakeChild => {
   const child = new EventEmitter() as FakeChild;
@@ -68,6 +104,12 @@ describe("VideoDownloader job lifecycle", () => {
   let processOptions: Array<{ shell?: boolean }>;
   let processArguments: string[][];
   let uploadLookup: SafeHttpLookupAll;
+  let downloadStdout: string | undefined;
+  let muxResponseStatus: number;
+  let muxAutoRespond: boolean;
+  let muxRequests: FakeMuxRequest[];
+  let muxRequestUrls: string[];
+  let muxRequestOptions: Array<{ headers?: Record<string, string>; lookup?: (...args: any[]) => void }>;
   let nativeTools: { ytDlpPath: string; denoPath: string; ffmpegPath: string; ffprobePath: string };
 
   beforeEach(() => {
@@ -94,6 +136,12 @@ describe("VideoDownloader job lifecycle", () => {
     inspectionProcessError = undefined;
     processOptions = [];
     processArguments = [];
+    downloadStdout = undefined;
+    muxResponseStatus = 200;
+    muxAutoRespond = true;
+    muxRequests = [];
+    muxRequestUrls = [];
+    muxRequestOptions = [];
     uploadLookup = async () => [{ address: "8.8.8.8", family: 4 }];
     const spawnProcess = ((binary: string, args: string[], options: { shell?: boolean }) => {
       processOptions.push(options);
@@ -132,7 +180,7 @@ describe("VideoDownloader job lifecycle", () => {
           const file = args[outputIndex].replace("%(ext)s", "mp4");
           mkdirSync(join(root, "downloads"), { recursive: true });
           writeFileSync(file, "fake-mp4");
-          finishChild(child, `WSYNC_PROGRESS:100:200:200\nWSYNC_FILE:${file}\nWSYNC_PROCESSING:started\n`);
+          finishChild(child, downloadStdout ?? `WSYNC_PROGRESS:100:200:200\nWSYNC_FILE:${file}\nWSYNC_PROCESSING:started\n`);
         } else if (!stallDownload) {
           failNextDownload = false;
           finishChild(child, "network error", 1, "network failure");
@@ -144,6 +192,13 @@ describe("VideoDownloader job lifecycle", () => {
       rootDirectory: join(root, "downloads"),
       ...nativeTools,
       spawnProcess,
+      requestMux: ((url: string, options: { headers?: Record<string, string>; lookup?: (...args: any[]) => void }) => {
+        const request = new FakeMuxRequest(muxResponseStatus, muxAutoRespond);
+        muxRequestUrls.push(url);
+        muxRequestOptions.push(options);
+        muxRequests.push(request);
+        return request;
+      }) as unknown as typeof import("node:https").request,
       lookupAll: (...args) => uploadLookup(...args),
       proxyFactory: () => ({ url: "http://127.0.0.1:12345", start: async () => undefined, stop: async () => undefined }),
     });
@@ -155,6 +210,15 @@ describe("VideoDownloader job lifecycle", () => {
   });
 
   const inspect = async () => downloader.inspect("https://youtu.be/S9EUEdnJQDA");
+  const downloadFixture = async (jobId: string) => {
+    const metadata = await inspect();
+    const events: VideoDownloadEvent[] = [];
+    downloader.on("progress", (event) => events.push(event));
+    const completed = waitForStage(events, "complete");
+    await downloader.startDownload({ jobId, inspectionId: metadata.inspectionId, quality: 1080 });
+    await completed;
+    return { metadata, events, path: downloader.getCompletedFile(jobId).path };
+  };
   const waitForStage = (events: VideoDownloadEvent[], stage: VideoDownloadEvent["stage"]) =>
     new Promise<VideoDownloadEvent>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error(`Missing ${stage} event`)), 3000);
@@ -403,5 +467,153 @@ describe("VideoDownloader job lifecycle", () => {
     expect(await upload).toEqual(expect.objectContaining({ message: "Upload cancelled." }));
     await cleanup;
     expect(existsSync(join(root, "downloads", jobId))).toBe(false);
+  });
+
+  it.each([
+    "https://storage.googleapis.com/video-storage/upload?Signature=legacy-signed-value",
+    "https://upload.mux.com/upload-id?token=current-signed-value",
+    "https://region-1.uploads.mux.com/upload-id?token=current-signed-value",
+  ])("streams a downloaded temporary file to a real Mux Direct Upload host (%s)", async (url) => {
+    const jobId = "52345678-1234-4123-8123-123456789abc";
+    const { events } = await downloadFixture(jobId);
+
+    await downloader.uploadToMux(jobId, url);
+
+    expect(muxRequestUrls).toEqual([url]);
+    expect(muxRequestOptions[0]).toMatchObject({
+      method: "PUT",
+      headers: { "content-length": "8", "content-type": "video/mp4" },
+    });
+    expect(Buffer.concat(muxRequests[0].chunks).toString()).toBe("fake-mp4");
+    expect(events.some((event) => event.stage === "uploading" && event.progress === 0)).toBe(true);
+    expect(events.some((event) => event.stage === "uploading" && event.progress === 99 && event.totalBytes === 8)).toBe(true);
+  });
+
+  it("rejects a deceptive Mux hostname before opening an HTTP request and logs only safe diagnostics", async () => {
+    const jobId = "62345678-1234-4123-8123-123456789abc";
+    await downloadFixture(jobId);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const signedUrl = "https://uploads.mux.com.attacker.example/upload?Signature=must-not-be-logged";
+
+    try {
+      await expect(downloader.uploadToMux(jobId, signedUrl)).rejects.toThrow("The cloud upload address is invalid.");
+      expect(muxRequests).toHaveLength(0);
+      expect(warn).toHaveBeenCalledWith("[VideoDownloader] Mux upload URL rejected", {
+        category: "host-not-allowed",
+        hostname: "uploads.mux.com.attacker.example",
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("must-not-be-logged");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("rejects an allowed upload host when DNS resolves to a private IP", async () => {
+    const jobId = "72345678-1234-4123-8123-123456789abc";
+    await downloadFixture(jobId);
+    uploadLookup = async () => [{ address: "10.0.0.12", family: 4 }];
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await expect(downloader.uploadToMux(jobId, "https://upload.mux.com/upload?signature=private-dns"))
+        .rejects.toThrow("The cloud upload address is invalid.");
+      expect(muxRequests).toHaveLength(0);
+      expect(warn).toHaveBeenCalledWith("[VideoDownloader] Mux upload URL rejected", {
+        category: "unsafe-address",
+        hostname: "upload.mux.com",
+      });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("private-dns");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("reports HTTP rejection, timeout, and transport failure without exposing request URLs", async () => {
+    const jobId = "82345678-1234-4123-8123-123456789abc";
+    await downloadFixture(jobId);
+    const url = "https://upload.mux.com/upload?Signature=do-not-expose";
+
+    muxResponseStatus = 403;
+    await expect(downloader.uploadToMux(jobId, url)).rejects.toThrow("HTTP 403");
+
+    muxResponseStatus = 200;
+    muxAutoRespond = false;
+    const timeoutUpload = downloader.uploadToMux(jobId, url);
+    await waitFor(() => muxRequests.length === 2 && muxRequests[1].writableFinished);
+    muxRequests[1].expire();
+    await expect(timeoutUpload).rejects.toThrow(/timed out/i);
+
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const transportUpload = downloader.uploadToMux(jobId, url);
+    await waitFor(() => muxRequests.length === 3 && muxRequests[2].writableFinished);
+    muxRequests[2].destroy(Object.assign(new Error(`ECONNRESET ${url}`), { code: "ECONNRESET" }));
+    await expect(transportUpload).rejects.toThrow(/connection failed/i);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("do-not-expose");
+    expect(JSON.stringify(warn.mock.calls)).toContain("ECONNRESET");
+    warn.mockRestore();
+  });
+
+  it("cancels the native HTTP upload and closes its stream", async () => {
+    const jobId = "92345678-1234-4123-8123-123456789abc";
+    await downloadFixture(jobId);
+    muxAutoRespond = false;
+    const upload = downloader.uploadToMux(jobId, "https://upload.mux.com/upload");
+    await waitFor(() => muxRequests.length === 1 && muxRequests[0].writableFinished);
+
+    await expect(downloader.cancelDownload(jobId)).resolves.toBe(true);
+    await expect(upload).rejects.toThrow("Upload cancelled.");
+    expect(muxRequests[0].destroyed).toBe(true);
+  });
+
+  it("uses the same native PUT implementation for registered local assets", async () => {
+    const jobId = "a2345678-1234-4123-8123-123456789abc";
+    const { path } = await downloadFixture("b2345678-1234-4123-8123-123456789abc");
+    const handle = await open(path, "r");
+
+    await downloader.uploadLocalAssetToMux(jobId, handle, 8, "https://storage.googleapis.com/video-storage/linked-upload");
+
+    expect(muxRequestUrls).toEqual(["https://storage.googleapis.com/video-storage/linked-upload"]);
+    expect(Buffer.concat(muxRequests[0].chunks).toString()).toBe("fake-mp4");
+  });
+
+  it("reports modern progress templates with separate audio and video stream metrics", async () => {
+    const jobId = "c2345678-1234-4123-8123-123456789abc";
+    const outputPath = join(root, "downloads", jobId, "video.mp4");
+    downloadStdout = [
+      "WSYNC_PROGRESS:137:avc1.640028:NA:2097152:4194304:NA:524288:4",
+      "WSYNC_PROGRESS:140:NA:mp4a.40.2:1048576:2097152:NA:262144:4",
+      `WSYNC_FILE:${outputPath}`,
+    ].join("\n");
+    const metadata = await inspect();
+    const events: VideoDownloadEvent[] = [];
+    downloader.on("progress", (event) => events.push(event));
+    const completed = waitForStage(events, "complete");
+
+    await downloader.startDownload({ jobId, inspectionId: metadata.inspectionId, quality: 1080 });
+    await completed;
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stage: "downloading", streamId: "137", progress: 50, totalBytes: 4194304 }),
+      expect.objectContaining({ stage: "downloading", streamId: "140", streamLabel: "Audio", progress: 50, totalBytes: 2097152 }),
+    ]));
+  });
+
+  it("uses yt-dlp estimated totals and leaves genuinely unknown totals indeterminate", () => {
+    expect(parseYtDlpProgressLine("WSYNC_PROGRESS:137:avc1:NA:1048576:NA:2097152:524288:2")).toEqual({
+      streamId: "137",
+      streamLabel: "Video",
+      downloadedBytes: 1048576,
+      totalBytes: 2097152,
+      speedBytesPerSecond: 524288,
+      etaSeconds: 2,
+    });
+    expect(parseYtDlpProgressLine("WSYNC_PROGRESS:140:NA:mp4a:1048576:NA:NA:262144:4")).toEqual({
+      streamId: "140",
+      streamLabel: "Audio",
+      downloadedBytes: 1048576,
+      totalBytes: undefined,
+      speedBytesPerSecond: 262144,
+      etaSeconds: 4,
+    });
   });
 });

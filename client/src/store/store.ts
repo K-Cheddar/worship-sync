@@ -3113,6 +3113,16 @@ listenerMiddleware.startListening({
               : {}),
             ...(submittedMoveIntents.length ? { moveIntents: [...submittedMoveIntents] } : {}),
           }));
+          const rechecked = (listenerApi.getState() as RootState).undoable.present;
+          if (rechecked.itemList.loadedOutlineId === selectedList._id &&
+            rechecked.itemLists.selectedList?._id === selectedList._id &&
+            rechecked.itemList.hasPendingUpdate &&
+            !rechecked.itemList.remoteConflicts[selectedList._id]) {
+            // The saved winner may have changed again while the failed save was
+            // settling. If the reducer can now merge the draft safely, retry it
+            // through the normal CAS writer instead of leaving it parked.
+            listenerApi.dispatch(itemListSlice.actions.forceUpdate());
+          }
         }
       } else if (db === dbAtStart) {
         listenerApi.dispatch(itemListSlice.actions.failOutlineResolution(selectedList._id));

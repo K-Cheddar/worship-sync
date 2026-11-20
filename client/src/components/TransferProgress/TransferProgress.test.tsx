@@ -68,6 +68,20 @@ describe("TransferProgress", () => {
     expect(screen.getByRole("progressbar", { name: "First.mp4 progress" })).toHaveAttribute("aria-valuenow", "24");
   });
 
+  it("keeps separate audio and video download details visible beside an indeterminate bar", () => {
+    render(<TransferProgress transfer={{
+      ...base,
+      type: "Video download",
+      name: "Sermon.mp4",
+      progress: null,
+      phase: { key: "downloading", label: "Downloading" },
+      detail: "Video 100% (800 MB of 800 MB) · Audio 20% (200 MB of 1 GB) · 3.2 MB/s · About 1m 24s remaining",
+    }} variant="card" />);
+
+    expect(screen.getByRole("progressbar", { name: "Sermon.mp4 progress" })).toHaveAttribute("aria-valuetext", "Downloading, progress unknown");
+    expect(screen.getByText(/Video 100%.*Audio 20%.*3\.2 MB\/s.*1m 24s remaining/)).toBeInTheDocument();
+  });
+
   it("shows partial completion alongside the actual single transfer progress", () => {
     render(<TransferProgress transfer={{ ...base, status: "partial", progress: 70, phase: { key: "partial", label: "Upload completed with errors" } }} variant="card" />);
     expect(screen.getByText("Completed with errors · 70%")).toBeInTheDocument();

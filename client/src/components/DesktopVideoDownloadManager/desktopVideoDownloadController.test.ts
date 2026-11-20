@@ -244,6 +244,29 @@ describe("desktop video download lifecycle manager", () => {
     expect(harness.transfers.get(`video-download-${jobId}`)?.progress).toBe(58);
   });
 
+  it("derives download percentage from byte totals and preserves byte, speed, and ETA details", () => {
+    const harness = makeHarness();
+    const jobId = harness.start();
+
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: null,
+      downloadedBytes: 184 * 1024 * 1024,
+      totalBytes: 438 * 1024 * 1024,
+      speedBytesPerSecond: 3.2 * 1024 * 1024,
+      etaSeconds: 84,
+    });
+
+    expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({
+      progress: 42,
+      phase: { label: "Downloading" },
+      detail: expect.stringContaining("Downloaded 184.0 MB of 438.0 MB"),
+    });
+    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("3.2 MB/s");
+    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("1m 24s remaining");
+  });
+
   it("switches separate audio and video progress to an indeterminate overall bar", () => {
     const harness = makeHarness();
     const jobId = harness.start();
@@ -255,6 +278,8 @@ describe("desktop video download lifecycle manager", () => {
       streamLabel: "Video",
       downloadedBytes: 800,
       totalBytes: 800,
+      speedBytesPerSecond: 2 * 1024 * 1024,
+      etaSeconds: 0,
     });
     harness.manager.handleProgress({
       jobId,
@@ -264,7 +289,7 @@ describe("desktop video download lifecycle manager", () => {
       streamLabel: "Audio",
       downloadedBytes: 200,
       totalBytes: 1000,
-      speedBytesPerSecond: 400,
+      speedBytesPerSecond: 1.2 * 1024 * 1024,
       etaSeconds: 2,
     });
 
@@ -272,7 +297,10 @@ describe("desktop video download lifecycle manager", () => {
       progress: null,
       detail: expect.stringContaining("Video 100%"),
     });
-    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("Audio 20%");
+    const detail = harness.transfers.get(`video-download-${jobId}`)?.detail ?? "";
+    expect(detail).toContain("Audio 20%");
+    expect(detail).toContain("Video 100% (1 KB of 1 KB) · 2.0 MB/s · About 0 seconds remaining");
+    expect(detail).toContain("Audio 20% (0 KB of 1 KB) · 1.2 MB/s · About 2 seconds remaining");
   });
 
   it("refreshes the same canonical video identity on retry and imports its refreshed thumbnail", async () => {
