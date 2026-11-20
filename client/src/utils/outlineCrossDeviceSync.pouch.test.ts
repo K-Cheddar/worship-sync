@@ -1,7 +1,10 @@
 import "core-js/stable/structured-clone";
 import "fake-indexeddb/auto";
 import PouchDB from "pouchdb-browser";
+import { Cloudinary } from "@cloudinary/url-gen";
 import type { DBItemListDetails, DBItemLists, ServiceItem } from "../types";
+import { formatItemList } from "./formatItemList";
+import { CLOUDINARY_CLOUD_NAME } from "./cloudinaryConfig";
 import { persistItemListsRegistry, registrySnapshot } from "./persistItemListsRegistry";
 import {
   inspectServiceListRevisions,
@@ -33,6 +36,123 @@ const savedMoveMarker = (
 });
 
 describe("two-client outline synchronization with replicated PouchDB state", () => {
+  it.each([
+    ["video", { type: "video", background: "media/sermon-thumbnail" }],
+    ["local video", {
+      type: "video",
+      background: "media/local-video-thumbnail",
+      localVideoFile: {
+        id: "local-video",
+        ownerDeviceId: "device-a",
+        ownerLabel: "Controller A",
+        fileName: "sermon.mp4",
+        contentType: "video/mp4",
+        storagePolicy: "local-only" as const,
+        contentRevision: "revision-1",
+      },
+    }],
+    ["image", {
+      type: "image",
+      background: "media/announcement-image",
+      localImage: {
+        id: "local-image",
+        ownerDeviceId: "device-a",
+        ownerLabel: "Controller A",
+        fileName: "announcement.png",
+        contentType: "image/png",
+        storagePolicy: "local-only" as const,
+      },
+    }],
+    ["heading without a background", { type: "heading" }],
+  ] as Array<[string, Partial<ServiceItem>]>)
+  ("saves a %s deletion against formatted controller rows after an unrelated remote edit", async (_kind, itemFields) => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-formatted-delete-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-formatted-delete-a-${suffix}`);
+    const clientB = new PouchDB(`outline-formatted-delete-b-${suffix}`);
+    const cloud = new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } });
+    const baseline: ServiceItem[] = [
+      { ...row("target", "Target row"), ...itemFields },
+      {
+        ...row("song", "Opening song"),
+        localVideoFile: {
+          id: "surviving-local-video",
+          ownerDeviceId: "device-b",
+          ownerLabel: "Controller B",
+          fileName: "opening.mp4",
+          contentType: "video/mp4",
+          storagePolicy: "local-only",
+        },
+      },
+    ];
+    const displayBaseline = formatItemList(baseline, cloud);
+    const localDraft = displayBaseline.filter(item => item.listId !== "target");
+    const remoteDraft = [baseline[0], { ...baseline[1], name: "Opening song updated" }];
+
+    try {
+      await shared.put({ _id: "outline-formatted-delete", docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await persistServiceListItems(clientB as never, "outline-formatted-delete", remoteDraft, baseline);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+
+      const saved = await persistServiceListItems(
+        clientA as never,
+        "outline-formatted-delete",
+        localDraft,
+        displayBaseline,
+      );
+
+      expect(displayBaseline[0].background === itemFields.background).toBe(!itemFields.background);
+      expect(saved.items).toEqual([remoteDraft[1]]);
+      expect((await clientA.get<DBItemListDetails>("outline-formatted-delete")).items).toEqual(saved.items);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
+  it("safely rebases a formatted deletion across a real CouchDB revision conflict", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-formatted-branches-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-formatted-branches-a-${suffix}`);
+    const clientB = new PouchDB(`outline-formatted-branches-b-${suffix}`);
+    const cloud = new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } });
+    const baseline: ServiceItem[] = [
+      { ...row("video", "Sermon video"), type: "video", background: "media/sermon-thumbnail" },
+      row("song", "Opening song"),
+    ];
+    const formattedBaseline = formatItemList(baseline, cloud);
+    const localDraft = [formattedBaseline[1]];
+    const remoteDraft = [baseline[0], { ...baseline[1], name: "Opening song updated" }];
+    const outlineId = "outline-formatted-branches";
+
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: baseline, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await Promise.all([
+        persistServiceListItems(clientA as never, outlineId, localDraft, formattedBaseline),
+        persistServiceListItems(clientB as never, outlineId, remoteDraft, baseline),
+      ]);
+      await Promise.all([clientA.replicate.to(shared), clientB.replicate.to(shared)]);
+      await clientA.replicate.from(shared);
+
+      const competing = await clientA.get<DBItemListDetails & { _conflicts?: string[] }>(outlineId, { conflicts: true });
+      expect(competing._conflicts).toHaveLength(1);
+      const put = jest.spyOn(clientA, "put");
+      const remove = jest.spyOn(clientA, "remove");
+      const saved = await persistServiceListItems(clientA as never, outlineId, localDraft, formattedBaseline);
+
+      expect(saved.items).toEqual([remoteDraft[1]]);
+      expect((await clientA.get<DBItemListDetails>(outlineId)).items).toEqual(saved.items);
+      expect(put).toHaveBeenCalledTimes(1);
+      expect(remove).not.toHaveBeenCalled();
+      expect((await clientA.get<DBItemListDetails & { _conflicts?: string[] }>(outlineId, { conflicts: true }))._conflicts)
+        .toEqual(competing._conflicts);
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
   it("combines local deletions and a survivor move with a remote insertion across replication", async () => {
     const suffix = `${Date.now()}-${Math.random()}`;
     const shared = new PouchDB(`outline-delete-move-shared-${suffix}`);

@@ -3,6 +3,7 @@ import type { DBItemListDetails, ServiceItem } from "../types";
 import { isPouchConflict } from "./persistOverlayDoc";
 import {
   getOutlineItemConflicts,
+  outlineItemsEqual,
   reconcileOutlineItems,
   type OutlineItemChoices,
   type OutlineMoveIntent,
@@ -422,7 +423,7 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
           const ancestor = revision === branches.winner._rev
             ? branches.winner
             : await db.get(listId, { rev: revision }) as DBItemListDetails;
-          if (isEqual(ancestor.items ?? [], baseline)) {
+          if (outlineItemsEqual(ancestor.items ?? [], baseline)) {
             latestBaselineRevision = revision;
             break;
           }
@@ -432,7 +433,7 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
       }
       // A losing leaf that forked before the Controller's loaded baseline is
       // historical, even when an older ancestor happens to have identical rows.
-      if (branchMerge && isEqual(branchMerge.baseline.items ?? [], baseline) &&
+      if (branchMerge && outlineItemsEqual(branchMerge.baseline.items ?? [], baseline) &&
         branchMerge.baseline._rev === latestBaselineRevision) {
         if (branchMerge.requiresReview) {
           if (branchMerge.itemReview && !branchMerge.documentConflicts.length) {
@@ -489,7 +490,7 @@ async function persistServiceListFieldNow<K extends "items" | "overlays">(
 
     const next = updatedDocument(current, field, nextValue);
     if (field === "items" && baseline && moveIntents.length && current._rev &&
-      isEqual(current.items ?? [], baseline) && sameOutlineRowsIgnoringOrder(baseline, nextValue as ServiceItem[]) &&
+      outlineItemsEqual(current.items ?? [], baseline) && sameOutlineRowsIgnoringOrder(baseline, nextValue as ServiceItem[]) &&
       !isEqual(baseline.map(item => item.listId), (nextValue as ServiceItem[]).map(item => item.listId))) {
       const marker: PersistedOutlineMoveMarker = {
         baseRevision: current._rev,
@@ -536,7 +537,10 @@ export const persistServiceListItems = (
 const sameOutlineRowsIgnoringOrder = (left: ServiceItem[], right: ServiceItem[]) => {
   if (!hasStableRowIds(left) || !hasStableRowIds(right) || left.length !== right.length) return false;
   const rightById = new Map(right.map(item => [item.listId, item]));
-  return left.every(item => isEqual(item, rightById.get(item.listId)));
+  return left.every(item => {
+    const matching = rightById.get(item.listId);
+    return matching !== undefined && outlineItemsEqual([item], [matching]);
+  });
 };
 
 const withoutOutlineRevisionMetadata = (document: DBItemListDetails) =>
@@ -730,7 +734,7 @@ export const resolveServiceListRevisionConflict = async (
   if (
     current.graph.conflictRevisions.length === 0 &&
     winnerHistory.includes(reviewed.graph.winningRevision) &&
-    isEqual(current.winner.items ?? [], selectedItems)
+    outlineItemsEqual(current.winner.items ?? [], selectedItems)
   ) return current.winner;
   if (!sameRevisionGraph(reviewed.graph, current.graph)) {
     throw new ServiceListConflictError(
@@ -754,9 +758,9 @@ export const resolveServiceListRevisionConflict = async (
     const result = reconcileOutlineItems(review.baselineItems, review.localItems, review.remoteItems,
       (conflict) => selection.choices[conflict.key]);
     if (!fresh?.itemReview ||
-      !isEqual(review.baselineItems, fresh.itemReview.baselineItems) ||
-      !isEqual(review.remoteItems, fresh.itemReview.remoteItems) ||
-      result.kind === "conflict" || !isEqual(result.items, selectedItems) || !hasStableRowIds(selectedItems)) {
+      !outlineItemsEqual(review.baselineItems, fresh.itemReview.baselineItems) ||
+      !outlineItemsEqual(review.remoteItems, fresh.itemReview.remoteItems) ||
+      result.kind === "conflict" || !outlineItemsEqual(result.items, selectedItems) || !hasStableRowIds(selectedItems)) {
       throw new Error("The outline choices no longer match the reviewed result");
     }
   }
@@ -773,7 +777,7 @@ export const resolveServiceListRevisionConflict = async (
       ? latest.versions.find((version) => version._rev === selection.revision)
       : undefined;
     if (selection?.kind === "whole" && selection.revision &&
-      (!selectedVersion || !isEqual(selectedVersion.items ?? [], selectedItems))) {
+      (!selectedVersion || !outlineItemsEqual(selectedVersion.items ?? [], selectedItems))) {
       throw new Error("The selected outline version no longer matches its preview");
     }
     const choiceDocument = {

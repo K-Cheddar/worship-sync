@@ -85,3 +85,29 @@ it("shows changed positions for a genuine competing order decision", async () =>
   await user.click(screen.getByRole("button", { name: "Save choices" }));
   expect(onSave).toHaveBeenCalledWith(saved);
 });
+
+it("describes the actual background change for a genuine field conflict", () => {
+  const baseline: ServiceItem[] = [{
+    _id: "video-doc",
+    listId: "video-row",
+    name: "Sermon video",
+    type: "video",
+    background: "media/original-thumbnail",
+  }];
+  const draft = [{ ...baseline[0], background: "media/local-thumbnail" }];
+  const remote = [{ ...baseline[0], background: "media/saved-thumbnail" }];
+
+  render(
+    <OutlineRevisionReview
+      conflict={{ baselineItems: baseline, localItems: draft, remoteItems: remote }}
+      draft={draft}
+      isOpen
+      onClose={() => undefined}
+      onSave={() => undefined}
+    />,
+  );
+
+  expect(screen.getByRole("button", { name: "Saved edit: Background changed" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "My edit: Background changed" })).toBeInTheDocument();
+  expect(screen.queryByText("Keep this setting")).not.toBeInTheDocument();
+});

@@ -72,37 +72,6 @@ export const buildLocalVideoCloudSharePatch = (
   };
 };
 
-export const uploadOwnedLocalVideoToCloud = async (
-  media: MediaType,
-  churchId: string,
-) => {
-  const assetId = media.localVideoFile?.id;
-  if (!assetId) {
-    throw new Error("This video is not saved on this device.");
-  }
-  if (await canUploadLocalVideoAssetNatively()) {
-    const result = await uploadLocalVideoAssetToMux(
-      assetId,
-      media.localVideoFile!.fileName || `${media.name}.mp4`,
-      { churchId, mediaId: media.id, title: media.name },
-    );
-    return buildLocalVideoCloudSharePatch(media, result, churchId);
-  }
-  const fileParts = await getLocalVideoFileBlob(assetId);
-  if (!fileParts) {
-    throw new Error("This video is not available on this device.");
-  }
-  const file = new File([fileParts.blob], fileParts.fileName, {
-    type: fileParts.contentType || "video/mp4",
-  });
-  const result = await uploadVideoToMux(file, {
-    churchId,
-    mediaId: media.id,
-    title: media.name,
-  });
-  return buildLocalVideoCloudSharePatch(media, result, churchId);
-};
-
 export const createMediaCloudUploadRequest = (
   deviceId: string,
   label: string,
@@ -393,7 +362,7 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
         publish();
         let cursor = 0;
         const uploadOne = async (entry: CloudShareFile) => {
-          const media = entry.media;
+          let media = entry.media;
           const claim = claimMediaUpload(media.id);
           if (!claim) {
             entry.status = "failed";
@@ -435,6 +404,15 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
           entry.progress = 0;
           publish();
           try {
+            if (retryFailedOnly) {
+              const latestMedia = reduxStore.getState().media.list.find((item) => item.id === media.id);
+              if (!latestMedia) throw new Error("This video was removed from Media Library. Select an available item to upload.");
+              if (!canUploadLocalMediaToCloud(latestMedia, deviceId)) {
+                throw new Error("This video is no longer available for cloud upload. Refresh Media Library and select the current item.");
+              }
+              media = latestMedia;
+              entry.media = latestMedia;
+            }
             if (media.localImage) {
               const assetId = media.localImage.id;
               if (retryFailedOnly) {
@@ -500,6 +478,11 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
               }
               const callbacks: MuxUploadCallbacks = {
                 onProgress: (value) => { entry.progress = Math.min(88, value * 0.88); entry.phase = "Uploading video"; publish(); },
+                onStageUpdate: (stage, message) => {
+                  entry.phase = message;
+                  if (stage === "processing") entry.progress = null;
+                  publish();
+                },
                 onStatusUpdate: (message) => { entry.phase = message; publish(); },
                 isCancelled: () => batch.cancelled || batch.cancelledMediaIds.has(media.id),
                 setXhr: (xhr) => batch.xhrs.set(media.id, xhr),
@@ -554,7 +537,21 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
               entry.phase = "Updating Media";
               entry.progress = 95;
               publish();
-              dispatch(updateMediaItemFields({ id: media.id, patch: buildLocalVideoCloudSharePatch(media, result, churchId) }));
+              const currentMedia = reduxStore.getState().media.list.find((item) => item.id === media.id);
+              if (!currentMedia || currentMedia.localVideoFile?.id !== media.localVideoFile.id ||
+                  currentMedia.localVideoFile.contentHash !== media.localVideoFile.contentHash) {
+                const sourceChanged = new Error("This video's local source changed or was removed before the cloud upload finished. Select the current item in Media Library to start a new upload.");
+                try {
+                  await deleteChurchMuxAsset(churchId, result.assetId);
+                } catch (cleanupError) {
+                  const retry = async () => { await deleteChurchMuxAsset(churchId, result.assetId); };
+                  claim.failCleanup(cleanupError instanceof Error ? cleanupError : new Error("Mux cleanup failed."), retry);
+                  entry.retryCleanup = retry;
+                  throw new Error(`${sourceChanged.message} Cloud cleanup needs attention: ${cleanupError instanceof Error ? cleanupError.message : "retry cleanup"}`);
+                }
+                throw sourceChanged;
+              }
+              dispatch(updateMediaItemFields({ id: media.id, patch: buildLocalVideoCloudSharePatch(currentMedia, result, churchId) }));
               entry.status = "complete";
               entry.progress = 100;
               entry.phase = "Upload complete";

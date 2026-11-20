@@ -111,6 +111,16 @@ jobs:
         env:
           ELECTRON_CACHE: ${{ runner.temp }}/electron
 
+      - name: Test Windows video tool preparation
+        if: matrix.platform == 'win'
+        run: npm run test:video-tools:prepare
+        working-directory: client
+
+      - name: Prepare and verify Windows video tools
+        if: matrix.platform == 'win'
+        run: node scripts/prepare-video-tools.mjs
+        working-directory: client
+
       - name: Build Electron app
         run: npm run build:electron
         working-directory: client

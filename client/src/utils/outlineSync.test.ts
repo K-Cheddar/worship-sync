@@ -1,5 +1,8 @@
 import type { ServiceItem } from "../types";
-import { createOutlineMoveIntent, getOutlineItemConflicts, reconcileOutlineItems } from "./outlineSync";
+import { Cloudinary } from "@cloudinary/url-gen";
+import { createOutlineMoveIntent, getOutlineItemConflicts, outlineBackgroundsEqual, reconcileOutlineItems } from "./outlineSync";
+import { formatItemList } from "./formatItemList";
+import { CLOUDINARY_CLOUD_NAME } from "./cloudinaryConfig";
 
 const row = (listId: string, name: string, type = "song"): ServiceItem => ({
   _id: `${listId}-doc`,
@@ -45,6 +48,128 @@ describe("reconcileOutlineItems", () => {
       kind: "conflict",
       items: local,
       remoteItems: remote,
+    });
+  });
+
+  it("treats the generated Cloudinary display URL and its stored ID as the same background", () => {
+    const baseline = [
+      { ...row("row-a", "Video"), type: "video", background: "media/sermon-thumbnail" },
+      row("row-b", "Song"),
+    ];
+    const formattedBaseline = formatItemList(
+      baseline,
+      new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } }),
+    );
+    const local = [formattedBaseline[1]];
+    const remote = JSON.parse(JSON.stringify(baseline)) as ServiceItem[];
+
+    const result = reconcileOutlineItems(formattedBaseline, local, remote);
+
+    expect(formattedBaseline[0].background).not.toBe(baseline[0].background);
+    expect(result).toEqual({ kind: "merged", items: [remote[1]], remoteItems: remote });
+  });
+
+  it("keeps matching public IDs from other Cloudinary accounts distinct", () => {
+    const baseline = [{ ...row("row-a", "Video"), type: "video", background: "media/sermon-thumbnail" }];
+    const formattedBaseline = formatItemList(
+      baseline,
+      new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } }),
+    );
+    const generated = formattedBaseline[0].background as string;
+    const otherAccount = generated.replace(
+      `/res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/`,
+      "/res.cloudinary.com/another-account/",
+    );
+    const remote = [{ ...baseline[0], background: otherAccount }];
+
+    expect(outlineBackgroundsEqual("media/sermon-thumbnail", generated)).toBe(true);
+    expect(outlineBackgroundsEqual("media/sermon-thumbnail", otherAccount)).toBe(false);
+    expect(reconcileOutlineItems(formattedBaseline, [], remote).kind).toBe("conflict");
+  });
+
+  it("treats missing optional JSON values as persisted equivalents without ignoring media fields", () => {
+    const localVideoFile = {
+      id: "local-video",
+      ownerDeviceId: "device-a",
+      ownerLabel: "Controller A",
+      fileName: "sermon.mp4",
+      contentType: "video/mp4",
+      storagePolicy: "local-only" as const,
+      contentRevision: "revision-1",
+    };
+    const baseline = [{
+      ...row("row-a", "Local video"),
+      type: "video",
+      background: "media/sermon-thumbnail",
+      localVideoFile: { ...localVideoFile, cloudUrl: undefined },
+    }];
+    const formattedBaseline = formatItemList(
+      baseline,
+      new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } }),
+    );
+    const local: ServiceItem[] = [];
+    const remote = JSON.parse(JSON.stringify(baseline)) as ServiceItem[];
+    const result = reconcileOutlineItems(formattedBaseline, local, remote);
+
+    expect(result.kind).toBe("merged");
+    expect(result.items).toEqual([]);
+
+    const editedRemote = [{
+      ...remote[0],
+      localVideoFile: { ...localVideoFile, contentRevision: "revision-2" },
+    }];
+    expect(reconcileOutlineItems(formattedBaseline, local, editedRemote).kind).toBe("conflict");
+  });
+
+  it("keeps a meaningful remote background edit in delete-edit review", () => {
+    const baseline = [{ ...row("row-a", "Video"), type: "video", background: "media/old-thumbnail" }];
+    const formattedBaseline = formatItemList(
+      baseline,
+      new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } }),
+    );
+    const remote = [{ ...baseline[0], background: "media/new-thumbnail" }];
+
+    expect(reconcileOutlineItems(formattedBaseline, [], remote).kind).toBe("conflict");
+    expect(getOutlineItemConflicts(formattedBaseline, [], remote)).toEqual([
+      expect.objectContaining({ reason: "delete-edit", listId: "row-a" }),
+    ]);
+
+    const transformedRemote = [{
+      ...baseline[0],
+      background: "https://res.cloudinary.com/portable-media/image/upload/c_fill/v1/media/old-thumbnail",
+    }];
+    expect(reconcileOutlineItems(formattedBaseline, [], transformedRemote).kind).toBe("conflict");
+  });
+
+  it("merges edits to separate fields on the same row", () => {
+    const baseline = [{ ...row("row-a", "Video"), background: "old-background" }];
+    const local = [{ ...baseline[0], name: "Local title" }];
+    const remote = [{ ...baseline[0], background: "remote-background" }];
+
+    expect(reconcileOutlineItems(baseline, local, remote)).toEqual({
+      kind: "merged",
+      items: [{ ...baseline[0], name: "Local title", background: "remote-background" }],
+      remoteItems: remote,
+    });
+  });
+
+  it("merges a same-field edit when both controllers choose the same value", () => {
+    const baseline = [row("row-a", "Base")];
+    const local = [{ ...baseline[0], name: "Shared edit" }];
+    const remote = [{ ...baseline[0], name: "Shared edit" }];
+
+    expect(reconcileOutlineItems(baseline, local, remote)).toEqual({
+      kind: "merged", items: remote, remoteItems: remote,
+    });
+  });
+
+  it("merges deletion of the same unchanged row from both controllers", () => {
+    const baseline = [row("row-a", "A"), row("row-b", "B")];
+    const local = [baseline[1]];
+    const remote = [baseline[1]];
+
+    expect(reconcileOutlineItems(baseline, local, remote)).toEqual({
+      kind: "merged", items: local, remoteItems: remote,
     });
   });
 
