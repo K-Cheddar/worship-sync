@@ -14,6 +14,7 @@ import { formatSong } from "../utils/overflow";
 import { getMonitorLayoutForSlides } from "../utils/monitorSlideFormatter";
 import { createOutlineMoveIntent } from "../utils/outlineSync";
 import { formatItemList } from "../utils/formatItemList";
+import { CLOUDINARY_CLOUD_NAME } from "../utils/cloudinaryConfig";
 
 const mockedCrossWindowLocks = new Map<string, Promise<void>>();
 if (typeof navigator !== "undefined") {
@@ -8983,7 +8984,7 @@ describe("item list outline persistence", () => {
     jest.useFakeTimers();
     const database = new PouchDB(`outline-formatted-controller-${Date.now()}-${Math.random()}`, { adapter: "idb" });
     const remoteController = new PouchDB(`outline-formatted-remote-${Date.now()}-${Math.random()}`, { adapter: "idb" });
-    const cloud = new Cloudinary({ cloud: { cloudName: "worshipsync" } });
+    const cloud = new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } });
     const video = createServiceItem({
       name: "Sermon video",
       _id: "video-doc",

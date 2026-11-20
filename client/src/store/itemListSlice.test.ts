@@ -22,6 +22,7 @@ import { createServiceItem } from "../test/fixtures";
 import type { ServiceItem } from "../types";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { formatItemList } from "../utils/formatItemList";
+import { CLOUDINARY_CLOUD_NAME } from "../utils/cloudinaryConfig";
 import generateRandomId from "../utils/generateRandomId";
 import { createOutlineMoveIntent } from "../utils/outlineSync";
 
@@ -407,7 +408,7 @@ describe("itemListSlice", () => {
     });
 
     it("keeps display backgrounds formatted when a raw saved row is acknowledged", () => {
-      const cloud = new Cloudinary({ cloud: { cloudName: "worshipsync" } });
+      const cloud = new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } });
       const baseline = [
         createServiceItem({ name: "Video", _id: "video", listId: "video-row", background: "media/video" }),
         createServiceItem({ name: "Song", _id: "song", listId: "song-row", background: "media/song-background" }),
