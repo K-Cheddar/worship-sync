@@ -1,3 +1,11 @@
+## [2.53.1](https://github.com/K-Cheddar/worship-sync/compare/v2.53.0...v2.53.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* Improve download functionality ([0690b44](https://github.com/K-Cheddar/worship-sync/commit/0690b44d4f1f39db31e8e0fb05d3f345fec78bac))
+* show download progress ([fc915fd](https://github.com/K-Cheddar/worship-sync/commit/fc915fde3be7e95c27d367b0b892170c602711ee))
+
 # [2.53.0](https://github.com/K-Cheddar/worship-sync/compare/v2.52.0...v2.53.0) (2026-11-20)
 
 
