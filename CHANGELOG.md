@@ -1,3 +1,10 @@
+## [2.53.2](https://github.com/K-Cheddar/worship-sync/compare/v2.53.1...v2.53.2) (2026-11-20)
+
+
+### Bug Fixes
+
+* Correct windows build ([d597316](https://github.com/K-Cheddar/worship-sync/commit/d5973162995d2ec57940f30c6d323083c3f41fd7))
+
 ## [2.53.1](https://github.com/K-Cheddar/worship-sync/compare/v2.53.0...v2.53.1) (2026-11-20)
 
 
