@@ -49,6 +49,15 @@ For significant persistence/async changes, explicitly open and apply the applica
 
 `code-review` orchestrates the review; these specialized guides supply the detailed domain rules. Do not duplicate their contents here.
 
+## Regression-oriented evidence gates
+
+Apply each gate when the changed code enters that production path. Derive only the variants that can reach the modified branch; do not create a mechanical Cartesian product. For each meaningful variant, record behavior evidence or a concrete reason it is unaffected.
+
+- **Shared branches:** identify supported legacy and sibling consumers and relevant states (for example, legacy/V2, clean/dirty, local/remote, loading/ready/unavailable, live/preview, success/failure/retry, or original/changed owner). Cover meaningful combinations selected from the branch conditions.
+- **Rendering and fallbacks:** trace final URL selection and later overrides, then inspect the rendered current/previous layers, opacity, transitions, loading/failure behavior, and live-versus-preview surface. A fallback node in the DOM does not prove it is visible.
+- **Stateful listeners:** trace `action -> state change -> listener predicate -> effect -> subsequent action`, including error, replication, acknowledgement, in-flight, and retry actions. If a failure can retrigger the effect, require a controlled failure test that asserts actual operation counts after relevant timers advance and checks explicit retry and retained pending intent.
+- **Changed tests:** record the exact command, whether it was inspected or executed (passed, failed, or not run), whether CI runs that command, the test runtime/module mode, and any production-versus-fixture differences. Lint, type-check, and build results do not establish that browser interactions executed.
+
 ## Required cross-boundary passes
 
 | Boundary | Questions to answer |
@@ -183,20 +192,15 @@ State required verification not completed separately from optional additional-co
 
 For each relevant review, record production-context verification as `Pass`, `Finding`, `Unverified`, or `Not applicable` with a reason. A missing, failing, or unperformed required context check prevents `Ready`; component tests that add production-missing context do not satisfy it.
 
-For relevant high-risk workflows, use this concise evidence gate in this section (extend the existing stateful evidence table, do not add a second checklist):
+For each significant affected workflow, use this relevant-path verification table. Keep it scoped to meaningful production branches and merge coverage and stateful evidence into the same row:
 
-| Invariant | Production entry / authoritative owner | Consumer and writer | Async or persistence boundary / adversarial sequence | Exact test evidence | Result |
-| --- | --- | --- | --- | --- | --- |
-| Latest intent survives | Route/provider/store and concrete document/field | Both the reader and the committing writer | Older save starts -> newer save commits -> older retries | Exact test and controlled transition; inspected / executed, or **Missing test** | Pass / Finding / Unverified |
+| Changed production path | Relevant sibling and legacy consumers | Main failure and compatibility scenarios | Exact test command, execution result, CI inclusion, and runtime context | Status |
+| --- | --- | --- | --- | --- |
+| [Specific changed branch / path] | [Relevant siblings and legacy consumers] | [Main failure and compatibility scenarios] | [Exact command; run status; CI inclusion; runtime context or gap] | Pass / Finding / Unverified |
 
-Trace at least one concrete adversarial sequence per relevant failure mechanism. Inspect what the test actually controls and asserts; related unit tests or matching titles cannot make a high-risk review complete. Distinguish a confirmed defect from a risk or coverage gap. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up. The [process-validation counterexamples](references/adversarial-review-validation.md) calibrate this gate.
+Trace at least one concrete adversarial sequence per relevant failure mechanism. Inspect what the test actually controls and asserts; related test names cannot substitute for the path. Mark required behavior without adequate evidence **Unverified**. A relevant high-risk path left unexamined or required verification left incomplete means `Not ready`; reserve `Ready with minor follow-up` for non-blocking, low-risk follow-up. The [process-validation counterexamples](references/adversarial-review-validation.md) calibrate this gate.
 
 Declare comparison coverage explicitly: **Entire change set inspected**, **Risk-scoped review only** (name excluded areas), or **Tool-limited / truncated comparison** (name missing coverage). Check pagination, caps, and truncation in GitHub/API results; retrieve the remaining relevant files or record incomplete coverage. A capped response is never evidence of the complete diff. Separately list tests **inspected** and tests **actually executed**, with results.
-
-For substantial reviews, include this concise coverage ledger; group tightly coupled files by workflow. A sampled review must say `Risk-scoped review only` and list exclusions.
-
-| Workflow / changed path | Production path and downstream consumer | Tests inspected / executed | Skipped area and reason |
-| --- | --- | --- | --- |
 
 State the review scope: **fix verification** checks the reported defect; **workflow review** checks affected end-to-end paths and related failure scenarios; **production-readiness review** checks release-critical branch scope, required checks, unresolved findings, and regression risk. A passing focused review supports only its stated scope. Do not call a branch production-ready unless that broader review and its verification were actually performed; say explicitly when tests, CI, builds, or runtime reproduction were not performed.
 

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import DisplayBoxTransitionStage, {
   type DisplayBoxTransitionSnapshot,
@@ -185,12 +185,17 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
   });
 
   it("crossfades a prepared frame without waiting for playback to advance", async () => {
+    let resolveActivationPlay: (() => void) | undefined;
+    let activationPlayResolved = false;
     const play = jest.fn(() => {
       if (play.mock.calls.length <= mockPoolCandidates.length) {
         return Promise.resolve();
       }
       return new Promise<void>((resolve) => {
-        window.setTimeout(resolve, 200);
+        resolveActivationPlay = () => {
+          activationPlayResolved = true;
+          resolve();
+        };
       });
     });
     Object.defineProperty(HTMLMediaElement.prototype, "play", {
@@ -201,7 +206,7 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
 
     const first = snapshot("prepared-a", "A", "remote:prepared-a");
     const second = snapshot("prepared-b", "B", "remote:prepared-b");
-  const { rerender } = render(
+    const { rerender } = render(
       <DisplayBoxTransitionStage
         snapshot={first}
         shouldAnimate
@@ -214,8 +219,8 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
         }}
         renderLane={renderLane}
       />,
-  );
-  requestElectronMediaSurfaceDiagnostics();
+    );
+    act(() => requestElectronMediaSurfaceDiagnostics());
 
     await waitFor(() =>
       expect(screen.getByTestId("electron-media-surface-remote:prepared-a")).toHaveAttribute(
@@ -246,20 +251,30 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
     );
 
     await waitFor(() => expect(play).toHaveBeenCalledTimes(3));
-    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
-      "data-transition-phase",
-      "animating",
+    await waitFor(() =>
+      expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+        "data-transition-phase",
+        "animating",
+      ),
     );
+    expect(activationPlayResolved).toBe(false);
     const fadeCount = mockTimeline.fromTo.mock.calls.length;
     expect(fadeCount).toBeGreaterThan(0);
 
+    await act(async () => {
+      resolveActivationPlay?.();
+      await Promise.resolve();
+    });
     await waitFor(() => expect(mockFirstAdvancingFrameCallback).toBeDefined());
     expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
       "data-transition-phase",
       "animating",
     );
 
-    mockFirstAdvancingFrameCallback?.();
+    await act(async () => {
+      mockFirstAdvancingFrameCallback?.();
+      await Promise.resolve();
+    });
     await waitFor(() =>
       expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
         "data-transition-phase",
@@ -320,11 +335,11 @@ describe("DisplayBoxTransitionStage prepared timing", () => {
         }),
       );
     });
-    expect(preparedB?.sendToPlayResolvedMs).toBeGreaterThanOrEqual(180);
-    expect(preparedB?.sendToPlayResolvedMs).toBeLessThan(300);
-    expect(preparedB?.sendToFirstAdvancingFrameMs).toBeGreaterThanOrEqual(180);
     expect(preparedB?.sendToTransitionStartMs).toBeLessThan(
       preparedB?.sendToPlayResolvedMs ?? Number.NEGATIVE_INFINITY,
+    );
+    expect(preparedB?.sendToPlayResolvedMs).toBeLessThanOrEqual(
+      preparedB?.sendToFirstAdvancingFrameMs ?? Number.NEGATIVE_INFINITY,
     );
   });
 

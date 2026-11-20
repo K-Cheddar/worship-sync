@@ -163,7 +163,7 @@ try {
       await page.getByRole('navigation',{name:'Services pages'}).getByRole('tab',{name:'Service setup',exact:true}).click();
       await page.getByRole('region',{name:'Fixture page'}).getByText('/teams-and-services/service-setup',{exact:true}).waitFor();
       await page.reload();
-      await page.waitForFunction(()=>location.hash.includes('/teams-and-services/service-setup')&&document.querySelector('[data-mobile-header-scroll-owner]')?.scrollHeight>1000&&document.querySelector('[aria-label="Fixture page"] h2')?.textContent==='/teams-and-services/service-setup');
+      await page.waitForFunction(()=>window.location.hash.includes('/teams-and-services/service-setup')&&document.querySelector('[data-mobile-header-scroll-owner]')?.scrollHeight>1000&&document.querySelector('[aria-label="Fixture page"] h2')?.textContent==='/teams-and-services/service-setup');
       const strip=page.getByRole('navigation',{name:'Services pages'});
       assert.equal(await strip.locator('svg').count(),0);
       await page.waitForFunction(()=>{
@@ -485,7 +485,7 @@ try {
         firstIemRow.getByRole('combobox').boundingBox(),
         firstIemRow.getByRole('button',{name:'Remove IEM 1'}).boundingBox(),
       ]);
-      assert(colorBox&&nameBox&&typeBox&&removeBox,`IEM editor controls are missing at mobile width ${await page.evaluate(()=>innerWidth)}`);
+      assert(colorBox&&nameBox&&typeBox&&removeBox,`IEM editor controls are missing at mobile width ${await page.evaluate(()=>window.innerWidth)}`);
       const colorCenterY=colorBox.y+colorBox.height/2;
       const removeCenterY=removeBox.y+removeBox.height/2;
       assert(Math.abs(colorCenterY-removeCenterY)<=1&&colorBox.x<removeBox.x&&nameBox.y>colorBox.y&&typeBox.y>nameBox.y,`mobile IEM controls lost their color/delete first row and stacked fields: ${JSON.stringify({colorBox,nameBox,typeBox,removeBox})}`);

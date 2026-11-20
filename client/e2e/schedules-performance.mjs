@@ -172,7 +172,7 @@ try {
     profile: window.__schedulesProfile,
     memberDetailsRenderMs: window.__schedulesProfile.memberDetailsMs,
     memberDetailsRenderCount: window.__schedulesProfile.memberDetailsCount,
-    url: location.hash,
+    url: window.location.hash,
     scheduleModuleLoaded: Boolean(window.__schedulesPageModuleLoaded),
     moduleResources: performance.getEntriesByType("resource")
       .filter(({ name }) => /TeamsSchedulesPage|ScheduleTab|teamSchedulePeriod/.test(name))
@@ -456,7 +456,7 @@ try {
     const productionVisit = await productionPage.evaluate(() => ({
       startedAtMs: window.__profileVisitStart,
       durationMs: performance.now() - window.__profileVisitStart,
-      url: location.hash,
+      url: window.location.hash,
       profile: window.__schedulesProfile,
       memberDetailsRenderMs: window.__schedulesProfile.memberDetailsMs,
       memberDetailsRenderCount: window.__schedulesProfile.memberDetailsCount,

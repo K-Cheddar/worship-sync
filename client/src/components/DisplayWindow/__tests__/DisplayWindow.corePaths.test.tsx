@@ -1,5 +1,5 @@
-import { act, render, screen } from "@testing-library/react";
-import { useEffect, type ReactNode } from "react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { useEffect, type ComponentType, type ReactNode } from "react";
 import DisplayWindow from "../DisplayWindow";
 import type { Box, MediaType } from "../../../types";
 import type { LocalVideoFileResolution } from "../../../hooks/useLocalVideoFileUrl";
@@ -13,8 +13,14 @@ const notLocalVideoFileResolution: LocalVideoFileResolution = {
   status: "not-local",
 };
 let mockLocalVideoFileResolution = notLocalVideoFileResolution;
-const mockUseLocalVideoFileUrl = jest.fn((value: unknown) =>
-  value ? mockLocalVideoFileResolution : notLocalVideoFileResolution,
+let mockLocalVideoThumbnailResolution = notLocalVideoFileResolution;
+let mockRenderActualDisplayBox = false;
+const mockUseLocalVideoFileUrl = jest.fn((value: unknown, purpose?: string) =>
+  !value
+    ? notLocalVideoFileResolution
+    : purpose === "thumbnail"
+      ? mockLocalVideoThumbnailResolution
+      : mockLocalVideoFileResolution,
 );
 const mockPublishMediaPreparationManifest = jest.fn();
 const mockRemoteMediaPreparationManifest = jest.fn(() => ({
@@ -85,6 +91,15 @@ type MonitorViewMockProps = {
   effectiveShowTimer?: boolean;
   currentMediaLayer?: ReactNode;
 };
+type DisplayBoxMockProps = {
+  box: Box;
+  prevBox?: Box;
+  isPrev?: boolean;
+  isWindowVideoLoaded?: boolean;
+  showLocalSourceStatus?: boolean;
+  onPaintReadyChange?: (ready: boolean) => void;
+  [key: string]: unknown;
+};
 
 jest.mock("gsap", () => ({
   __esModule: true,
@@ -97,6 +112,13 @@ jest.mock("gsap", () => ({
   },
 }));
 
+jest.mock("@gsap/react", () => ({
+  useGSAP: (callback: () => void, config?: { dependencies?: unknown[] }) => {
+    const React = jest.requireActual("react");
+    React.useLayoutEffect(callback, [...(config?.dependencies ?? []), callback]);
+  },
+}));
+
 jest.mock("../../../hooks", () => ({
   useSelector: (selector: (state: unknown) => unknown) =>
     mockUseSelector(selector),
@@ -104,12 +126,21 @@ jest.mock("../../../hooks", () => ({
 
 jest.mock("../../../hooks/useCachedMediaUrl", () => ({
   useCachedVideoUrl: (url?: string) => mockUseCachedVideoUrl(url),
+  useCachedMediaUrl: (url?: string) => url,
+  useResolvedCachedMediaUrl: (url?: string) => url,
 }));
 jest.mock("../../../hooks/useLocalVideoFileUrl", () => ({
-  useLocalVideoFileUrl: (value: unknown) =>
-    mockUseLocalVideoFileUrl(value),
+  useLocalVideoFileUrl: (value: unknown, purpose?: string) =>
+    mockUseLocalVideoFileUrl(value, purpose),
   isUnavailableLocalVideoFile: (resolution: LocalVideoFileResolution) =>
     resolution.isLocalVideoFile && resolution.status === "unavailable",
+}));
+jest.mock("../../../hooks/useLocalImageUrl", () => ({
+  useLocalImageUrl: () => ({
+    isLocalImage: false,
+    isOwner: false,
+    status: "not-local",
+  }),
 }));
 
 jest.mock("../../../hooks/useMediaPreparationManifest", () => ({
@@ -124,26 +155,36 @@ jest.mock("../../../hooks/useMediaPreparationManifest", () => ({
     mockRemoteMediaPreparationManifest(...args),
 }));
 
+jest.mock("../../../hooks/useServiceVideoCandidates", () => ({
+  useServiceVideoCandidates: () => ({
+    candidates: [],
+    diagnostics: [],
+    discovery: { items: [] },
+    poolCapacity: 0,
+    performanceClass: "normal",
+    posterUrls: [],
+  }),
+}));
+
 jest.mock("../DisplayBox", () => ({
   __esModule: true,
-  default: function MockDisplayBox({
-    box,
-    prevBox,
-    isPrev,
-    isWindowVideoLoaded,
-    showLocalSourceStatus,
-    onPaintReadyChange,
-  }: {
-    box: Box;
-    prevBox?: Box;
-    isPrev?: boolean;
-    isWindowVideoLoaded?: boolean;
-    showLocalSourceStatus?: boolean;
-    onPaintReadyChange?: (ready: boolean) => void;
-  }) {
+  default: function MockDisplayBox(props: DisplayBoxMockProps) {
+    const {
+      box,
+      prevBox,
+      isPrev,
+      isWindowVideoLoaded,
+      showLocalSourceStatus,
+      onPaintReadyChange,
+    } = props;
     useEffect(() => {
-      onPaintReadyChange?.(true);
+      if (!mockRenderActualDisplayBox) onPaintReadyChange?.(true);
     }, [onPaintReadyChange]);
+    if (mockRenderActualDisplayBox) {
+      const ActualDisplayBox = jest.requireActual("../DisplayBox")
+        .default as ComponentType<DisplayBoxMockProps>;
+      return <ActualDisplayBox {...props} />;
+    }
     return (
       <div
         data-testid={isPrev ? "display-box-prev" : "display-box"}
@@ -666,6 +707,8 @@ describe("DisplayWindow core paths", () => {
     mockDisplayTransitionComplete = undefined;
     mockLocalVideoViewInstanceCounter = 0;
     mockLocalVideoFileResolution = notLocalVideoFileResolution;
+    mockLocalVideoThumbnailResolution = notLocalVideoFileResolution;
+    mockRenderActualDisplayBox = false;
     setServerTimeOffset(0);
     mockUseCachedVideoUrl.mockImplementation((url?: string) => url);
     mockRemoteMediaPreparationManifest.mockReturnValue({
@@ -924,6 +967,74 @@ describe("DisplayWindow core paths", () => {
     expect(container).not.toHaveTextContent(
       "Local video unavailable on this device",
     );
+  });
+
+  it("keeps the real projector lane black when a retained local video still remains available", async () => {
+    mockRenderActualDisplayBox = true;
+    const savedStill = "blob:projector-retained-video-still";
+    mockLocalVideoFileResolution = {
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready",
+      url: "worshipsync-media://asset/video-1",
+    };
+    mockLocalVideoThumbnailResolution = {
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready",
+      url: savedStill,
+    };
+    const box: Box = {
+      ...unavailableLocalVideoBox,
+      mediaInfo: {
+        ...unavailableLocalVideoBox.mediaInfo!,
+        placeholderImage: savedStill,
+      } as MediaType,
+    };
+    const props = {
+      displayType: "projector" as const,
+      outputId: "projector",
+      boxes: [box],
+      shouldPlayVideo: true,
+      shouldAnimate: true,
+    };
+    const { rerender } = render(<DisplayWindow {...props} />);
+
+    expect(await screen.findByTestId("file-video-fallback")).toHaveAttribute(
+      "src",
+      savedStill,
+    );
+
+    mockLocalVideoFileResolution = {
+      ...mockLocalVideoFileResolution,
+      isOwner: false,
+      status: "unavailable",
+      url: undefined,
+    };
+    rerender(<DisplayWindow {...props} />);
+
+    const liveOutput = within(screen.getByTestId("current-display-layer"));
+    await waitFor(() => {
+      expect(liveOutput.getByTestId("display-box-transition-stage")).toHaveAttribute(
+        "data-transition-phase",
+        "animating",
+      );
+    });
+    expect(
+      liveOutput.getByTestId("unavailable-local-video-black-screen"),
+    ).toHaveClass("bg-black");
+    expect(
+      liveOutput.queryByTestId("display-box-local-video-thumbnail"),
+    ).not.toBeInTheDocument();
+    act(() => mockDisplayTransitionComplete?.());
+
+    expect(
+      await liveOutput.findByTestId("unavailable-local-video-black-screen"),
+    ).toHaveClass("bg-black");
+    expect(
+      liveOutput.queryByTestId("display-box-local-video-thumbnail"),
+    ).not.toBeInTheDocument();
+    expect(liveOutput.queryByTestId("file-video-fallback")).not.toBeInTheDocument();
   });
 
   it("renders monitor mode through MonitorView with next-slide and clock/timer flags", () => {

@@ -1,6 +1,9 @@
 name: Checks
 
 on:
+  push:
+    branches:
+      - in-progress
   pull_request:
   workflow_dispatch:
 
@@ -8,7 +11,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: checks-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  # Separate event/repository groups keep automated runs and manual reruns isolated.
+  # New runs supersede older runs for the same push branch, PR, or manual ref.
+  group: checks-${{ github.workflow }}-${{ github.repository }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -90,6 +95,9 @@ jobs:
 
       - name: Install Chromium for browser integration
         run: npx playwright install --with-deps chromium
+
+      - name: Run unauthenticated schedule quick-member browser fixture
+        run: npm run test:e2e:schedule-quick-member --prefix client
 
       - name: Build client for server browser integration
         run: npm run build:heroku --prefix client
