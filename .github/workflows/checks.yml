@@ -11,7 +11,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: checks-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  # Separate event/repository groups keep automated runs and manual reruns isolated.
+  # New runs supersede older runs for the same push branch, PR, or manual ref.
+  group: checks-${{ github.workflow }}-${{ github.repository }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
