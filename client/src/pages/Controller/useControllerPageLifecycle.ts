@@ -11,6 +11,8 @@ import {
   isControllerMediaRouteFoldersDocId,
   getControllerMediaRouteFoldersDocId,
   MONITOR_SETTINGS_POUCH_ID,
+  MediaFolder,
+  MediaType,
   PREFERENCES_POUCH_ID,
   PreferencesClusterRemoteDoc,
   QUICK_LINKS_POUCH_ID,
@@ -32,6 +34,7 @@ import {
   updateOverlaysByIdFromRemote,
 } from "../../store/overlaysSlice";
 import { formatItemList } from "../../utils/formatItemList";
+import { outlineItemsEqual } from "../../utils/outlineSync";
 import { setMediaCacheMap } from "../../store/mediaCacheMapSlice";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
@@ -75,8 +78,10 @@ import {
 } from "../../store/mediaSlice";
 import {
   loadMediaLibrary as readMediaLibrary,
+  normalizeMediaDoc,
   parseMediaReplicationDoc,
   requireMediaLibraryV2,
+  type MediaReplicationChange,
 } from "../../utils/mediaDocUtils";
 import { setIsInitialized as setOverlaysIsInitialized } from "../../store/overlaysSlice";
 import { forceUpdate as forceOverlaysUpdate } from "../../store/overlaysSlice";
@@ -104,9 +109,40 @@ import type { ItemContentOwner } from "../../types";
 import { getActiveContentDatabaseOwner, getContentDatabaseForOwner } from "../../store/deferredItemMutations";
 import {
   getContentDatabaseSessionToken,
+  hasVerifiedInitialContentReplication,
   subscribeToContentActivity,
 } from "../../utils/contentReplicationActivity";
 import { reconcileConcurrentOutlineMoves } from "../../utils/persistServiceListField";
+
+type PendingMediaReplicationChange = {
+  revision: number;
+  change: MediaReplicationChange;
+};
+
+const MAX_MEDIA_SNAPSHOT_REREADS = 2;
+
+const mergePendingMediaReplicationChanges = (
+  snapshot: { list: MediaType[]; folders: MediaFolder[] },
+  changes: Map<string, PendingMediaReplicationChange>,
+) => {
+  let list = [...snapshot.list];
+  let folders = snapshot.folders;
+  const orderedChanges = [...changes.values()].sort((left, right) => left.revision - right.revision);
+
+  for (const { change } of orderedChanges) {
+    if (change.kind === "folders") {
+      folders = change.folders;
+    } else if (change.kind === "item-delete") {
+      list = list.filter((item) => item.id !== change.id);
+    } else {
+      const index = list.findIndex((item) => item.id === change.item.id);
+      if (index < 0) list.push(change.item as MediaType);
+      else list[index] = change.item as MediaType;
+    }
+  }
+
+  return normalizeMediaDoc({ list, folders });
+};
 
 /**
  * Shared DB sync, preferences, overlays, media cache, and teardown for controller-like pages.
@@ -118,7 +154,7 @@ export const useControllerPageLifecycle = () => {
   const activeControllerId = useActiveControllerId();
   const activeControllerProfile = useActiveControllerProfile();
   const { showToast } = useToast();
-  const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote, bootstrapReady, canCreateBootstrapDocuments } =
+  const { db, cloud, updater, setIsMobile, setIsPhone, pullFromRemote, bootstrapReady = true, canCreateBootstrapDocuments } =
     useContext(ControllerInfoContext) || {};
   const contentDatabaseSessionToken = useSyncExternalStore(
     subscribeToContentActivity,
@@ -212,12 +248,34 @@ export const useControllerPageLifecycle = () => {
 
   const hasDispatchedControllerPageReady = useRef(false);
   const mediaReplicationRevisionRef = useRef(0);
-  const mediaReplicationDbRef = useRef<PouchDB.Database | undefined>(db);
+  const mediaReplicationIdentityRef = useRef({ db, token: contentDatabaseSessionToken });
   const mediaReplicationFingerprintsRef = useRef(new Map<string, string>());
-  if (mediaReplicationDbRef.current !== db) {
-    mediaReplicationDbRef.current = db;
+  const pendingMediaReplicationChangesRef = useRef(
+    new Map<string, PendingMediaReplicationChange>(),
+  );
+  if (
+    mediaReplicationIdentityRef.current.db !== db ||
+    mediaReplicationIdentityRef.current.token !== contentDatabaseSessionToken
+  ) {
+    mediaReplicationIdentityRef.current = { db, token: contentDatabaseSessionToken };
+    mediaReplicationRevisionRef.current = 0;
     mediaReplicationFingerprintsRef.current.clear();
+    pendingMediaReplicationChangesRef.current.clear();
   }
+  const mediaInitializationIdentityRef = useRef({
+    db,
+    churchId: churchId ?? "",
+    controllerId: activeControllerId,
+    contentDatabaseSessionToken,
+    bootstrapReady,
+  });
+  mediaInitializationIdentityRef.current = {
+    db,
+    churchId: churchId ?? "",
+    controllerId: activeControllerId,
+    contentDatabaseSessionToken,
+    bootstrapReady,
+  };
 
   // A profile change is a new editing session even when React keeps this hook
   // mounted. Re-arm readiness without reloading already hydrated slices; the
@@ -334,7 +392,7 @@ export const useControllerPageLifecycle = () => {
               const itemListState = (store.getState() as RootState).undoable.present.itemList;
               if (
                 itemListState.isInitialized && itemListState.loadedOutlineId === update._id &&
-                !_.isEqual(itemListState.syncBaseline, remoteItems)
+                !outlineItemsEqual(itemListState.syncBaseline, remoteItems)
               ) {
                 dispatch(updateItemListFromRemote({
                   outlineId: update._id,
@@ -465,7 +523,7 @@ export const useControllerPageLifecycle = () => {
     (event: CustomEventInit) => {
       const updates = event.detail;
       if (!Array.isArray(updates)) return;
-      for (const update of updates) {
+      for (const update of updates as Record<string, unknown>[]) {
         if (typeof update?._id === "string") {
           const fingerprint = JSON.stringify(
             Object.fromEntries(
@@ -483,7 +541,14 @@ export const useControllerPageLifecycle = () => {
         }
         const change = parseMediaReplicationDoc(update);
         if (!change) continue;
-        mediaReplicationRevisionRef.current += 1;
+        const revision = ++mediaReplicationRevisionRef.current;
+        const mediaState = (store.getState() as RootState).media;
+        if (!mediaState.isInitialized && mediaState.loadStatus === "loading") {
+          const changeKey = change.kind === "folders"
+            ? "folders"
+            : `item:${change.kind === "item-delete" ? change.id : change.item.id}`;
+          pendingMediaReplicationChangesRef.current.set(changeKey, { revision, change });
+        }
         if (change.kind === "folders") {
           dispatch(updateMediaFoldersFromRemote(change.folders));
         } else if (change.kind === "item-delete") {
@@ -493,7 +558,7 @@ export const useControllerPageLifecycle = () => {
         }
       }
     },
-    [dispatch],
+    [dispatch, store],
   );
 
   useGlobalBroadcast(updateOutlineFromExternal);
@@ -757,27 +822,60 @@ export const useControllerPageLifecycle = () => {
   useEffect(() => {
     if (!db || access !== "full") return;
     let cancelled = false;
-    dispatch(setMediaLoadStatus("loading"));
+    const databaseAtStart = db;
+    const identityAtStart = {
+      churchId: churchId ?? "",
+      controllerId: activeControllerId,
+      contentDatabaseSessionToken,
+      bootstrapReady,
+    };
+    const isCurrent = () => {
+      const current = mediaInitializationIdentityRef.current;
+      return !cancelled &&
+        databaseRef.current === databaseAtStart &&
+        current.db === databaseAtStart &&
+        current.churchId === identityAtStart.churchId &&
+        current.controllerId === identityAtStart.controllerId &&
+        current.contentDatabaseSessionToken === identityAtStart.contentDatabaseSessionToken &&
+        current.bootstrapReady === identityAtStart.bootstrapReady;
+    };
+    dispatch(setMediaLoadStatus(bootstrapReady ? "loading" : "waiting"));
     const initializeMediaLibrary = async () => {
       try {
-        await requireMediaLibraryV2(db);
-        if (cancelled) return;
         const replicationRevisionAtStart = mediaReplicationRevisionRef.current;
+        if (!bootstrapReady) {
+          const hasVerifiedOfflineLibrary = await hasVerifiedInitialContentReplication(db);
+          if (!isCurrent() || !hasVerifiedOfflineLibrary) return;
+          dispatch(setMediaLoadStatus("loading"));
+        }
+        await requireMediaLibraryV2(db);
+        if (!isCurrent()) return;
         let loaded = await readMediaLibrary(db);
-        if (cancelled) return;
-        // Item or folder documents can replicate during a same-schema read too.
-        // Re-read until no media change arrived while the read was in flight.
+        if (!isCurrent()) return;
+        // A small bounded reread catches ordinary replication during the
+        // snapshot. The pending change overlay below handles sustained traffic.
         let readRevision = mediaReplicationRevisionRef.current;
-        while (readRevision !== replicationRevisionAtStart) {
+        let rereads = 0;
+        while (
+          readRevision !== replicationRevisionAtStart &&
+          rereads < MAX_MEDIA_SNAPSHOT_REREADS
+        ) {
           const revisionBeforeRead = mediaReplicationRevisionRef.current;
           loaded = await readMediaLibrary(db);
-          if (cancelled) return;
+          if (!isCurrent()) return;
+          rereads += 1;
           readRevision = mediaReplicationRevisionRef.current;
           if (readRevision === revisionBeforeRead) break;
         }
-        dispatch(initiateMediaFromDoc(loaded));
+        const consistentSnapshot = mergePendingMediaReplicationChanges(
+          loaded,
+          pendingMediaReplicationChangesRef.current,
+        );
+        if (!isCurrent()) return;
+        pendingMediaReplicationChangesRef.current.clear();
+        dispatch(initiateMediaFromDoc(consistentSnapshot));
       } catch (error) {
-        if (cancelled) return;
+        if (!isCurrent()) return;
         dispatch(setMediaLoadStatus("error"));
         console.error("Failed to load media library from PouchDB:", error);
         showToast(
@@ -791,7 +889,7 @@ export const useControllerPageLifecycle = () => {
     return () => {
       cancelled = true;
     };
-  }, [dispatch, db, access, showToast]);
+  }, [dispatch, db, access, bootstrapReady, churchId, activeControllerId, contentDatabaseSessionToken, showToast]);
 
   useEffect(() => {
     if (

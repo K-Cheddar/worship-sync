@@ -404,9 +404,13 @@ export type ItemState = ItemProperties & {
   isItemFormatting?: boolean;
   hasPendingUpdate?: boolean;
   hasRemoteUpdate?: boolean;
+  /** Local-only identifier for the latest failed autosave, used to offer a retry. */
+  itemPersistenceError?: number | null;
   remoteUpdateReason?: "song-version-transition" | "song-content-conflict" | "song-recovery-discard-failed" | null;
   baseItem?: DBItem | null;
   pendingRemoteItem?: DBItem | null;
+  /** PouchDB leaf revisions shown by the generic item conflict prompt. */
+  pendingItemRevisionConflict?: { revisions: string[] };
   /** Runtime-only revision leaves shown with the current conflict decision. */
   pendingSongV2Conflicts?: { documentId: string; winningRevision: string; revisions: string[] }[];
   /** When set, SlideEditor should focus this box index then clear. Used after format when slide count changes. */
@@ -1139,6 +1143,9 @@ export type SlideMediaSource = LocalVideoInputMediaSource;
 export type LocalVideoFileReference = {
   id: string;
   contentRevision?: string;
+  /** Safe to share as metadata; native source paths remain in the device registry. */
+  storageMode?: "managed" | "linked";
+  contentHash?: string;
   ownerDeviceId: string;
   ownerLabel: string;
   fileName: string;
@@ -1229,7 +1236,25 @@ export type CanvaMediaSource = {
   pageNumbers: number[];
 };
 
+export type LinkedVideoReplacementSnapshot = Pick<MediaType,
+  "width" | "height" | "duration" | "format" | "background" | "thumbnail" | "placeholderImage" |
+  "muxAssetId" | "muxPlaybackId" | "providerStorage" | "localVideoFile" | "updatedAt">;
+
 export type MediaType = {
+  /** Durable retirement checkpoint, written with a linked-source replacement. */
+  pendingLinkedVideoCleanup?: Array<{
+    localAssetId: string;
+    muxAssetIds: string[];
+    linkedAssetId: string;
+    contentHash: string;
+    previousContentHash?: string;
+    nativePreviousContentHash?: string;
+    contentChanged: boolean;
+    previousFields: LinkedVideoReplacementSnapshot;
+    proposedFields?: LinkedVideoReplacementSnapshot;
+    rolledBack?: boolean;
+  }>;
+
   path: string;
   createdAt: string;
   updatedAt: string;

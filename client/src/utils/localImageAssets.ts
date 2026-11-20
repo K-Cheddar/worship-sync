@@ -59,6 +59,12 @@ export type StoredLocalImageThumbnail = {
   width: number;
   height: number;
   createdAt: string;
+  /** Present only when this shared thumbnail belongs to a local video file. */
+  videoThumbnail?: {
+    source: "generated" | "supplied";
+    contentRevision: string;
+    generatorVersion?: number;
+  };
 };
 
 export type LocalImageUploadJobStatus =
@@ -419,6 +425,82 @@ export const saveLocalImageThumbnail = async (
     db.close();
   }
   notifyLocalImageChange(thumbnail.id, "thumbnail");
+};
+
+/** Save a video still atomically with a check that its owning video still exists. */
+export const saveLocalVideoThumbnail = async (
+  thumbnail: StoredLocalImageThumbnail,
+  expectedContentHash?: string,
+  expectedContentRevision?: string,
+  allowReplaceExisting = false,
+) => {
+  const db = await openLocalAssetDb();
+  let saved = false;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction(
+        [LOCAL_VIDEO_STORE_NAME, THUMBNAIL_STORE_NAME],
+        "readwrite",
+      );
+      const videoRequest = transaction
+        .objectStore(LOCAL_VIDEO_STORE_NAME)
+        .get(thumbnail.id);
+      videoRequest.onsuccess = () => {
+        const video = videoRequest.result as
+          | {
+              contentHash?: string;
+              contentRevision?: string;
+              createdAt?: string;
+              size?: number;
+            }
+          | undefined;
+        if (!video || video.contentHash !== expectedContentHash) return;
+        const contentRevision =
+          video.contentHash ||
+          video.contentRevision ||
+          `${video.createdAt ?? "legacy"}:${video.size ?? 0}`;
+        if (
+          expectedContentRevision &&
+          contentRevision !== expectedContentRevision
+        ) {
+          return;
+        }
+        const thumbnailStore = transaction.objectStore(THUMBNAIL_STORE_NAME);
+        const existingRequest = thumbnailStore.get(thumbnail.id);
+        existingRequest.onsuccess = () => {
+          const existing = existingRequest.result as
+            | StoredLocalImageThumbnail
+            | undefined;
+          if (existing) {
+            const existingVideoThumbnail = existing.videoThumbnail;
+            // Pre-provenance records may be user-supplied posters. Preserve
+            // them, and never replace a current supplied poster with a frame.
+            if (!existingVideoThumbnail) return;
+            if (
+              existingVideoThumbnail.source === "supplied" &&
+              existingVideoThumbnail.contentRevision === contentRevision
+            ) {
+              return;
+            }
+            if (!allowReplaceExisting) return;
+          }
+          thumbnailStore.put(thumbnail);
+          saved = true;
+        };
+      };
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () =>
+        reject(
+          transaction.error ??
+            new Error("The local video thumbnail could not be saved."),
+        );
+      transaction.onabort = transaction.onerror;
+    });
+  } finally {
+    db.close();
+  }
+  if (saved) notifyLocalImageChange(thumbnail.id, "thumbnail");
+  return saved;
 };
 
 export const getLocalImageThumbnail = async (

@@ -10,14 +10,23 @@ import {
   acquireLocalVideoFileUrl,
   peekLocalVideoFileThumbnailUrl,
   peekLocalVideoFileUrl,
+  refreshLocalVideoFileUrl,
 } from "../utils/localVideoFileUrlCache";
 
 export type LocalVideoFileResolution = {
   isLocalVideoFile: boolean;
   isOwner: boolean;
   status: "not-local" | "loading" | "ready" | "unavailable";
+  /** Availability of the device-local source, even when playback uses cloud fallback. */
+  localStatus?: "loading" | "ready" | "unavailable";
   url?: string;
 };
+
+/** True only after this renderer has determined that a local source is absent. */
+export const isUnavailableLocalVideoFile = (
+  resolution: LocalVideoFileResolution,
+): boolean =>
+  resolution.isLocalVideoFile && resolution.status === "unavailable";
 
 type KeyedLocalVideoFileResolution = {
   key: string;
@@ -29,11 +38,15 @@ type LocalVideoFileUrlPurpose = "display" | "thumbnail";
 export const useLocalVideoFileUrl = (
   value: LocalVideoFileReference | undefined,
   purpose: LocalVideoFileUrlPurpose = "display",
+  refreshKey = 0,
+  allowThumbnailGeneration = true,
 ): LocalVideoFileResolution => {
   const cloudUrl = value?.cloudUrl;
   const contentRevision = value?.contentRevision;
   const contentType = value?.contentType;
   const fileName = value?.fileName;
+  const storageMode = value?.storageMode;
+  const contentHash = value?.contentHash;
   const id = value?.id;
   const ownerDeviceId = value?.ownerDeviceId;
   const ownerLabel = value?.ownerLabel;
@@ -52,6 +65,8 @@ export const useLocalVideoFileUrl = (
               ownerLabel: ownerLabel ?? "",
               fileName: fileName ?? "",
               contentType: contentType ?? "",
+              storageMode: storageMode ?? "managed",
+              contentHash,
               storagePolicy: storagePolicy ?? "local-only",
               audioEnabled,
               cloudUrl,
@@ -66,11 +81,13 @@ export const useLocalVideoFileUrl = (
       cloudUrl,
       contentRevision,
       contentType,
+      contentHash,
       fileName,
       id,
       ownerDeviceId,
       ownerLabel,
       preferCloudPlayback,
+      storageMode,
       storagePolicy,
     ],
   );
@@ -78,15 +95,19 @@ export const useLocalVideoFileUrl = (
     reference && reference.ownerDeviceId === getOrCreateDeviceId(),
   );
   const useCloudPlayback = Boolean(
-    reference?.preferCloudPlayback && reference.cloudUrl,
+    purpose === "display" &&
+      reference?.preferCloudPlayback &&
+      reference.cloudUrl,
   );
-  const peekLocalUrl =
-    purpose === "thumbnail"
-      ? peekLocalVideoFileThumbnailUrl
-      : peekLocalVideoFileUrl;
   const warmUrl =
     reference && isOwner
-      ? peekLocalUrl(reference.id, reference.contentRevision)
+      ? purpose === "thumbnail"
+        ? peekLocalVideoFileThumbnailUrl(
+            reference.id,
+            reference.contentRevision,
+            allowThumbnailGeneration,
+          )
+        : peekLocalVideoFileUrl(reference.id, reference.contentRevision)
       : undefined;
   const referenceCloudUrl =
     useCloudPlayback || (!isOwner && purpose !== "thumbnail")
@@ -98,8 +119,11 @@ export const useLocalVideoFileUrl = (
         reference.id,
         reference.ownerDeviceId,
         reference.contentRevision ?? "legacy",
+        reference.storageMode ?? "managed",
+        reference.contentHash ?? "",
         referenceCloudUrl,
         useCloudPlayback,
+        allowThumbnailGeneration,
       ])
     : "";
   const [assetRevision, setAssetRevision] = useState(0);
@@ -108,7 +132,13 @@ export const useLocalVideoFileUrl = (
       return { isLocalVideoFile: false, isOwner: false, status: "not-local" };
     }
     if (useCloudPlayback) {
-      return { isLocalVideoFile: false, isOwner, status: "ready" };
+      return {
+        isLocalVideoFile: false,
+        isOwner,
+        status: "ready",
+        localStatus: isOwner ? "loading" : undefined,
+        url: reference.cloudUrl,
+      };
     }
     if (isOwner) {
       return {
@@ -152,12 +182,54 @@ export const useLocalVideoFileUrl = (
       });
       return;
     }
+    if (isOwner && purpose === "display" && refreshKey > 0) {
+      refreshLocalVideoFileUrl(reference.id);
+    }
     if (useCloudPlayback) {
+      if (!isOwner) {
+        setState({
+          key: referenceKey,
+          value: {
+            isLocalVideoFile: false,
+            isOwner: false,
+            status: "ready",
+            url: reference.cloudUrl,
+          },
+        });
+        return;
+      }
+      let active = true;
       setState({
         key: referenceKey,
-        value: { isLocalVideoFile: false, isOwner, status: "ready" },
+        value: {
+          isLocalVideoFile: false,
+          isOwner: true,
+          status: "ready",
+          localStatus: "loading",
+          url: reference.cloudUrl,
+        },
       });
-      return;
+      const lease = acquireLocalVideoFileUrl(
+        reference.id,
+        reference.contentRevision,
+      );
+      void lease.url.then((url) => {
+        if (!active) return;
+        setState({
+          key: referenceKey,
+          value: {
+            isLocalVideoFile: false,
+            isOwner: true,
+            status: "ready",
+            ...(!url ? { localStatus: "unavailable" as const } : {}),
+            url: reference.cloudUrl,
+          },
+        });
+      });
+      return () => {
+        active = false;
+        lease.release();
+      };
     }
     if (!isOwner) {
       if (purpose === "thumbnail") {
@@ -189,6 +261,7 @@ export const useLocalVideoFileUrl = (
           ? peekLocalVideoFileThumbnailUrl(
               reference.id,
               reference.contentRevision,
+              allowThumbnailGeneration,
             )
           : peekLocalVideoFileUrl(reference.id, reference.contentRevision);
       // Keep a known-good URL while the lease refreshes so display snapshots do
@@ -217,6 +290,7 @@ export const useLocalVideoFileUrl = (
         ? acquireLocalVideoFileThumbnailUrl(
             reference.id,
             reference.contentRevision,
+            allowThumbnailGeneration,
           )
         : acquireLocalVideoFileUrl(reference.id, reference.contentRevision);
     void lease.url.then((url) => {
@@ -226,8 +300,14 @@ export const useLocalVideoFileUrl = (
         value: {
           isLocalVideoFile: true,
           isOwner: true,
-          status: url ? "ready" : "unavailable",
-          url,
+          status:
+            url || (purpose === "display" && reference.cloudUrl)
+              ? "ready"
+              : "unavailable",
+          ...(!url && purpose === "display" && reference.cloudUrl
+            ? { localStatus: "unavailable" as const }
+            : {}),
+          url: url || (purpose === "display" ? reference.cloudUrl : undefined),
         },
       });
     });
@@ -236,9 +316,11 @@ export const useLocalVideoFileUrl = (
       lease.release();
     };
   }, [
+    allowThumbnailGeneration,
     assetRevision,
     isOwner,
     purpose,
+    refreshKey,
     reference,
     referenceKey,
     useCloudPlayback,

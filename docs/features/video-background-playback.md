@@ -14,9 +14,11 @@ Confirmed product intent: the October 30, 2026 request for configurable video ba
 | Persistence | Save `videoBackgroundLoop` alongside the slide's send mode, in the selected arrangement and flat slide deck. | Current request, requirements 3–4 |
 | Completion | Retain the final frame. Continue preserves completion; Restart, Play, or Start over can explicitly replay. | Current request, requirements 5–6 and transport tests |
 | Live update | Preserve position and pause state when changing Loop. Enabling Loop on a completed clip retains its final frame until replay. | Current request, requirement 7: no automatic restart or interrupted image |
-| UI | Loop and Continue / Start over are available in Edit and Present modes, with wrapping compact controls on mobile. | Current request, requirements 1 and 8 |
+| UI at initial rollout | Loop and Continue / Start over were available in Edit and Present modes, with wrapping compact controls on mobile. | October 30, 2026 request; superseded for Present mode by the November 18, 2026 controller UI decision below. |
 
 The same-day UI follow-up uses the shared `Toggle` used by live controls, with a loop icon and the default cyan color used by Show On toggles.
+
+The November 18, 2026 controller UI request supersedes the initial visibility rule above: Loop and the Continue / Start over send-mode controls remain available in Edit mode and are hidden in Present mode. Video transport controls (play, pause, restart, stop, and timeline seeking) remain available in Present mode. The saved loop and send-mode preferences continue to apply when the slide is sent. Authorization: current user request.
 
 UI follow-up verification: Toggle, VideoBackgroundControls, and ItemSlides suites passed (67 tests); strict client build passed with the existing Vite warnings.
 

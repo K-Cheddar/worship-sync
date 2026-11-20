@@ -1,7 +1,8 @@
 import type { DBItem } from "../types";
 import { discoverSongLibrary } from "./songLibraryDiscovery";
-import { buildSongV2LibraryProjection, loadSongV2LibraryProjection, serializeSongToV2Documents } from "./songPersistence";
+import { buildSongV2LibraryProjection, classifySongV2RootState, loadSongV2LibraryProjection, serializeSongToV2Documents } from "./songPersistence";
 import { filterAndSortSongsForSearchWithEnrichment } from "./songSearchUtils";
+import { getSongV2DocumentIdentity, getSongV2RootDocId } from "./songV2Codec";
 import * as monitor from "./monitorSlideFormatter";
 
 const fixture = () => serializeSongToV2Documents({
@@ -16,9 +17,17 @@ const fixture = () => serializeSongToV2Documents({
 describe("song library discovery", () => {
   afterEach(() => jest.restoreAllMocks());
 
+  it("classifies physical absence separately from logical deletion and read failure", () => {
+    const docs = fixture();
+    expect(classifySongV2RootState({ kind: "missing" })).toBe("legacy");
+    expect(classifySongV2RootState({ kind: "deleted" })).toBe("legacy");
+    expect(classifySongV2RootState({ kind: "found", root: { ...docs.root, deletedAt: "2026-11-16" } })).toBe("v2");
+    expect(classifySongV2RootState({ kind: "read-failed" })).toBe("unknown");
+  });
+
   it("leaves v1 documents unchanged", () => {
     const song = { _id: "legacy", type: "song", name: "Legacy" } as DBItem;
-    expect(discoverSongLibrary([song])).toEqual({ songs: [song], diagnostics: [] });
+    expect(discoverSongLibrary([song])).toEqual({ songs: [song], diagnostics: [], activatedSongIds: [] });
     expect(discoverSongLibrary([song]).songs[0]).toBe(song);
   });
 
@@ -60,7 +69,19 @@ describe("song library discovery", () => {
     const docs = fixture();
     const v1 = { _id: docs.root.songId, type: "song", name: "Stale" } as DBItem;
     docs.root.deletedAt = "2026-10-07T00:00:00.000Z";
-    expect(discoverSongLibrary([v1, docs.root, ...docs.arrangements])).toEqual({ songs: [], diagnostics: [] });
+    expect(discoverSongLibrary([v1, docs.root, ...docs.arrangements])).toEqual({ songs: [], diagnostics: [], activatedSongIds: [docs.root.songId] });
+  });
+
+  it("restores legacy authority when a physical root tombstone is present", () => {
+    const docs = fixture();
+    const legacy = { _id: docs.root.songId, type: "song", name: "Restored legacy" } as DBItem;
+    const tombstone = { ...docs.root, _deleted: true };
+
+    expect(discoverSongLibrary([tombstone, legacy, ...docs.arrangements])).toEqual({
+      songs: [legacy],
+      diagnostics: [],
+      activatedSongIds: [],
+    });
   });
 
   it.each([false, true])("gives v2 authority independent of scan order (%s)", (reverse) => {
@@ -95,6 +116,17 @@ describe("song library discovery", () => {
     const result = discoverSongLibrary([{ _id: docs.root.songId, type: "song", name: "Stale" }, docs.root, invalid, docs.arrangements[1]]);
     expect(result.songs).toEqual([]);
     expect(result.diagnostics).toEqual([expect.objectContaining({ code: "incomplete-v2", message: expect.stringContaining("invalid library contract") })]);
+  });
+
+  it("extracts logical song IDs from physical root, arrangement and slide IDs", () => {
+    expect(getSongV2DocumentIdentity(getSongV2RootDocId("song/1")))
+      .toEqual({ songId: "song/1", kind: "root" });
+    expect(getSongV2DocumentIdentity("song-v2:arrangement:song%2F1:master%3Aacoustic"))
+      .toEqual({ songId: "song/1", kind: "arrangement" });
+    expect(getSongV2DocumentIdentity("song-v2:slide:song%2F1:master%3Aacoustic:slide%3A1"))
+      .toEqual({ songId: "song/1", kind: "slide" });
+    expect(getSongV2DocumentIdentity("song-v2:slide:%E0%A4%A:a:b")).toBeUndefined();
+    expect(getSongV2DocumentIdentity("song-v1:root:song")).toBeUndefined();
   });
 
 });

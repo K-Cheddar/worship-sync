@@ -1,6 +1,7 @@
 import type { MediaType } from "../../types";
 import {
   buildLocalVideoCloudSharePatch,
+  canUploadLocalVideoAssetNatively,
   createMediaCloudUploadRequest,
   getLocalMediaCloudShareBarAction,
 } from "./localMediaCloudShare";
@@ -33,6 +34,29 @@ const ownedVideo = (overrides: Partial<MediaType> = {}): MediaType => ({
 });
 
 describe("localMediaCloudShare", () => {
+  it.each([
+    ["Windows x64", true, true],
+    ["macOS", true, false],
+    ["Linux without the native binary", true, false],
+    ["browser/PWA", false, false],
+  ])("selects native streaming only when available on %s", async (_platform, hasPreload, available) => {
+    const api = hasPreload
+      ? {
+          uploadLocalVideoAssetToMux: jest.fn(),
+          isVideoDownloaderAvailable: jest.fn().mockResolvedValue(available),
+        }
+      : undefined;
+    await expect(canUploadLocalVideoAssetNatively(api as never)).resolves.toBe(available);
+  });
+
+  it("falls back when native runtime availability cannot be confirmed", async () => {
+    const api = {
+      uploadLocalVideoAssetToMux: jest.fn(),
+      isVideoDownloaderAvailable: jest.fn().mockRejectedValue(new Error("runtime query failed")),
+    };
+    await expect(canUploadLocalVideoAssetNatively(api as never)).resolves.toBe(false);
+  });
+
   it("offers Upload to cloud on the owner device", () => {
     const action = getLocalMediaCloudShareBarAction({
       media: ownedVideo(),

@@ -23,9 +23,16 @@ import {
   useResolvedCachedMediaUrl,
 } from "../../hooks/useCachedMediaUrl";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
-import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
-import LocalSourceStatus from "./LocalSourceStatus";
+import {
+  isUnavailableLocalVideoFile,
+  useLocalVideoFileUrl,
+} from "../../hooks/useLocalVideoFileUrl";
+import LocalSourceStatus, {
+  getUnavailableLocalVideoStatusProps,
+} from "./LocalSourceStatus";
+import type { LocalSourceStatusSize } from "./LocalSourceStatus";
 import { shouldSkipDisplayTextAnimation } from "./utils";
+import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
 
 const DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS = 650;
 
@@ -112,6 +119,11 @@ type DisplayBoxProps = {
   paintForeground?: boolean;
   /** Explicitly enabled only for operator previews. */
   showLocalSourceStatus?: boolean;
+  /** Scale of the fixed reference canvas, used to keep status text readable. */
+  statusScaleFactor?: number;
+  localSourceStatusSize?: LocalSourceStatusSize;
+  /** Static controller previews may backfill; live output only reads a saved still. */
+  allowLocalVideoThumbnailGeneration?: boolean;
 };
 
 const DisplayBox = ({
@@ -135,6 +147,9 @@ const DisplayBox = ({
   paintBackground = true,
   paintForeground = true,
   showLocalSourceStatus = false,
+  statusScaleFactor = 1,
+  localSourceStatusSize = "canvas",
+  allowLocalVideoThumbnailGeneration = false,
 }: DisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline | null>(null);
@@ -145,6 +160,10 @@ const DisplayBox = ({
   // the raw form never matches, so the placeholder stayed painted at full
   // opacity over a video that was playing fine underneath it.
   const localVideoDisplay = useLocalVideoFileUrl(box.mediaInfo?.localVideoFile);
+  const unavailableLocalVideo =
+    isVideoBg && isUnavailableLocalVideoFile(localVideoDisplay);
+  const hideUnavailableVideoStill =
+    unavailableLocalVideo && localSourceStatusSize !== "thumbnail";
   const resolvedVideoUrl = localVideoDisplay.isLocalVideoFile
     ? localVideoDisplay.url
     : videoUrl;
@@ -165,20 +184,25 @@ const DisplayBox = ({
   const localVideoThumbnail = useLocalVideoFileUrl(
     box.mediaInfo?.localVideoFile,
     "thumbnail",
+    0,
+    allowLocalVideoThumbnailGeneration,
   );
   const prevLocalVideoThumbnail = useLocalVideoFileUrl(
     prevBox?.mediaInfo?.localVideoFile,
     "thumbnail",
+    0,
+    allowLocalVideoThumbnailGeneration,
   );
-  const videoPlaceholderImage =
-    localVideoThumbnail.url || box.mediaInfo?.placeholderImage;
+  const videoPlaceholderImage = hideUnavailableVideoStill
+    ? undefined
+    : localVideoThumbnail.url || box.mediaInfo?.placeholderImage;
   const rawImage = isVideoBg ? videoPlaceholderImage : background;
+  const localImage = useLocalImageUrl(box.mediaInfo?.localImage);
   const shouldShowBackground = Boolean(
     paintBackground &&
       showBackground &&
-      (background || (isVideoBg && rawImage)),
+      (background || (isVideoBg && rawImage) || localImage.isLocalImage),
   );
-  const localImage = useLocalImageUrl(box.mediaInfo?.localImage);
   const prevIsVideoBg = prevBox?.mediaInfo?.type === "video";
   let prevRawImage = prevBox?.background;
   if (prevIsVideoBg) {
@@ -219,14 +243,26 @@ const DisplayBox = ({
   const currentImageCandidate = resolvedCachedImage ?? cachedImage ?? rawImage;
   const currentTransitionImage =
     managedImageForCurrentIdentity ?? currentImageCandidate;
+  const rawImageFallback = isLocalMediaReferenceUrl(rawImage)
+    ? undefined
+    : cachedImage;
   let displayImage = isTransitionManaged
     ? currentTransitionImage
     : deferredRemoteImage;
   if (localImage.isLocalImage) {
-    displayImage = localImage.url;
-  } else if (localVideoThumbnail.url) {
+    displayImage =
+      localImage.url ??
+      (localImage.status === "unavailable" ? rawImageFallback : undefined);
+  } else if (
+    localVideoThumbnail.url &&
+    !hideUnavailableVideoStill
+  ) {
     displayImage = localVideoThumbnail.url;
   }
+  // Availability is renderer-local, while these image candidates can outlive
+  // the playback lookup. Apply the output decision after managed, cached, and
+  // local candidates have all been considered so none can cover the fallback.
+  if (hideUnavailableVideoStill) displayImage = undefined;
   const [decodedImage, setDecodedImage] = useState<ManagedImage>();
   const isImageReadyToPaint = Boolean(
     displayImage &&
@@ -374,6 +410,7 @@ const DisplayBox = ({
     !shouldShowBackground ||
     shouldImageBeHidden ||
     localImage.status === "unavailable" ||
+    unavailableLocalVideo ||
     Boolean(displayImage && isImageReadyToPaint);
 
   useEffect(() => {
@@ -552,6 +589,7 @@ const DisplayBox = ({
       {shouldShowBackground &&
         localImage.isLocalImage &&
         !isPrev &&
+        !hideUnavailableVideoStill &&
         // Keep the faded fallback mounted for the rest of an animated slide.
         // Electron can composite one black frame when it removes this CSS-
         // animated image at the exact time the incoming GSAP layer settles.
@@ -571,12 +609,23 @@ const DisplayBox = ({
             src={previousDisplayImage}
           />
         )}
+      {shouldShowBackground && unavailableLocalVideo && !showLocalSourceStatus ? (
+        <div
+          aria-hidden
+          className="absolute inset-0 bg-black"
+          data-testid="unavailable-local-video-black-screen"
+        />
+      ) : null}
       {shouldShowBackground &&
-        (localImage.isLocalImage && localImage.status === "unavailable" ? (
+        (localImage.isLocalImage &&
+        localImage.status === "unavailable" &&
+        !displayImage ? (
           showLocalSourceStatus ? (
             <div style={{ opacity: initialBackgroundOpacity }}>
               <LocalSourceStatus
                 sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
+                size={localSourceStatusSize}
+                scaleFactor={statusScaleFactor}
                 ownerLabel={
                   localImage.isOwner
                     ? undefined
@@ -595,9 +644,26 @@ const DisplayBox = ({
               />
             </div>
           ) : null
+        ) : localImage.isLocalImage &&
+          localImage.status === "loading" &&
+          !displayImage ? (
+          showLocalSourceStatus ? (
+            <LocalSourceStatus
+              sourceLabel={`Local image · ${box.mediaInfo?.localImage?.fileName || "Background"}`}
+              heading="Loading local image"
+              state="loading"
+              size={localSourceStatusSize}
+              scaleFactor={statusScaleFactor}
+            />
+          ) : null
         ) : displayImage ? (
           <img
             ref={backgroundImageRef}
+            data-testid={
+              box.mediaInfo?.localVideoFile
+                ? "display-box-local-video-thumbnail"
+                : undefined
+            }
             className={cn(
               "display-box-background h-full w-full absolute",
               box.shouldKeepAspectRatio && "object-contain",
@@ -621,22 +687,30 @@ const DisplayBox = ({
       showBackground &&
       box.mediaInfo?.localVideoFile &&
       localVideoDisplay.isLocalVideoFile &&
-      localVideoDisplay.status === "unavailable" ? (
+      localVideoDisplay.status === "loading" &&
+      (!videoUrl || isLocalMediaReferenceUrl(videoUrl)) ? (
         <LocalSourceStatus
           sourceLabel={`Local video · ${box.mediaInfo.localVideoFile.fileName || "Background"}`}
-          ownerLabel={
-            localVideoDisplay.isOwner
-              ? undefined
-              : box.mediaInfo.localVideoFile.ownerLabel
-          }
-          heading={
-            localVideoDisplay.isOwner ? "Local video unavailable" : undefined
-          }
-          detail={
-            localVideoDisplay.isOwner
-              ? "Open Media on this device and relink the file."
-              : undefined
-          }
+          heading="Loading local video"
+          state="loading"
+          size={localSourceStatusSize}
+          scaleFactor={statusScaleFactor}
+        />
+      ) : null}
+      {showLocalSourceStatus &&
+      isVideoBg &&
+      showBackground &&
+      box.mediaInfo?.localVideoFile &&
+      unavailableLocalVideo &&
+      (!videoUrl || isLocalMediaReferenceUrl(videoUrl)) ? (
+        <LocalSourceStatus
+          {...getUnavailableLocalVideoStatusProps(
+            box.mediaInfo.localVideoFile,
+            localVideoDisplay.isOwner,
+            box.mediaInfo.name,
+          )}
+          size={localSourceStatusSize}
+          scaleFactor={statusScaleFactor}
         />
       ) : null}
       {paintForeground ? (

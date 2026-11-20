@@ -60,6 +60,88 @@ try {
     page.on("pageerror", (error) => { errors.push(error.message); console.error(error.message); });
     await page.goto("http://127.0.0.1:3116/schedule-quick-member");
     await page.getByRole("button", { name: "Choose assignee" }).click();
+    const options = page.getByTestId("schedule-assignment-options");
+    await options.waitFor();
+    const initialMetrics = await options.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      scrollHeight: element.scrollHeight,
+    }));
+    assert(
+      initialMetrics.scrollHeight > initialMetrics.clientHeight,
+      "the fixture should contain enough members to require scrolling",
+    );
+
+    const optionsBounds = await options.boundingBox();
+    assert.ok(optionsBounds, "the Available Members list should have browser bounds");
+    await page.mouse.move(
+      optionsBounds.x + optionsBounds.width / 2,
+      optionsBounds.y + optionsBounds.height / 2,
+    );
+    await page.mouse.wheel(0, 480);
+    await page.waitForFunction(() => {
+      const list = document.querySelector("[data-testid='schedule-assignment-options']");
+      return Boolean(list && list.scrollTop > 0);
+    });
+    await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+    const afterWheel = await options.evaluate((element) => element.scrollTop);
+    assert(afterWheel > 0, "manual wheel scrolling should move through available members");
+
+    await page.evaluate(() => window.forcePickerRerender?.());
+    await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+    assert.equal(
+      await options.evaluate((element) => element.scrollTop),
+      afterWheel,
+      "an unrelated React render should preserve manual list scrolling",
+    );
+
+    await page.evaluate(() => window.addPickerMember?.());
+    await page.getByRole("option", { name: /Member 37/ }).waitFor();
+    await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+    assert.equal(
+      await options.evaluate((element) => element.scrollTop),
+      afterWheel,
+      "an asynchronous member-list update should preserve manual list scrolling",
+    );
+
+    const dragMetrics = await options.evaluate((element) => ({
+      clientHeight: element.clientHeight,
+      offsetWidth: element.offsetWidth,
+      clientWidth: element.clientWidth,
+      scrollHeight: element.scrollHeight,
+      scrollTop: element.scrollTop,
+    }));
+    const scrollbarWidth = dragMetrics.offsetWidth - dragMetrics.clientWidth;
+    if (scrollbarWidth > 0) {
+      const thumbHeight = Math.max(
+        (dragMetrics.clientHeight * dragMetrics.clientHeight) / dragMetrics.scrollHeight,
+        16,
+      );
+      const trackRange = dragMetrics.clientHeight - thumbHeight;
+      const thumbTop = trackRange * (
+        dragMetrics.scrollTop / (dragMetrics.scrollHeight - dragMetrics.clientHeight)
+      );
+      const scrollbarX = optionsBounds.x + optionsBounds.width - scrollbarWidth / 2;
+      await page.mouse.move(scrollbarX, optionsBounds.y + thumbTop + thumbHeight / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        scrollbarX,
+        optionsBounds.y + dragMetrics.clientHeight - thumbHeight / 2,
+        { steps: 8 },
+      );
+      await page.mouse.up();
+      await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))));
+      const afterScrollbarDrag = await options.evaluate((element) => element.scrollTop);
+      assert(
+        afterScrollbarDrag > dragMetrics.scrollTop,
+        "dragging the native scrollbar should move the Available Members list",
+      );
+    } else {
+      console.log("SKIP native scrollbar drag: this browser uses overlay scrollbars");
+    }
+
+    await page.getByRole("option", { name: /Member 37/ }).click();
+    await expect(page.getByRole("status")).toHaveText("Selected Member 37");
+    await page.getByRole("button", { name: "Choose assignee" }).click();
     await page.getByRole("button", { name: "Add new member" }).click();
     await page.getByRole("textbox", { name: "First name" }).fill("Jordan");
     await page.getByRole("textbox", { name: "First name" }).press("Tab");

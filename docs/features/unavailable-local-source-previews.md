@@ -1,0 +1,46 @@
+# Feature Contract: Unavailable local-source previews
+
+**Contract status:** Confirmed product intent
+
+**Approval source:** Current user request, November 18, 2026; live local-video fallback request, November 19, 2026.
+
+**Last reviewed:** November 19, 2026
+
+## Purpose
+
+Help operators distinguish a genuinely empty slide from a local image, video, camera, screen share, or window share that this device cannot preview.
+
+## Operator workflow
+
+Operators inspect slides in the editor, service-plan thumbnails, Media Library previews, and projector, monitor, or stream preview cards before presenting. When a preview cannot access its local source, it identifies the source and its owning device when that information is available.
+
+## Expected behavior
+
+- A source owned by another device with no usable local or cloud media is identified as **Local source on another device**.
+- A missing local image or video on its owning device is identified as **Local image unavailable** or **Local video unavailable** and includes the existing relink guidance.
+- Cameras and screen/window captures use wording appropriate to their source type. Persisted ownership metadata is enough to explain an unavailable preview; previewing must not create a hardware binding or change capture ownership.
+- Loading remains distinct from unavailable. A ready local or cloud-backed preview removes the status automatically.
+- A local video with a playable cloud fallback remains playable and is not marked unavailable because its local file or thumbnail is missing.
+- Availability is resolved independently by each rendering device. A live output with no usable local or cloud video immediately clears that video's still and shows black; an available owner device continues playback.
+- The A/B transition may not hold its previous lane indefinitely after a local video becomes explicitly unavailable. Ordinary loading and buffering keep the existing readiness and transition behavior.
+- Projector, Monitor, Stream, and Aux output routes show no unavailable-source diagnostics. The Stream fallback uses black only for the current item-media layer; its separate overlay lane remains visible.
+- Controller Projector, Monitor, and Stream previews show a black unavailable-video placeholder with the unavailable-source icon, filename or title, **Local video unavailable on this device**, and **Source is local to another device**. Preview copy describes source ownership only; it does not claim playback is active elsewhere.
+- Status UI uses the shared `LocalSourceStatus` treatment. Full editor and standalone previews include the source name and owner when available; small tiles use a compact status.
+- Filesystem paths and unnecessary identifiers are not shown.
+- Display-specific settings that hide a background also hide its unavailable status. Empty or intentionally black slides remain unchanged.
+- Operator diagnostics may appear in editors and controller preview cards. They must not appear on audience-facing projector, monitor, or stream outputs. Stream preview surfaces remain transparent.
+- Warnings do not start media playback or decoding, and item-slide virtualization remains in place.
+
+## Product decisions
+
+- **Unavailable live local video:** If one renderer cannot resolve a local video and has no playable cloud fallback, its physical output clears the prior video visual and renders black. The controller preview identifies the unavailable source. Availability remains renderer-local so the device owning the file can play it. This avoids presenting a stale prior image as the current live selection. The material alternative—retaining the previous frame—can mislead the operator. **Approval source:** current user request, November 19, 2026.
+
+## Implementation references
+
+- Shared status: `client/src/components/DisplayWindow/LocalSourceStatus.tsx`
+- Terminal local-video availability: `client/src/hooks/useLocalVideoFileUrl.ts`
+- Display surfaces: `client/src/components/DisplayWindow/DisplayWindow.tsx`, `DisplayBox.tsx`, `DisplayEditor.tsx`, `LocalVideoInputView.tsx`, `MonitorBandBackground.tsx`
+- Item previews: `client/src/containers/ItemSlides/StaticSlideThumbnail.tsx`, `StaticMonitorThumbnail.tsx`, `ItemSlide.tsx`, `ContinuousStaticItemSlide.tsx`
+- Media previews: `client/src/containers/Media/MediaModal.tsx`, `MediaLibraryMediaVisual.tsx`
+- Ownership and availability: `client/src/hooks/useLocalImageUrl.ts`, `useLocalVideoFileUrl.ts`, `client/src/utils/localVideoInput.ts`
+- Tests: DisplayWindow local-source tests, static thumbnail tests, Media Library preview tests, and local video input utility tests.

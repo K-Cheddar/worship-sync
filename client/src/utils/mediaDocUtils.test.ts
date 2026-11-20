@@ -192,6 +192,55 @@ describe("v2 media repository", () => {
     expect(db.remove).toHaveBeenCalledWith(expect.objectContaining({ _id: mediaItemDocId("delete") }));
   });
 
+  it("merges nested local-video cloud fields without overwriting concurrent user edits", async () => {
+    const beforeItem = {
+      ...media("cloud-merge", "Before rename"),
+      folderId: "folder-before",
+      thumbnail: "before-thumb",
+      localVideoFile: {
+        id: "local-asset",
+        contentRevision: "saved-revision",
+        ownerDeviceId: "device-one",
+        ownerLabel: "Booth PC",
+        fileName: "video.mp4",
+        contentType: "video/mp4",
+        storagePolicy: "local-only" as const,
+        audioEnabled: true,
+      },
+    } as MediaType;
+    const concurrent = {
+      ...beforeItem,
+      name: "Renamed during upload",
+      folderId: "folder-after",
+      thumbnail: "operator-thumb",
+      localVideoFile: { ...beforeItem.localVideoFile, audioEnabled: false },
+    } as MediaType;
+    const cloudTarget = {
+      ...beforeItem,
+      localVideoFile: {
+        ...beforeItem.localVideoFile,
+        storagePolicy: "local-and-cloud" as const,
+        cloudUrl: "https://stream.mux.com/playback.m3u8",
+        cloudMediaId: "mux-asset",
+      },
+    } as MediaType;
+    const { db, docs } = makePersistedDb([], [concurrent]);
+
+    await persistMediaStateChanges(db, { list: [beforeItem], folders: [] }, { list: [cloudTarget], folders: [] });
+
+    expect(docs.get(mediaItemDocId(beforeItem.id))).toEqual(expect.objectContaining({
+      name: "Renamed during upload",
+      folderId: "folder-after",
+      thumbnail: "operator-thumb",
+      localVideoFile: expect.objectContaining({
+        audioEnabled: false,
+        storagePolicy: "local-and-cloud",
+        cloudUrl: "https://stream.mux.com/playback.m3u8",
+        cloudMediaId: "mux-asset",
+      }),
+    }));
+  });
+
   it("rechecks persisted row ownership after a Media item conflict", async () => {
     const rowB: MediaType = {
       ...media("local_input_camera", "Camera"),

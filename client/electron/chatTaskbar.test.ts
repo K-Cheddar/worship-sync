@@ -372,6 +372,8 @@ describe("chat taskbar controller", () => {
       join(__dirname, "../electron-builder.config.js"),
       "utf8",
     );
-    expect(config).toContain('"buildResources/**/*"');
+    expect(config).toContain('from: "buildResources"');
+    expect(config).toContain('to: "buildResources"');
+    expect(config).toContain('filter: ["**/*", "!video-tools/**/*"]');
   });
 });

@@ -53,7 +53,7 @@ try {
       const sectionWidth = await page.locator("section").first().evaluate((node) => node.clientWidth);
       const compact = sectionWidth < 768;
       await page.getByRole(compact ? "list" : "table", { name: "Resources", exact: true }).waitFor();
-      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${theme} ${width}: page must not overflow`);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `${theme} ${width}: page must not overflow`);
       assert.equal(await page.getByRole("button", { name: "Preview June-2026-by-date.pdf" }).count(), 1);
       if (compact) {
         const nameToggle = page.getByRole("button", { name: /^Toggle full name for Very-long-service/ });
@@ -67,7 +67,7 @@ try {
         assert.equal(await nameToggle.getAttribute("aria-expanded"), "true");
         const expanded = await measureName();
         assert.ok(expanded.height > expanded.lineHeight * 2, "expanded names should show all their lines");
-        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "expanded name must wrap without overflow");
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "expanded name must wrap without overflow");
         assert.equal(await page.getByRole("dialog").count(), 0, "touching the name should not preview");
         await nameToggle.tap();
         assert.equal(await nameToggle.getAttribute("aria-expanded"), "false");

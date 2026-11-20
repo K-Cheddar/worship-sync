@@ -1,7 +1,9 @@
 import { configureStore } from "@reduxjs/toolkit";
 import {
   itemDocMatchesEditorState,
+  itemDocsMatchPersistedContent,
   getItemPersistenceChanges,
+  getItemPersistenceConflicts,
   updateSlideVideoBackgroundLoop,
   updateSlideVideoBackgroundSendMode,
   itemSlice,
@@ -23,6 +25,211 @@ const createStore = (preloadedState?: Partial<ItemSliceState>) =>
   });
 
 describe("itemSlice", () => {
+  it.each(["free", "bible"] as const)("tracks layout-only %s edits and reports conflicting monitor layouts", (type) => {
+    const base = {
+      _id: `${type}-layout`,
+      type,
+      name: `${type} item`,
+      selectedArrangement: 0,
+      slides: [],
+      monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 24 },
+    } as any;
+    const local = {
+      ...itemSlice.getInitialState(),
+      ...base,
+      monitorLayout: { currentFontSizePx: 28, nextFontSizePx: 22 },
+      baseItem: base,
+    } as ItemState;
+    const remoteOtherField = { ...base, name: "Remote name" };
+    const remoteLayout = { ...base, monitorLayout: { currentFontSizePx: 27, nextFontSizePx: 20 } };
+
+    expect(getItemPersistenceChanges(local, base)).toEqual(["monitorLayout"]);
+    expect(getItemPersistenceConflicts(local, base, remoteOtherField)).toEqual([]);
+    expect(getItemPersistenceConflicts(local, base, remoteLayout)).toEqual(["monitorLayout"]);
+  });
+
+  it("compares editor snapshots with full database documents by persisted content", () => {
+    const databaseDocument = {
+      _id: "custom-item",
+      _rev: "2-replicated",
+      type: "free",
+      docType: "item",
+      name: "Custom item",
+      slides: [],
+      createdAt: "created",
+      createdBy: "creator",
+      updatedAt: "replicated",
+      updatedBy: "editor",
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as any;
+    const editorSnapshot = {
+      ...databaseDocument,
+      _rev: "1-original",
+      updatedAt: "original",
+      updatedBy: "creator",
+    };
+
+    expect(itemDocsMatchPersistedContent(databaseDocument, editorSnapshot)).toBe(true);
+    expect(itemDocsMatchPersistedContent(
+      { ...databaseDocument, name: "Different content" },
+      editorSnapshot,
+    )).toBe(false);
+  });
+
+  it("treats a Pouch JSON round-trip with omitted undefined fields as the same authored content", () => {
+    const baseline = {
+      _id: "custom-pouch-json-roundtrip",
+      _rev: "1-base",
+      type: "free",
+      docType: "item",
+      name: "Custom item",
+      slides: [{
+        id: "slide-a",
+        name: "A",
+        type: "Section",
+        boxes: [{ id: "box-a", words: "Original", mediaInfo: undefined }],
+      }],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as any;
+    const local = {
+      ...baseline,
+      slides: [{
+        ...baseline.slides[0],
+        boxes: [{ ...baseline.slides[0].boxes[0], words: "My saved edit" }],
+      }],
+    };
+    const pouchEcho = JSON.parse(JSON.stringify(local));
+    pouchEcho._rev = "2-saved";
+
+    expect(itemDocsMatchPersistedContent(pouchEcho, local)).toBe(true);
+    expect(getItemPersistenceConflicts(local, baseline, pouchEcho)).toEqual([]);
+  });
+
+  it("normalizes derived monitor layouts before checking an add-box edit for remote overlap", () => {
+    const baseline = {
+      _id: "custom-derived-monitor-layout",
+      _rev: "1-base",
+      type: "free",
+      docType: "item",
+      name: "Custom item",
+      slides: [{
+        id: "slide-a",
+        name: "A",
+        type: "Section",
+        boxes: [{ id: "box-a", words: "Original", width: 100, height: 100 }],
+      }],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    } as any;
+    const store = createStore();
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    const editorBaseline = store.getState().item.baseItem!;
+    const locallyEdited = {
+      ...baseline.slides[0],
+      boxes: [
+        ...baseline.slides[0].boxes,
+        { id: "box-b", words: "Added box", width: 75, height: 75 },
+      ],
+    };
+    store.dispatch(itemSlice.actions._updateSlides([locallyEdited]));
+
+    expect(editorBaseline.monitorLayout).toBeDefined();
+    expect(baseline.monitorLayout).toBeUndefined();
+    expect(getItemPersistenceConflicts(
+      store.getState().item,
+      editorBaseline,
+      baseline,
+    )).toEqual([]);
+  });
+
+  it("rebases a non-overlapping remote edit without replacing the local draft", () => {
+    const baseline = {
+      _id: "custom-rebase",
+      type: "free" as const,
+      name: "Original name",
+      selectedArrangement: 0,
+      slides: [{ id: "slide-a", name: "A", type: "Section", boxes: [] }],
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+      _rev: "1-base",
+    } as any;
+    const store = createStore();
+    store.dispatch(itemSlice.actions.setActiveItem(baseline));
+    store.dispatch(itemSlice.actions.setItemPersistenceError(7));
+    const localSlides = [
+      ...baseline.slides,
+      { id: "slide-b", name: "B", type: "Section", boxes: [] },
+    ];
+    store.dispatch(itemSlice.actions._updateSlides(localSlides));
+    const remote = { ...baseline, _rev: "2-remote", name: "Remote rename" };
+
+    store.dispatch(itemSlice.actions.mergeRemoteItemUpdate({
+      document: remote,
+      authoredBaseline: baseline,
+    }));
+
+    expect(store.getState().item.name).toBe("Remote rename");
+    expect(store.getState().item.slides).toEqual(localSlides);
+    expect(store.getState().item.baseItem?.name).toBe("Remote rename");
+    expect(store.getState().item.hasPendingUpdate).toBe(true);
+    expect(store.getState().item.itemPersistenceError).toBe(7);
+  });
+
+  it("keeps monitor layouts in persisted baselines and markItemPersisted updates", () => {
+    const baseline = {
+      _id: "free-layout-save",
+      type: "free" as const,
+      name: "Free item",
+      selectedArrangement: 0,
+      slides: [],
+      monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 24 },
+    } as any;
+    const persisted = { ...baseline, monitorLayout: { currentFontSizePx: 28, nextFontSizePx: 22 } };
+    const store = createStore({ item: {
+      ...itemSlice.getInitialState(),
+      ...baseline,
+      baseItem: baseline,
+      monitorLayout: persisted.monitorLayout,
+      hasPendingUpdate: true,
+    } as ItemState });
+
+    store.dispatch(itemSlice.actions.markItemPersisted(persisted, persisted));
+    expect(store.getState().item.monitorLayout).toEqual(persisted.monitorLayout);
+    expect(store.getState().item.baseItem?.monitorLayout).toEqual(persisted.monitorLayout);
+    expect(getItemPersistenceChanges(store.getState().item, persisted)).toEqual([]);
+
+    const newerRemote = { ...persisted, monitorLayout: { currentFontSizePx: 26, nextFontSizePx: 18 } };
+    store.dispatch(itemSlice.actions.rebaseItemPersistence(newerRemote));
+    expect(store.getState().item.baseItem?.monitorLayout).toEqual(newerRemote.monitorLayout);
+    expect(getItemPersistenceChanges(store.getState().item, newerRemote)).toEqual(["monitorLayout"]);
+  });
+
+  it("keeps Song V2 arrangement layouts scoped to their arrangement", () => {
+    const baseline = {
+      _id: "song-layout-v2",
+      type: "song" as const,
+      docType: "song-v2-root",
+      name: "Song",
+      slides: [],
+      selectedArrangement: 0,
+      arrangements: [{
+        id: "master", name: "Master", slides: [], formattedLyrics: [], songOrder: [],
+        monitorLayout: { currentFontSizePx: 30, nextFontSizePx: 24 },
+      }],
+    } as any;
+    const current = {
+      ...itemSlice.getInitialState(), ...baseline, baseItem: baseline,
+      monitorLayout: undefined,
+      arrangements: [{ ...baseline.arrangements[0], monitorLayout: { currentFontSizePx: 28, nextFontSizePx: 22 } }],
+    } as ItemState;
+    const latest = {
+      ...baseline,
+      arrangements: [{ ...baseline.arrangements[0], monitorLayout: { currentFontSizePx: 27, nextFontSizePx: 20 } }],
+    };
+
+    expect(getItemPersistenceChanges(current, baseline)).toContain("arrangements");
+    expect(getItemPersistenceChanges(current, baseline)).not.toContain("monitorLayout");
+    expect(getItemPersistenceConflicts(current, baseline, latest)).not.toContain("monitorLayout");
+  });
+
   it("rejects audio results for another song or church with the same song ID", () => {
     const store = createStore();
     const owner = { scopeId: "a", databaseKey: "a", churchId: "a", itemId: "song-A", itemType: "song" as const };

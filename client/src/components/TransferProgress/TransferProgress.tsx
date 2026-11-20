@@ -6,6 +6,7 @@ import { normalizeProgress, type TransferOverviewItem } from "../../context/tran
 type TransferProgressProps = {
   transfer: TransferOverviewItem;
   variant: "card" | "summary" | "compact";
+  onResultAction?: (key: string) => void;
 };
 
 export const formatTransferProgress = (progressValue: number | null) => {
@@ -26,13 +27,14 @@ const percentLabel = (transfer: TransferOverviewItem) => {
   return formatTransferProgress(transfer.progress);
 };
 
-export const TransferProgress = ({ transfer, variant }: TransferProgressProps) => {
+export const TransferProgress = ({ transfer, variant, onResultAction }: TransferProgressProps) => {
   const [showFailedFiles, setShowFailedFiles] = useState(false);
   const compact = variant === "compact";
   const summary = variant === "summary";
   const progress = normalizeProgress(transfer.progress);
   const showAggregateProgress = !transfer.files?.length;
   const failedFiles = transfer.files?.filter((file) => file.status === "failed" || Boolean(file.error)) ?? [];
+  const wrapProgressDetail = transfer.phase?.key === "downloading";
   const hideFailedFilesUntilExpanded = !compact && !summary && failedFiles.length > 3;
   const visibleFiles = hideFailedFilesUntilExpanded && !showFailedFiles
     ? transfer.files?.filter((file) => file.status === "active").slice(0, 2)
@@ -65,7 +67,7 @@ export const TransferProgress = ({ transfer, variant }: TransferProgressProps) =
       <p className={`${compact ? "mt-0.5" : "mt-1"} truncate text-xs text-gray-300`}>
         {phaseText}
       </p>
-      {transfer.detail ? <p className="mt-1 truncate text-xs text-gray-400">{transfer.detail}</p> : null}
+      {transfer.detail ? <p className={`mt-1 text-xs text-gray-400 ${wrapProgressDetail ? "whitespace-normal break-words" : "truncate"}`}>{transfer.detail}</p> : null}
       {showAggregateProgress && transfer.status !== "failed" && transfer.status !== "cancelled" ? (
         <div
           role="progressbar"
@@ -110,7 +112,9 @@ export const TransferProgress = ({ transfer, variant }: TransferProgressProps) =
       ) : null}
       {transfer.result ? (
         <div className="mt-2 text-xs">
-          {transfer.result.to
+          {transfer.result.actionKey && onResultAction
+            ? <button type="button" onClick={() => onResultAction(transfer.result!.actionKey!)} className="flex cursor-pointer items-center gap-1 rounded text-cyan-200 underline outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800">{transfer.result.label}</button>
+            : transfer.result.to
           ? <Link to={transfer.result.to} onClick={transfer.result.onClick} className="flex cursor-pointer items-center gap-1 rounded text-cyan-200 underline outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 focus-visible:ring-offset-2 focus-visible:ring-offset-gray-800">{transfer.result.label}</Link>
             : <span className="text-gray-300">{transfer.result.label}</span>}
         </div>

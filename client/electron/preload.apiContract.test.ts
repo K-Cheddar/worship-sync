@@ -30,6 +30,18 @@ describe("electron preload API contract", () => {
       "importLocalAssetBytes",
       "getLocalAsset",
       "deleteLocalAsset",
+      "linkLocalVideoFile",
+      "linkSelectedLocalVideoFile",
+      "relinkLocalVideoFile",
+      "commitRelinkLocalVideoFile",
+      "getLocalVideoRelinkStatus",
+      "onLocalVideoAssetChanged",
+      "notifyLocalVideoAssetChanged",
+      "saveDownloadedVideoExternally",
+      "uploadLocalVideoAssetToMux",
+      "getVideoDownloadPreferences",
+      "updateVideoDownloadPreferences",
+      "chooseVideoDownloadDirectory",
       "getDesktopCaptureSources",
       "openExternalUrl",
       "fetchGeniusLyrics",
@@ -66,5 +78,6 @@ describe("electron preload API contract", () => {
   it("keeps native file paths inside the preload boundary", () => {
     expect(preloadSource).toContain("webUtils.getPathForFile(file)");
     expect(preloadSource).not.toContain("getPathForFile:");
+    expect(preloadSource).toContain('ipcRenderer.invoke("link-selected-local-video-file"');
   });
 });

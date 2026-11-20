@@ -40,6 +40,28 @@ describe("LocalVideoInputSlideBadge", () => {
     ).toHaveTextContent("Screen share: Lyrics screen");
   });
 
+  it("marks an unavailable source while retaining its type and owner in the label", () => {
+    render(
+      <LocalVideoInputSlideBadge
+        label="Presenter screen"
+        captureKind="screen"
+        variant="indicator"
+        unavailable
+        ownerLabel="Booth PC"
+      />,
+    );
+
+    const badge = screen.getByTestId("local-video-input-slide-badge");
+    expect(badge).toHaveAttribute(
+      "aria-label",
+      "Screen share: Presenter screen · Unavailable on this device · Available on Booth PC",
+    );
+    expect(badge).toHaveTextContent(
+      "Unavailable · Screen share · Presenter screen",
+    );
+    expect(badge).not.toHaveTextContent("Live input");
+  });
+
   it("falls back when the label is blank", () => {
     render(<LocalVideoInputSlideBadge label="   " captureKind="window" />);
 

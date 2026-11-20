@@ -7,7 +7,7 @@ import type { ClientRequest, IncomingMessage, RequestOptions } from "node:http";
 export const MAX_SAFE_HTTP_REDIRECTS = 5;
 
 type ResolvedAddress = { address: string; family: 4 | 6 };
-type LookupAll = (
+export type SafeHttpLookupAll = (
   hostname: string,
   options: { all: true; verbatim: true },
 ) => Promise<ResolvedAddress[]>;
@@ -116,12 +116,12 @@ export const isProhibitedIpAddress = (address: string) => {
   );
 };
 
-const defaultLookupAll: LookupAll = async (hostname, options) =>
+const defaultLookupAll: SafeHttpLookupAll = async (hostname, options) =>
   (await dns.lookup(hostname, options)) as ResolvedAddress[];
 
 export const validateSafeHttpUrl = async (
   rawUrl: string,
-  lookupAll: LookupAll = defaultLookupAll,
+  lookupAll: SafeHttpLookupAll = defaultLookupAll,
 ) => {
   let parsed: URL;
   try {
@@ -161,7 +161,7 @@ export const safeHttpGet = async (
   }: {
     headers?: Record<string, string>;
     maxRedirects?: number;
-    lookupAll?: LookupAll;
+    lookupAll?: SafeHttpLookupAll;
     requestFactory?: RequestFactory;
     timeoutMs?: number;
   } = {},

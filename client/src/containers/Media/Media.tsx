@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   LayoutGrid,
+  LoaderCircle,
   Maximize,
   MonitorSmartphone,
   X,
@@ -12,6 +13,14 @@ import {
 import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useDispatch } from "../../hooks";
 import MediaUploadInput from "./MediaUploadInput";
+import { useStore } from "react-redux";
+import { useOptionalTransferActions } from "../../context/transferContext";
+import { globalDb } from "../../context/controllerInfo";
+import { globalFireDbInfo } from "../../context/globalInfo";
+import { readMediaItemForDeletion } from "../../utils/mediaDocUtils";
+import type { RootState } from "../../store/store";
+import type { DesktopVideoDownloadOwner } from "../../components/DesktopVideoDownloadManager/desktopVideoDownloadController";
+import { cleanupLinkedVideoReplacement, discardUnadoptedLinkedVideo, finalizeLinkedVideoReplacement, linkedVideoRecoveryPatch, persistLinkedVideoReplacement, restoreUncommittedLinkedVideo, registerLinkedVideoReplacementRecovery } from "./relinkLocalVideo";
 import { setIsMediaExpanded } from "../../store/preferencesSlice";
 import {
   MEDIA_LIBRARY_ROOT_VIEW,
@@ -60,6 +69,16 @@ import {
 import { useNativeFileDrop } from "./useNativeFileDrop";
 import { MediaAddControl } from "./MediaAddControl";
 import { MediaSourceAddMenu } from "./MediaSourceAddMenu";
+import DownloadVideoDialog from "./DownloadVideoDialog";
+import { useActiveControllerProfile } from "../../context/activeController";
+import { useLocation } from "react-router-dom";
+import { MEDIA_STORAGE_CHANGED_EVENT } from "./mediaStorageEvents";
+import { createLocalMediaFromLinkedVideo } from "./localMediaImport";
+import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
+import { useToast } from "../../context/toastContext";
+import { claimMediaUpload } from "../../utils/mediaOperationClaims";
+import { flushMediaLibraryDocToPouch } from "../../utils/flushMediaLibraryDoc";
+import { loadMediaLibrary } from "../../utils/mediaDocUtils";
 
 const MEDIA_LIBRARY_FORM_POPOVER_CLASS =
   "w-72 border border-gray-600 bg-gray-900 p-3 text-white";
@@ -85,13 +104,50 @@ export const getMediaPanelClassName = ({
 
 const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
   const dispatch = useDispatch();
+  const reduxStore = useStore<RootState>();
+  const transfer = useOptionalTransferActions();
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
+  const { showToast } = useToast();
   const { churchId = "" } = useContext(GlobalInfoContext) || {};
+  const controllerProfile = useActiveControllerProfile();
+  const { pathname } = useLocation();
   const [isCanvaImportOpen, setIsCanvaImportOpen] = useState(false);
   const [canvaSourceMedia, setCanvaSourceMedia] = useState<MediaType | null>(
     null,
   );
   const [canvaOauthConfigured, setCanvaOauthConfigured] = useState(false);
   const [isVideoInputOpen, setIsVideoInputOpen] = useState(false);
+  const [isVideoDownloadOpen, setIsVideoDownloadOpen] = useState(false);
+  const [isVideoDownloaderAvailable, setIsVideoDownloaderAvailable] = useState(false);
+  const [localVideoTask, setLocalVideoTask] = useState<{
+    id: number;
+    scope: string;
+    label: string;
+  } | null>(null);
+  const localVideoTaskRef = useRef<typeof localVideoTask>(null);
+  const localVideoTaskIdRef = useRef(0);
+  const localVideoTaskScope = `${churchId}:${pathname}`;
+  const isLinkingLocalVideo = localVideoTask?.scope === localVideoTaskScope;
+  const beginLocalVideoTask = useCallback((label: string) => {
+    if (localVideoTaskRef.current?.scope === localVideoTaskScope) return null;
+    const task = { id: ++localVideoTaskIdRef.current, scope: localVideoTaskScope, label };
+    localVideoTaskRef.current = task;
+    if (mountedRef.current) setLocalVideoTask(task);
+    return task;
+  }, [localVideoTaskScope]);
+  const updateLocalVideoTask = useCallback((task: NonNullable<typeof localVideoTask>, label: string) => {
+    if (localVideoTaskRef.current?.id !== task.id) return;
+    const next = { ...task, label };
+    localVideoTaskRef.current = next;
+    if (mountedRef.current) setLocalVideoTask(next);
+  }, []);
+  const finishLocalVideoTask = useCallback((task: NonNullable<typeof localVideoTask>) => {
+    if (localVideoTaskRef.current?.id !== task.id) return;
+    localVideoTaskRef.current = null;
+    if (mountedRef.current) setLocalVideoTask(null);
+  }, []);
+  useEffect(() => { setLocalVideoTask(null); }, [localVideoTaskScope]);
   const [videoInputToEdit, setVideoInputToEdit] = useState<MediaType>();
   const [videoInputMode, setVideoInputMode] =
     useState<LocalVideoCaptureMode>("device");
@@ -182,6 +238,24 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
       active = false;
     };
   }, [churchId]);
+
+  useEffect(() => {
+    let active = true;
+    const checkAvailability = window.electronAPI?.isVideoDownloaderAvailable;
+    if (!checkAvailability) return;
+    void checkAvailability().then((available) => {
+      if (active) setIsVideoDownloaderAvailable(available);
+    }).catch(() => {
+      if (active) setIsVideoDownloaderAvailable(false);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    const onStorageChanged = () => notifyStorageUsageChanged();
+    window.addEventListener(MEDIA_STORAGE_CHANGED_EVENT, onStorageChanged);
+    return () => window.removeEventListener(MEDIA_STORAGE_CHANGED_EVENT, onStorageChanged);
+  }, [notifyStorageUsageChanged]);
 
   const selectedCount = c.selectedMediaIds.size;
   const mediaRenameWindowRef = useRef<FloatingWindowHandle>(null);
@@ -327,6 +401,201 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
     ],
   );
 
+  const linkLocalVideo = useCallback(async (file: File, displayName: string) => {
+    const api = window.electronAPI;
+    if (c.isMediaReadOnly || !api?.linkSelectedLocalVideoFile) return;
+    const task = beginLocalVideoTask("Checking video file…");
+    if (!task) return;
+    const dbAtStart = globalDb;
+    const isOwnerCurrent = () => globalDb === dbAtStart && globalFireDbInfo.churchId === churchId;
+    const canNotify = () =>
+      mountedRef.current &&
+      localVideoTaskRef.current?.id === task.id &&
+      task.scope === localVideoTaskScope &&
+      isOwnerCurrent();
+    let assetId: string | undefined;
+    let persistenceStarted = false;
+    try {
+      const asset = await api.linkSelectedLocalVideoFile(churchId, file);
+      if (!asset) return;
+      assetId = asset.assetId;
+      if (!isOwnerCurrent()) throw new Error("The active church changed before the video could be linked.");
+      updateLocalVideoTask(task, "Validating playback…");
+      const media = await createLocalMediaFromLinkedVideo({
+        asset,
+        workspaceId: churchId,
+        displayName,
+        folderId: c.uploadTargetFolderId,
+      });
+      if (!isOwnerCurrent()) throw new Error("The active church changed before the video could be linked.");
+      updateLocalVideoTask(task, "Completing Media Library registration…");
+      const before = reduxStore.getState().media;
+      addLocalMedia(media);
+      persistenceStarted = true;
+      const after = reduxStore.getState().media;
+      const flushed = await flushMediaLibraryDocToPouch(
+        dbAtStart,
+        after.list,
+        after.folders,
+        () => isOwnerCurrent()
+          ? { list: reduxStore.getState().media.list, folders: reduxStore.getState().media.folders }
+          : { list: after.list, folders: after.folders },
+        { list: before.list, folders: before.folders },
+        { canPersist: isOwnerCurrent, publishIfCurrent: isOwnerCurrent },
+      );
+      if (!flushed.ok) throw flushed.error instanceof Error
+        ? flushed.error
+        : new Error("Could not save this video to the Media Library.");
+      const persisted = await loadMediaLibrary(dbAtStart as PouchDB.Database);
+      if (!persisted.list.some((item) => item.id === media.id && item.localVideoFile?.id === assetId)) {
+        throw new Error("The linked video could not be confirmed in the Media Library. Its source was kept.");
+      }
+      if (canNotify()) {
+        notifyStorageUsageChanged();
+        showToast("Video added to the Media Library.", "success");
+      }
+    } catch (error) {
+      let mayDiscardAsset = true;
+      if (persistenceStarted && assetId && dbAtStart) {
+        try {
+          const persisted = await loadMediaLibrary(dbAtStart as PouchDB.Database, { forCleanup: true });
+          if (persisted.list.some((item) => item.id === assetId || item.localVideoFile?.id === assetId)) {
+            mayDiscardAsset = false;
+          } else if (reduxStore.getState().media.list.some((item) => item.id === assetId || item.localVideoFile?.id === assetId)) {
+            mayDiscardAsset = false;
+          }
+        } catch {
+          mayDiscardAsset = false;
+        }
+      } else if (persistenceStarted) {
+        mayDiscardAsset = false;
+      }
+      if (assetId && mayDiscardAsset) await deleteLocalVideoFile(assetId).catch(() => undefined);
+      if (canNotify()) showToast(
+        error instanceof Error ? error.message : "Could not link this video file.",
+        "error",
+      );
+    } finally {
+      finishLocalVideoTask(task);
+    }
+  }, [addLocalMedia, beginLocalVideoTask, churchId, c.isMediaReadOnly, c.uploadTargetFolderId, finishLocalVideoTask, localVideoTaskScope, notifyStorageUsageChanged, reduxStore, showToast, updateLocalVideoTask]);
+
+  const relinkLocalVideoFile = useCallback(async (media: MediaType) => {
+    const api = window.electronAPI;
+    const reference = media.localVideoFile;
+    if (
+      c.isMediaReadOnly || !api?.relinkLocalVideoFile ||
+      !reference || reference.storageMode !== "linked"
+    ) return;
+    const task = beginLocalVideoTask("Checking linked video…");
+    if (!task) return;
+    const claim = claimMediaUpload(media.id);
+    if (!claim) {
+      finishLocalVideoTask(task);
+      showToast("Wait for the current video upload to finish before relinking this file.", "error");
+      return;
+    }
+    const owner: DesktopVideoDownloadOwner = {
+      churchId, workspaceId: churchId, controllerProfileId: "", folderId: media.folderId ?? null,
+      routePath: pathname, dbAtStart: globalDb,
+    };
+    const isOwnerCurrent = () => globalDb === owner.dbAtStart && globalFireDbInfo.churchId === owner.churchId;
+    const isCurrent = () => claim.isCurrent() && isOwnerCurrent();
+    const getItems = () => reduxStore.getState().media.list;
+    const publishAdopted = (saved: MediaType) => {
+      const patch = linkedVideoRecoveryPatch(saved, getItems().find((item) => item.id === media.id));
+      if (patch && isOwnerCurrent()) dispatch(updateMediaItemFields({ id: media.id, patch }));
+    };
+    let candidate: Awaited<ReturnType<typeof api.relinkLocalVideoFile>>;
+    let savedReplacement: Awaited<ReturnType<typeof persistLinkedVideoReplacement>> | undefined;
+    let persistenceStarted = false;
+    try {
+      const persisted = owner.dbAtStart
+        ? await readMediaItemForDeletion(owner.dbAtStart as PouchDB.Database, media.id) : null;
+      const pending = persisted?.item.pendingLinkedVideoCleanup?.findLast((entry) =>
+        !entry.rolledBack && entry.contentHash === persisted.item.localVideoFile?.contentHash);
+      if (pending) {
+        const status = await api.getLocalVideoRelinkStatus(reference.id, pending.localAssetId);
+        if (status.status !== "committed") {
+          registerLinkedVideoReplacementRecovery({ item: persisted!.item, owner, isOwnerCurrent, getItems, dispatch,
+            transfer: transfer ?? undefined, error: new Error("Finish the previous relink before selecting another file.") });
+          throw new Error("Finish the previous relink using Retry relink in Activity, then choose another file.");
+        }
+      }
+      if (!isCurrent()) throw new Error("The active church or video changed. Try relinking again.");
+      updateLocalVideoTask(task, "Choose a replacement video file…");
+      candidate = await api.relinkLocalVideoFile(reference.id);
+      if (!candidate) return;
+      if (candidate.workspaceId !== churchId) throw new Error("This local video belongs to a different church. Its source was kept.");
+      if (candidate.assetId === reference.id) throw new Error("Restart WorshipSync before relinking this video.");
+      if (!isCurrent()) throw new Error("The active church or video changed. Try relinking again.");
+      updateLocalVideoTask(task, "Validating replacement video…");
+      const linked = await createLocalMediaFromLinkedVideo({
+        asset: candidate, workspaceId: churchId, displayName: media.name, folderId: media.folderId, validateOnly: true,
+      });
+      // Recheck identity after Chromium has decoded the candidate. Do not adopt
+      // a source moved or modified while metadata validation was in progress.
+      updateLocalVideoTask(task, "Checking replacement file…");
+      const available = await api.getLocalAsset(candidate.assetId);
+      if (!available || available.contentHash !== candidate.contentHash || !isCurrent()) {
+        throw new Error("The selected file or active church changed while the video was being checked.");
+      }
+      updateLocalVideoTask(task, "Saving relink to the Media Library…");
+      persistenceStarted = true;
+      const saved = await persistLinkedVideoReplacement({ original: media, linked, candidateAssetId: candidate.assetId, previousContentHash: candidate.previousContentHash, owner, isOwnerCurrent: isCurrent });
+      savedReplacement = saved;
+      updateLocalVideoTask(task, "Finalizing linked video…");
+      await finalizeLinkedVideoReplacement(saved.item, isCurrent, owner.workspaceId);
+      if (isCurrent()) {
+        const current = getItems().find((item) => item.id === media.id);
+        dispatch(updateMediaItemFields({ id: media.id, patch: {
+          ...saved.patch,
+          localVideoFile: { ...saved.patch.localVideoFile!, audioEnabled: current?.localVideoFile?.audioEnabled },
+          pendingLinkedVideoCleanup: saved.item.pendingLinkedVideoCleanup,
+        } }));
+      }
+      const onRetired = (retired: NonNullable<MediaType["pendingLinkedVideoCleanup"]>[number]) => {
+        const current = getItems().find((item) => item.id === media.id);
+        dispatch(updateMediaItemFields({ id: media.id, patch: {
+          pendingLinkedVideoCleanup: current?.pendingLinkedVideoCleanup?.filter((entry) => JSON.stringify(entry) !== JSON.stringify(retired)),
+        } }));
+      };
+      const cleanup = () => cleanupLinkedVideoReplacement(media.id, owner, isCurrent, getItems, onRetired, publishAdopted);
+      try { await cleanup(); }
+      catch (error) {
+        registerLinkedVideoReplacementRecovery({ item: saved.item, owner, isOwnerCurrent, getItems, dispatch, transfer: transfer ?? undefined, error });
+      }
+      if (isOwnerCurrent() && mountedRef.current) {
+        notifyStorageUsageChanged();
+        showToast(saved.changed ? "File relinked. Upload it again to restore its cloud copy." : "File relinked.", "success");
+      }
+    } catch (error) {
+      if (candidate && savedReplacement) {
+        await restoreUncommittedLinkedVideo(media, savedReplacement.patch, candidate.assetId, owner, isOwnerCurrent, candidate.previousContentHash).catch(() => undefined);
+      }
+      if (candidate && persistenceStarted) {
+        let pending = true;
+        try {
+          const persisted = await readMediaItemForDeletion(owner.dbAtStart as PouchDB.Database, media.id);
+          pending = Boolean(persisted?.item.pendingLinkedVideoCleanup?.some((entry) => entry.localAssetId === candidate!.assetId));
+        } catch { /* An unreadable commit needs recovery, never speculative rollback. */ }
+        if (pending) registerLinkedVideoReplacementRecovery({ item: media, owner, isOwnerCurrent, getItems, dispatch,
+          transfer: transfer ?? undefined, error });
+      }
+      if (candidate && candidate.assetId !== reference.id) {
+        // A rejected acknowledgement may already have adopted the candidate.
+        // Preserve it whenever the authoritative reference cannot be checked.
+        await discardUnadoptedLinkedVideo(candidate, owner, isOwnerCurrent, getItems).catch(() => undefined);
+      }
+      if (isOwnerCurrent() && mountedRef.current) showToast(
+        error instanceof Error ? error.message : "Could not relink this video file.", "error",
+      );
+    } finally {
+      claim.release();
+      finishLocalVideoTask(task);
+    }
+  }, [beginLocalVideoTask, churchId, c.isMediaReadOnly, dispatch, finishLocalVideoTask, notifyStorageUsageChanged, pathname, reduxStore, showToast, transfer, updateLocalVideoTask]);
+
   return (
     <ErrorBoundary>
       <div
@@ -360,13 +629,20 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
             />
           </div>
           <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+            {localVideoTask?.scope === localVideoTaskScope ? (
+              <p role="status" aria-live="polite" aria-busy="true" className="mr-2 text-xs text-gray-300">
+                <LoaderCircle className="mr-1 inline size-3 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+                {localVideoTask.label}
+              </p>
+            ) : null}
             <MediaAddControl>
               <MediaSourceAddMenu
                 onAddMedia={() => void c.requestMediaUpload()}
                 onAddVideoInput={() => openVideoInputPicker("device")}
                 onAddScreenShare={supportsDesktopCapture() ? () => openVideoInputPicker("desktop") : undefined}
                 onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
-                mediaUploadDisabled={c.isMediaReadOnly}
+                onDownloadVideo={isVideoDownloaderAvailable ? () => setIsVideoDownloadOpen(true) : undefined}
+                mediaUploadDisabled={c.isMediaReadOnly || isLinkingLocalVideo}
                 isGuestSession={c.isGuestSession}
               />
             </MediaAddControl>
@@ -385,11 +661,23 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           onLocalMediaPatched={(id, patch) =>
             dispatch(updateMediaItemFields({ id, patch }))
           }
+          onLinkVideo={linkLocalVideo}
           showButton={false}
           uploadPreset="bpqu4ma5"
           onUploadComplete={notifyStorageUsageChanged}
-          uploadDisabled={c.isMediaReadOnly}
+          uploadDisabled={c.isMediaReadOnly || isLinkingLocalVideo}
         />
+        {isVideoDownloaderAvailable ? (
+          <DownloadVideoDialog
+            open={isVideoDownloadOpen}
+            onOpenChange={setIsVideoDownloadOpen}
+            disabled={c.isMediaReadOnly}
+            isGuestSession={c.isGuestSession}
+            controllerProfileId={controllerProfile.id}
+            folderId={c.uploadTargetFolderId}
+            routePath={pathname}
+          />
+        ) : null}
         {isVideoInputOpen ? (
           <LocalVideoInputPicker
             hideTrigger
@@ -554,6 +842,7 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           isPanelVariant={c.isPanelVariant}
           isMediaExpanded={c.isMediaExpanded}
           isMediaLoading={c.isMediaLoading}
+          isMediaWaitingForSync={c.isMediaWaitingForSync}
           hasMediaLoadError={c.hasMediaLoadError}
           mediaItemsPerRow={c.mediaItemsPerRow}
           mediaListRef={c.mediaListRef}
@@ -582,7 +871,6 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
           isOpen={c.showDeleteModal}
           onClose={c.handleCancelDelete}
           onConfirm={c.handleConfirmDelete}
-          isConfirming={c.isDeleteInProgress}
           itemName={c.isDeletingMultiple ? undefined : c.mediaToDelete?.name}
           title="Delete Media"
           message={
@@ -649,8 +937,9 @@ const Media = ({ variant = "default", pageMode = "default" }: MediaProps) => {
               : undefined
           }
           onRelinkVideoInput={relinkVideoInput}
+          onRelinkLocalVideoFile={relinkLocalVideoFile}
           onImportFromCanva={canvaOauthConfigured ? openCanva : undefined}
-          mediaUploadDisabled={c.isMediaReadOnly}
+          mediaUploadDisabled={c.isMediaReadOnly || isLinkingLocalVideo}
           isGuestSession={c.isGuestSession}
           onStorageUsageRefreshReady={registerStorageUsageRefresh}
           onStorageUsageChanged={notifyStorageUsageChanged}

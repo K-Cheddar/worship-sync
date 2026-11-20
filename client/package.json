@@ -91,6 +91,7 @@
     "esbuild": "^0.27.2"
   },
   "scripts": {
+    "preelectron": "node scripts/prepare-video-tools.mjs",
     "dev": "npm run electron",
     "build": "vite build",
     "build:heroku": "vite build --mode heroku",
@@ -99,11 +100,12 @@
     "build:strict": "npm run lint:check && vite build",
     "preview": "vite preview",
     "electron": "electron-vite dev && wait-on https://local.worshipsync.net:3000 && electron .",
-    "electron:build": "electron-vite build && electron-builder",
-    "electron:build:win": "electron-vite build && electron-builder --win",
-    "electron:build:mac": "electron-vite build && electron-builder --mac",
-    "electron:build:linux": "electron-vite build && electron-builder --linux",
+    "electron:build": "electron-vite build && electron-builder --config electron-builder.config.js",
+    "electron:build:win": "node scripts/prepare-video-tools.mjs && electron-vite build && electron-builder --config electron-builder.config.js --win",
+    "electron:build:mac": "electron-vite build && electron-builder --config electron-builder.config.js --mac",
+    "electron:build:linux": "electron-vite build && electron-builder --config electron-builder.config.js --linux",
     "test": "jest --watchAll=false",
+    "test:video-tools:prepare": "node --test scripts/prepare-video-tools.test.mjs",
     "test:coverage": "jest --watchAll=false --coverage",
     "test:watch": "jest",
     "test:e2e:responsive-navigation": "node e2e/run-browser-suite.mjs account-responsive-navigation.mjs",
@@ -115,17 +117,18 @@
     "test:e2e:my-schedule-cards": "node e2e/run-browser-suite.mjs my-schedule-service-cards.mjs",
     "test:e2e:volunteer-workspace": "node e2e/run-browser-suite.mjs volunteer-workspace-layout.mjs",
     "test:e2e:service-plan-refresh": "node e2e/run-browser-suite.mjs service-plan-refresh.mjs",
+    "test:e2e:service-public-efficiency": "node e2e/run-browser-suite.mjs service-public-efficiency.mjs",
     "test:e2e:availability-workspace": "node e2e/run-browser-suite.mjs availability-workspace.mjs",
     "test:e2e:resources-responsive": "node e2e/resources-responsive.mjs",
     "test:e2e:teams-responsive-navigation": "node e2e/responsive-navigation.mjs",
     "test:e2e:responsive-navigation:smoke": "node e2e/responsive-navigation.mjs --smoke",
     "test:e2e:schedules-performance": "node e2e/schedules-performance.mjs",
     "test:e2e:schedule-staffing-responsive": "node e2e/schedules-performance.mjs --responsive-only",
-    "test:e2e:browser": "npm run test:e2e:responsive-navigation && npm run test:e2e:board-controller-mobile",
+    "test:e2e:browser": "npm run test:e2e:responsive-navigation && npm run test:e2e:board-controller-mobile && npm run test:e2e:schedule-quick-member",
     "eject": "vite eject",
-    "lint": "eslint src --ext .ts,.tsx,.js,.jsx",
-    "lint:fix": "eslint src --ext .ts,.tsx,.js,.jsx --fix",
-    "lint:check": "eslint src --ext .ts,.tsx,.js,.jsx --max-warnings 0",
+    "lint": "eslint src --ext .ts,.tsx,.js,.jsx && eslint e2e --ext .mjs",
+    "lint:fix": "eslint src --ext .ts,.tsx,.js,.jsx --fix && eslint e2e --ext .mjs --fix",
+    "lint:check": "eslint src --ext .ts,.tsx,.js,.jsx --max-warnings 0 && eslint e2e --ext .mjs --max-warnings 0",
     "type-check": "tsc --noEmit",
     "generate:maskable-icon": "node scripts/generate-maskable-icon.mjs"
   },
@@ -203,6 +206,20 @@
               ]
             }
           ]
+        }
+      },
+      {
+        "files": [
+          "e2e/**/*.mjs"
+        ],
+        "env": {
+          "browser": true,
+          "node": true,
+          "es6": true
+        },
+        "parserOptions": {
+          "ecmaVersion": "latest",
+          "sourceType": "module"
         }
       }
     ]

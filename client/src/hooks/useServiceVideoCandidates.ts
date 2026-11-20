@@ -22,7 +22,7 @@ import {
   isHLSVideoSource,
 } from "../utils/isInstantVideoSource";
 import { isPlayableMediaSource } from "../utils/mediaSource";
-import { parseLocalVideoFileAssetId } from "../utils/localVideoFileAssets";
+import { parseLocalVideoFileAssetId, subscribeLocalVideoFileChanges } from "../utils/localVideoFileAssets";
 import {
   acquireLocalVideoFileUrl,
   peekLocalVideoFileUrl,
@@ -45,7 +45,7 @@ import {
 import { isTransportSafeMediaUrl } from "../utils/mediaPreparationManifest";
 import { getImageFromVideoUrl } from "../utils/generalUtils";
 import { getActiveItemSlides } from "../utils/activeItemSlides";
-import { loadItemWithSongHydration } from "../utils/songPersistence";
+import { classifySongV2RootState, getSongV2DocumentIdentity, getSongV2RootDocId, loadItemWithSongHydration } from "../utils/songPersistence";
 
 type ServiceItemMedia = {
   itemId: string;
@@ -805,6 +805,78 @@ export const useServiceVideoCandidates = ({
         }
         docsById.set(itemId, row.doc);
       }
+      // The logical row can be a stale pre-migration predecessor. Probe root
+      // markers in one bulk read, then hydrate each activated song through the
+      // authoritative V2 path before reading any media candidates.
+      const uniqueItemIds = [...new Set(itemIds)];
+      const rootsResponse = (await db.allDocs({
+        keys: uniqueItemIds.map(getSongV2RootDocId),
+        include_docs: true,
+      })) as PouchAllDocsResult;
+      if (generation !== loadGenerationRef.current) return;
+      const authoritativeSongIds = new Set<string>();
+      const deletedRootSongIds = new Set<string>();
+      const unknownRootSongIds = new Set<string>();
+      const rootRowsById = new Map((rootsResponse.rows ?? []).map((row) => {
+        const docId = row.doc && typeof row.doc === "object"
+          ? (row.doc as { _id?: unknown })._id
+          : undefined;
+        const key = row.key ?? row.id ?? (typeof docId === "string" ? docId : "");
+        return [key, row] as const;
+      }));
+      uniqueItemIds.forEach((songId) => {
+        const key = getSongV2RootDocId(songId);
+        const row = rootRowsById.get(key);
+        if (!row) {
+          unknownRootSongIds.add(songId);
+          return;
+        }
+        const identity = getSongV2DocumentIdentity(key);
+        if (identity?.kind !== "root") {
+          unknownRootSongIds.add(songId);
+          return;
+        }
+        const rootState = classifySongV2RootState(
+          row.value?.deleted
+            ? { kind: "deleted" }
+            : row.error === "not_found"
+              ? { kind: "missing" }
+              : row.doc
+                ? { kind: "found", root: row.doc }
+                : { kind: "read-failed" },
+        );
+        if (rootState === "v2") authoritativeSongIds.add(identity.songId);
+        else if (rootState === "unknown") unknownRootSongIds.add(identity.songId);
+        else if (row.value?.deleted) deletedRootSongIds.add(identity.songId);
+      });
+      const v2SongIds = uniqueItemIds.filter(id => authoritativeSongIds.has(id) && !deletedRootSongIds.has(id));
+      const v2HydrationErrors = new Set<string>(unknownRootSongIds);
+      for (let start = 0; start < v2SongIds.length; start += 4) {
+        const batch = v2SongIds.slice(start, start + 4);
+        const hydrated = await Promise.all(batch.map(async (songId) => {
+          try {
+            return [songId, await loadItemWithSongHydration(db, songId)] as const;
+          } catch {
+            // Keep the activated root authoritative even while children are
+            // replicating or the song is logically deleted. Never use its
+            // legacy predecessor as a media fallback.
+            v2HydrationErrors.add(songId);
+            return [songId, undefined] as const;
+          }
+        }));
+        if (generation !== loadGenerationRef.current) return;
+        hydrated.forEach(([songId, doc]) => {
+          if (doc && isSlideBearingDocument(doc)) {
+            docsById.set(songId, doc);
+            const missingIndex = missingItemIds.indexOf(songId);
+            if (missingIndex >= 0) missingItemIds.splice(missingIndex, 1);
+          } else docsById.delete(songId);
+        });
+      }
+      v2HydrationErrors.forEach(songId => {
+        docsById.delete(songId);
+        if (!missingItemIds.includes(songId)) missingItemIds.push(songId);
+      });
       const nextServiceMedia = (
         await Promise.all(
           itemIds.map(async (itemId, itemIndex) => {
@@ -829,6 +901,7 @@ export const useServiceVideoCandidates = ({
       const discoveredById = new Map(nextServiceMedia.map((media) => [media.itemId, media]));
       if (missingItemIds.length > 0) {
         serviceMediaRef.current.forEach((media) => {
+          if (authoritativeSongIds.has(media.itemId) || deletedRootSongIds.has(media.itemId)) return;
           if (!discoveredById.has(media.itemId) && !missingItemIds.includes(media.itemId)) return;
           if (!discoveredById.has(media.itemId)) discoveredById.set(media.itemId, media);
         });
@@ -1219,7 +1292,8 @@ export const useServiceVideoCandidates = ({
         ids.length === 0 ||
         ids.includes("ItemLists") ||
         ids.includes(activeListIdRef.current ?? "") ||
-        ids.some((id) => serviceItemIdsRef.current.has(id))
+        ids.some((id) => serviceItemIdsRef.current.has(id) ||
+          serviceItemIdsRef.current.has(getSongV2DocumentIdentity(id)?.songId ?? ""))
       ) {
         void loadServiceMedia();
       }
@@ -1234,6 +1308,17 @@ export const useServiceVideoCandidates = ({
   }, [enabled, handleUpdate, updater]);
 
   useGlobalBroadcast(handleUpdate);
+
+  useEffect(() => {
+    if (!enabled) return;
+    return subscribeLocalVideoFileChanges((assetId) => {
+      const prefix = `local-video:${assetId}:`;
+      if (outlineLoad.state !== "loaded" || serviceMediaRef.current.length === 0 ||
+          serviceMediaRef.current.some((item) => [...item.candidates, ...item.diagnostics].some((candidate) => candidate.mediaKey.startsWith(prefix)))) {
+        void loadServiceMedia();
+      }
+    });
+  }, [enabled, loadServiceMedia, outlineLoad.state]);
 
   useEffect(() => subscribeToElectronMediaSurfaceDiagnostics(
     () => undefined,

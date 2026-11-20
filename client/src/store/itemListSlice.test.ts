@@ -15,10 +15,14 @@ import itemListReducer, {
   markItemListPersisted,
   resolveOutlineConflict,
   failOutlineResolution,
+  restoreUndoRedoState,
 } from "./itemListSlice";
 import { activateOutlineContent } from "./outlineContent";
 import { createServiceItem } from "../test/fixtures";
 import type { ServiceItem } from "../types";
+import { Cloudinary } from "@cloudinary/url-gen";
+import { formatItemList } from "../utils/formatItemList";
+import { CLOUDINARY_CLOUD_NAME } from "../utils/cloudinaryConfig";
 import generateRandomId from "../utils/generateRandomId";
 import { createOutlineMoveIntent } from "../utils/outlineSync";
 
@@ -107,6 +111,73 @@ describe("itemListSlice", () => {
       expect(store.getState().itemList.remoteConflicts.a.resolutionChoice).toBeUndefined();
       expect(store.getState().itemList.pendingRevisionResolutions.a).toBeUndefined();
       expect(store.getState().itemList.list).toEqual(draft);
+    });
+
+    it.each([
+      ["matches the local draft", "Local", false],
+      ["returns to the shared baseline", "Base", true],
+    ] as const)("clears a stale conflict when the latest saved row %s", (_scenario, latestName, pending) => {
+      const store = createStore();
+      const base = createServiceItem({ name: "Base", _id: "a", listId: "row" });
+      const local = { ...base, name: "Local" };
+
+      store.dispatch(initiateItemList({ outlineId: "outline", items: [base] }));
+      store.dispatch(updateItemList([local]));
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: [{ ...base, name: "Remote" }] }));
+      expect(store.getState().itemList.remoteConflicts.outline).toBeDefined();
+
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: [{ ...base, name: latestName }] }));
+
+      expect(store.getState().itemList.remoteConflicts.outline).toBeUndefined();
+      expect(store.getState().itemList.list).toEqual([local]);
+      expect(store.getState().itemList.syncBaseline).toEqual([{ ...base, name: latestName }]);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(pending);
+    });
+
+    it("rechecks a retained conflict against the winner when the outline is reloaded", () => {
+      const store = createStore();
+      const base = createServiceItem({ name: "Base", _id: "a", listId: "row" });
+      const local = { ...base, name: "Local" };
+      const remote = { ...base, name: "Remote" };
+
+      store.dispatch(initiateItemList({ outlineId: "outline", items: [base] }));
+      store.dispatch(updateItemList([local]));
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: [remote] }));
+      expect(store.getState().itemList.remoteConflicts.outline).toBeDefined();
+
+      store.dispatch(initiateItemList({ outlineId: "outline", items: [local] }));
+
+      expect(store.getState().itemList.remoteConflicts.outline).toBeUndefined();
+      expect(store.getState().itemList.list).toEqual([local]);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(false);
+    });
+
+    it("keeps a selected revision resolution pending when history restores the baseline rows", () => {
+      const store = createStore();
+      const base = [createServiceItem({ _id: "a", listId: "row", name: "Base" })];
+      const draft = [{ ...base[0], name: "My edit" }];
+      const remote = [{ ...base[0], name: "Saved edit" }];
+      store.dispatch(activateOutlineContent({ ownerKey: "owner-a", hasSelection: true }));
+      store.dispatch(initiateItemList({ outlineId: "a", items: base }));
+      store.dispatch(updateItemList(draft));
+      store.dispatch(updateItemListFromRemote({ outlineId: "a", items: remote }));
+      store.dispatch(resolveOutlineConflict({
+        outlineId: "a",
+        choice: "keep-local",
+        reviewedItems: remote,
+        draftItems: draft,
+        reviewedRemoteItems: remote,
+      }));
+
+      const current = store.getState().itemList;
+      store.dispatch(restoreUndoRedoState({
+        current,
+        historical: { ...current, list: remote },
+      }));
+
+      expect(store.getState().itemList.list).toEqual(remote);
+      expect(store.getState().itemList.pendingRevisionResolutions.a).toBeDefined();
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
     });
 
     it("initiateItemList sets list and isInitialized", () => {
@@ -336,6 +407,39 @@ describe("itemListSlice", () => {
       expect(store.getState().itemList.hasPendingUpdate).toBe(true);
     });
 
+    it("keeps display backgrounds formatted when a raw saved row is acknowledged", () => {
+      const cloud = new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } });
+      const baseline = [
+        createServiceItem({ name: "Video", _id: "video", listId: "video-row", background: "media/video" }),
+        createServiceItem({ name: "Song", _id: "song", listId: "song-row", background: "media/song-background" }),
+      ];
+      const formattedBaseline = formatItemList(baseline, cloud);
+      const submitted = [formattedBaseline[1]];
+      const persisted = [baseline[1]];
+      const store = createStore({
+        itemList: {
+          list: submitted,
+          isLoading: false,
+          selectedItemListId: "song-row",
+          insertPointIndex: 0,
+          hasPendingUpdate: true,
+          initialItems: ["song-row"],
+          isInitialized: true,
+          syncBaseline: formattedBaseline,
+          loadedOutlineId: "outline",
+          remoteConflicts: {},
+          pendingRevisionResolutions: {},
+          pendingMoveIntents: [],
+        },
+      });
+
+      store.dispatch(markItemListPersisted({ outlineId: "outline", submittedItems: submitted, items: persisted }));
+
+      expect(store.getState().itemList.list[0].background).toBe(submitted[0].background);
+      expect(store.getState().itemList.syncBaseline).toEqual(persisted);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(false);
+    });
+
     it("retains latest conflict edits and remote baseline across navigation and repeated notifications", () => {
       const store = createStore();
       const base = createServiceItem({ name: "Base", listId: "row", _id: "base" });
@@ -417,6 +521,56 @@ describe("itemListSlice", () => {
       store.dispatch(initiateItemList({ outlineId: "outline-a", items: remote }));
       expect(store.getState().itemList.list[0].name).toBe("Local draft");
       expect(store.getState().itemList.hasPendingUpdate).toBe(true);
+    });
+
+    it("clears an offscreen resolution conflict while retaining a safely rebased draft", () => {
+      const submitted = [createServiceItem({ name: "Saved row", _id: "a", listId: "a" })];
+      const retainedDraft = [
+        ...submitted,
+        createServiceItem({ name: "Added after choosing", _id: "b", listId: "b" }),
+      ];
+      const otherOutline = [createServiceItem({ name: "Other outline", _id: "c", listId: "c" })];
+      const store = createStore({
+        itemList: {
+          list: otherOutline,
+          isLoading: false,
+          selectedItemListId: "c",
+          insertPointIndex: 0,
+          hasPendingUpdate: false,
+          initialItems: ["c"],
+          isInitialized: true,
+          syncBaseline: otherOutline,
+          loadedOutlineId: "outline-b",
+          outlineOwnerKey: "owner-a",
+          remoteConflicts: {
+            "outline-a": {
+              baselineItems: submitted,
+              localItems: retainedDraft,
+              originalLocalItems: submitted,
+              remoteItems: submitted,
+              resolutionChoice: "keep-local",
+            },
+          },
+          pendingByOutline: { "owner-a": retainedDraft },
+          syncBaselineByOutline: { "owner-a": submitted },
+          pendingRevisionResolutions: { "outline-a": { items: submitted } },
+          pendingMoveIntents: [],
+          pendingMoveIntentsByOutline: {},
+        },
+      });
+
+      store.dispatch(markItemListPersisted({
+        outlineId: "outline-a",
+        ownerKey: "owner-a",
+        submittedItems: submitted,
+        items: submitted,
+      }));
+
+      expect(store.getState().itemList.list).toEqual(otherOutline);
+      expect(store.getState().itemList.remoteConflicts["outline-a"]).toBeUndefined();
+      expect(store.getState().itemList.pendingRevisionResolutions["outline-a"]).toBeUndefined();
+      expect(store.getState().itemList.pendingByOutline?.["owner-a"]).toEqual(retainedDraft);
+      expect(store.getState().itemList.syncBaselineByOutline?.["owner-a"]).toEqual(submitted);
     });
 
     it("updateItemList replaces list and sets hasPendingUpdate", () => {

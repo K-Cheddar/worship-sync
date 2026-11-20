@@ -686,6 +686,9 @@ export const createProviderStorageService = ({
     } catch (error) {
       if (error?.status !== 404 && error?.statusCode !== 404) throw error;
     }
+    // A previous deletion may have completed despite a lost acknowledgement.
+    // No provider or quota mutation is needed when both resources are absent.
+    if (!asset && !owner) return { success: true };
     const metadataChurchId = asset?.meta?.creator_id;
     const passthroughMatches = asset?.passthrough?.startsWith(
       `worship-sync:church:${churchId}:`,

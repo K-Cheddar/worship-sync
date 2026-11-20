@@ -189,4 +189,57 @@ describe("AllToolsDrawer quick toolbar targets", () => {
       }),
     );
   });
+
+  it("opens the existing sheet at Show On without rendering Edit shortcuts", () => {
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    const scrollIntoView = jest.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+
+    try {
+      const view = render(
+        <div style={{ display: "none" }}>
+          <AllToolsDrawer
+            isOpen={true}
+            onClose={jest.fn()}
+            onToggle={jest.fn()}
+            isMobile={false}
+            showToolbarControls={false}
+            scrollToOutputTargets={true}
+            showBibleMode={false}
+            showStreamFormatting={false}
+            showOutputTargets={true}
+          >
+            {(targets) => (
+              <ItemEditTools drawerTarget={targets.outputTargets} />
+            )}
+          </AllToolsDrawer>
+        </div>,
+      );
+
+      expect(scrollIntoView).toHaveBeenCalledWith({ block: "start" });
+      expect(
+        screen.getByRole("heading", { name: "Show On" }),
+      ).toBeVisible();
+      expect(
+        screen.getByRole("switch", { name: "Projector:" }),
+      ).toBeVisible();
+      expect(
+        screen.queryByRole("button", { name: "All Tools" }),
+      ).not.toBeInTheDocument();
+      view.unmount();
+    } finally {
+      if (originalScrollIntoView) {
+        Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+          configurable: true,
+          value: originalScrollIntoView,
+        });
+      } else {
+        delete (HTMLElement.prototype as { scrollIntoView?: () => void })
+          .scrollIntoView;
+      }
+    }
+  });
 });

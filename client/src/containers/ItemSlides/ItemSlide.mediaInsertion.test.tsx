@@ -74,6 +74,46 @@ describe("ItemSlide media insertion zones", () => {
     mockUseDroppable.mockClear();
   });
 
+  it("marks the source unavailable while keeping its name and owner accessible", () => {
+    render(
+      <ul>
+        <ItemSlide
+          slide={{
+            ...slide,
+            mediaSource: {
+              kind: "local-video-input",
+              sourceId: "remote-camera",
+              label: "Main camera",
+              ownerDeviceId: "remote-device-for-preview-test",
+              ownerLabel: "Booth PC",
+            },
+          }}
+          index={0}
+          selectSlide={jest.fn()}
+          isSelected={false}
+          size={3}
+          itemType="song"
+          isMobile={false}
+          draggedSection={null}
+          isLive={false}
+          previewMode="projector"
+          getBibleInfo={() => ({ title: "", text: "" })}
+          borderWidth="1px"
+          hSize="text-sm"
+          onSlideGridClick={jest.fn()}
+        />
+      </ul>,
+    );
+
+    const badge = screen.getByTestId("local-video-input-slide-badge");
+    expect(badge).toHaveTextContent("Unavailable · Video input · Main camera");
+    expect(badge).toHaveAttribute(
+      "aria-label",
+      "Video input: Main camera · Unavailable on this device · Available on Booth PC",
+    );
+    expect(badge).toHaveClass("!z-40");
+  });
+
   it.each([false, true])(
     "keeps a %s slide thumbnail static, including its video background",
     (isLive) => {
@@ -188,7 +228,9 @@ describe("ItemSlide media insertion zones", () => {
     );
     expect(first.boxes[0].background).toBe("");
     expect(second.boxes[0].background).toBe("");
-    expect(screen.getAllByText("Live input · Main camera")).toHaveLength(2);
+    expect(
+      screen.getAllByText("Unavailable · Video input · Main camera"),
+    ).toHaveLength(2);
   });
 
   it.each([
@@ -231,9 +273,10 @@ describe("ItemSlide media insertion zones", () => {
     expect(screen.getByText(status, { exact: true })).toBeVisible();
     const inputBadge = screen.getByTestId("local-video-input-slide-badge");
     expect(inputBadge).toBeVisible();
-    expect(inputBadge).toHaveClass(
-      ...(hasThumbnail ? ["!left-2", "!right-auto"] : ["inset-x-0"]),
+    expect(inputBadge).toHaveTextContent(
+      "Unavailable · Video input · Main camera",
     );
+    expect(inputBadge).toHaveClass("!left-2", "!right-auto");
   });
 
   it("keeps auxiliary insertion targets positioned inside the existing slide grid item", () => {

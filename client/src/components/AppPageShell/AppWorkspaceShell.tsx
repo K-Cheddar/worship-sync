@@ -309,10 +309,10 @@ const AppWorkspaceShell = ({
           data-app-toolbar
           data-testid="app-workspace-toolbar"
           className={cn(
-            "relative grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center border-b border-gray-700",
+            "relative grid h-[48px] min-h-[48px] w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center border-b border-gray-700",
             compactMobileToolbar
-              ? "h-[48px] min-h-[48px] gap-2 px-2 py-0 text-base lg:h-auto lg:min-h-0 lg:grid-cols-[1fr_auto_1fr] lg:gap-4 lg:px-6 lg:py-2 lg:text-lg"
-              : "gap-1 px-2 py-1 text-lg sm:grid-cols-[1fr_auto_1fr] sm:gap-4 sm:px-4 sm:py-2 lg:px-6",
+              ? "gap-2 px-2 py-0 text-base lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:gap-4 lg:px-6 lg:text-lg"
+              : "gap-2 px-2 py-0 text-base sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-4 sm:px-4 sm:text-lg lg:px-6",
           )}
         >
           <div className="flex min-w-0 items-center gap-1 justify-self-start sm:gap-3">
@@ -357,11 +357,10 @@ const AppWorkspaceShell = ({
             ) : null}
           </div>
           <div className={cn(
-            "flex min-w-0 items-center justify-end justify-self-end",
-            compactMobileToolbar ? "flex-nowrap gap-2 lg:flex-wrap lg:gap-4" : "flex-wrap gap-4",
+            "flex min-w-0 flex-nowrap items-center justify-end justify-self-end gap-2 lg:gap-4",
           )}>
             {toolbarActions}
-            {showUserSection ? <UserSection variant={compactMobileToolbar ? "responsiveCompact" : "default"} /> : null}
+            {showUserSection ? <UserSection variant={compactMobileToolbar ? "responsiveCompact" : "compact"} /> : null}
           </div>
         </div>
       </div>

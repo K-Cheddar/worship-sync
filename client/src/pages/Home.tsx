@@ -531,7 +531,7 @@ const Welcome = () => {
         data-testid="home-toolbar"
         className="relative w-full shrink-0 border-b border-gray-700"
       >
-        <div className="relative mx-auto flex w-full items-center justify-between gap-4 px-4 py-3 text-lg sm:px-6 lg:px-8">
+        <div className="relative mx-auto flex h-[48px] min-h-[48px] w-full items-center justify-between gap-2 px-2 py-0 text-base sm:px-4 sm:text-lg lg:px-8">
           <div className="flex shrink-0 items-center gap-2">
             <HomeToolbarMenu extraMenuItems={installMenuItems} />
           </div>
@@ -546,7 +546,7 @@ const Welcome = () => {
                 Sign in
               </Button>
             ) : null}
-            <UserSection />
+            <UserSection variant="compact" />
           </div>
           <span
             role="img"

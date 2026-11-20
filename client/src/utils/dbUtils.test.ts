@@ -102,8 +102,8 @@ describe("dbUtils", () => {
     await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
 
     expect(dispatch).toHaveBeenCalledWith({
-      type: "allDocs/updateAllSongDocs",
-      payload: [song],
+      type: "allDocs/replaceSongLibrarySnapshot",
+      payload: { songs: [song], diagnostics: [], activatedSongIds: [] },
     });
   });
 
@@ -129,17 +129,23 @@ describe("dbUtils", () => {
       selectedArrangement: 0,
       slides: [],
     } as unknown as import("../types").DBItem);
-    db.allDocs.mockResolvedValue({
-      rows: [legacySong, v2Docs.root, ...v2Docs.arrangements, ...v2Docs.slides]
-        .map((doc) => ({ doc })),
-    });
+    const documents = [legacySong, v2Docs.root, ...v2Docs.arrangements, ...v2Docs.slides];
+    db.allDocs.mockImplementation(async ({ keys }: { keys?: string[] } = {}) => ({
+      rows: documents
+        .filter((doc) => !keys || keys.includes(doc._id))
+        .map((doc) => ({ id: doc._id, key: doc._id, doc })),
+    }));
     const dispatch = jest.fn();
 
     await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
 
     expect(dispatch).toHaveBeenCalledWith({
-      type: "allDocs/updateAllSongDocs",
-      payload: [legacySong, expect.objectContaining({ _id: "song-v2", docType: "song-v2-root", arrangements: [expect.objectContaining({ slides: [] })] })],
+      type: "allDocs/replaceSongLibrarySnapshot",
+      payload: {
+        songs: [legacySong, expect.objectContaining({ _id: "song-v2", docType: "song-v2-root", arrangements: [expect.objectContaining({ slides: [] })] })],
+        diagnostics: [],
+        activatedSongIds: ["song-v2"],
+      },
     });
     expect(v2Docs.root).not.toHaveProperty("type");
     expect(v2Docs.arrangements[0]).not.toHaveProperty("type");
@@ -158,7 +164,7 @@ describe("dbUtils", () => {
     }));
     await updateAllDocs(jest.fn(), db as unknown as PouchDB.Database);
     expect(db.allDocs.mock.calls).toEqual([
-      [{ include_docs: false }],
+      [{ include_docs: false, update_seq: true }],
       [{ keys: [docs.root._id, docs.arrangements[0]._id], include_docs: true }],
     ]);
     expect(db.get).not.toHaveBeenCalled();
@@ -292,6 +298,37 @@ describe("dbUtils", () => {
     release({ rows: [] });
     await expect(pending).resolves.toBe(false);
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it("replaces stale V2 activation only after a complete library scan", async () => {
+    const db = createDb();
+    const legacy = { _id: "song-rollback", type: "song", name: "Restored legacy" };
+    const root = { _id: "song-v2:root:song-rollback", docType: "song-v2-root", songId: "song-rollback" };
+    let includeRoot = false;
+    let incomplete = false;
+    db.allDocs.mockImplementation(async ({ keys }: { keys?: string[] } = {}) => {
+      const manifest = includeRoot ? [legacy, root] : [legacy];
+      const selected = keys ? manifest.filter((doc) => keys.includes(doc._id)) : manifest;
+      const rows = (incomplete && keys ? selected.filter((doc) => doc !== root) : selected)
+        .map((doc) => ({ id: doc._id, key: doc._id, doc }));
+      return { rows };
+    });
+    let state = allDocsSlice.getInitialState();
+    const v2Projection = { ...legacy, name: "Stale V2 projection", docType: "song-v2-root" as const };
+    state = allDocsSlice.reducer(state, allDocsSlice.actions.applySongLibraryRefresh({ songId: legacy._id, projection: v2Projection as any }));
+    const dispatch = jest.fn((action) => { state = allDocsSlice.reducer(state, action as any); });
+
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(true);
+    expect(state.activatedSongIds[legacy._id]).toBeUndefined();
+    expect(state.allSongDocs).toEqual([expect.objectContaining({ _id: legacy._id, name: "Restored legacy" })]);
+
+    includeRoot = true;
+    incomplete = true;
+    const errorLog = jest.spyOn(console, "error").mockImplementation(() => {});
+    await expect(updateAllDocs(dispatch, db as unknown as PouchDB.Database)).resolves.toBe(false);
+    expect(state.activatedSongIds[legacy._id]).toBeUndefined();
+    expect(state.allSongDocs).toEqual([expect.objectContaining({ _id: legacy._id, name: "Restored legacy" })]);
+    errorLog.mockRestore();
   });
 
   it("builds overlay usage map from item lists and skips unreadable lists", async () => {

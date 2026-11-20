@@ -5,6 +5,21 @@ const contentDatabaseSessions = new Map<
   { token: symbol; initialReplicationComplete: boolean }
 >();
 const activityListeners = new Set<() => void>();
+const VERIFIED_CONTENT_REPLICATION_DOC_ID =
+  "_local/worship-sync-initial-content-replication-v1";
+
+type VerifiedContentReplicationDoc = {
+  _id: string;
+  _rev?: string;
+  localDatabaseName: string;
+  sourceDatabaseName: string;
+  complete: true;
+};
+
+const isNotFound = (error: unknown) => {
+  const pouchError = error as { status?: number | string; name?: string };
+  return pouchError?.status === 404 || pouchError?.status === "404" || pouchError?.name === "not_found";
+};
 
 const notifyActivityChanged = () => {
   activityListeners.forEach((listener) => listener());
@@ -97,6 +112,62 @@ export const hasSuccessfulInitialContentReplication = (
     token && current?.token === token && current.initialReplicationComplete,
   );
 };
+
+/**
+ * Persist the existing initial-pull readiness fact locally so a completed
+ * library can still be used offline after the provider is recreated.
+ * `_local` documents are not replicated to CouchDB.
+ */
+export async function recordVerifiedInitialContentReplication(
+  db: PouchDB.Database,
+  sourceDatabaseName: string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    let current: VerifiedContentReplicationDoc | undefined;
+    try {
+      current = await db.get<VerifiedContentReplicationDoc>(VERIFIED_CONTENT_REPLICATION_DOC_ID);
+      if (
+        current.localDatabaseName === db.name &&
+        current.sourceDatabaseName === sourceDatabaseName &&
+        current.complete === true
+      ) {
+        return;
+      }
+    } catch (error) {
+      if (!isNotFound(error)) throw error;
+    }
+
+    try {
+      await db.put({
+        _id: VERIFIED_CONTENT_REPLICATION_DOC_ID,
+        ...(current?._rev ? { _rev: current._rev } : {}),
+        localDatabaseName: db.name,
+        sourceDatabaseName,
+        complete: true,
+      });
+      return;
+    } catch (error) {
+      const pouchError = error as { status?: number | string; name?: string };
+      const isConflict = pouchError?.status === 409 || pouchError?.name === "conflict";
+      if (!isConflict || attempt === 2) throw error;
+    }
+  }
+}
+
+export async function hasVerifiedInitialContentReplication(
+  db: PouchDB.Database,
+  sourceDatabaseName: string = db.name,
+): Promise<boolean> {
+  try {
+    const checkpoint = await db.get<VerifiedContentReplicationDoc>(VERIFIED_CONTENT_REPLICATION_DOC_ID);
+    return checkpoint.localDatabaseName === db.name &&
+      checkpoint.sourceDatabaseName === sourceDatabaseName &&
+      checkpoint.complete === true;
+  } catch (error) {
+    if (isNotFound(error)) return false;
+    throw error;
+  }
+}
 
 /** Track Bible creation while its content document is being committed. */
 export const trackBibleDocumentActivity = (databaseName: string) => {

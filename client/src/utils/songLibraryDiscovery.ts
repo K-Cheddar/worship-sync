@@ -1,10 +1,10 @@
 import type { DBItem, SongV2RootDocument, SongV2ArrangementDocument } from "../types";
-import { buildSongV2LibraryProjection, getSongV2RootDocId } from "./songPersistence";
+import { buildSongV2LibraryProjection, classifySongV2RootState, getSongV2RootDocId } from "./songPersistence";
 
 export type SongLibraryDiagnostic = {
   songId: string;
   rootId: string;
-  code: "incomplete-v2";
+  code: "incomplete-v2" | "read-failed";
   message: string;
 };
 
@@ -12,6 +12,7 @@ export type SongLibraryDiagnostic = {
 export function discoverSongLibrary(documents: unknown[]): {
   songs: DBItem[];
   diagnostics: SongLibraryDiagnostic[];
+  activatedSongIds: string[];
 } {
   const songs = new Map<string, DBItem>();
   const roots: SongV2RootDocument[] = [];
@@ -19,7 +20,11 @@ export function discoverSongLibrary(documents: unknown[]): {
   for (const input of documents) {
     if (!input || typeof input !== "object") continue;
     const doc = input as Record<string, unknown>;
-    if (doc.docType === "song-v2-root") roots.push(input as SongV2RootDocument);
+    if (doc.docType === "song-v2-root") {
+      if (classifySongV2RootState({ kind: "found", root: input }) === "v2") {
+        roots.push(input as SongV2RootDocument);
+      }
+    }
     else if (doc.docType === "song-v2-arrangement") {
       const arrangement = input as SongV2ArrangementDocument;
       const group = arrangements.get(arrangement.songId) ?? [];
@@ -38,6 +43,7 @@ export function discoverSongLibrary(documents: unknown[]): {
     }
   }
   const diagnostics: SongLibraryDiagnostic[] = [];
+  const activatedSongIds = new Set<string>();
   for (const root of roots) {
     // The physical root ID also suppresses a stale predecessor if songId is corrupt.
     let physicalSongId = root.songId;
@@ -46,6 +52,8 @@ export function discoverSongLibrary(documents: unknown[]): {
     } catch { /* Invalid encoding is reported by root validation below. */ }
     songs.delete(physicalSongId);
     songs.delete(root.songId);
+    activatedSongIds.add(physicalSongId);
+    activatedSongIds.add(root.songId);
     if (root.deletedAt) continue;
     try {
       if (root._id !== getSongV2RootDocId(root.songId)) throw new Error("Invalid root identity");
@@ -57,5 +65,5 @@ export function discoverSongLibrary(documents: unknown[]): {
       });
     }
   }
-  return { songs: [...songs.values()], diagnostics };
+  return { songs: [...songs.values()], diagnostics, activatedSongIds: [...activatedSongIds] };
 }

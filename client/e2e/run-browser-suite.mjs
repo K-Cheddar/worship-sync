@@ -14,6 +14,7 @@ const allowedSuites = new Set([
   "my-schedule-service-cards.mjs",
   "volunteer-workspace-layout.mjs",
   "service-plan-refresh.mjs",
+  "service-public-efficiency.mjs",
   "availability-workspace.mjs",
 ]);
 if (!allowedSuites.has(suite)) {

@@ -38,6 +38,7 @@ import {
 import ErrorBoundary from "../../components/ErrorBoundary/ErrorBoundary";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import BoxEditor from "./ToolbarElements/BoxEditor";
+import SendRoutingIndicator from "./ToolbarElements/SendRoutingIndicator";
 import {
   updateArrangements,
   updateBibleInfo,
@@ -112,6 +113,7 @@ const Toolbar = ({
   );
   const [section, setSection] = useState<sections>("configurations");
   const [allToolsOpen, setAllToolsOpen] = useState(false);
+  const openAtRoutingControlsRef = useRef(false);
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
@@ -191,15 +193,15 @@ const Toolbar = ({
   useEffect(() => {
     if (
       !onItemPage ||
-      mode === "present" ||
       section !== "editing" ||
       !itemType ||
       isViewOnlyAccess(access) ||
       !canShowSlideAndBoxTools
     ) {
       setAllToolsOpen(false);
+      openAtRoutingControlsRef.current = false;
     }
-  }, [onItemPage, mode, section, access, canShowSlideAndBoxTools, itemType]);
+  }, [onItemPage, section, access, canShowSlideAndBoxTools, itemType]);
 
   useEffect(() => {
     if (!activeControllerConfigurationRoute) return;
@@ -254,10 +256,13 @@ const Toolbar = ({
       className={cn(
         "flex min-h-0 w-full min-w-0 flex-1 items-center px-2",
         "[&_[data-slot=input]]:!h-8 [&_[data-slot=input]]:!min-h-8 [&_[data-slot=select-trigger]]:!h-8 [&_[data-slot=select-trigger]]:!min-h-8",
-        (isLyricsEditorOpen || (section === "editing" && !itemType)) && "hidden",
+        (mode === "present" ||
+          isLyricsEditorOpen ||
+          (section === "editing" && !itemType)) &&
+          "hidden",
       )}
     >
-      {section === "configurations" ? (
+      {section === "configurations" && mode === "edit" ? (
         <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-variable">
           {!isViewOnlyAccess(access) && (
             <ToolbarButton
@@ -303,19 +308,32 @@ const Toolbar = ({
           )}
           <MediaSurfaceDiagnostics />
         </div>
-      ) : onItemPage && !isViewOnlyAccess(access) && canShowSlideAndBoxTools ? (
+      ) :
+        onItemPage &&
+        !isViewOnlyAccess(access) &&
+        canShowSlideAndBoxTools &&
+        (section === "editing" || mode === "present") ? (
         <AllToolsDrawer
-          isOpen={allToolsOpen && mode === "edit" && Boolean(itemType)}
-          onClose={() => setAllToolsOpen(false)}
-          onToggle={() => setAllToolsOpen((open) => !open)}
+          isOpen={allToolsOpen && Boolean(itemType)}
+          onClose={() => {
+            setAllToolsOpen(false);
+            openAtRoutingControlsRef.current = false;
+          }}
+          onToggle={() => {
+            openAtRoutingControlsRef.current = false;
+            setAllToolsOpen((open) => !open);
+          }}
           isMobile={isMobile}
+          showToolbarControls={mode === "edit"}
+          scrollToOutputTargets={openAtRoutingControlsRef.current}
           showBibleMode={itemType === "bible"}
           showStreamFormatting={
             access === "full" && showStreamFormat && itemType === "free"
           }
           showOutputTargets={access === "full"}
         >
-          {(targets) => (
+          {(targets) =>
+            mode === "edit" || allToolsOpen ? (
             <>
               <SlideEditTools
                 quickFontSizeTarget={targets.quickFontSize}
@@ -336,7 +354,8 @@ const Toolbar = ({
                 <ItemEditTools drawerTarget={targets.outputTargets} />
               )}
             </>
-          )}
+            ) : null
+          }
         </AllToolsDrawer>
       ) : null}
     </div>
@@ -354,7 +373,10 @@ const Toolbar = ({
           isActive={mode === option}
           className="rounded-none first:rounded-l-md last:rounded-r-md"
           onClick={() => {
-            if (option === "present") setAllToolsOpen(false);
+            if (option === "present") {
+              setAllToolsOpen(false);
+              openAtRoutingControlsRef.current = false;
+            }
             setMode(option);
           }}
         >
@@ -381,13 +403,26 @@ const Toolbar = ({
                 data-testid="toolbar-scroll-controls"
               >
                 {modeToggle}
+                {onItemPage && access === "full" && Boolean(itemType) && (
+                  <SendRoutingIndicator
+                    isOpen={allToolsOpen}
+                    onClick={() => {
+                      openAtRoutingControlsRef.current = true;
+                      setAllToolsOpen(true);
+                    }}
+                  />
+                )}
                 {mode === "edit" && !isLyricsEditorOpen && !isViewOnlyAccess(access) && <Undo />}
                 {mode === "edit" && renderConfigurationsButton()}
               </div>
             </div>
-            {mode === "edit" && (
+            {(mode === "edit" ||
+              (mode === "present" &&
+                onItemPage &&
+                access === "full" &&
+                Boolean(itemType))) && (
               <>
-                <div className={cn("w-full border-t border-gray-600", section === "editing" && !itemType && "hidden")} />
+                <div className={cn("w-full border-t border-gray-600", mode === "present" && "hidden", section === "editing" && !itemType && "hidden")} />
                 {renderContextualToolbar()}
               </>
             )}
