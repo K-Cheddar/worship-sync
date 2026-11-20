@@ -15,9 +15,12 @@ const runChecker = (results, extraEnv = {}) => spawnSync(process.execPath, [chec
   env: { ...process.env, CHECK_RESULTS: JSON.stringify(results), ...extraEnv },
 });
 
-test("all PRs and manual runs use four ordinary Jest shards and the stable aggregate job", () => {
+test("PRs, in-progress pushes, and manual runs use four ordinary Jest shards and the stable aggregate job", () => {
+  assert.match(workflow, /^on:\n  push:\n    branches:\n      - in-progress$/m);
   assert.match(workflow, /pull_request:/);
   assert.match(workflow, /workflow_dispatch:/);
+  assert.match(workflow, /group: checks-\$\{\{ github\.workflow \}\}-\$\{\{ github\.event\.pull_request\.head\.repo\.full_name \|\| github\.repository \}\}-\$\{\{ github\.event\.pull_request\.head\.ref \|\| github\.ref_name \}\}/);
+  assert.match(workflow, /cancel-in-progress: true/);
   assert.doesNotMatch(workflow, /inputs:\s*\n\s+coverage:|coverage:\s*\n|test:coverage|coverage-artifact|coverageDirectory|COVERAGE_REQUIRED/);
   assert.match(workflow, /shard:\s*\[1, 2, 3, 4\]/);
   assert.match(workflow, /npm test --prefix client/);

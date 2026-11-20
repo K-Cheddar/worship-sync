@@ -37,6 +37,7 @@ const mockNotLocalVideoResolution: LocalVideoFileResolution = {
   status: "not-local",
 };
 let mockLocalVideoResolution = mockNotLocalVideoResolution;
+let mockLocalVideoThumbnailResolution = mockNotLocalVideoResolution;
 
 jest.mock("gsap", () => ({
   __esModule: true,
@@ -141,8 +142,12 @@ jest.mock("../../../hooks/useLocalImageUrl", () => ({
   useLocalImageUrl: () => mockNotLocalImageResolution,
 }));
 jest.mock("../../../hooks/useLocalVideoFileUrl", () => ({
-  useLocalVideoFileUrl: (value: unknown) =>
-    value ? mockLocalVideoResolution : mockNotLocalVideoResolution,
+  useLocalVideoFileUrl: (value: unknown, purpose?: string) =>
+    !value
+      ? mockNotLocalVideoResolution
+      : purpose === "thumbnail"
+        ? mockLocalVideoThumbnailResolution
+        : mockLocalVideoResolution,
   isUnavailableLocalVideoFile: (resolution: LocalVideoFileResolution) =>
     resolution.isLocalVideoFile && resolution.status === "unavailable",
 }));
@@ -302,7 +307,7 @@ const renderDisplayBoxLane = (
 ) =>
   snapshot.boxes.map((box, index) => (
     <DisplayBox
-      key={`${isPrevious ? "prev" : "current"}-${box.id}`}
+      key={index}
       box={box as Box}
       width={100}
       showBackground
@@ -337,6 +342,7 @@ describe("DisplayBoxTransitionStage", () => {
     mockTimelineComplete = undefined;
     mockTimelineCompletions.length = 0;
     mockLocalVideoResolution = mockNotLocalVideoResolution;
+    mockLocalVideoThumbnailResolution = mockNotLocalVideoResolution;
     mockMediaReady = true;
     mockLiveMediaReady = true;
     mockReadinessByMedia.clear();
@@ -427,6 +433,89 @@ describe("DisplayBoxTransitionStage", () => {
     expect(
       screen.getByTestId("unavailable-local-video-black-screen"),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the unavailable-source layer black through previous-lane retirement", async () => {
+    const savedStill = "blob:retained-stage-thumbnail";
+    const videoBox = {
+      ...unavailableLocalVideoBox,
+      words: "Available local video",
+      mediaInfo: {
+        ...unavailableLocalVideoBox.mediaInfo!,
+        placeholderImage: savedStill,
+      },
+    };
+    mockLocalVideoResolution = {
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready",
+      url: "worshipsync-media://asset/video-1",
+    };
+    mockLocalVideoThumbnailResolution = {
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready",
+      url: savedStill,
+    };
+    const available: DisplayBoxTransitionSnapshot = {
+      key: "available-local-video",
+      boxes: [videoBox],
+      backgroundMedia: NONE_LANE_BACKGROUND_MEDIA,
+    };
+    const unavailable: DisplayBoxTransitionSnapshot = {
+      ...available,
+      key: "unavailable-local-video",
+      boxes: [{ ...videoBox, words: "Unavailable local video" }],
+    };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={available}
+        shouldAnimate
+        renderLane={renderDisplayBoxLane}
+      />,
+    );
+
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "idle",
+    );
+    expect(
+      screen.getByTestId("display-box-local-video-thumbnail"),
+    ).toHaveAttribute("src", savedStill);
+
+    mockLocalVideoResolution = {
+      ...mockLocalVideoResolution,
+      status: "unavailable",
+      url: undefined,
+    };
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={unavailable}
+        shouldAnimate
+        renderLane={renderDisplayBoxLane}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+        "data-transition-phase",
+        "animating",
+      );
+    });
+    expect(
+      screen.getAllByTestId("unavailable-local-video-black-screen"),
+    ).not.toHaveLength(0);
+    expect(
+      screen.queryByTestId("display-box-local-video-thumbnail"),
+    ).not.toBeInTheDocument();
+
+    act(() => mockTimelineCompletions.at(-1)?.());
+
+    expect(screen.getByTestId("unavailable-local-video-black-screen")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("display-box-local-video-thumbnail"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("display-box-background-fallback")).not.toBeInTheDocument();
   });
 
   it("uses the direct video lane for Electron transmit previews", () => {

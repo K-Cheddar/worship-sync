@@ -378,6 +378,111 @@ describe("DisplayBox", () => {
     expect(onPaintReadyChange).toHaveBeenLastCalledWith(true);
   });
 
+  it("suppresses a retained managed still while playback is unavailable and restores it on recovery", () => {
+    const savedStill = "blob:retained-video-thumbnail";
+    const box = {
+      ...localVideoBox,
+      mediaInfo: { ...localVideoBox.mediaInfo!, placeholderImage: savedStill },
+    };
+    const displayProps = {
+      box,
+      width: 100,
+      showBackground: true,
+      index: 0,
+      isTransitionManaged: true,
+    };
+    const thumbnail = {
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready" as const,
+      url: savedStill,
+    };
+    const availableDisplay = {
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready" as const,
+      url: "worshipsync-media://asset/video-1",
+    };
+    setLocalVideoFileResolutions(availableDisplay, thumbnail);
+
+    const { rerender } = render(<DisplayBox {...displayProps} />);
+
+    expect(screen.getByTestId("display-box-local-video-thumbnail")).toHaveAttribute(
+      "src",
+      savedStill,
+    );
+
+    setLocalVideoFileResolutions(
+      { ...availableDisplay, status: "unavailable", url: undefined },
+      thumbnail,
+    );
+    rerender(<DisplayBox {...displayProps} />);
+
+    expect(screen.getByTestId("unavailable-local-video-black-screen")).toHaveClass(
+      "bg-black",
+    );
+    expect(screen.queryByTestId("display-box-local-video-thumbnail")).not.toBeInTheDocument();
+    expect(screen.queryByAltText("Main")).not.toBeInTheDocument();
+
+    setLocalVideoFileResolutions(availableDisplay, thumbnail);
+    rerender(<DisplayBox {...displayProps} />);
+
+    expect(screen.getByTestId("display-box-local-video-thumbnail")).toHaveAttribute(
+      "src",
+      savedStill,
+    );
+    expect(
+      screen.queryByTestId("unavailable-local-video-black-screen"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the saved still visible in compact slide thumbnails through playback loss", () => {
+    const savedStill = "blob:compact-video-thumbnail";
+    const box = {
+      ...localVideoBox,
+      mediaInfo: { ...localVideoBox.mediaInfo!, placeholderImage: savedStill },
+    };
+    const displayProps = {
+      box,
+      width: 100,
+      showBackground: true,
+      index: 0,
+      showLocalSourceStatus: true,
+      localSourceStatusSize: "thumbnail" as const,
+    };
+    const availableDisplay = {
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready" as const,
+      url: "worshipsync-media://asset/video-1",
+    };
+    const thumbnail = {
+      isLocalVideoFile: true,
+      isOwner: true,
+      status: "ready" as const,
+      url: savedStill,
+    };
+    setLocalVideoFileResolutions(availableDisplay, thumbnail);
+
+    const { rerender } = render(<DisplayBox {...displayProps} />);
+
+    expect(screen.getByTestId("display-box-local-video-thumbnail")).toHaveAttribute(
+      "src",
+      savedStill,
+    );
+
+    setLocalVideoFileResolutions(
+      { ...availableDisplay, status: "unavailable", url: undefined },
+      thumbnail,
+    );
+    rerender(<DisplayBox {...displayProps} />);
+
+    expect(screen.getByTestId("display-box-local-video-thumbnail")).toHaveAttribute(
+      "src",
+      savedStill,
+    );
+  });
+
   it("keeps the saved still in compact slide thumbnails", () => {
     setLocalVideoFileResolution({
       isLocalVideoFile: true,

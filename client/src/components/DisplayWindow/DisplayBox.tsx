@@ -162,6 +162,8 @@ const DisplayBox = ({
   const localVideoDisplay = useLocalVideoFileUrl(box.mediaInfo?.localVideoFile);
   const unavailableLocalVideo =
     isVideoBg && isUnavailableLocalVideoFile(localVideoDisplay);
+  const hideUnavailableVideoStill =
+    unavailableLocalVideo && localSourceStatusSize !== "thumbnail";
   const resolvedVideoUrl = localVideoDisplay.isLocalVideoFile
     ? localVideoDisplay.url
     : videoUrl;
@@ -191,10 +193,9 @@ const DisplayBox = ({
     0,
     allowLocalVideoThumbnailGeneration,
   );
-  const videoPlaceholderImage =
-    unavailableLocalVideo && localSourceStatusSize !== "thumbnail"
-      ? undefined
-      : localVideoThumbnail.url || box.mediaInfo?.placeholderImage;
+  const videoPlaceholderImage = hideUnavailableVideoStill
+    ? undefined
+    : localVideoThumbnail.url || box.mediaInfo?.placeholderImage;
   const rawImage = isVideoBg ? videoPlaceholderImage : background;
   const localImage = useLocalImageUrl(box.mediaInfo?.localImage);
   const shouldShowBackground = Boolean(
@@ -254,10 +255,14 @@ const DisplayBox = ({
       (localImage.status === "unavailable" ? rawImageFallback : undefined);
   } else if (
     localVideoThumbnail.url &&
-    !(unavailableLocalVideo && localSourceStatusSize !== "thumbnail")
+    !hideUnavailableVideoStill
   ) {
     displayImage = localVideoThumbnail.url;
   }
+  // Availability is renderer-local, while these image candidates can outlive
+  // the playback lookup. Apply the output decision after managed, cached, and
+  // local candidates have all been considered so none can cover the fallback.
+  if (hideUnavailableVideoStill) displayImage = undefined;
   const [decodedImage, setDecodedImage] = useState<ManagedImage>();
   const isImageReadyToPaint = Boolean(
     displayImage &&
@@ -584,6 +589,7 @@ const DisplayBox = ({
       {shouldShowBackground &&
         localImage.isLocalImage &&
         !isPrev &&
+        !hideUnavailableVideoStill &&
         // Keep the faded fallback mounted for the rest of an animated slide.
         // Electron can composite one black frame when it removes this CSS-
         // animated image at the exact time the incoming GSAP layer settles.
