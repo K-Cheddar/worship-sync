@@ -24,7 +24,7 @@ const PINNED_TOOLS = {
     maxBytes: 60 * 1024 * 1024,
   },
   ffmpeg: {
-    url: "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-8.1.2-essentials_build.zip",
+    url: "https://github.com/GyanD/codexffmpeg/releases/download/8.1.2/ffmpeg-8.1.2-essentials_build.zip",
     sha256: "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec",
     files: {
       "ffmpeg.exe": "1326dde4c84ff1f96fe6b8916c5bed29e163e9b5dccf995f6f3db069d143ec5e",
@@ -85,10 +85,12 @@ const runPowerShell = (source, description) => new Promise((resolvePromise, reje
 export const extractArchiveWithPowerShell = async (archive, destination, description = "pinned video tool") => {
   const script = [
     "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
     "try {",
-    `  Expand-Archive -LiteralPath ${quotePowerShell(archive)} -DestinationPath ${quotePowerShell(destination)} -Force -ErrorAction Stop`,
+    "  [void][System.Reflection.Assembly]::LoadWithPartialName('System.IO.Compression.FileSystem')",
+    `  [System.IO.Compression.ZipFile]::ExtractToDirectory(${quotePowerShell(archive)}, ${quotePowerShell(destination)})`,
     "} catch {",
-    `  [Console]::Error.WriteLine(${quotePowerShell(`${description} archive extraction failed: `)} + $_.Exception.Message)`,
+    "  [Console]::Error.WriteLine($_.Exception.Message)",
     "  exit 1",
     "}",
   ].join("\n");
