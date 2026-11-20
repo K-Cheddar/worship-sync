@@ -1,3 +1,28 @@
+# [2.53.0](https://github.com/K-Cheddar/worship-sync/compare/v2.52.0...v2.53.0) (2026-11-20)
+
+
+### Bug Fixes
+
+* avoid derived layout autosave conflicts ([c66adf1](https://github.com/K-Cheddar/worship-sync/commit/c66adf15365826c36cf8f1b308ef702bbd318f50))
+* **controller:** hide video playback options in present mode ([a909f4a](https://github.com/K-Cheddar/worship-sync/commit/a909f4a6b39f0766112d460cf88d86ca6096f36d))
+* handle custom item autosave conflicts ([4d1b581](https://github.com/K-Cheddar/worship-sync/commit/4d1b581c60d96920bd84c2ce6958e8610d1bbc64))
+* Multiple minor improvements ([55a8465](https://github.com/K-Cheddar/worship-sync/commit/55a846553e0a397b4e42edd9293476a99ff496aa))
+* normalize PouchDB item comparisons ([07a490c](https://github.com/K-Cheddar/worship-sync/commit/07a490c9248934ec53258b8b097c8259f260bdcd))
+* preserve schedule assignment picker scrolling ([d48803a](https://github.com/K-Cheddar/worship-sync/commit/d48803ac12a1b7257f2ed7323984f0a5026045bb))
+* **services:** fill available width with service cards ([9680269](https://github.com/K-Cheddar/worship-sync/commit/968026948fe6c9b7b41997585af84c220bd1a87d))
+
+
+### Features
+
+* **controller:** add presentation routing indicator ([a66650d](https://github.com/K-Cheddar/worship-sync/commit/a66650d111aa96f5b40076a38f1de47d3cd0c028))
+* **media:** queue deletions in Activity ([fb59b45](https://github.com/K-Cheddar/worship-sync/commit/fb59b45983180cf5159917a219c5058bf9a9a202))
+* **schedule:** unify lifecycle status banner ([2cb189d](https://github.com/K-Cheddar/worship-sync/commit/2cb189daa47e0c3b9585ab88ab451f1fbbf38ad9))
+
+
+### Performance Improvements
+
+* reduce controller and viewer background work ([763ef44](https://github.com/K-Cheddar/worship-sync/commit/763ef44f7cfcc942886ee694663a1f70e6b10c6f))
+
 # [2.52.0](https://github.com/K-Cheddar/worship-sync/compare/v2.51.0...v2.52.0) (2026-11-18)
 
 
