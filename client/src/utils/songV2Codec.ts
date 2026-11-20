@@ -6,6 +6,51 @@ export const SONG_V2_ROOT_ID_PREFIX = "song-v2:root:";
 export const SONG_V2_ARRANGEMENT_ID_PREFIX = "song-v2:arrangement:";
 export const SONG_V2_SLIDE_ID_PREFIX = "song-v2:slide:";
 
+export type SongV2DocumentIdentity = {
+  songId: string;
+  kind: "root" | "arrangement" | "slide";
+};
+
+export type SongV2RootStateEvidence =
+  | { kind: "found"; root: unknown }
+  | { kind: "missing" }
+  | { kind: "deleted" }
+  | { kind: "read-failed" };
+
+/** A live root owns authority even when it is logically deleted or incomplete. */
+export const classifySongV2RootState = (
+  evidence: SongV2RootStateEvidence,
+): "legacy" | "v2" | "unknown" => {
+  if (evidence.kind === "read-failed") return "unknown";
+  if (evidence.kind === "missing" || evidence.kind === "deleted") return "legacy";
+  if (!evidence.root || typeof evidence.root !== "object") return "unknown";
+  const root = evidence.root as Record<string, unknown>;
+  if (root._deleted === true) return "legacy";
+  return root.docType === "song-v2-root" ? "v2" : "unknown";
+};
+
+/** Decodes the logical song identity carried by a physical Song V2 document ID. */
+export const getSongV2DocumentIdentity = (id: string): SongV2DocumentIdentity | undefined => {
+  const prefix = id.startsWith(SONG_V2_ROOT_ID_PREFIX)
+    ? SONG_V2_ROOT_ID_PREFIX
+    : id.startsWith(SONG_V2_ARRANGEMENT_ID_PREFIX)
+      ? SONG_V2_ARRANGEMENT_ID_PREFIX
+      : id.startsWith(SONG_V2_SLIDE_ID_PREFIX)
+        ? SONG_V2_SLIDE_ID_PREFIX
+        : undefined;
+  if (!prefix) return undefined;
+  const kind = prefix === SONG_V2_ROOT_ID_PREFIX
+    ? "root"
+    : prefix === SONG_V2_ARRANGEMENT_ID_PREFIX ? "arrangement" : "slide";
+  const encodedSongId = id.slice(prefix.length).split(":", 1)[0];
+  try {
+    const songId = decodeURIComponent(encodedSongId);
+    return songId ? { songId, kind } : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
 const encodeIdPart = (id: string) => encodeURIComponent(id);
 
 export const getSongV2RootDocId = (songId: string) =>

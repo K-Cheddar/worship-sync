@@ -36,6 +36,15 @@ describe("formatItemList", () => {
     expect(result[0].background).toBe("https://cloudinary.com/image.jpg");
   });
 
+  it("preserves absent backgrounds instead of formatting an empty media reference", () => {
+    const item = createServiceItem({ name: "Heading", _id: "heading", type: "heading" });
+
+    const result = formatItemList([item], mockCloud);
+
+    expect(result[0].background).toBeUndefined();
+    expect(mockImage).not.toHaveBeenCalled();
+  });
+
   it("preserves other item fields", () => {
     const item = createServiceItem({
       name: "Song",

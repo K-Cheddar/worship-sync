@@ -77,6 +77,7 @@ type MonitorViewProps = {
   /** Single-slide monitor hosts this media inside the transition stage. */
   backgroundMedia?: LaneBackgroundMedia;
   mediaPlayback?: LaneMediaPlaybackOptions;
+  showLocalSourceStatus?: boolean;
 };
 
 const MonitorView = ({
@@ -101,6 +102,7 @@ const MonitorView = ({
   currentMediaLayer,
   backgroundMedia = NONE_LANE_BACKGROUND_MEDIA,
   mediaPlayback,
+  showLocalSourceStatus = false,
 }: MonitorViewProps) => {
   const useNextSlideLayout = showNextSlide && nextBoxes.length > 0;
   const singleSlideSnapshot = useMemo<DisplayBoxTransitionSnapshot>(() => {
@@ -211,7 +213,13 @@ const MonitorView = ({
         key="monitor-next-slide-layout"
         className="relative isolate bg-black w-full h-full flex flex-col px-4"
       >
-        {showBackground && <MonitorBandBackground box={boxes[0]} />}
+        {showBackground && (
+          <MonitorBandBackground
+            box={boxes[0]}
+            showLocalSourceStatus={showLocalSourceStatus}
+            scaleFactor={scaleFactor}
+          />
+        )}
 
         {currentMediaLayer && (
           <div
@@ -309,6 +317,8 @@ const MonitorView = ({
                   isTransitionManaged
                   paintBackground={laneMedia.paintBackground}
                   paintForeground={laneMedia.paintForeground}
+                  showLocalSourceStatus={showLocalSourceStatus && !isPrevious}
+                  statusScaleFactor={scaleFactor}
                 />
               ));
             }}

@@ -30,6 +30,8 @@ export type MediaUploadInputProps = {
   uploadPreset?: string;
   /** Called once a batch has successfully added at least one cloud asset. */
   onUploadComplete?: () => void;
+  /** Registers a selected Electron video at its current path without copying it. */
+  onLinkVideo?: (file: File, displayName: string) => void | Promise<void>;
   /** When true, the upload modal cannot be opened and file upload is disabled. */
   uploadDisabled?: boolean;
 };

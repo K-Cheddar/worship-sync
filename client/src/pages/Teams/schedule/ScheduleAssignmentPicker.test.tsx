@@ -4,7 +4,7 @@ import ScheduleMemberConsentFollowup from "./ScheduleMemberConsentFollowup";
 import { ToastProvider } from "../../../context/toastContext";
 import { AuthApiError, getTeamsBootstrap, recordMemberSmsConsent, searchTeamRosterCandidates } from "../../../api/auth";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type {
   TeamRosterMember,
   TeamScheduleGuest,
@@ -32,6 +32,8 @@ const PickerHarness = ({
   onAssignmentAction,
   onClose,
   onCreateMember,
+  onSelectMember,
+  initialPositionId,
 }: {
   currentPrimaryMemberId: string;
   currentAssigneeLabel: string;
@@ -48,15 +50,68 @@ const PickerHarness = ({
   onAssignmentAction?: jest.Mock;
   onCreateMember?: jest.Mock;
   onClose?: jest.Mock;
+  onSelectMember?: jest.Mock;
+  initialPositionId: string;
 }) => {
   const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
   const [assignmentQuery, setAssignmentQuery] = useState("");
+  const [positionId, setPositionId] = useState(initialPositionId);
+  const [displayedMembers, setDisplayedMembers] = useState(members);
+  const [renderVersion, setRenderVersion] = useState(0);
+  const anchorTopRef = useRef(100);
+  const anchorMeasureCountRef = useRef(0);
+  const setAnchor = useCallback((node: HTMLButtonElement | null) => {
+    if (node) {
+      Object.defineProperty(node, "getBoundingClientRect", {
+        configurable: true,
+        value: () => {
+          anchorMeasureCountRef.current += 1;
+          return new DOMRect(10, anchorTopRef.current, 120, 32);
+        },
+      });
+    }
+    setAnchorEl(node);
+  }, []);
   return (
     <>
-      <button ref={setAnchorEl} type="button">
-        Assignment anchor
+      <div data-testid="schedule-scroll-container">
+        <button ref={setAnchor} type="button">
+          Assignment anchor
+        </button>
+      </div>
+      <button type="button" onClick={() => setRenderVersion((version) => version + 1)}>
+        Rerender parent
       </button>
+      <button type="button" onClick={() => { anchorTopRef.current -= 20; }}>
+        Move assignment anchor
+      </button>
+      <button type="button" onClick={() => setPositionId("audio") }>
+        Switch assignment slot
+      </button>
+      <button
+        type="button"
+        onClick={() => setDisplayedMembers((current) => [
+          ...current,
+          {
+            ...(current[0] || {
+              churchId: "church-1",
+              firstName: "Added",
+              lastName: "Volunteer",
+              positionIds: [positionId],
+              blockoutDates: [],
+            }),
+            memberId: "member-added-later",
+            firstName: "Added",
+            lastName: "Volunteer",
+          },
+        ])}
+      >
+        Load another member
+      </button>
+      <span data-testid="picker-harness-render-version">{renderVersion}</span>
+      <span data-testid="picker-anchor-measure-count">{anchorMeasureCountRef.current}</span>
       <ScheduleAssignmentPicker
+        key={positionId}
         open
         churchId="church-1"
         teamId="team-1"
@@ -64,9 +119,9 @@ const PickerHarness = ({
         onCreateMember={onCreateMember}
         anchorEl={anchorEl}
         label="Sunday Camera"
-        positionId="camera"
+        positionId={positionId}
         positionName="Camera"
-        members={members}
+        members={displayedMembers}
         assignmentQuery={assignmentQuery}
         onAssignmentQueryChange={setAssignmentQuery}
         currentPrimaryMemberId={currentPrimaryMemberId}
@@ -78,7 +133,7 @@ const PickerHarness = ({
         getGuestWarning={getGuestWarning}
         getIssue={() => ""}
         getAssignmentActionIssues={getAssignmentActionIssues}
-        onSelectMember={jest.fn()}
+        onSelectMember={onSelectMember || jest.fn()}
         onAssignmentAction={onAssignmentAction}
         onClose={onClose}
         onAssignGuest={onAssignGuest}
@@ -106,6 +161,8 @@ const renderPicker = ({
   onClose = jest.fn(),
   onCreateMember,
   selfMemberId = null,
+  positionId = "camera",
+  onSelectMember = jest.fn(),
 }: {
   currentPrimaryMemberId?: string;
   currentAssigneeLabel?: string;
@@ -123,6 +180,8 @@ const renderPicker = ({
   onClose?: jest.Mock;
   onCreateMember?: jest.Mock;
   selfMemberId?: string | null;
+  positionId?: string;
+  onSelectMember?: jest.Mock;
 } = {}) => {
   const view = render(
     <CurrentMemberIdentityProvider memberId={selfMemberId}>
@@ -142,10 +201,48 @@ const renderPicker = ({
         onAssignmentAction={onAssignmentAction}
         onClose={onClose}
         onCreateMember={onCreateMember}
+        onSelectMember={onSelectMember}
+        initialPositionId={positionId}
       />
     </CurrentMemberIdentityProvider>,
   );
-  return { onAssignGuest, onEditGuest, onRemoveGuest, onClose, unmount: view.unmount };
+  return {
+    onAssignGuest,
+    onEditGuest,
+    onRemoveGuest,
+    onClose,
+    onSelectMember,
+    unmount: view.unmount,
+  };
+};
+
+const makePickerMembers = (
+  count: number,
+  positionIds = ["camera"],
+): TeamRosterMember[] =>
+  Array.from({ length: count }, (_, index) => ({
+    memberId: `picker-member-${index + 1}`,
+    churchId: "church-1",
+    firstName: `Member ${index + 1}`,
+    lastName: "Volunteer",
+    positionIds,
+    blockoutDates: [],
+  }));
+
+const mockPickerListGeometry = (list: HTMLElement) => {
+  Object.defineProperty(list, "getBoundingClientRect", {
+    configurable: true,
+    value: () => new DOMRect(0, 100, 300, 240),
+  });
+  for (const [index, option] of within(list).getAllByRole("option").entries()) {
+    Object.defineProperty(option, "getBoundingClientRect", {
+      configurable: true,
+      value: () => {
+        const top = 100 + index * 40 - list.scrollTop;
+        return new DOMRect(0, top, 300, 40);
+      },
+    });
+  }
 };
 
 it("closes when the close button is pressed", () => {
@@ -295,28 +392,91 @@ describe("ScheduleAssignmentPicker guests", () => {
     fireEvent.change(input, { target: { value: "Guest" } });
     const list = screen.getByTestId("schedule-assignment-options");
     const finalGuest = within(list).getByRole("option", { name: /Guest person 24.*Guest/i });
-    Object.defineProperty(list, "getBoundingClientRect", {
-      configurable: true,
-      value: () => ({ top: 100, bottom: 340, left: 0, right: 300, width: 300, height: 240 }),
-    });
-    for (const [index, option] of within(list).getAllByRole("option").entries()) {
-      Object.defineProperty(option, "getBoundingClientRect", {
-        configurable: true,
-        value: () => {
-          const top = 100 + index * 40 - list.scrollTop;
-          return { top, bottom: top + 40, left: 0, right: 300, width: 300, height: 40 };
-        },
-      });
-    }
+    mockPickerListGeometry(list);
     for (let index = 0; index < recentGuests.length - 1; index += 1) {
       fireEvent.keyDown(input, { key: "ArrowDown" });
     }
     expect(finalGuest).toHaveAttribute("aria-selected", "true");
     expect(list.scrollTop).toBeGreaterThan(0);
+    for (let index = 0; index < recentGuests.length - 1; index += 1) {
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+    }
+    expect(within(list).getByRole("option", { name: /^Guest person 1 Guest$/i })).toHaveAttribute("aria-selected", "true");
+    expect(list.scrollTop).toBe(0);
+    for (let index = 0; index < recentGuests.length - 1; index += 1) {
+      fireEvent.keyDown(input, { key: "ArrowDown" });
+    }
+    expect(list.scrollTop).toBeGreaterThan(0);
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(onAssignGuest).toHaveBeenCalledWith(
       expect.objectContaining({ guestId: "scheduleGuest_24", name: "Guest person 24" }),
     ));
+  });
+
+  it("preserves manual scrolling across internal scroll events and member-list updates", () => {
+    const members = makePickerMembers(24);
+    renderPicker({ members });
+    const list = screen.getByTestId("schedule-assignment-options");
+    mockPickerListGeometry(list);
+    list.scrollTop = 480;
+    fireEvent.click(screen.getByRole("button", { name: "Rerender parent" }));
+    const initialMeasureCount = Number(
+      screen.getByTestId("picker-anchor-measure-count").textContent,
+    );
+
+    fireEvent.scroll(list);
+    expect(list.scrollTop).toBe(480);
+
+    fireEvent.click(screen.getByRole("button", { name: "Rerender parent" }));
+    expect(screen.getByTestId("picker-harness-render-version")).toHaveTextContent("2");
+    expect(screen.getByTestId("picker-anchor-measure-count")).toHaveTextContent(String(initialMeasureCount));
+    expect(list.scrollTop).toBe(480);
+
+    fireEvent.click(screen.getByRole("button", { name: "Load another member" }));
+    expect(screen.getByRole("option", { name: /Added/ })).toBeInTheDocument();
+    expect(list.scrollTop).toBe(480);
+  });
+
+  it("starts search results at the top and resets when a different slot opens", () => {
+    const members = makePickerMembers(24, ["camera", "audio"]);
+    renderPicker({ members });
+    const input = screen.getByRole("combobox", { name: "Sunday Camera" });
+    const list = screen.getByTestId("schedule-assignment-options");
+    list.scrollTop = 480;
+
+    fireEvent.change(input, { target: { value: "Member 24" } });
+    expect(list.scrollTop).toBe(0);
+    expect(screen.getByRole("option", { name: /Member 24/ })).toBeInTheDocument();
+
+    fireEvent.change(input, { target: { value: "" } });
+    list.scrollTop = 480;
+    fireEvent.click(screen.getByRole("button", { name: "Switch assignment slot" }));
+
+    expect(screen.getByTestId("schedule-assignment-options").scrollTop).toBe(0);
+    expect(screen.getByRole("option", { name: /Member 24/ })).toBeInTheDocument();
+  });
+
+  it("tracks schedule-container scrolling and window resizing without reacting to popover scrolling", () => {
+    renderPicker();
+    const anchorProxy = screen.getByTestId("schedule-assignment-anchor-proxy");
+    expect(anchorProxy).toHaveStyle({ top: "100px" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Move assignment anchor" }));
+    fireEvent.scroll(screen.getByTestId("schedule-scroll-container"));
+    expect(anchorProxy).toHaveStyle({ top: "80px" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Move assignment anchor" }));
+    fireEvent.resize(window);
+    expect(anchorProxy).toHaveStyle({ top: "60px" });
+  });
+
+  it("selects a member after it is clicked", () => {
+    const onSelectMember = jest.fn();
+    renderPicker({ members: makePickerMembers(1), onSelectMember });
+
+    fireEvent.mouseDown(screen.getByRole("option", { name: /Member 1/ }));
+
+    expect(onSelectMember).toHaveBeenCalledWith("picker-member-1");
   });
 
   it("excludes the guest already assigned to the active slot from search results", () => {

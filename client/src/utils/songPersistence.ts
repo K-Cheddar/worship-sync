@@ -348,7 +348,7 @@ export async function createSong(
     normalizeSongForPersistence({
       ...song,
       createdAt: song.createdAt ?? now,
-      updatedAt: song.updatedAt ?? now,
+      updatedAt: now,
     }),
     { isNew: true },
   );
@@ -407,6 +407,8 @@ export async function saveSong(
     ...existing,
     ...song,
     _rev: existing._rev,
+    createdAt: existing.createdAt ?? song.createdAt,
+    updatedAt: new Date().toISOString(),
   });
   const persistedFields = normalized as Record<string, unknown>;
   for (const [key, value] of Object.entries(persistedFields)) {

@@ -93,6 +93,78 @@ describe("persistDownloadedVideoMedia", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it("patches cloud registration onto the latest row and retains edits made during upload", async () => {
+    const patch: Partial<MediaType> = {
+      updatedAt: "cloud-completed",
+      format: "m3u8",
+      background: muxResult.playbackUrl,
+      thumbnail: "upload-thumbnail",
+      placeholderImage: muxResult.thumbnailUrl,
+      muxPlaybackId: muxResult.playbackId,
+      muxAssetId: muxResult.assetId,
+      providerStorage: { provider: "mux", assetId: muxResult.assetId, churchId: owner.churchId, permanent: true },
+      localVideoFile: {
+        ...media.localVideoFile!,
+        storagePolicy: "local-and-cloud",
+        cloudUrl: muxResult.playbackUrl,
+        cloudMediaId: muxResult.assetId,
+      },
+    };
+    const baseline = { ...media, localVideoFile: { ...media.localVideoFile! } };
+    let mediaState = { list: [baseline], folders: [], isInitialized: true, loadStatus: "ready" as const } as unknown as RootState["media"];
+    let persistedItem: MediaType | undefined;
+    const dispatch = jest.fn((action: { type: string; payload: unknown }) => {
+      if (action.type === updateMediaItemFields.type) {
+        const value = action.payload as { id: string; patch: Partial<MediaType> };
+        mediaState = { ...mediaState, list: mediaState.list.map((item) => item.id === value.id ? { ...item, ...value.patch } : item) };
+      }
+      return action;
+    });
+    loadMediaLibrary.mockResolvedValueOnce({ list: [baseline], folders: [] });
+    flushMediaLibraryDocToPouch.mockImplementation(async (_db, _list, _folders, getLatestState) => {
+      mediaState = {
+        ...mediaState,
+        list: [
+          {
+            ...baseline,
+            name: "Renamed during upload",
+            folderId: "folder-b",
+            thumbnail: "operator-thumbnail",
+            updatedAt: "operator-edit-revision",
+            localVideoFile: { ...baseline.localVideoFile!, audioEnabled: false },
+          },
+        ],
+      } as RootState["media"];
+      persistedItem = getLatestState!().list[0];
+      return { ok: true };
+    });
+    readMediaItemForDeletion.mockImplementationOnce(async () => ({ doc: {} as never, item: persistedItem! }));
+
+    await persistDownloadedVideoMedia({
+      incoming: baseline,
+      owner,
+      patch,
+      dispatch: dispatch as unknown as AppDispatch,
+      getState: () => ({ media: mediaState } as RootState),
+      isOwnerCurrent: () => true,
+    });
+
+    expect(persistedItem).toEqual(expect.objectContaining({
+      name: "Renamed during upload",
+      folderId: "folder-b",
+      thumbnail: "operator-thumbnail",
+      updatedAt: "operator-edit-revision",
+      muxAssetId: muxResult.assetId,
+      localVideoFile: expect.objectContaining({
+        audioEnabled: false,
+        storagePolicy: "local-and-cloud",
+        cloudUrl: muxResult.playbackUrl,
+        cloudMediaId: muxResult.assetId,
+      }),
+    }));
+    expect(mediaState.list[0]).toEqual(expect.objectContaining({ name: "Renamed during upload", folderId: "folder-b" }));
+  });
+
   it("publishes a deferred write after a lost acknowledgement only when a fresh Pouch read confirms it", async () => {
     const db = owner.dbAtStart as PouchDB.Database;
     let mediaState = { list: [] as MediaType[], folders: [], isInitialized: true, loadStatus: "ready" as const } as unknown as RootState["media"];

@@ -2,8 +2,9 @@ import type { MediaType } from "../../types";
 import type { ElectronLocalAsset, DesktopVideoDownloadEvent, DesktopVideoInspection } from "../../types/electron";
 import type { Transfer } from "../../context/transferModel";
 import type { MuxUploadResult } from "../../containers/Media/MediaUploadInput.types";
-import { DesktopVideoDownloadManager, type DesktopVideoDownloadDependencies, type DesktopVideoDownloadOwner } from "./desktopVideoDownloadController";
+import { DesktopVideoDownloadManager, type DesktopVideoDownloadDependencies, type DesktopVideoDownloadOwner, type DesktopVideoUploadSource } from "./desktopVideoDownloadController";
 import { claimMediaUpload } from "../../utils/mediaOperationClaims";
+import type { MuxUploadCallbacks } from "../../containers/Media/utils/muxUpload";
 
 const inspection: DesktopVideoInspection = {
   inspectionId: "inspection-one",
@@ -244,6 +245,56 @@ describe("desktop video download lifecycle manager", () => {
     expect(harness.transfers.get(`video-download-${jobId}`)?.progress).toBe(58);
   });
 
+  it("shows percentage, bytes, speed, and ETA from captured yt-dlp video progress", () => {
+    const harness = makeHarness();
+    const jobId = harness.start();
+
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: null,
+      streamId: "137",
+      streamLabel: "Video",
+      downloadedBytes: 784914,
+      totalBytes: 2097152,
+      speedBytesPerSecond: 262012.01993290862,
+      etaSeconds: 5,
+    });
+
+    expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({
+      progress: 37,
+      phase: { label: "Downloading" },
+      detail: expect.stringContaining("Downloaded 767 KB of 2.0 MB"),
+    });
+    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("256 KB/s");
+    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("5 seconds remaining");
+  });
+
+  it("shows captured unknown-total bytes and speed while keeping progress indeterminate", () => {
+    const harness = makeHarness();
+    const jobId = harness.start();
+
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: null,
+      streamId: "unknown",
+      streamLabel: "Video",
+      downloadedBytes: 523096,
+      speedBytesPerSecond: 131028.5718746678,
+    });
+
+    const transfer = harness.transfers.get(`video-download-${jobId}`);
+    expect(transfer).toMatchObject({
+      status: "active",
+      progress: null,
+      phase: { label: "Downloading" },
+      detail: expect.stringContaining("Downloaded 511 KB"),
+    });
+    expect(transfer?.detail).not.toContain(" of ");
+    expect(transfer?.detail).toContain("128 KB/s");
+  });
+
   it("switches separate audio and video progress to an indeterminate overall bar", () => {
     const harness = makeHarness();
     const jobId = harness.start();
@@ -255,6 +306,8 @@ describe("desktop video download lifecycle manager", () => {
       streamLabel: "Video",
       downloadedBytes: 800,
       totalBytes: 800,
+      speedBytesPerSecond: 2 * 1024 * 1024,
+      etaSeconds: 0,
     });
     harness.manager.handleProgress({
       jobId,
@@ -264,7 +317,7 @@ describe("desktop video download lifecycle manager", () => {
       streamLabel: "Audio",
       downloadedBytes: 200,
       totalBytes: 1000,
-      speedBytesPerSecond: 400,
+      speedBytesPerSecond: 1.2 * 1024 * 1024,
       etaSeconds: 2,
     });
 
@@ -272,7 +325,10 @@ describe("desktop video download lifecycle manager", () => {
       progress: null,
       detail: expect.stringContaining("Video 100%"),
     });
-    expect(harness.transfers.get(`video-download-${jobId}`)?.detail).toContain("Audio 20%");
+    const detail = harness.transfers.get(`video-download-${jobId}`)?.detail ?? "";
+    expect(detail).toContain("Audio 20%");
+    expect(detail).toContain("Video 100% (1 KB of 1 KB) · 2.0 MB/s · About 0 seconds remaining");
+    expect(detail).toContain("Audio 20% (0 KB of 1 KB) · 1.2 MB/s · About 2 seconds remaining");
   });
 
   it("refreshes the same canonical video identity on retry and imports its refreshed thumbnail", async () => {
@@ -302,7 +358,18 @@ describe("desktop video download lifecycle manager", () => {
 
   it("keeps the local video thumbnail reference when cloud upload registers the same media", async () => {
     const registerCloudMedia = jest.fn(async () => undefined);
-    const harness = makeHarness({ registerCloudMedia });
+    const uploadToCloud = jest.fn(async (
+      _source: DesktopVideoUploadSource,
+      _fileName: string,
+      _options: { churchId: string; mediaId: string; title: string },
+      callbacks: MuxUploadCallbacks,
+    ) => {
+      callbacks.onStageUpdate?.("uploading", "Uploading video");
+      callbacks.onProgress?.(63);
+      callbacks.onStageUpdate?.("processing", "Waiting for cloud video processing");
+      return muxResult;
+    });
+    const harness = makeHarness({ registerCloudMedia, uploadToCloud });
     const jobId = harness.start("cloud");
 
     await harness.manager.handleProgress(completion(jobId));
@@ -316,6 +383,15 @@ describe("desktop video download lifecycle manager", () => {
       expect.objectContaining({ muxPlaybackId: muxResult.playbackId }),
       expect.objectContaining({ churchId: "church-a" }),
     );
+    const updates = jest.mocked(harness.deps.transfer.updateTransfer).mock.calls.map(([transfer]) => transfer);
+    const uploadStages = updates.filter((transfer) => transfer.phase?.label === "Uploading");
+    expect(uploadStages.map((transfer) => transfer.progress)).toContain(63);
+    const stageLabels = updates.map((transfer) => transfer.phase?.label);
+    expect(stageLabels.indexOf("Creating upload")).toBeLessThan(stageLabels.indexOf("Uploading"));
+    expect(stageLabels.indexOf("Uploading")).toBeLessThan(stageLabels.indexOf("Processing"));
+    expect(stageLabels.indexOf("Processing")).toBeLessThan(stageLabels.indexOf("Registering"));
+    expect(stageLabels.indexOf("Registering")).toBeLessThan(stageLabels.indexOf("Complete"));
+    expect(harness.native.cleanupVideoDownload).toHaveBeenCalledTimes(1);
   });
 
   it("registers Activity actions when a job is created and waits for cancellation cleanup", async () => {
@@ -425,11 +501,36 @@ describe("desktop video download lifecycle manager", () => {
   });
 
   it("keeps successful local import and Media registration when cloud upload fails, then retries only cloud", async () => {
-    const uploadToCloud = jest.fn().mockRejectedValueOnce(new Error("Mux is unavailable.")).mockResolvedValue(muxResult);
+    let failedAttemptProgress: ((progress: number) => void) | undefined;
+    const uploadToCloud = jest.fn()
+      .mockImplementationOnce(async (
+        _source: DesktopVideoUploadSource,
+        _fileName: string,
+        _options: { churchId: string; mediaId: string; title: string },
+        callbacks: MuxUploadCallbacks,
+      ) => {
+        callbacks.onStageUpdate?.("uploading", "Uploading video");
+        failedAttemptProgress = callbacks.onProgress;
+        callbacks.onProgress?.(74);
+        throw new Error("Mux is unavailable.");
+      })
+      .mockImplementationOnce(async (
+        _source: DesktopVideoUploadSource,
+        _fileName: string,
+        _options: { churchId: string; mediaId: string; title: string },
+        callbacks: MuxUploadCallbacks,
+      ) => {
+        callbacks.onStageUpdate?.("uploading", "Uploading video");
+        callbacks.onProgress?.(31);
+        callbacks.onStageUpdate?.("processing", "Waiting for cloud video processing");
+        return muxResult;
+      });
     const harness = makeHarness({ uploadToCloud });
     const jobId = harness.start("cloud");
     await harness.manager.handleProgress(completion(jobId));
     expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("failed");
+    failedAttemptProgress?.(89);
+    expect(harness.transfers.get(`video-download-${jobId}`)).toMatchObject({ status: "failed", progress: null });
     await harness.action(jobId, "retry");
     expect(harness.native.startVideoDownload).toHaveBeenCalledTimes(1);
     expect(harness.native.importDownloadedVideo).toHaveBeenCalledTimes(1);
@@ -437,6 +538,64 @@ describe("desktop video download lifecycle manager", () => {
     expect(harness.deps.registerLocalMedia).toHaveBeenCalledTimes(1);
     expect(uploadToCloud).toHaveBeenCalledTimes(2);
     expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("complete");
+    const updates = jest.mocked(harness.deps.transfer.updateTransfer).mock.calls.map(([transfer]) => transfer);
+    expect(updates.filter((transfer) => transfer.phase?.label === "Uploading").map((transfer) => transfer.progress))
+      .toEqual(expect.arrayContaining([74, 31]));
+    expect(updates.filter((transfer) => transfer.phase?.label === "Uploading").map((transfer) => transfer.progress))
+      .not.toContain(89);
+  });
+
+  it("retries a church-switched upload from the retained local asset after cleaning its temporary job", async () => {
+    let activeChurch = "church-a";
+    let markUploadStarted!: () => void;
+    let firstAttemptProgress: ((progress: number) => void) | undefined;
+    const uploadStarted = new Promise<void>((resolve) => { markUploadStarted = resolve; });
+    const uploadToCloud = jest.fn()
+      .mockImplementationOnce((_source: DesktopVideoUploadSource, _fileName: string, _options: { churchId: string; mediaId: string; title: string }, callbacks: MuxUploadCallbacks) => new Promise((_resolve, reject) => {
+        callbacks.onStageUpdate?.("uploading", "Uploading video");
+        firstAttemptProgress = callbacks.onProgress;
+        callbacks.onProgress?.(81);
+        markUploadStarted();
+        callbacks.setCancelUpload?.(async () => reject(new Error("Upload cancelled when the church changed.")));
+      }))
+      .mockImplementationOnce(async (_source: DesktopVideoUploadSource, _fileName: string, _options: { churchId: string; mediaId: string; title: string }, callbacks: MuxUploadCallbacks) => {
+        callbacks.onStageUpdate?.("uploading", "Uploading video");
+        firstAttemptProgress?.(96);
+        callbacks.onProgress?.(24);
+        callbacks.onStageUpdate?.("processing", "Waiting for cloud video processing");
+        return muxResult;
+      });
+    const harness = makeHarness({
+      isOwnerCurrent: () => activeChurch === "church-a",
+      uploadToCloud,
+    });
+    const jobId = harness.start("cloud");
+    const pipeline = harness.manager.handleProgress(completion(jobId));
+    await uploadStarted;
+    expect(uploadToCloud.mock.calls[0][0]).toEqual({ kind: "download-job", jobId });
+
+    activeChurch = "church-b";
+    harness.manager.handleChurchChange("church-b");
+    await Promise.all([pipeline, harness.action(jobId, "cancel")]);
+    expect(harness.native.cleanupVideoDownload).toHaveBeenCalledWith(jobId);
+
+    activeChurch = "church-a";
+    await harness.action(jobId, "retry");
+
+    expect(uploadToCloud).toHaveBeenCalledTimes(2);
+    expect(uploadToCloud.mock.calls[1][0]).toEqual({ kind: "local-asset", assetId: asset.assetId });
+    expect(harness.native.startVideoDownload).toHaveBeenCalledTimes(1);
+    expect(harness.native.importDownloadedVideo).toHaveBeenCalledTimes(1);
+    expect(harness.deps.registerLocalMedia).toHaveBeenCalledTimes(1);
+    expect(harness.deps.registerCloudMedia).toHaveBeenCalledTimes(1);
+    expect(harness.transfers.get(`video-download-${jobId}`)?.status).toBe("complete");
+    const updates = jest.mocked(harness.deps.transfer.updateTransfer).mock.calls.map(([transfer]) => transfer);
+    const uploadProgress = updates
+      .filter((transfer) => transfer.phase?.label === "Uploading")
+      .map((transfer) => transfer.progress);
+    expect(uploadProgress).toEqual(expect.arrayContaining([81, 24]));
+    expect(uploadProgress).not.toContain(96);
+    expect(harness.native.cleanupVideoDownload).toHaveBeenCalledTimes(1);
   });
 
   it("adopts a successful Mux result on retry when cloud media registration fails", async () => {

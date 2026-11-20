@@ -14,10 +14,84 @@ const isSameDownloadedMedia = (existing: MediaType, incoming: MediaType) =>
 
 const sameValue = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
 
-const hasPatch = (item: MediaType, patch?: Partial<MediaType>) =>
-  Object.entries(patch ?? {}).every(([key, value]) =>
-    sameValue((item as unknown as Record<string, unknown>)[key], value),
+const hasPatch = (item: MediaType, patch?: Partial<MediaType>) => {
+  if (!patch) return true;
+  const requiredFields = ["muxAssetId", "muxPlaybackId", "providerStorage"] as const;
+  if (!requiredFields.every((key) =>
+    !Object.prototype.hasOwnProperty.call(patch, key) || sameValue(item[key], patch[key]),
+  )) return false;
+  const localPatch = patch.localVideoFile;
+  const local = item.localVideoFile;
+  return !localPatch || ["storagePolicy", "cloudUrl", "cloudMediaId"].every((key) =>
+    !Object.prototype.hasOwnProperty.call(localPatch, key) ||
+    sameValue((local as unknown as Record<string, unknown> | undefined)?.[key],
+      (localPatch as unknown as Record<string, unknown>)[key]),
   );
+};
+
+/** Apply upload fields only where the live row still matches the upload snapshot. */
+const mergeCloudPatch = (
+  baseline: MediaType,
+  patch: Partial<MediaType>,
+  live: MediaType,
+  authoritative: MediaType = live,
+): MediaType => {
+  const candidate = { ...baseline, ...live } as MediaType;
+  for (const [key, cloudValue] of Object.entries(patch)) {
+    if (key === "localVideoFile") continue;
+    const before = (baseline as unknown as Record<string, unknown>)[key];
+    const current = (live as unknown as Record<string, unknown>)[key];
+    if (sameValue(current, before) || sameValue(current, cloudValue)) {
+      (candidate as unknown as Record<string, unknown>)[key] = cloudValue;
+    }
+  }
+  const result = { ...authoritative } as MediaType;
+  const baselineVideo = baseline.localVideoFile;
+  const patchVideo = patch.localVideoFile;
+  const liveVideo = live.localVideoFile;
+  let candidateVideo = candidate.localVideoFile;
+  if (baselineVideo && patchVideo) {
+    const baselineFields = baselineVideo as unknown as Record<string, unknown>;
+    const patchFields = patchVideo as unknown as Record<string, unknown>;
+    const liveFields = (liveVideo ?? {}) as unknown as Record<string, unknown>;
+    const candidateFields = { ...baselineFields, ...liveFields };
+    for (const [key, cloudValue] of Object.entries(patchFields)) {
+      if (sameValue(liveFields[key], baselineFields[key]) || sameValue(liveFields[key], cloudValue)) {
+        candidateFields[key] = cloudValue;
+      }
+    }
+    candidateVideo = candidateFields as unknown as NonNullable<MediaType["localVideoFile"]>;
+    candidate.localVideoFile = candidateVideo;
+  }
+  const keys = new Set([...Object.keys(baseline), ...Object.keys(candidate)]);
+  for (const key of keys) {
+    if (key === "localVideoFile" && baselineVideo && candidateVideo) {
+      const baselineFields = baselineVideo as unknown as Record<string, unknown>;
+      const desiredFields = candidateVideo as unknown as Record<string, unknown>;
+      const authoritativeVideo = authoritative.localVideoFile;
+      const authoritativeFields = (authoritativeVideo ?? {}) as unknown as Record<string, unknown>;
+      const mergedFields = { ...authoritativeFields };
+      const nestedKeys = new Set([...Object.keys(baselineFields), ...Object.keys(desiredFields)]);
+      for (const nestedKey of nestedKeys) {
+        const before = baselineFields[nestedKey];
+        const desired = desiredFields[nestedKey];
+        const current = authoritativeFields[nestedKey];
+        if (!sameValue(before, desired) && (sameValue(current, before) || sameValue(current, desired))) {
+          mergedFields[nestedKey] = desired;
+        }
+      }
+      result.localVideoFile = mergedFields as unknown as NonNullable<MediaType["localVideoFile"]>;
+      continue;
+    }
+    const before = (baseline as unknown as Record<string, unknown>)[key];
+    const desired = (candidate as unknown as Record<string, unknown>)[key];
+    const current = (authoritative as unknown as Record<string, unknown>)[key];
+    if (!sameValue(before, desired) && (sameValue(current, before) || sameValue(current, desired))) {
+      (result as unknown as Record<string, unknown>)[key] = desired;
+    }
+  }
+  return result;
+};
 
 /** Merge only fields owned by this import, preserving edits made while Pouch is writing. */
 const mergeOwnedFields = (
@@ -32,6 +106,25 @@ const mergeOwnedFields = (
     const saved = (desired as unknown as Record<string, unknown>)[key];
     const live = (current as unknown as Record<string, unknown>)[key];
     if (sameValue(before, saved)) continue;
+    if (key === "localVideoFile" && before && saved && live) {
+      const beforeFields = before as Record<string, unknown>;
+      const savedFields = saved as Record<string, unknown>;
+      const liveFields = live as Record<string, unknown>;
+      const nestedChanges: Record<string, unknown> = {};
+      for (const nestedKey of new Set([...Object.keys(beforeFields), ...Object.keys(savedFields)])) {
+        const beforeValue = beforeFields[nestedKey];
+        const savedValue = savedFields[nestedKey];
+        const liveValue = liveFields[nestedKey];
+        if (!sameValue(beforeValue, savedValue) &&
+            (sameValue(liveValue, beforeValue) || sameValue(liveValue, savedValue))) {
+          nestedChanges[nestedKey] = savedValue;
+        }
+      }
+      if (Object.keys(nestedChanges).length > 0) {
+        changes[key] = { ...liveFields, ...nestedChanges };
+      }
+      continue;
+    }
     if (sameValue(live, before) || sameValue(live, saved)) changes[key] = saved;
   }
   return changes as Partial<MediaType>;
@@ -45,11 +138,12 @@ const publishPersistedItem = (
   getState: () => RootState,
   isOwnerCurrent: (owner: DesktopVideoDownloadOwner) => boolean,
   owner: DesktopVideoDownloadOwner,
+  allowAddWhenMissing: boolean,
 ) => {
   if (!isOwnerCurrent(owner)) return;
   const current = getState().media.list.find((row) => row.id === item.id);
   if (!current) {
-    dispatch(addItemToMediaList(item));
+    if (allowAddWhenMissing) dispatch(addItemToMediaList(item));
     return;
   }
   if (!isSameDownloadedMedia(current, incoming)) return;
@@ -95,19 +189,29 @@ export const persistDownloadedVideoMedia = async ({
   if (existing && !isSameDownloadedMedia(existing, incoming)) {
     throw new Error("A different Media Library item already uses this downloaded video ID.");
   }
-  const nextItem: MediaType = { ...(existing ?? incoming), ...incoming, ...patch, id: incoming.id };
+  const liveAtStart = existing ?? incoming;
+  const nextItem: MediaType = patch
+    ? mergeCloudPatch(incoming, patch, liveAtStart)
+    : { ...(existing ?? incoming), ...incoming, id: incoming.id };
+  const persistedNextItem = patch && persistedExisting
+    ? mergeCloudPatch(incoming, patch, nextItem, persistedExisting)
+    : { ...(existing ?? incoming), ...incoming, id: incoming.id };
+  persistedNextItem.id = incoming.id;
   const targetList = [...beforeState.list];
   const existingIndex = targetList.findIndex((item) => item.id === incoming.id);
-  if (existingIndex >= 0) targetList[existingIndex] = nextItem;
-  else targetList.push(nextItem);
+  if (existingIndex >= 0) targetList[existingIndex] = persistedNextItem;
+  else targetList.push(persistedNextItem);
   const latestState = () => {
     if (!isOwnerCurrent(owner)) return persistedBefore;
     const latest = getState().media;
     const list = [...latest.list];
     const index = list.findIndex((item) => item.id === incoming.id);
-    if (index < 0) list.push(nextItem);
-    else if (isSameDownloadedMedia(list[index], incoming)) {
-      list[index] = { ...list[index], ...mergeOwnedFields(existing, nextItem, list[index]) };
+    if (index < 0) {
+      if (!patch) list.push(nextItem);
+    } else if (isSameDownloadedMedia(list[index], incoming)) {
+      list[index] = patch
+        ? mergeCloudPatch(incoming, patch, list[index], persistedExisting ?? list[index])
+        : { ...list[index], ...mergeOwnedFields(existing, nextItem, list[index]) };
     }
     return { list, folders: latest.folders };
   };
@@ -131,7 +235,7 @@ export const persistDownloadedVideoMedia = async ({
         ? "The cloud video registration could not be confirmed. Retry to finish the upload."
         : "Media Library registration could not be confirmed. Retry to finish importing the video.");
     }
-    publishPersistedItem(persisted.item, existing, incoming, dispatch, getState, isOwnerCurrent, owner);
+    publishPersistedItem(persisted.item, existing, incoming, dispatch, getState, isOwnerCurrent, owner, !patch);
     return;
   } catch (error) {
     failure = error;
@@ -146,7 +250,7 @@ export const persistDownloadedVideoMedia = async ({
     throw new Error(`${failure instanceof Error ? failure.message : "Media Library registration failed."} The saved state could not be checked: ${reconcileError instanceof Error ? reconcileError.message : "database read failed."}`);
   }
   if (authoritative && isSameDownloadedMedia(authoritative.item, incoming)) {
-    publishPersistedItem(authoritative.item, existing, incoming, dispatch, getState, isOwnerCurrent, owner);
+    publishPersistedItem(authoritative.item, existing, incoming, dispatch, getState, isOwnerCurrent, owner, !patch);
     if (hasPatch(authoritative.item, patch)) return;
     throw failure instanceof Error
       ? failure

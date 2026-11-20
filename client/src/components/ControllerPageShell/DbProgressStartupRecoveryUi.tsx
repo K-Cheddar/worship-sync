@@ -1,13 +1,21 @@
 import Button from "../Button/Button";
 import type { ConnectionStatus } from "../../context/controllerInfo";
 
-export function DbStartupConnectionFailedPanel() {
+export function DbStartupConnectionFailedPanel({
+  message,
+}: {
+  message?: string;
+}) {
   return (
-    <>
-      <p className="text-center">Unable to connect to the server</p>
-      <p className="text-lg text-gray-300 text-center max-w-md">
-        Check your network connection, then reload or try again.
-      </p>
+    <div className="flex w-full flex-col items-center gap-3">
+      <div role="alert" className="space-y-1 text-center">
+        <p className="text-base font-semibold">
+          Unable to connect to the server
+        </p>
+        <p className="text-sm leading-5 text-gray-300">
+          {message || "Check your network connection, then try again."}
+        </p>
+      </div>
       <Button
         onClick={() => window.location.reload()}
         variant="cta"
@@ -15,7 +23,7 @@ export function DbStartupConnectionFailedPanel() {
       >
         Try Again
       </Button>
-    </>
+    </div>
   );
 }
 
@@ -34,7 +42,10 @@ export function DbStartupLoadingDetails({
 
   return (
     <details className="w-full max-w-md text-left text-base">
-      <summary className="cursor-pointer text-gray-300 hover:text-white select-none list-none [&::-webkit-details-marker]:hidden">
+      <summary
+        data-testid="startup-details-summary"
+        className="cursor-pointer text-gray-300 hover:text-white select-none list-none [&::-webkit-details-marker]:hidden"
+      >
         <span className="underline-offset-2 hover:underline">Show details</span>
       </summary>
       <div className="mt-2 space-y-1 rounded border border-gray-600 bg-black/20 px-3 py-2 text-sm text-gray-200">
@@ -63,13 +74,17 @@ export function DbStartupStuckRecoveryPanel({
   connectionStatus?: ConnectionStatus;
 }) {
   return (
-    <>
-      <p className="max-w-lg px-4 text-center">
+    <div className="flex w-full flex-col items-center gap-3">
+      <p
+        role="status"
+        aria-live="polite"
+        className="max-w-lg text-center text-sm font-semibold"
+      >
         Startup is taking longer than expected.
       </p>
-      <p className="text-lg text-gray-300 text-center max-w-md px-4">
-        Sync is still running in the background. If nothing changes, you can try
-        reloading the page.
+      <p className="max-w-sm text-center text-sm leading-5 text-gray-300">
+        Database progress has not changed recently. You can retry startup or
+        review the details below.
       </p>
       <Button
         onClick={() => window.location.reload()}
@@ -82,6 +97,6 @@ export function DbStartupStuckRecoveryPanel({
         dbProgress={dbProgress}
         connectionStatus={connectionStatus}
       />
-    </>
+    </div>
   );
 }

@@ -13,6 +13,7 @@ import { formatTime } from "../DisplayWindow/TimerDisplay";
 import { useCachedMediaUrl } from "../../hooks/useCachedMediaUrl";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import LocalSourceStatus from "../DisplayWindow/LocalSourceStatus";
 import MultiSelectSubsetTick from "../MultiSelectSubsetTick/MultiSelectSubsetTick";
 import type {
   LocalImageAssetReference,
@@ -86,16 +87,12 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
     const preferLocalVideo =
       localVideo.isLocalVideoFile &&
       (localVideo.status === "ready" || localVideo.status === "loading");
-    const unresolvedLocalBackground =
-      isLocalMediaReferenceUrl(image) &&
-      !local.isLocalImage &&
-      !localVideo.isLocalVideoFile;
     const imageForCache =
       preferLocal && local.url
         ? local.url
         : preferLocalVideo && localVideo.url
           ? localVideo.url
-          : unresolvedLocalBackground
+          : isLocalMediaReferenceUrl(image)
             ? undefined
             : image;
     const resolvedImage = useCachedMediaUrl(imageForCache);
@@ -113,6 +110,43 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
     } else {
       thumbnailSrc = resolvedImage ?? imageForCache;
     }
+    const localThumbnailStatus =
+      !thumbnailSrc && local.isLocalImage && local.status === "loading"
+        ? {
+            sourceLabel: `Local image · ${localImage?.fileName || title}`,
+            heading: "Loading local image",
+            state: "loading" as const,
+            indicatorLabel: "Loading",
+          }
+        : !thumbnailSrc && local.isLocalImage && local.status === "unavailable"
+        ? {
+            sourceLabel: `Local image · ${localImage?.fileName || title}`,
+            heading: local.isOwner ? "Local image unavailable" : undefined,
+            ownerLabel: local.isOwner ? undefined : localImage?.ownerLabel,
+            detail: local.isOwner
+              ? "Choose Relink to restore this file."
+              : undefined,
+            indicatorLabel: "Unavailable",
+          }
+        : !thumbnailSrc &&
+            localVideo.isLocalVideoFile &&
+            localVideo.status === "loading"
+          ? {
+              sourceLabel: `Local video · ${localVideoFile?.fileName || title}`,
+              heading: "Loading local video thumbnail",
+              state: "loading" as const,
+              indicatorLabel: "Loading",
+            }
+          : !thumbnailSrc &&
+            localVideo.isLocalVideoFile &&
+            localVideo.status === "unavailable"
+          ? {
+              sourceLabel: `Local video · ${localVideoFile?.fileName || title}`,
+              heading: "Local video thumbnail unavailable",
+              ownerLabel: localVideoFile?.ownerLabel,
+              indicatorLabel: "No thumbnail",
+            }
+          : undefined;
 
     return (
       <li
@@ -162,6 +196,14 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
               onError={() => setImageFailed(true)}
             />
           )}
+          {!thumbnailSrc && localThumbnailStatus ? (
+            <div
+              data-testid="local-thumbnail-placeholder"
+              className="relative aspect-video w-12 max-w-[20%] shrink-0 overflow-hidden rounded bg-black"
+            >
+              <LocalSourceStatus {...localThumbnailStatus} variant="thumbnail" />
+            </div>
+          ) : null}
           {isActive && (
             <span className="shrink-0 rounded-lg bg-black/55 px-2 py-1 text-xs font-semibold tabular-nums text-white">
               {timerText ?? formatTime(timerValue || 0, false, true)}

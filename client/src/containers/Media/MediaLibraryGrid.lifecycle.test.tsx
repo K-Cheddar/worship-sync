@@ -126,12 +126,13 @@ const renderGrid = (
   isMediaExpanded: boolean,
   mediaListRef: React.RefObject<HTMLElement | null>,
   mediaGridRef: React.RefObject<VirtualMediaGridHandle | null>,
-  options: { showAll?: boolean; childFolders?: MediaFolder[] } = {},
+  options: { showAll?: boolean; childFolders?: MediaFolder[]; waitingForSync?: boolean } = {},
 ) => (
   <MediaLibraryGrid
     isPanelVariant
     isMediaExpanded={isMediaExpanded}
-    isMediaLoading={false}
+    isMediaLoading={Boolean(options.waitingForSync)}
+    isMediaWaitingForSync={options.waitingForSync}
     hasMediaLoadError={false}
     mediaItemsPerRow={2}
     mediaListRef={mediaListRef}
@@ -179,6 +180,16 @@ describe("MediaLibraryGrid viewport lifecycle", () => {
     mockViewportHeight = 600;
     mockScrollHeight = 1000;
     mockVirtualizerSnapshots.length = 0;
+  });
+
+  it("shows a calm preparation state while the first media sync is pending", () => {
+    const mediaListRef = { current: null } as React.RefObject<HTMLElement | null>;
+    const mediaGridRef = { current: null } as React.RefObject<VirtualMediaGridHandle | null>;
+
+    render(renderGrid(true, mediaListRef, mediaGridRef, { waitingForSync: true }));
+
+    expect(screen.getByText("Preparing media library...")).toBeInTheDocument();
+    expect(screen.queryByTestId("media-grid-tile")).not.toBeInTheDocument();
   });
 
   afterAll(() => {

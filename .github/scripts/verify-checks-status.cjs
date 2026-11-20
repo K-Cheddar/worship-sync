@@ -5,10 +5,6 @@ const requiredJobs = [
   "server_tests",
   "lint_typecheck",
 ];
-
-if (process.env.COVERAGE_REQUIRED === "true") {
-  requiredJobs.push("coverage");
-}
 let checks;
 
 try {

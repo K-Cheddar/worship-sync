@@ -7,7 +7,7 @@ import {
 } from "./localAssetStore";
 import { finalizeExternalVideo } from "./externalVideoFinalization";
 import type { VideoDownloadPreferencesStore } from "./videoDownloadPreferences";
-import { getVideoContentType } from "../src/utils/mediaFileTypes";
+import { getVideoContentType, isSupportedVideoFile } from "../src/utils/mediaFileTypes";
 import type { VideoDownloader } from "./videoDownloader";
 
 type Dependencies = {
@@ -55,8 +55,9 @@ export const registerVideoDownloaderIpc = ({
   isDirectoryAvailable,
   notifyLocalVideoChanged,
 }: Dependencies) => {
-  // Opaque selections and job bindings are native-only and scoped to the
-  // authorized WebContents. Renderer paths are never accepted as authority.
+  // Opaque selections and job bindings stay native-only and are scoped to the
+  // authorized WebContents. Selected File paths arrive only through preload,
+  // which resolves them with webUtils before invoking this controller IPC.
   const selections = new Map<string, { senderId: number; directory: string }>();
   const destinations = new Map<
     string,
@@ -368,6 +369,37 @@ export const registerVideoDownloaderIpc = ({
       sourcePath: selected,
       fileName,
       contentType: getVideoContentType({ name: fileName, type: "" }),
+    });
+    return { ...descriptor, url: buildLocalAssetProtocolUrl(descriptor) };
+  });
+
+  ipcMain.handle("link-selected-local-video-file", async (event, input: unknown) => {
+    assertSender(event, assertControllerSender);
+    if (!input || typeof input !== "object" || Array.isArray(input))
+      throw new Error("The local video details are invalid.");
+    const value = input as { workspaceId?: unknown; sourcePath?: unknown };
+    if (
+      typeof value.workspaceId !== "string" ||
+      !value.workspaceId.trim() ||
+      value.workspaceId.length > 200 ||
+      typeof value.sourcePath !== "string" ||
+      !value.sourcePath.trim()
+    ) {
+      throw new Error("The local video details are invalid.");
+    }
+    const fileName = getSelectedFileName(value.sourcePath);
+    const selectedFile = { name: fileName, type: "" };
+    if (!isSupportedVideoFile(selectedFile))
+      throw new Error("Choose a supported video file.");
+    const store = getLocalAssetStore();
+    if (!store) throw new Error("Local media storage is not ready.");
+    const descriptor = await store.linkFile({
+      assetId: `local_video_link_${randomUUID()}`,
+      workspaceId: value.workspaceId,
+      kind: "video",
+      sourcePath: value.sourcePath,
+      fileName,
+      contentType: getVideoContentType(selectedFile),
     });
     return { ...descriptor, url: buildLocalAssetProtocolUrl(descriptor) };
   });

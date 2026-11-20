@@ -10,6 +10,7 @@ import {
   acquireLocalVideoFileUrl,
   peekLocalVideoFileThumbnailUrl,
   peekLocalVideoFileUrl,
+  refreshLocalVideoFileUrl,
 } from "../utils/localVideoFileUrlCache";
 
 export type LocalVideoFileResolution = {
@@ -21,6 +22,12 @@ export type LocalVideoFileResolution = {
   url?: string;
 };
 
+/** True only after this renderer has determined that a local source is absent. */
+export const isUnavailableLocalVideoFile = (
+  resolution: LocalVideoFileResolution,
+): boolean =>
+  resolution.isLocalVideoFile && resolution.status === "unavailable";
+
 type KeyedLocalVideoFileResolution = {
   key: string;
   value: LocalVideoFileResolution;
@@ -31,6 +38,8 @@ type LocalVideoFileUrlPurpose = "display" | "thumbnail";
 export const useLocalVideoFileUrl = (
   value: LocalVideoFileReference | undefined,
   purpose: LocalVideoFileUrlPurpose = "display",
+  refreshKey = 0,
+  allowThumbnailGeneration = true,
 ): LocalVideoFileResolution => {
   const cloudUrl = value?.cloudUrl;
   const contentRevision = value?.contentRevision;
@@ -86,15 +95,19 @@ export const useLocalVideoFileUrl = (
     reference && reference.ownerDeviceId === getOrCreateDeviceId(),
   );
   const useCloudPlayback = Boolean(
-    reference?.preferCloudPlayback && reference.cloudUrl,
+    purpose === "display" &&
+      reference?.preferCloudPlayback &&
+      reference.cloudUrl,
   );
-  const peekLocalUrl =
-    purpose === "thumbnail"
-      ? peekLocalVideoFileThumbnailUrl
-      : peekLocalVideoFileUrl;
   const warmUrl =
     reference && isOwner
-      ? peekLocalUrl(reference.id, reference.contentRevision)
+      ? purpose === "thumbnail"
+        ? peekLocalVideoFileThumbnailUrl(
+            reference.id,
+            reference.contentRevision,
+            allowThumbnailGeneration,
+          )
+        : peekLocalVideoFileUrl(reference.id, reference.contentRevision)
       : undefined;
   const referenceCloudUrl =
     useCloudPlayback || (!isOwner && purpose !== "thumbnail")
@@ -110,6 +123,7 @@ export const useLocalVideoFileUrl = (
         reference.contentHash ?? "",
         referenceCloudUrl,
         useCloudPlayback,
+        allowThumbnailGeneration,
       ])
     : "";
   const [assetRevision, setAssetRevision] = useState(0);
@@ -167,6 +181,9 @@ export const useLocalVideoFileUrl = (
         value: { isLocalVideoFile: false, isOwner: false, status: "not-local" },
       });
       return;
+    }
+    if (isOwner && purpose === "display" && refreshKey > 0) {
+      refreshLocalVideoFileUrl(reference.id);
     }
     if (useCloudPlayback) {
       if (!isOwner) {
@@ -244,6 +261,7 @@ export const useLocalVideoFileUrl = (
           ? peekLocalVideoFileThumbnailUrl(
               reference.id,
               reference.contentRevision,
+              allowThumbnailGeneration,
             )
           : peekLocalVideoFileUrl(reference.id, reference.contentRevision);
       // Keep a known-good URL while the lease refreshes so display snapshots do
@@ -272,6 +290,7 @@ export const useLocalVideoFileUrl = (
         ? acquireLocalVideoFileThumbnailUrl(
             reference.id,
             reference.contentRevision,
+            allowThumbnailGeneration,
           )
         : acquireLocalVideoFileUrl(reference.id, reference.contentRevision);
     void lease.url.then((url) => {
@@ -281,8 +300,11 @@ export const useLocalVideoFileUrl = (
         value: {
           isLocalVideoFile: true,
           isOwner: true,
-          status: url || reference.cloudUrl ? "ready" : "unavailable",
-          ...(!url && reference.cloudUrl
+          status:
+            url || (purpose === "display" && reference.cloudUrl)
+              ? "ready"
+              : "unavailable",
+          ...(!url && purpose === "display" && reference.cloudUrl
             ? { localStatus: "unavailable" as const }
             : {}),
           url: url || (purpose === "display" ? reference.cloudUrl : undefined),
@@ -294,9 +316,11 @@ export const useLocalVideoFileUrl = (
       lease.release();
     };
   }, [
+    allowThumbnailGeneration,
     assetRevision,
     isOwner,
     purpose,
+    refreshKey,
     reference,
     referenceKey,
     useCloudPlayback,

@@ -1,11 +1,15 @@
 import { act, render, screen, within } from "@testing-library/react";
-import type { ComponentType, ReactNode, SVGProps } from "react";
+import type { AriaAttributes, ComponentType, ReactNode, SVGProps } from "react";
 import Toolbar from "./Toolbar";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import { preferencesSlice } from "../../store/preferencesSlice";
 import type { ControllerConfigurationRoute } from "../../store/preferencesSlice";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
+import { getDefaultControllerProfiles } from "../../utils/controllerProfiles";
+import type { ControllerProfile } from "../../utils/controllerProfiles";
+import { getDefaultDisplayOutputs } from "../../utils/displayOutputs";
+import type { ShouldSendTo } from "../../types";
 import {
   ThumbnailPreviewModeProvider,
   useThumbnailPreviewMode,
@@ -18,13 +22,18 @@ let mockState: {
   undoable: {
     present: {
       item: {
+        _id?: string;
         isLyricsEditorOpen: boolean;
         type: string;
+        shouldSendTo: ShouldSendTo;
       };
       preferences: ReturnType<typeof preferencesSlice.getInitialState>;
     };
   };
+  displayOutputs: { list: ReturnType<typeof getDefaultDisplayOutputs> };
 };
+
+let mockActiveControllerProfile: ControllerProfile;
 
 jest.mock("react-router-dom", () => ({
   ...jest.requireActual("react-router-dom"),
@@ -45,6 +54,8 @@ jest.mock("../../components/Button/Button", () => ({
     onClick,
     "aria-label": ariaLabel,
     "aria-expanded": ariaExpanded,
+    "aria-haspopup": ariaHasPopup,
+    title,
     disabled,
     svg,
   }: {
@@ -53,6 +64,8 @@ jest.mock("../../components/Button/Button", () => ({
     onClick?: () => void;
     "aria-label"?: string;
     "aria-expanded"?: boolean;
+    "aria-haspopup"?: AriaAttributes["aria-haspopup"];
+    title?: string;
     disabled?: boolean;
     svg?: ComponentType<SVGProps<SVGSVGElement>>;
   }) => (
@@ -62,6 +75,8 @@ jest.mock("../../components/Button/Button", () => ({
       onClick={onClick}
       aria-label={ariaLabel}
       aria-expanded={ariaExpanded}
+      aria-haspopup={ariaHasPopup}
+      title={title}
       disabled={disabled}
       data-icon={svg?.displayName ?? svg?.name}
     >
@@ -195,6 +210,7 @@ jest.mock("../../hooks/useGenerateCreditsFromOverlays", () => ({
 
 jest.mock("../../context/activeController", () => ({
   useControllerBasePath: () => mockControllerBasePath,
+  useActiveControllerProfile: () => mockActiveControllerProfile,
 }));
 
 let mockControllerBasePath = "/controller";
@@ -211,6 +227,7 @@ const renderToolbar = ({
   variant,
   workspaceMode,
   isMobile = false,
+  shouldSendTo = { projector: true, monitor: true, stream: true },
 }: {
   access: "full" | "music" | "view";
   itemType: string;
@@ -218,13 +235,16 @@ const renderToolbar = ({
   variant?: "default" | "aux";
   workspaceMode?: "present" | "edit";
   isMobile?: boolean;
+  shouldSendTo?: ShouldSendTo;
 }) => {
   mockState = {
     undoable: {
       present: {
         item: {
+          _id: "item-a",
           isLyricsEditorOpen: false,
           type: itemType,
+          shouldSendTo,
         },
         preferences: {
           ...preferencesSlice.getInitialState(),
@@ -234,7 +254,11 @@ const renderToolbar = ({
         },
       },
     },
+    displayOutputs: { list: getDefaultDisplayOutputs() },
   };
+  mockActiveControllerProfile = getDefaultControllerProfiles().find(
+    (profile) => profile.id === "presentation",
+  ) as ControllerProfile;
 
   const toolbar = <Toolbar className="toolbar" variant={variant} />;
   return render(
@@ -272,6 +296,7 @@ const renderToolbarOverlay = ({
         item: {
           isLyricsEditorOpen: false,
           type: "song",
+          shouldSendTo: { projector: true, monitor: true, stream: true },
         },
         preferences: {
           ...preferencesSlice.getInitialState(),
@@ -279,7 +304,11 @@ const renderToolbarOverlay = ({
         },
       },
     },
+    displayOutputs: { list: getDefaultDisplayOutputs() },
   };
+  mockActiveControllerProfile = getDefaultControllerProfiles().find(
+    (profile) => profile.id === "presentation",
+  ) as ControllerProfile;
 
   return render(
     <ThumbnailPreviewModeProvider>
@@ -319,6 +348,85 @@ describe("Toolbar", () => {
       "aria-expanded",
       "true",
     );
+  });
+
+  it("keeps normal all-display routing visually invisible", () => {
+    renderToolbar({
+      access: "full",
+      itemType: "song",
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    });
+
+    expect(
+      screen.queryByRole("button", { name: /Click to change Send To settings/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("follows active-item changes and synchronized routing updates", () => {
+    const { rerender } = renderToolbar({
+      access: "full",
+      itemType: "song",
+      shouldSendTo: { projector: true, monitor: false, stream: true },
+    });
+    const refreshToolbar = () =>
+      rerender(
+        <ThumbnailPreviewModeProvider>
+          <GlobalInfoContext.Provider value={{ access: "full" } as any}>
+            <ControllerInfoContext.Provider value={{ isPhone: false, isMobile: false } as any}>
+              <Toolbar className="toolbar" />
+              <PreviewModeProbe />
+            </ControllerInfoContext.Provider>
+          </GlobalInfoContext.Provider>
+        </ThumbnailPreviewModeProvider>,
+      );
+
+    expect(
+      screen.getByRole("button", { name: /Not sent to Monitor/ }),
+    ).toBeInTheDocument();
+
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      _id: "item-b",
+      shouldSendTo: { projector: true, monitor: true, stream: true },
+    };
+    refreshToolbar();
+    expect(
+      screen.queryByRole("button", { name: /Click to change Send To settings/ }),
+    ).not.toBeInTheDocument();
+
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      shouldSendTo: { projector: true, monitor: true, stream: false },
+    };
+    refreshToolbar();
+    expect(
+      screen.getByRole("button", { name: /Not sent to Stream/ }),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    { mode: "Edit" as const, workspaceMode: undefined },
+    { mode: "Present" as const, workspaceMode: "present" as const },
+  ])("opens the existing All Tools sheet from the routing indicator in $mode mode", ({ workspaceMode }) => {
+    renderToolbar({
+      access: "full",
+      itemType: "song",
+      workspaceMode,
+      shouldSendTo: { projector: true, monitor: false, stream: true },
+    });
+
+    const indicator = screen.getByRole("button", {
+      name: /Not sent to Monitor/,
+    });
+    expect(indicator).toHaveAttribute("aria-haspopup", "dialog");
+    expect(indicator).toHaveAttribute("aria-expanded", "false");
+    act(() => indicator.click());
+
+    expect(screen.getByTestId("all-tools-drawer")).toHaveAttribute(
+      "data-open",
+      "true",
+    );
+    expect(screen.getByText("Item Tools Panel")).toBeInTheDocument();
   });
 
   it("hides undo and secondary toolbar rows in Present mode", () => {

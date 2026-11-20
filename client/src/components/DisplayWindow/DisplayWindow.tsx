@@ -14,6 +14,7 @@ import {
   Box,
   DisplayType,
   FormattedTextDisplayInfo,
+  LocalVideoInputMediaSource,
   LocalVideoInputPresentation,
   MonitorLayoutMode,
   OverlayInfo,
@@ -27,6 +28,9 @@ import DisplayParticipantOverlay from "./DisplayParticipantOverlay";
 import DisplayStbOverlay from "./DisplayStbOverlay";
 import DisplayQrCodeOverlay from "./DisplayQrCodeOverlay";
 import DisplayEditor, { DisplayEditorChangeInfo } from "./DisplayEditor";
+import LocalSourceStatus, {
+  getUnavailableLocalVideoStatusProps,
+} from "./LocalSourceStatus";
 import DisplayStreamText from "./DisplayStreamText";
 import DisplayImageOverlay from "./DisplayImageOverlay";
 import DisplayStreamFormattedText from "./DisplayStreamFormattedText";
@@ -59,7 +63,10 @@ import {
   logVideoCue,
 } from "../../utils/videoBackgroundPlayback";
 import LocalVideoInputLayer from "./LocalVideoInputLayer";
-import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import {
+  isUnavailableLocalVideoFile,
+  useLocalVideoFileUrl,
+} from "../../hooks/useLocalVideoFileUrl";
 import DisplayBoxTransitionStage, {
   type DisplayBoxTransitionSnapshot,
   type LaneMediaPlaybackOptions,
@@ -72,6 +79,7 @@ import {
 } from "./laneBackgroundMedia";
 import { calculateReferenceScaleFactor } from "./referenceCanvas";
 import { resolveDisplayRenderProfile } from "./displayRenderProfile";
+import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
 import type { ElectronMediaDiscovery } from "../../utils/electronMediaSurfaceDiagnostics";
 import {
   usePreparedMediaContext,
@@ -338,6 +346,8 @@ type DisplayWindowProps = {
   monitorLayoutMode?: MonitorLayoutMode;
   /** Projector-only capture source. Remote devices render an unavailable status. */
   localVideoInput?: LocalVideoInputPresentation;
+  /** Saved source metadata remains available when no local binding can be built. */
+  localVideoInputPreviewSource?: LocalVideoInputMediaSource;
   /** Outgoing capture source retained briefly for the media crossfade. */
   prevLocalVideoInput?: LocalVideoInputPresentation;
   /** Live file/HLS background playhead synced from the controller preview. */
@@ -403,6 +413,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
       streamItemContentBlocked = false,
       monitorLayoutMode = "content-only",
       localVideoInput,
+      localVideoInputPreviewSource,
       prevLocalVideoInput,
       videoPlayback,
       videoBackgroundLoop = true,
@@ -504,9 +515,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     const isStream = displayType === "stream";
     const isEditor = displayType === "editor";
-    // This explicit opt-in is additionally constrained to the editor surface,
-    // so an output window can never render operator-only ownership status.
-    const localSourceStatusEnabled = showLocalSourceStatus && isEditor;
+    // Diagnostic status is limited to editor and preview-role windows. Live
+    // projector, monitor, and stream output routes never receive this flag.
+    const localSourceStatusEnabled =
+      showLocalSourceStatus && (isEditor || videoPreloadRole === "preview");
     const isDisplay = !isStream && !isEditor;
     const isMonitor = displayType === "monitor";
     const [editorPreparedActive, setEditorPreparedActive] = useState(false);
@@ -1236,16 +1248,22 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
     // Determine the active background video (if any) from boxes
     const { videoBox, rawDesiredVideoUrl } = useMemo(() => {
-      if (!shouldPlayVideo || !showBackground)
+      // Stream keeps slide backgrounds transparent, but still resolves a
+      // selected local-file video so an unavailable source can blank its item
+      // layer without affecting the separate overlay lane.
+      if (!shouldPlayVideo || (!showBackground && !isStream))
         return { videoBox: undefined, rawDesiredVideoUrl: undefined };
       const videoBox = boxes.find(
-        (b) => b.mediaInfo?.type === "video" && b.mediaInfo?.background,
+        (b) =>
+          b.mediaInfo?.type === "video" &&
+          b.mediaInfo?.background &&
+          (showBackground || b.mediaInfo.localVideoFile),
       );
       return {
         videoBox,
         rawDesiredVideoUrl: videoBox?.mediaInfo?.background,
       };
-    }, [boxes, showBackground, shouldPlayVideo]);
+    }, [boxes, isStream, showBackground, shouldPlayVideo]);
     const videoMediaKey = useMemo(
       () => getVideoBackgroundMediaKey(videoBox?.mediaInfo),
       [videoBox?.mediaInfo],
@@ -1284,6 +1302,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     const localVideoFile = useLocalVideoFileUrl(
       videoBox?.mediaInfo?.localVideoFile,
     );
+    const unavailableLocalVideo =
+      isUnavailableLocalVideoFile(localVideoFile);
     const isCloudPlaybackPending = Boolean(
       videoBox?.mediaInfo?.localVideoFile?.preferCloudPlayback &&
         !videoBox.mediaInfo.localVideoFile.cloudUrl,
@@ -1348,6 +1368,17 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
     // Overlay activity hides lyrics/Bible/formatted text only. Hide Content
     // still hides and mutes local video so operators can drop the camera.
     const localVideoContentVisible = !isStream || !streamItemContentBlocked;
+    const localVideoInputStatus =
+      localSourceStatusEnabled && localVideoContentVisible && !overlayPreviewMode
+      ? getLocalVideoInputPreviewStatus(
+          localVideoInput ?? localVideoInputPreviewSource,
+        )
+      : undefined;
+    const localVideoInputPreviewStatus =
+      localVideoInput &&
+      localVideoInputStatus?.heading === "Local source on another device"
+        ? undefined
+        : localVideoInputStatus;
     const localVideoVolume = resolvedDisplaySettings.localVideoVolume / 100;
     const localVideoFileAudioEnabled = Boolean(
       videoBox?.mediaInfo?.localVideoFile &&
@@ -1440,6 +1471,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
             receiveHighQuality: canCaptureLocalVideo,
             publishPreview: canCaptureLocalVideo && displayType === "editor",
             showErrors: !canCaptureLocalVideo || displayType === "editor",
+            showLocalSourceStatus: localSourceStatusEnabled,
+            statusSize: "canvas",
+            statusScaleFactor: scaleFactor,
             transparentBackground: displayType === "stream",
             contentVisible: localVideoContentVisible,
           },
@@ -1456,8 +1490,10 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         localVideoFileAudioEnabled,
         localVideoInput?.audioEnabled,
         localVideoVolume,
+        localSourceStatusEnabled,
         playLocalVideoAudio,
         resolvedDisplaySettings.localVideoAudioEnabled,
+        scaleFactor,
         suspendVideoPlayback,
         videoPreloadRole,
         outputId,
@@ -1510,6 +1546,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           publishPreview={canCaptureLocalVideo && displayType === "editor"}
           showErrors={!canCaptureLocalVideo || displayType === "editor"}
           showLocalSourceStatus={localSourceStatusEnabled}
+          statusSize="canvas"
+          statusScaleFactor={scaleFactor}
           transparentBackground={displayType === "stream"}
           outputId={outputId}
           windowRole={
@@ -1661,6 +1699,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               }
               backgroundMedia={stageBackgroundMedia}
               mediaPlayback={laneMediaPlayback}
+              showLocalSourceStatus={localSourceStatusEnabled}
             />
           </div>
         );
@@ -1717,6 +1756,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     paintBackground={laneMedia.paintBackground}
                     paintForeground={laneMedia.paintForeground}
                     showLocalSourceStatus={localSourceStatusEnabled && !isPrevious}
+                    statusScaleFactor={scaleFactor}
                   />
                 ));
               }}
@@ -1849,6 +1889,13 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                   pointerEvents: showStreamItemContent ? "auto" : "none",
                 }}
               >
+                {unavailableLocalVideo ? (
+                  <div
+                    aria-hidden
+                    className="pointer-events-none absolute inset-0 bg-black"
+                    data-testid="unavailable-local-video-black-screen"
+                  />
+                ) : null}
                 {currentStreamTextLayer}
                 {prevStreamTextLayer}
                 <DisplayStreamBible
@@ -1996,6 +2043,31 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                 </>
               );
             })()}
+          {localVideoInputPreviewStatus ? (
+            <LocalSourceStatus
+              {...localVideoInputPreviewStatus}
+              size="canvas"
+              scaleFactor={scaleFactor}
+              transparentBackground={isStream}
+              testId="preview-local-video-input-status"
+            />
+          ) : null}
+          {isStream &&
+          localSourceStatusEnabled &&
+          !overlayPreviewMode &&
+          localVideoContentVisible &&
+          unavailableLocalVideo ? (
+            <LocalSourceStatus
+              {...getUnavailableLocalVideoStatusProps(
+                videoBox?.mediaInfo?.localVideoFile,
+                localVideoFile.isOwner,
+                videoBox?.mediaInfo?.name,
+              )}
+              size="canvas"
+              scaleFactor={scaleFactor}
+              testId="preview-local-video-file-status"
+            />
+          ) : null}
         </>
       );
 

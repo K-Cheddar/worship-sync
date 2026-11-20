@@ -172,7 +172,7 @@ try {
     profile: window.__schedulesProfile,
     memberDetailsRenderMs: window.__schedulesProfile.memberDetailsMs,
     memberDetailsRenderCount: window.__schedulesProfile.memberDetailsCount,
-    url: location.hash,
+    url: window.location.hash,
     scheduleModuleLoaded: Boolean(window.__schedulesPageModuleLoaded),
     moduleResources: performance.getEntriesByType("resource")
       .filter(({ name }) => /TeamsSchedulesPage|ScheduleTab|teamSchedulePeriod/.test(name))
@@ -185,6 +185,8 @@ try {
 
   const staffingSummary = page.getByRole("status", { name: "Schedule staffing summary" });
   await staffingSummary.waitFor({ state: "visible" });
+  const lifecycleBanner = page.getByRole("group", { name: "Schedule status banner" });
+  await lifecycleBanner.waitFor({ state: "visible" });
   const scheduleControls = page.getByRole("group", { name: "Team schedule controls" });
   await scheduleControls.waitFor({ state: "visible" });
   for (const viewport of [
@@ -194,14 +196,24 @@ try {
   ]) {
     await page.setViewportSize(viewport);
     const layout = await page.evaluate(() => {
+      const banner = document.querySelector('[aria-label="Schedule status banner"]');
       const summary = document.querySelector('[aria-label="Schedule staffing summary"]');
       const controls = document.querySelector('[aria-label="Team schedule controls"]');
       const moreButton = controls?.querySelector('[aria-label="More schedule actions"]');
-      if (!summary || !controls || !moreButton) return null;
+      if (!banner || !summary || !controls || !moreButton) return null;
+      const bannerBounds = banner.getBoundingClientRect();
       const summaryBounds = summary.getBoundingClientRect();
       const controlBounds = controls.getBoundingClientRect();
       const moreBounds = moreButton.getBoundingClientRect();
       return {
+        banner: {
+          top: bannerBounds.top,
+          bottom: bannerBounds.bottom,
+          left: bannerBounds.left,
+          right: bannerBounds.right,
+          clientWidth: banner.clientWidth,
+          scrollWidth: banner.scrollWidth,
+        },
         summary: {
           left: summaryBounds.left,
           right: summaryBounds.right,
@@ -223,6 +235,12 @@ try {
       };
     });
     assert(layout, `schedule staffing summary, controls, and More menu should render at ${viewport.width}px`);
+    assert(layout.banner.left >= 0 && layout.banner.right <= viewport.width,
+      `lifecycle banner should fit at ${viewport.width}px: ${JSON.stringify(layout)}`);
+    assert(layout.banner.scrollWidth <= layout.banner.clientWidth,
+      `lifecycle banner should wrap without horizontal overflow at ${viewport.width}px: ${JSON.stringify(layout.banner)}`);
+    assert(layout.banner.bottom <= layout.summary.top,
+      `lifecycle banner should sit above staffing summary at ${viewport.width}px: ${JSON.stringify(layout)}`);
     assert(layout.summary.left >= 0 && layout.summary.right <= viewport.width,
       `staffing summary should fit the schedule header at ${viewport.width}px: ${JSON.stringify(layout)}`);
     assert(layout.summary.scrollWidth <= layout.summary.clientWidth,
@@ -438,7 +456,7 @@ try {
     const productionVisit = await productionPage.evaluate(() => ({
       startedAtMs: window.__profileVisitStart,
       durationMs: performance.now() - window.__profileVisitStart,
-      url: location.hash,
+      url: window.location.hash,
       profile: window.__schedulesProfile,
       memberDetailsRenderMs: window.__schedulesProfile.memberDetailsMs,
       memberDetailsRenderCount: window.__schedulesProfile.memberDetailsCount,

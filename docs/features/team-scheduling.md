@@ -41,6 +41,9 @@ A schedule follows **Virtual → Draft ↔ Published**.
 - Unpublishing preserves assignments, responses, equipment, and notification history.
 - A saved schedule with no publication status is treated as Published so existing member visibility is preserved.
 - Publication applies to the whole schedule document. There is no church-level mode, per-occurrence publication state, or approval workflow.
+- The workspace shows one status banner for each lifecycle state: a neutral preview for Virtual schedules, an amber Draft banner with Publish for editors, and a subtle green Published banner with Unpublish for editors. Published uses the normal workspace background. Read-only users can see the status without publication actions; the banner never sends notifications.
+
+**Approval source:** Current product-owner request, 2026-11-18 (unified schedule lifecycle status banner).
 
 ### Public view-only schedule links
 

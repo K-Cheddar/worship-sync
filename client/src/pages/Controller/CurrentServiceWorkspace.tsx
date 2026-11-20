@@ -292,7 +292,7 @@ const WorkspacePage = ({
   children: ReactNode;
 }) => (
   <main className="flex h-dvh flex-col overflow-hidden bg-homepage-canvas p-3 text-white lg:p-4">
-    <header className="mb-3 flex shrink-0 flex-wrap items-center gap-3 rounded-xl border border-gray-700 bg-gray-900/60 px-3 py-2">
+    <header className="mb-3 flex h-[48px] min-h-[48px] shrink-0 flex-nowrap items-center gap-2 rounded-xl border border-gray-700 bg-gray-900/60 px-2 py-0">
       <HomeToolbarMenu />
       <ServiceHeading
         service={service}
@@ -301,7 +301,7 @@ const WorkspacePage = ({
         timingPlan={timingPlan}
       />
       <div className="ml-auto shrink-0">
-        <UserSection />
+        <UserSection variant="compact" />
       </div>
     </header>
     <ChurchServiceTimeZoneNotice area="current service" />

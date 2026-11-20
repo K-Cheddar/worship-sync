@@ -11,6 +11,7 @@ import { itemSlice } from "../store/itemSlice";
 import type { DBItem } from "../types";
 import { createMockControllerContext, createMockPouchDB } from "../test/mocks";
 import { loadSong, saveSong, serializeSongToV2Documents, songToLibraryProjection } from "../utils/songPersistence";
+import * as songPersistence from "../utils/songPersistence";
 
 const song = (id: string, name = id) => ({ _id: id, name, type: "song", arrangements: [], selectedArrangement: 0 }) as unknown as DBItem;
 const setup = (read: jest.Mock, changes = jest.fn().mockResolvedValue({ results: [] }), database?: PouchDB.Database) => {
@@ -45,6 +46,7 @@ it("reloads all neighboring slides for a replicated nonactive v2 outline song", 
     const physical = serializeSongToV2Documents(source);
     await databaseA.bulkDocs([physical.root, ...physical.arrangements, ...physical.slides]);
     await databaseA.replicate.to(databaseB);
+    const rootRead = jest.spyOn(databaseB, "get");
     const baseline = await loadSong(databaseA, source._id);
     const projection = songToLibraryProjection(baseline);
     const otherSong = song("Currently active song");
@@ -63,6 +65,7 @@ it("reloads all neighboring slides for a replicated nonactive v2 outline song", 
     await waitFor(() => expect(
       view.result.current.get(source._id)?.arrangements?.[0].slides?.map((slide) => slide.boxes[0].words),
     ).toEqual(["First stays", "Middle before", "Last stays"]));
+    expect(rootRead).toHaveBeenCalledTimes(1);
     const cachedProjection = store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id);
 
     const edited = structuredClone(baseline);
@@ -106,6 +109,7 @@ it("refreshes repeated continuous-outline occurrences while preserving the activ
     const physical = serializeSongToV2Documents(source);
     await databaseA.bulkDocs([physical.root, ...physical.arrangements, ...physical.slides]);
     await databaseA.replicate.to(databaseB);
+    const rootRead = jest.spyOn(databaseB, "get");
     const baseline = await loadSong(databaseA, source._id);
     const projection = songToLibraryProjection(baseline);
     const localDraft = structuredClone(baseline);
@@ -119,12 +123,16 @@ it("refreshes repeated continuous-outline occurrences while preserving the activ
         <ControllerInfoContext.Provider value={context as never}>{children}</ControllerInfoContext.Provider>
       </Provider>
     );
-    const view = renderHook(() => useOutlineItemDocs([source._id, source._id]), { wrapper });
+    const view = renderHook(({ ids }) => useOutlineItemDocs(ids), {
+      initialProps: { ids: [source._id, source._id] },
+      wrapper,
+    });
     unmount = view.unmount;
 
     await waitFor(() => expect(
       view.result.current.get(source._id)?.arrangements?.[0].slides?.map((slide) => slide.boxes[0].words),
     ).toEqual(["First stays", "Middle before", "Last stays"]));
+    expect(rootRead).toHaveBeenCalledTimes(1);
     const cachedProjection = store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id);
 
     const edited = structuredClone(baseline);
@@ -145,6 +153,14 @@ it("refreshes repeated continuous-outline occurrences while preserving the activ
       .toEqual([expectedSlides, expectedSlides]);
     expect(store.getState().activeItem.listId).toBe("active-occurrence");
     expect(store.getState().activeItem.arrangements[0].slides[1].boxes[0].words).toBe("Local active draft");
+    expect(store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id)).toBe(cachedProjection);
+
+    store.dispatch(applyItemDocumentChange({ id: "cached", doc: song("cached") }));
+    view.rerender({ ids: ["cached"] });
+    await waitFor(() => expect(
+      view.result.current.get(source._id)?.arrangements?.[0].slides,
+    ).toEqual([]));
+    expect(view.result.current.get("cached")).toEqual(song("cached"));
     expect(store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id)).toBe(cachedProjection);
   } finally {
     unmount?.();
@@ -304,6 +320,63 @@ it("ignores a pending cache miss after the requested route changes", async () =>
   await act(async () => { finish({ results: [{ id: "missing", doc: song("missing") }] }); await pending; });
   expect(result.current.has("missing")).toBe(false);
   expect(store.getState().allDocs.allSongDocs).toEqual([song("cached")]);
+});
+
+it("does not restore hydrated Song V2 content after its outline item is removed while loading", async () => {
+  const source = {
+    _id: "pending-v2-song",
+    name: "Pending V2 song",
+    type: "song",
+    docType: "song-v2-root",
+    selectedArrangement: 0,
+    slides: [],
+    arrangements: [{
+      id: "main",
+      name: "Master",
+      formattedLyrics: [],
+      songOrder: [],
+      slides: [{
+        id: "pending-slide",
+        name: "Verse 1",
+        type: "Verse",
+        boxes: [{ id: "pending-box", words: "Hydrated after removal", width: 1920, height: 1080 }],
+      }],
+    }],
+  } as unknown as DBItem;
+  const projection = songToLibraryProjection(source);
+  const store = configureStore({ reducer: { allDocs } });
+  store.dispatch(hydrateItemCache([projection, song("cached")]));
+  const cachedProjection = store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id);
+  const context = createMockControllerContext({ db: createMockPouchDB() });
+  const wrapper = ({ children }: { children: React.ReactNode }) => (
+    <Provider store={store}>
+      <ControllerInfoContext.Provider value={context as never}>{children}</ControllerInfoContext.Provider>
+    </Provider>
+  );
+  let finishLoad!: (doc: DBItem) => void;
+  const pendingLoad = new Promise<DBItem>((resolve) => { finishLoad = resolve; });
+  const loadSpy = jest.spyOn(songPersistence, "loadSong").mockReturnValue(pendingLoad);
+  try {
+    const view = renderHook(({ ids }) => useOutlineItemDocs(ids), {
+      initialProps: { ids: [source._id] },
+      wrapper,
+    });
+    await waitFor(() => expect(loadSpy).toHaveBeenCalledWith(expect.anything(), source._id));
+
+    view.rerender({ ids: ["cached"] });
+    await act(async () => {
+      finishLoad(source);
+      await pendingLoad;
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(view.result.current.get(source._id)?.arrangements?.[0].slides).toEqual([]);
+    expect(view.result.current.get("cached")).toEqual(song("cached"));
+    expect(store.getState().allDocs.allSongDocs.find((doc) => doc._id === source._id)).toBe(cachedProjection);
+  } finally {
+    loadSpy.mockRestore();
+  }
 });
 
 it("ignores a pending cache miss after the Redux database session changes", async () => {

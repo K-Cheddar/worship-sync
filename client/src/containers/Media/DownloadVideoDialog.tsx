@@ -1,5 +1,5 @@
 import { useContext, useEffect, useRef, useState } from "react";
-import { Download } from "lucide-react";
+import { Download, LoaderCircle } from "lucide-react";
 import Button from "../../components/Button/Button";
 import Checkbox from "../../components/Checkbox/Checkbox";
 import Input from "../../components/Input/Input";
@@ -307,7 +307,14 @@ const DownloadVideoDialog = ({
           placeholder="Paste a YouTube video link"
           disabled={disabled || isStarting}
         />
-        {isInspecting ? <p role="status" className="text-sm text-gray-300">Checking video details…</p> : null}
+        {isInspecting ? (
+          <div role="status" className="flex items-center gap-3 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2">
+            <span aria-hidden="true" className="flex size-8 shrink-0 items-center justify-center rounded-md bg-cyan-400/10 text-cyan-300">
+              <LoaderCircle className="size-4 motion-safe:animate-spin" />
+            </span>
+            <span className="text-sm font-medium text-gray-100">Checking video details…</span>
+          </div>
+        ) : null}
         {inspection && inspectedInputUrl === url.trim() ? (
           <div className="flex min-w-0 gap-3 rounded-md border border-gray-600 bg-gray-900 p-3">
             {inspection.thumbnail ? <img src={inspection.thumbnail} alt="" className="h-20 w-36 shrink-0 rounded object-cover" /> : null}

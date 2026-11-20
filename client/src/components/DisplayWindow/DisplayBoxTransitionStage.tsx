@@ -129,6 +129,9 @@ export type LaneMediaPlaybackOptions = {
     receiveHighQuality: boolean;
     publishPreview: boolean;
     showErrors: boolean;
+    showLocalSourceStatus?: boolean;
+    statusSize?: "compact" | "preview" | "canvas";
+    statusScaleFactor?: number;
     transparentBackground: boolean;
     contentVisible: boolean;
   };

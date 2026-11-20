@@ -84,10 +84,14 @@ it("changes a previous intake response and confirms only the availability patch"
     availability: { elsewhere: "unavailable" },
     availabilityForOccurrence: "available",
   });
-  mockUpdateAvailability.mockResolvedValue({
+  mockUpdateAvailability.mockResolvedValueOnce({
     success: true,
     serviceAvailability: { elsewhere: "unavailable", [occurrenceId]: "unavailable" },
     updatedAt: "revision-2",
+  }).mockResolvedValueOnce({
+    success: true,
+    serviceAvailability: { elsewhere: "unavailable", [occurrenceId]: "available" },
+    updatedAt: "revision-3",
   });
   await user.click(screen.getByText("Service availability"));
   const service = screen.getByRole("listitem");
@@ -112,6 +116,13 @@ it("changes a previous intake response and confirms only the availability patch"
     serviceAvailability: expect.objectContaining({ elsewhere: "unavailable" }),
     updatedAt: "revision-2",
   })));
+
+  await user.click(control);
+  await user.click(screen.getByRole("option", { name: "Available" }));
+  await user.click(screen.getByRole("button", { name: "Save availability" }));
+  await waitFor(() => expect(mockUpdateAvailability).toHaveBeenCalledTimes(2));
+  expect(mockUpdateAvailability.mock.calls[1][2].expectedUpdatedAt).toBe("revision-2");
+  expect(onSaved).toHaveBeenLastCalledWith(expect.objectContaining({ updatedAt: "revision-3" }));
 });
 
 it("clears an explicit response when Not set is selected", async () => {

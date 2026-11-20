@@ -1,6 +1,7 @@
 import isEqual from "lodash/isEqual";
 import type { ServiceItem } from "../types";
 import generateRandomId from "./generateRandomId";
+import { CLOUDINARY_CLOUD_NAME } from "./cloudinaryConfig";
 
 export type OutlineMergeResult =
   | { kind: "merged"; items: ServiceItem[]; remoteItems: ServiceItem[] }
@@ -81,7 +82,79 @@ const stableRows = (
 const orderedBaseIds = (rows: ServiceItem[], baseIds: Set<string>) =>
   rows.map((row) => row.listId).filter((id) => baseIds.has(id));
 
-const rowEqual = (left: ServiceItem, right: ServiceItem) => isEqual(left, right);
+const normalizePersistedJsonValue = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map((entry) => entry === undefined ? null : normalizePersistedJsonValue(entry));
+  }
+  if (value && typeof value === "object") {
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return value;
+    return Object.fromEntries(Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [key, normalizePersistedJsonValue(entry)]));
+  }
+  return value;
+};
+
+/** formatItemList uses Cloudinary's default URLGen representation for stored
+ * public IDs. Convert only that exact, untransformed URL shape for comparison;
+ * authored URLs, local media references, and transformed URLs remain distinct. */
+const canonicalBackground = (value: unknown) => {
+  if (typeof value !== "string" || !value.startsWith("https://")) return value;
+  try {
+    const url = new URL(value);
+    const segments = url.pathname.split("/").filter(Boolean);
+    const queryKeys = [...url.searchParams.keys()];
+    if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com" ||
+      url.port || url.username || url.password || url.hash ||
+      segments[0] !== CLOUDINARY_CLOUD_NAME ||
+      segments.length < 5 || segments[1] !== "image" || segments[2] !== "upload" ||
+      segments[3] !== "v1" || queryKeys.length !== 1 || queryKeys[0] !== "_a" ||
+      !url.searchParams.get("_a")) return value;
+    return segments.slice(4).map((segment) => decodeURIComponent(segment)).join("/");
+  } catch {
+    return value;
+  }
+};
+
+const canonicalFieldValue = (key: string, value: unknown) => {
+  const normalized = normalizePersistedJsonValue(value);
+  return key === "background" ? canonicalBackground(normalized) : normalized;
+};
+
+const hasPersistedField = (row: ServiceItem, key: string) =>
+  Object.prototype.hasOwnProperty.call(row, key) &&
+  (row as unknown as Record<string, unknown>)[key] !== undefined;
+
+const rowEqual = (left: ServiceItem, right: ServiceItem) => isEqual(
+  Object.fromEntries(Object.entries(left)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => [key, canonicalFieldValue(key, value)])),
+  Object.fromEntries(Object.entries(right)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => [key, canonicalFieldValue(key, value)])),
+);
+
+export const outlineItemsEqual = (left: ServiceItem[], right: ServiceItem[]) =>
+  left.length === right.length && left.every((row, index) => rowEqual(row, right[index]));
+
+export const outlineBackgroundsEqual = (left: string | undefined, right: string | undefined) =>
+  isEqual(canonicalFieldValue("background", left), canonicalFieldValue("background", right));
+
+export const preserveOutlineBackgroundPresentation = (
+  items: ServiceItem[],
+  displayedItems: ServiceItem[],
+) => {
+  const displayedById = new Map(displayedItems.map((item) => [item.listId, item]));
+  return items.map((item) => {
+    const displayed = displayedById.get(item.listId);
+    if (displayed?.background !== item.background &&
+      outlineBackgroundsEqual(displayed?.background, item.background)) {
+      return { ...item, background: displayed?.background };
+    }
+    return item;
+  });
+};
 
 const mergeRow = (
   base: ServiceItem,
@@ -95,23 +168,30 @@ const mergeRow = (
 
   keys.forEach((key) => {
     if (key === "listId") return;
-    const hadBase = Object.prototype.hasOwnProperty.call(base, key);
-    const hasLocal = Object.prototype.hasOwnProperty.call(local, key);
-    const hasRemote = Object.prototype.hasOwnProperty.call(remote, key);
+    const hadBase = hasPersistedField(base, key);
+    const hasLocal = hasPersistedField(local, key);
+    const hasRemote = hasPersistedField(remote, key);
     const baseValue = (base as unknown as Record<string, unknown>)[key];
     const localValue = (local as unknown as Record<string, unknown>)[key];
     const remoteValue = (remote as unknown as Record<string, unknown>)[key];
-    const localChanged = hadBase !== hasLocal || !isEqual(baseValue, localValue);
-    const remoteChanged = hadBase !== hasRemote || !isEqual(baseValue, remoteValue);
+    const canonicalBaseValue = canonicalFieldValue(key, baseValue);
+    const canonicalLocalValue = canonicalFieldValue(key, localValue);
+    const canonicalRemoteValue = canonicalFieldValue(key, remoteValue);
+    const localChanged = hadBase !== hasLocal || !isEqual(canonicalBaseValue, canonicalLocalValue);
+    const remoteChanged = hadBase !== hasRemote || !isEqual(canonicalBaseValue, canonicalRemoteValue);
 
     if (!localChanged) return;
-    if (remoteChanged && (hasLocal !== hasRemote || !isEqual(localValue, remoteValue))) {
+    if (remoteChanged && (hasLocal !== hasRemote || !isEqual(canonicalLocalValue, canonicalRemoteValue))) {
       const choice = choose?.({
         key: JSON.stringify([local.listId, key]), listId: local.listId,
         field: key, reason: "field", localRow: local, remoteRow: remote,
       });
       if (choice === "remote") return;
       if (!choice) conflict = true;
+    } else if (remoteChanged) {
+      // Both writers reached the same persisted value. Keep the authoritative
+      // remote representation instead of creating a needless format-only write.
+      return;
     }
     if (hasLocal) merged[key] = localValue;
     else delete merged[key];
@@ -278,13 +358,17 @@ const mergeBaseOrder = (
 const rebaseMovesOntoRemote = (
   local: ServiceItem[],
   remote: ServiceItem[],
+  baseline: ServiceItem[],
   moveIntents: OutlineMoveIntent[],
 ): ServiceItem[] => {
   if (!moveIntents.length) return local;
   const localById = new Map(local.map(row => [row.listId, row]));
   const remoteById = new Map(remote.map(row => [row.listId, row]));
   const localAdded = new Set(local.filter(row => !remoteById.has(row.listId)).map(row => row.listId));
-  const order = remote.map(row => row.listId);
+  const locallyDeletedBaselineIds = new Set(
+    baseline.filter(row => !localById.has(row.listId)).map(row => row.listId),
+  );
+  const order = remote.filter(row => !locallyDeletedBaselineIds.has(row.listId)).map(row => row.listId);
   insertAddedRows(order, local, localAdded);
 
   moveIntents.forEach(intent => {
@@ -360,7 +444,7 @@ export const reconcileOutlineItems = (
   const base = stableRows(baseline, knownRows);
   const normalizedLocal = stableRows(localItems, [...base, ...localItems]);
   const remote = stableRows(remoteItems, [...base, ...normalizedLocal]);
-  const local = rebaseMovesOntoRemote(normalizedLocal, remote, moveIntents);
+  const local = rebaseMovesOntoRemote(normalizedLocal, remote, base, moveIntents);
   const baseById = new Map(base.map((row) => [row.listId, row]));
   const localById = new Map(local.map((row) => [row.listId, row]));
   const remoteById = new Map(remote.map((row) => [row.listId, row]));
@@ -374,9 +458,6 @@ export const reconcileOutlineItems = (
   const overlappingReplacements = [...localRemovedIds].some((id) =>
     remoteRemovedIds.has(id),
   ) && localAddedIds.size > 0 && remoteAddedIds.size > 0;
-  const finalBaseIds = base.map(row => row.listId).filter(id =>
-    localById.has(id) || remoteById.has(id));
-  const initialOrder = mergeBaseOrder(base.map(row => row.listId), localBaseOrder, remoteBaseOrder, finalBaseIds);
   const baseOrder = base.map(row => row.listId);
   const exactLocalOrder = orderedBaseIds(normalizedLocal, baseIds);
   const localPresentBaseOrder = baseOrder.filter(id => localById.has(id));
@@ -386,6 +467,19 @@ export const reconcileOutlineItems = (
   const remoteMoveCandidates = remoteOrderChanged
     ? movedRowCandidates(remotePresentBaseOrder, remoteBaseOrder)
     : new Set<string>();
+  const remoteMoveMayOverlap = (id: string) => remoteMoveCandidates === undefined
+    ? remoteOrderChanged
+    : remoteMoveCandidates.has(id);
+  const unchangedLocallyDeletedRemoteIds = new Set(base
+    .filter(row => !localById.has(row.listId))
+    .filter(row => {
+      const remoteRow = remoteById.get(row.listId);
+      return !!remoteRow && rowEqual(remoteRow, row) && !remoteMoveMayOverlap(row.listId);
+    })
+    .map(row => row.listId));
+  const finalBaseIds = base.map(row => row.listId).filter(id =>
+    (localById.has(id) || remoteById.has(id)) && !unchangedLocallyDeletedRemoteIds.has(id));
+  const initialOrder = mergeBaseOrder(baseOrder, localBaseOrder, remoteBaseOrder, finalBaseIds);
   const remoteMovedId = remoteMoveCandidates?.size === 1 ? [...remoteMoveCandidates][0] : undefined;
   const localOrderKnown = moveIntents.length > 0 || !localOrderChanged ||
     hasSingleUnambiguousMovedRow(localPresentBaseOrder, exactLocalOrder);
@@ -407,7 +501,7 @@ export const reconcileOutlineItems = (
   // Keep the existing whole-version review for that case.
   if (overlappingReplacements) choose?.({ key: "replacement", reason: "replacement" });
   const orderMerge = orderConflict
-    ? mergeBaseOrder(base.map(row => row.listId), localBaseOrder, remoteBaseOrder, finalBaseIds,
+    ? mergeBaseOrder(baseOrder, localBaseOrder, remoteBaseOrder, finalBaseIds,
       orderChoice, orderChoiceIds)
     : initialOrder;
   let conflict = (orderConflict && (orderMerge.unresolvedCycle || !orderChoice)) || overlappingReplacements;
@@ -444,11 +538,9 @@ export const reconcileOutlineItems = (
 
     if (!localRow && !remoteRow) return;
     if (!localRow) {
-      const remoteMoveMayOverlap = remoteRow && (remoteMoveCandidates === undefined
-        ? remoteOrderChanged
-        : remoteMoveCandidates.has(id));
-      if (remoteRow && (!rowEqual(remoteRow, baseRow) || remoteMoveMayOverlap)) {
-        const item = chooseRow(id, localRow, remoteRow, "delete-edit", remoteMoveMayOverlap
+      const remoteMovedOverlap = remoteRow && remoteMoveMayOverlap(id);
+      if (remoteRow && (!rowEqual(remoteRow, baseRow) || remoteMovedOverlap)) {
+        const item = chooseRow(id, localRow, remoteRow, "delete-edit", remoteMovedOverlap
           ? { movedIds: [id], remoteMoved: true }
           : undefined);
         if (item) rowsById.set(id, item);

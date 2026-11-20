@@ -2,9 +2,9 @@
 
 **Contract status:** The expanded desktop workflow has prior Windows x64 package evidence. Restart recovery and native cleanup follow-up are implemented and locally built; live YouTube and packaged UI verification for this follow-up remain unverified.
 
-**Approval source:** Desktop Video Downloader request, October 29, 2026; linked local videos, external download storage and progress request, November 5, 2026.
+**Approval source:** Desktop Video Downloader request, October 29, 2026; linked local videos, external download storage and progress request, November 5, 2026; unified Media Add files workflow, November 18, 2026.
 
-**Last reviewed:** November 12, 2026.
+**Last reviewed:** November 18, 2026.
 
 ## Purpose and operator workflow
 
@@ -41,11 +41,33 @@ computer.
   before it appears as a completed item. Retry must not duplicate a completed
   file or record. Incomplete or cancelled downloads must not appear as finished
   media items.
-- Existing local-video imports offer “Add files” and
-  “Link local video”. A linked item keeps its Media Library identity, metadata and
-  thumbnail when its file is unavailable, offers “Relink file”, and may use a
-  valid cloud copy for playback. Relinking updates the existing item; a changed
-  file invalidates stale cloud playback metadata and thumbnails.
+- The Media Add menu has one “Add files” action. In Electron, selecting a video
+  reveals “Copy into WorshipSync” (the default) and “Link to original file”. The
+  choice appears after the existing picker so image-only imports have no extra
+  step. Browser/PWA uploads keep the existing managed-import behavior and do not
+  show Link. Copy keeps the current managed import and cloud-upload behavior.
+- Linking applies to one selected video at a time. In a mixed selection, images
+  still use managed imports. The selected File reaches the native asset store
+  through the preload boundary; its absolute path stays on this device. The
+  linked item uses the existing validation and Media Library save path without
+  copying the video. The choice is remembered locally on this device, starts at
+  Copy, and is not stored in church data.
+- A linked item keeps its Media Library identity, metadata and thumbnail when
+  its file is unavailable, offers “Relink file”, and may use a valid cloud copy
+  for playback. Relinking updates the existing item; a changed file invalidates
+  stale cloud playback metadata and thumbnails.
+- Owners can always find “Relink file” for a linked video. Opening its Media
+  dialog and a failed local preview recheck the source, while cloud fallback and
+  saved thumbnails remain available. The check is scoped to the modal so it does
+  not disturb active display playback.
+- Linking and relinking show an accessible, indeterminate status from file
+  selection through validation and Media Library persistence. Canceling,
+  failing, changing church, or leaving the route clears the status.
+- Cloud upload uses native streaming only when the packaged runtime reports the
+  downloader service available; unsupported desktop builds and browser/PWA use
+  the existing Blob upload path. A retry after switching churches uses the
+  retained permanent local asset if the temporary download job was cleaned up,
+  without repeating the download or import.
 - After the Media Library initializes, persisted interrupted relinks are
   reconciled with native relink status and restored in Transfer Activity,
   including after an app restart. Startup discovery does not delete files or
@@ -53,6 +75,20 @@ computer.
   native or persisted state keeps the checkpoint and its files.
 - Deleting a linked item removes only WorshipSync's local reference and
   application-owned metadata. It never deletes or changes the external file.
+
+## Product decisions
+
+- **Question/problem:** Should operators choose between managed video copies
+  and linked videos as separate Add menu actions, or as methods within Add files?
+- **Approved behavior:** Keep one Add files entry. Show the storage choice only
+  for Electron selections containing a video, default to Copy, and remember an
+  explicit choice on the device. Link one video per selection; images in a mixed
+  selection remain managed imports, and browser/PWA uploads are unchanged.
+- **Why:** One familiar entry keeps routine imports simple while offering a
+  video storage choice only where it applies.
+- **Material alternative rejected:** Keep a separate Link local video menu
+  action, or ask every browser and image import to choose a video storage mode.
+- **Approval source/date:** Current user request, November 18, 2026.
 
 ## Behavioral boundaries
 
@@ -175,6 +211,21 @@ the imported video usable. The queued thumbnail write shares an IndexedDB
 transaction with a check for the owning video record, so a delete that wins
 the race cannot leave a late same-ID thumbnail behind. Deleting the video
 continues to delete its same-ID thumbnail record.
+
+Managed, linked, downloaded, and browser-stored videos use this same
+serialized frame-capture queue when a static preview needs a still. Capture
+samples three bounded positions, favors a non-black frame, and keeps a valid
+fallback when the whole video is dark. It stores the generator version, source,
+and content revision beside the thumbnail. A current supplied poster is
+preserved; known older generated stills are refreshed. Existing records without
+provenance are retained because they may be supplied posters. Static controller
+previews may request a backfill; live display paths only read saved stills and
+never start a decode. Electron's `worshipsync-media` responses allow anonymous
+canvas reads only from the app renderer origin, so frame scoring can inspect
+local video without granting that access to unrelated origins. The queued
+thumbnail write also checks the content
+revision, so a replacement that wins the race cannot leave a late same-ID
+thumbnail behind.
 
 ## Previous baseline validation recorded October 29, 2026
 

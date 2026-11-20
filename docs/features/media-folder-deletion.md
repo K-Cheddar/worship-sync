@@ -1,10 +1,11 @@
-# Media folder deletion
+# Media deletion queue
 
 ## Purpose
 
-Let a controller operator remove a Media folder and choose whether to remove its
-contents or move those contents to the folder's parent. Folder deletions remain
-visible in the existing Activity panel while they run.
+Let a controller operator delete selected media items or remove a Media folder
+and choose whether to remove its contents or move those contents to the folder's
+parent. Deletion jobs remain visible in the existing Activity panel while they
+run.
 
 ## Confirmed product intent
 
@@ -15,6 +16,11 @@ Queue and Cancellation,”** confirms these behaviors:
   earlier job. Accepted jobs run one at a time in request order.
 - Activity tracks each accepted job. Closing or minimizing Activity does not
   stop or discard the work.
+- Activity keeps its minimize control while any displayed job is queued or
+  active. Once all displayed jobs are settled and no action is pending, the
+  header X dismisses the finished entries through their existing Dismiss
+  handlers. Other recovery actions remain available until the operator
+  dismisses the activity.
 - A queued job can be cancelled before it starts. An active job can be cancelled
   only at a checkpoint where remaining work can stop without leaving media,
   folder, or reference data inconsistent. Cancellation never restores work
@@ -44,6 +50,25 @@ Queue and Cancellation,”** confirms these behaviors:
 - Duplicate requests are identified by folder ID within the originating church
   and PouchDB database. The same folder ID in a different scope can be queued.
 
+The November 18, 2026 request confirms adding item deletion to the same queue:
+
+- Single-item and bulk confirmations submit their selected media IDs to the
+  existing Activity queue and close as soon as the queue accepts the job.
+- Folder and item jobs use one first-in, first-out queue. Accepted work
+  continues when the operator leaves Media in the same church session.
+- A request is rejected with feedback when any requested item ID overlaps an
+  item job already queued or running in the same church and PouchDB database.
+  A rejected request leaves the confirmation open and both actions enabled.
+- Activity shows accepted item jobs as queued or running and lets the operator
+  cancel an item job while it is waiting. A queued cancellation performs no
+  deletion. Active item deletion cannot be cancelled after it starts.
+- Each item job captures its database and church session. A stale queued job is
+  retired before it starts deletion work after logout or a session change.
+- Retries that resume item deletion use the same queue. Provider-only cleanup
+  and upload-cleanup recovery remain available without repeating completed
+  library deletion. If an earlier job already removed an item, a later queued
+  request finishes without repeating its reference or provider cleanup.
+
 ## Persistence and cancellation boundary
 
 The authoritative per-item media document is read before deletion and its exact
@@ -53,7 +78,8 @@ and the shared library document through the existing media-library flush path.
 Saved route repair must succeed before the folder is removed; a failed repair
 leaves any completed repairs in place for a safe retry. Failed folder deletion
 can be retried from Activity after navigating away within the same session.
-Retries do not resume after logout or a church-session change.
+Retries do not resume after logout or a church-session change. Item jobs use the
+same captured database and church session boundary, including cleanup actions.
 
 The October 30 five-findings correction confirms that every queued job reads
 folder structure and membership from its originating PouchDB when it starts,
@@ -97,3 +123,5 @@ the existing PouchDB revision-aware merge paths.
 - `client/src/utils/mediaReferenceSweep.ts`
 - `client/src/utils/flushMediaLibraryDoc.ts`
 - `server/providerStorageService.js`
+- `client/src/containers/Media/__tests__/Media.test.tsx`
+- `client/src/context/transferContext.test.tsx`

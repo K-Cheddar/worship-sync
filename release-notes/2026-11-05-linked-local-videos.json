@@ -3,5 +3,5 @@
   "date": "2026-11-05",
   "type": "improved",
   "title": "More control over local videos",
-  "description": "Link existing videos or save downloads to a chosen folder without another copy, optionally add a cloud version, track download progress, and recover interrupted relinks from Activity after restarting WorshipSync."
+  "description": "Add files lets you copy videos into WorshipSync or link them from their current location. Downloads show percentage, speed, and remaining time when available, and cloud uploads can be retried without downloading the video again."
 }

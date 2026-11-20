@@ -56,6 +56,8 @@ type LocalVideoInputViewProps = {
   publishPreview?: boolean;
   showErrors?: boolean;
   showLocalSourceStatus?: boolean;
+  statusSize?: "compact" | "preview" | "canvas";
+  statusScaleFactor?: number;
   transparentBackground?: boolean;
   outputId?: string;
   windowRole?: string;
@@ -133,6 +135,8 @@ const LocalVideoInputView = ({
   publishPreview = false,
   showErrors = true,
   showLocalSourceStatus = false,
+  statusSize = "compact",
+  statusScaleFactor = 1,
   transparentBackground = false,
   outputId,
   windowRole,
@@ -923,7 +927,7 @@ const LocalVideoInputView = ({
   }, [onPaintReadyChange, paintReady]);
 
   if (!isLocal) {
-    if (!showErrors || !showLocalSourceStatus) {
+    if (!showLocalSourceStatus) {
       return (
         <div
           className={`absolute inset-0 ${transparentBackground ? "bg-transparent" : "bg-black"}`}
@@ -937,6 +941,8 @@ const LocalVideoInputView = ({
         sourceLabel={`${sourceKind} · ${input.deviceLabel}`}
         ownerLabel={input.ownerLabel}
         transparentBackground={transparentBackground}
+        size={statusSize}
+        scaleFactor={statusScaleFactor}
       />
     );
   }

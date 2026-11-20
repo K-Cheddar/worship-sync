@@ -112,7 +112,11 @@ it("supports a compact toolbar without hiding the page title from desktop", () =
   </AppWorkspaceShell></MemoryRouter>);
 
   const toolbar = screen.getByTestId("app-workspace-toolbar");
-  expect(toolbar).toHaveClass("h-[48px]", "min-h-[48px]", "lg:grid-cols-[1fr_auto_1fr]");
+  expect(toolbar).toHaveClass(
+    "h-[48px]",
+    "min-h-[48px]",
+    "lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]",
+  );
   expect(screen.getByTestId("app-workspace-title")).toHaveClass("hidden", "lg:flex");
 });
 

@@ -384,6 +384,7 @@ const PresentationPreview = ({
     shouldPlayVideo: !previewDeepSuspended,
     suspendVideoPlayback: !previewIsVisible,
     videoPreloadRole: "preview",
+    showLocalSourceStatus: true,
     showClockTimer,
     // Only the transmit-handler monitor preview uses the full monitor chrome.
     monitorLayoutMode:
@@ -392,6 +393,9 @@ const PresentationPreview = ({
     streamItemContentBlocked:
       info.displayType === "stream" ? streamItemContentBlocked : undefined,
     localVideoInput: info.localVideoInput,
+    ...(info.slide?.mediaSource?.kind === "local-video-input"
+      ? { localVideoInputPreviewSource: info.slide.mediaSource }
+      : {}),
     prevLocalVideoInput: prevInfo.localVideoInput,
     videoPlayback: info.videoPlayback,
     // Same-machine booth tiles must show live local video, not still previews,

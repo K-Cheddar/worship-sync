@@ -188,16 +188,20 @@ const MemberServiceAvailabilityEditor = ({
           })),
         },
       );
+      const updatedAt = response.updatedAt || member.updatedAt || "";
       const savedMember: TeamRosterMember = {
         ...member,
         serviceAvailability: response.serviceAvailability || {},
-        updatedAt: response.updatedAt || member.updatedAt,
+        // Availability writes advance the member's shared revision. Returning
+        // it lets a later profile save use the current baseline without
+        // replacing the profile draft held by the parent editor.
+        updatedAt,
       };
       onSaved(savedMember);
       setPendingChanges({});
       setReviewedAvailability({
         serviceAvailability: savedMember.serviceAvailability,
-        updatedAt: savedMember.updatedAt || "",
+        updatedAt,
       });
       setConflict(false);
     } catch (saveError) {

@@ -24,7 +24,12 @@ import { deleteLocalVideoFile } from "../../utils/localVideoFileAssets";
 import { cancelLocalImageUpload, enqueueLocalImageUpload, getLocalImageUploadJob, retryLocalImageUpload, retryLocalImageUploadCancellation, waitForLocalImageUpload } from "../../utils/localImageUploadQueue";
 import { claimMediaUpload, type MediaUploadClaim } from "../../utils/mediaOperationClaims";
 import { deleteChurchMuxAsset } from "../../api/providerStorage";
-import { createLocalMediaFromFile } from "./localMediaImport";
+import {
+  createLocalMediaFromFile,
+  getRememberedLocalVideoImportMethod,
+  rememberLocalVideoImportMethod,
+  type LocalVideoImportMethod,
+} from "./localMediaImport";
 import { buildLocalVideoCloudSharePatch } from "./localMediaCloudShare";
 import {
   MediaUploadInputProps,
@@ -93,6 +98,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
       showButton = true,
       uploadPreset = "bpqu4ma5",
       onUploadComplete,
+      onLinkVideo,
       uploadDisabled = false,
     },
     ref,
@@ -108,6 +114,9 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [error, setError] = useState("");
     const [selectedFiles, setSelectedFiles] = useState<FileUploadProgress[]>([]);
+    const [videoImportMethod, setVideoImportMethod] = useState<LocalVideoImportMethod>(
+      getRememberedLocalVideoImportMethod,
+    );
     const [uploadStatus, setUploadStatus] = useState<UploadStatus>("idle");
     const [convertingFileIndex, setConvertingFileIndex] = useState<number | null>(
       null,
@@ -808,14 +817,45 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
         setError("Each media file needs a display name.");
         return;
       }
+      const selectedWithNames = selectedFiles.map((file, index) => ({
+        ...file,
+        displayName: normalizedNames[index],
+      }));
+      const selectedVideoFiles = selectedWithNames.filter((file) => file.fileType === "video");
+      const canLinkLocalVideo = Boolean(
+        window.electronAPI?.linkSelectedLocalVideoFile && onLinkVideo,
+      );
+      const shouldLinkVideo =
+        canLinkLocalVideo && videoImportMethod === "link" && selectedVideoFiles.length === 1;
+      if (canLinkLocalVideo && videoImportMethod === "link" && selectedVideoFiles.length > 1) {
+        setError("Link one video at a time. Choose Copy to add multiple videos together.");
+        return;
+      }
+      const linkedVideo = shouldLinkVideo ? selectedVideoFiles[0] : undefined;
+      const filesToCopy = linkedVideo
+        ? selectedWithNames.filter((file) => file.fileType !== "video")
+        : selectedWithNames;
+      if (linkedVideo) void onLinkVideo!(linkedVideo.file, linkedVideo.displayName);
+
+      const clearSelection = () => {
+        setError("");
+        setUploadStatus("idle");
+        setSelectedFiles([]);
+        setIsModalOpen(false);
+        if (fileInputRef.current) fileInputRef.current.value = "";
+      };
       const storagePolicy: LocalAssetStoragePolicy =
         !isGuestSession && uploadToCloud ? "local-and-cloud" : "local-only";
+      if (filesToCopy.length === 0) {
+        clearSelection();
+        return;
+      }
       const batchId = `media-upload-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
       const batch: MediaUploadBatch = {
         id: batchId,
         database: db,
         churchId,
-        files: selectedFiles.map((file, index) => ({ ...file, displayName: normalizedNames[index] })),
+        files: filesToCopy,
         storagePolicy,
         cancelled: false,
         stopping: false,
@@ -890,11 +930,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
           removeTransfer?.(batchId);
         });
       }
-      setError("");
-      setUploadStatus("idle");
-      setSelectedFiles([]);
-      setIsModalOpen(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      clearSelection();
       batch.completion = runMediaBatch(batch);
       void batch.completion;
     };
@@ -921,6 +957,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     const openModal = useCallback(() => {
       if (uploadDisabled) return;
+      setVideoImportMethod(getRememberedLocalVideoImportMethod());
       setIsModalOpen(true);
     }, [uploadDisabled]);
 
@@ -1035,8 +1072,18 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
 
     const imageCount = selectedFiles.filter(f => f.fileType === "image").length;
     const videoCount = selectedFiles.filter(f => f.fileType === "video").length;
+    const canLinkLocalVideo = Boolean(
+      window.electronAPI?.linkSelectedLocalVideoFile && onLinkVideo,
+    );
+    const canLinkSelectedVideo = canLinkLocalVideo && videoCount === 1;
+    const isLinkingSelectedVideo =
+      canLinkLocalVideo && videoImportMethod === "link" && canLinkSelectedVideo;
     let confirmLabel = cloudEnabled ? "Upload" : "Add";
-    if (selectedFiles.length === 1) {
+    if (isLinkingSelectedVideo && imageCount === 0) {
+      confirmLabel = "Link video";
+    } else if (isLinkingSelectedVideo) {
+      confirmLabel = `Add ${imageCount} ${imageCount === 1 ? "image" : "images"} and link video`;
+    } else if (selectedFiles.length === 1) {
       confirmLabel = `${confirmLabel} (1 file)`;
     } else if (selectedFiles.length > 1) {
       confirmLabel = `${confirmLabel} (${selectedFiles.length} files)`;
@@ -1137,9 +1184,68 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
               )}
             </div>
 
+            {canLinkLocalVideo && videoCount > 0 ? (
+              <fieldset className="flex shrink-0 flex-col gap-2 rounded border border-gray-700 p-3" aria-label="Video storage method">
+                <legend className="px-1 text-sm font-semibold">How to add videos</legend>
+                <label className="flex cursor-pointer items-start gap-2 text-sm">
+                  <input
+                    type="radio"
+                    name="video-import-method"
+                    value="copy"
+                    checked={videoImportMethod === "copy"}
+                    onChange={() => {
+                      setVideoImportMethod("copy");
+                      rememberLocalVideoImportMethod("copy");
+                      setError("");
+                    }}
+                    className="mt-1 accent-blue-500"
+                    disabled={isUploading || uploadDisabled}
+                  />
+                  <span>
+                    <span className="font-medium">Copy into WorshipSync (recommended)</span>
+                    <span className="block text-xs text-gray-400">
+                      Keep a copy in WorshipSync so the video remains available even if the original file is moved or deleted.
+                    </span>
+                  </span>
+                </label>
+                <label className={`flex items-start gap-2 text-sm ${videoCount === 1 ? "cursor-pointer" : "cursor-not-allowed opacity-60"}`}>
+                  <input
+                    type="radio"
+                    name="video-import-method"
+                    value="link"
+                    checked={videoImportMethod === "link"}
+                    onChange={() => {
+                      setVideoImportMethod("link");
+                      rememberLocalVideoImportMethod("link");
+                      setError("");
+                    }}
+                    className="mt-1 accent-blue-500"
+                    disabled={!canLinkSelectedVideo || isUploading || uploadDisabled}
+                  />
+                  <span>
+                    <span className="font-medium">Link to original file</span>
+                    <span className="block text-xs text-gray-400">
+                      Use the video from its current location without making another copy. Keep the original file in place.
+                    </span>
+                  </span>
+                </label>
+                {videoCount > 1 ? (
+                  <p className="ml-6 text-xs text-gray-400">
+                    Link one video at a time. Choose Copy to add multiple videos together.
+                  </p>
+                ) : null}
+                {isLinkingSelectedVideo && imageCount > 0 ? (
+                  <p className="ml-6 text-xs text-gray-400">
+                    Images in this selection will still be copied.
+                  </p>
+                ) : null}
+              </fieldset>
+            ) : null}
+
+            {!(isLinkingSelectedVideo && imageCount === 0) ? (
             <div className="flex shrink-0 flex-col gap-1">
               <Toggle
-                label="Upload to cloud"
+                label={isLinkingSelectedVideo && imageCount > 0 ? "Upload images to cloud" : "Upload to cloud"}
                 icon={Cloud}
                 value={cloudEnabled}
                 onChange={handleUploadToCloudChange}
@@ -1147,10 +1253,15 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
               />
               <p className="text-xs text-gray-400">
                 {cloudEnabled
-                  ? "Keep a copy here and upload so other computers can use it."
-                  : "Keep files on this device only."}
+                  ? isLinkingSelectedVideo && imageCount > 0
+                    ? "Keep copies of these images here and upload them so other computers can use them."
+                    : "Keep a copy here and upload so other computers can use it."
+                  : isLinkingSelectedVideo && imageCount > 0
+                    ? "Keep these images on this device only."
+                    : "Keep files on this device only."}
               </p>
             </div>
+            ) : null}
 
             {error && <p className="shrink-0 text-sm text-red-500">{error}</p>}
 
@@ -1186,7 +1297,7 @@ const MediaUploadInput = forwardRef<MediaUploadInputRef, MediaUploadInputProps>(
               <Button
                 variant="cta"
                 onClick={handleUpload}
-                disabled={selectedFiles.length === 0 || isUploading}
+                disabled={selectedFiles.length === 0 || isUploading || uploadDisabled || (canLinkLocalVideo && videoImportMethod === "link" && videoCount > 1)}
                 svg={Upload}
               >
                 {confirmLabel}

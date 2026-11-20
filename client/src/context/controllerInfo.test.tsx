@@ -16,6 +16,8 @@ import { hasSuccessfulInitialContentReplication } from "../utils/contentReplicat
 
 const mockPouchInstances: Array<{
   name: string;
+  get: jest.Mock;
+  put: jest.Mock;
   destroy: jest.Mock;
   bulkDocs: jest.Mock;
   allDocs: jest.Mock;
@@ -52,8 +54,19 @@ const createSyncHandle = (completeAfterSetup = false) => {
 
 jest.mock("pouchdb-browser", () => {
   const PouchDBMock = jest.fn().mockImplementation((name: string) => {
+    const localDocs = new Map<string, Record<string, unknown>>();
     const instance = {
       name,
+      get: jest.fn(async (id: string) => {
+        const doc = localDocs.get(id);
+        if (!doc) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
+        return { ...doc };
+      }),
+      put: jest.fn(async (doc: Record<string, unknown>) => {
+        const stored = { ...doc, _rev: "1-local" };
+        localDocs.set(String(doc._id), stored);
+        return { ok: true, id: doc._id, rev: "1-local" };
+      }),
       destroy: jest.fn().mockResolvedValue(undefined),
       bulkDocs: jest.fn().mockResolvedValue([]),
       allDocs: jest.fn().mockImplementation(async () => ({ update_seq: 0, rows: mockLocalItemDocs.map((doc) => ({ doc })) })),
@@ -342,11 +355,21 @@ describe("controller replication 413 batch policy", () => {
     act(() => initialPullHandles.at(-1)!.emit("change", { pending: 0 }));
     expect(screen.getByTestId("progress")).toHaveTextContent("100");
     expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
+    act(() => initialPullHandles.at(-1)!.emit("paused", { status: 0, message: "offline" }));
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
     act(() => initialPullHandles[initialPullHandles.length - 1].emit("complete"));
     await waitFor(() => {
       expect(hasSuccessfulInitialContentReplication(databaseName)).toBe(true);
     });
     expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("yes");
+    const localDb = mockPouchInstances.find((instance) => instance.name === databaseName)!;
+    await expect(localDb.get("_local/worship-sync-initial-content-replication-v1")).resolves.toEqual(
+      expect.objectContaining({
+        localDatabaseName: databaseName,
+        sourceDatabaseName: databaseName,
+        complete: true,
+      }),
+    );
   });
 
   it.each(["cancelled", "failed"])("does not enable bootstrap defaults after a %s initial pull", async (outcome) => {
@@ -376,7 +399,7 @@ describe("controller replication 413 batch policy", () => {
     expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
     expect(liveSyncHandles).toHaveLength(0);
     act(() => initialPullHandles[1].emit("complete", { ok: true }));
-    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("yes");
+    await waitFor(() => expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("yes"));
     expect(liveSyncOwners).toEqual(["worship-sync-b"]);
   });
 

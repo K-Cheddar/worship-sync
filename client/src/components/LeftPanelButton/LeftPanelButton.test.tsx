@@ -128,6 +128,37 @@ describe("LeftPanelButton", () => {
     expect(screen.getByText("Welcome Slides")).toBeInTheDocument();
   });
 
+  it("keeps an unavailable local-image indicator visible on the active row", () => {
+    mockUseLocalImageUrl.mockReturnValue({
+      isLocalImage: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+
+    render(
+      <LeftPanelButton
+        isSelected={false}
+        title="Welcome Slides"
+        type="free"
+        id="list-1"
+        isActive
+        timerText="12:34"
+        image="local-image://asset-1"
+        localImage={{
+          id: "asset-1",
+          ownerDeviceId: "another-device",
+          ownerLabel: "Booth PC",
+          fileName: "welcome.png",
+          contentType: "image/png",
+          storagePolicy: "local-only",
+        }}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveTextContent("Unavailable");
+    expect(screen.getByText("12:34")).toBeInTheDocument();
+  });
+
   it("hides unresolved local-video-file backgrounds to avoid CSP violations", () => {
     render(
       <LeftPanelButton
@@ -141,6 +172,45 @@ describe("LeftPanelButton", () => {
     );
 
     expect(screen.queryByAltText("")).not.toBeInTheDocument();
+  });
+
+  it("shows a 16:9 no-thumbnail placeholder for a local video owned by another device", () => {
+    mockUseLocalVideoFileUrl.mockReturnValue({
+      isLocalVideoFile: true,
+      isOwner: false,
+      status: "unavailable",
+    });
+
+    render(
+      <LeftPanelButton
+        isSelected={false}
+        title="Local clip"
+        type="free"
+        id="list-1"
+        image="local-video-file://video-1"
+        localVideoFile={{
+          id: "video-1",
+          ownerDeviceId: "another-device",
+          ownerLabel: "Booth PC",
+          fileName: "clip.mp4",
+          contentType: "video/mp4",
+          storagePolicy: "local-only",
+        }}
+      />,
+    );
+
+    const placeholder = screen.getByRole("status");
+    expect(placeholder).toHaveAttribute(
+      "data-local-source-status-size",
+      "thumbnail-indicator",
+    );
+    expect(screen.getByTestId("local-thumbnail-placeholder")).toHaveClass(
+      "aspect-video",
+    );
+    expect(placeholder).toHaveTextContent("No thumbnail");
+    expect(placeholder).toHaveAccessibleName(
+      expect.stringContaining("Available on Booth PC"),
+    );
   });
 
   it("resolves localVideoFile thumbnails when metadata is present", () => {

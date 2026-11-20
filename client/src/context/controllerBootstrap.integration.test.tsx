@@ -26,6 +26,7 @@ const mockGet = jest.fn(async (id: string) => {
   return mockDocs.get(id);
 });
 const mockPulls: Array<{ emit: (event: string, value?: unknown) => void }> = [];
+const applicationPuts = () => mockPut.mock.calls.filter(([doc]) => !String(doc._id).startsWith("_local/"));
 // The default Jest mapper replaces controllerInfo for component tests. These
 // consumers must share the actual provider/context to exercise early DB access.
 jest.mock("../context/controllerInfo", () => jest.requireActual("./controllerInfo"));
@@ -96,7 +97,7 @@ describe("controller bootstrap production consumers", () => {
     await waitFor(() => expect(screen.getByTestId("brightness")).toHaveTextContent("83"));
     await waitFor(() => expect(screen.getByTestId("folder")).toHaveTextContent("saved-folder"));
     await waitFor(() => expect(screen.getByTestId("item")).toHaveTextContent("Saved song"));
-    expect(mockPut).not.toHaveBeenCalled();
+    expect(applicationPuts()).toHaveLength(0);
   });
   it("keeps saved local content available while the first remote pull stalls", async () => {
     seedSaved();
@@ -119,7 +120,7 @@ describe("controller bootstrap production consumers", () => {
     mockDocs.set("saved-aux", { _id: "saved-aux", name: "Saved Aux", items: [], overlays: [] });
     act(() => mockPulls[0].emit("complete", { ok: true }));
     await screen.findAllByRole("button", { name: "Saved Aux" });
-    expect(mockPut).not.toHaveBeenCalled();
+    expect(applicationPuts()).toHaveLength(0);
   });
   it("creates defaults once after a successful empty remote pull", async () => {
     mount();
@@ -127,8 +128,8 @@ describe("controller bootstrap production consumers", () => {
     expect(mockPut).not.toHaveBeenCalled();
     act(() => mockPulls[0].emit("complete", { ok: true }));
     await screen.findAllByRole("button", { name: "New Outline" });
-    await waitFor(() => expect(mockPut).toHaveBeenCalledTimes(6));
-    expect(new Set(mockPut.mock.calls.map(([doc]) => doc._id)).size).toBe(6);
+    await waitFor(() => expect(applicationPuts()).toHaveLength(6));
+    expect(new Set(applicationPuts().map(([doc]) => doc._id)).size).toBe(6);
   });
   it("initializes a genuinely empty aux scope after verified registry hydration", async () => {
     mount();
