@@ -30,6 +30,7 @@ import TextArea from "../../components/TextArea/TextArea";
 import { useToast } from "../../context/toastContext";
 import { useApiErrorToast } from "../../hooks/useApiErrorToast";
 import { buildShareableHashRouterUrl } from "../../utils/environment";
+import { CLOUDINARY_CLOUD_NAME } from "../../utils/cloudinaryConfig";
 import {
   createAdminInvite,
   createDisplayPairing,
@@ -72,7 +73,6 @@ import { cn } from "@/utils/cnHelper";
 import { useSelector } from "../../hooks";
 import { selectDisplayOutputs } from "../../store/displayOutputsSlice";
 
-const CLOUDINARY_CLOUD_NAME = "portable-media";
 const CLOUDINARY_UNSIGNED_UPLOAD_PRESET = "bpqu4ma5";
 const MAX_LOGO_FILE_BYTES = 5 * 1024 * 1024;
 const BRANDING_LOGO_ACCEPT = ".png,.jpg,.jpeg,.webp,.svg";

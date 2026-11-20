@@ -1,5 +1,6 @@
 import { mediaInfoType } from "../cloudinaryTypes";
 import { deleteCloudinaryAsset } from "../../../utils/cloudinaryUtils";
+import { CLOUDINARY_CLOUD_NAME } from "../../../utils/cloudinaryConfig";
 import type { CloudinaryImageUploadIntent } from "../../../api/providerStorage";
 
 function requireNonEmptyString(value: unknown, fieldLabel: string): string {
@@ -266,8 +267,6 @@ export const uploadImageToCloudinarySigned = (
     intent.publicId,
   );
 };
-
-const CLOUDINARY_CLOUD_NAME = "portable-media";
 
 const buildCloudinaryWebpUrl = (secureUrl: string) => {
   const marker = "/image/upload/";

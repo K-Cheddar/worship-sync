@@ -36,6 +36,20 @@ export class MuxUploadError extends Error {
   }
 }
 
+const getHttpStatus = (error: unknown, message: string) => {
+  if (error && typeof error === "object") {
+    const details = error as {
+      status?: unknown;
+      statusCode?: unknown;
+      response?: { status?: unknown };
+    };
+    const status = [details.statusCode, details.status, details.response?.status]
+      .find((candidate) => typeof candidate === "number" && Number.isInteger(candidate) && candidate >= 100 && candidate <= 599);
+    if (typeof status === "number") return String(status);
+  }
+  return message.match(/\b(?:HTTP|status)\s+(\d{3})\b/i)?.[1];
+};
+
 const safeMuxErrorMessage = (error: unknown, fallback: string) => {
   const message = error instanceof Error ? error.message : fallback;
   return message
@@ -63,7 +77,7 @@ const makeMuxUploadError = (stage: MuxUploadFailureStage, error: unknown) => {
   if (stage === "file-read") return new MuxUploadError(stage, "The local video could not be read. Check that it is available and retry.");
   if (stage === "processing") return new MuxUploadError(stage, `Cloud video processing failed. ${detail}`);
   if (stage === "cleanup") return new MuxUploadError(stage, `Mux cleanup failed. ${detail}`);
-  const httpStatus = detail.match(/\bHTTP (\d{3})\b/i)?.[1];
+  const httpStatus = getHttpStatus(error, detail);
   if (httpStatus) return new MuxUploadError(stage, `The cloud service rejected the video upload (HTTP ${httpStatus}).`);
   if (/timed? out|timeout/i.test(detail)) {
     return new MuxUploadError(stage, "The cloud upload timed out. Check your connection and retry.");
@@ -438,7 +452,12 @@ export const uploadVideoToMux = (
       });
       xhr.addEventListener("load", () => {
         if (xhr.status >= 200 && xhr.status < 300) resolve();
-        else reject(new Error(`Upload failed with status ${xhr.status}`));
+        else if (xhr.status >= 100 && xhr.status <= 599) {
+          reject(Object.assign(
+            new Error("The cloud service rejected the video upload."),
+            { statusCode: xhr.status },
+          ));
+        } else reject(new Error("Upload failed"));
       });
       xhr.addEventListener("error", () => reject(new Error("Upload failed")));
       xhr.addEventListener("abort", () => reject(new Error("Upload cancelled")));

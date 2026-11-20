@@ -18,6 +18,7 @@ import { useLocation } from "react-router-dom";
 import { useDispatch, useSelector } from "../hooks";
 import { backoff } from "../utils/generalUtils";
 import { getApiBasePath } from "../utils/environment";
+import { CLOUDINARY_CLOUD_NAME } from "../utils/cloudinaryConfig";
 import { MAX_INITIAL_SESSION_RETRIES, MAX_REPLICATION_AUTH_RETRIES } from "../constants";
 import { seedOfflineGuestDatabase } from "../utils/offlineGuestSeed";
 import {
@@ -238,7 +239,7 @@ export type CouchResponse = {
 
 const cloud = new Cloudinary({
   cloud: {
-    cloudName: "portable-media",
+    cloudName: CLOUDINARY_CLOUD_NAME,
     apiKey: import.meta.env.VITE_CLOUDINARY_KEY,
     apiSecret: import.meta.env.VITE_CLOUDINARY_SECRET,
   },

@@ -1,6 +1,7 @@
 import isEqual from "lodash/isEqual";
 import type { ServiceItem } from "../types";
 import generateRandomId from "./generateRandomId";
+import { CLOUDINARY_CLOUD_NAME } from "./cloudinaryConfig";
 
 export type OutlineMergeResult =
   | { kind: "merged"; items: ServiceItem[]; remoteItems: ServiceItem[] }
@@ -104,9 +105,12 @@ const canonicalBackground = (value: unknown) => {
     const url = new URL(value);
     const segments = url.pathname.split("/").filter(Boolean);
     const queryKeys = [...url.searchParams.keys()];
-    if (url.hostname !== "res.cloudinary.com" ||
+    if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com" ||
+      url.port || url.username || url.password || url.hash ||
+      segments[0] !== CLOUDINARY_CLOUD_NAME ||
       segments.length < 5 || segments[1] !== "image" || segments[2] !== "upload" ||
-      segments[3] !== "v1" || queryKeys.length !== 1 || queryKeys[0] !== "_a") return value;
+      segments[3] !== "v1" || queryKeys.length !== 1 || queryKeys[0] !== "_a" ||
+      !url.searchParams.get("_a")) return value;
     return segments.slice(4).map((segment) => decodeURIComponent(segment)).join("/");
   } catch {
     return value;

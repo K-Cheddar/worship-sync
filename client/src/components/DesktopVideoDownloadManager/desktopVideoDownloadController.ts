@@ -105,6 +105,7 @@ type Runtime = {
   localMediaRegistered: boolean;
   cloudResult?: MuxUploadResult;
   cloudMediaRegistered: boolean;
+  cloudUploadAttempt: number;
   nativeCleaned: boolean;
   cancelRequested: boolean;
   ownerChanged: boolean;
@@ -178,6 +179,7 @@ export class DesktopVideoDownloadManager {
       temporaryDownloadAvailable: false,
       localMediaRegistered: false,
       cloudMediaRegistered: false,
+      cloudUploadAttempt: 0,
       nativeCleaned: false,
       cancelRequested: false,
       ownerChanged: false,
@@ -206,7 +208,9 @@ export class DesktopVideoDownloadManager {
   handleProgress(event: DesktopVideoDownloadEvent): void | Promise<void> {
     const runtime = this.jobs.get(event.jobId);
     if (!runtime) return;
-    if (event.stage === "uploading" && ["Processing", "Registering", "Complete", "Failed", "Cancelled"].includes(runtime.stage)) return;
+    // Upload progress is owned by muxUpload's per-attempt listener and callback.
+    // It may use a different native job ID when uploading a retained asset.
+    if (event.stage === "uploading") return;
     const measuredProgress = event.progress ?? (
       event.downloadedBytes !== undefined && event.totalBytes !== undefined && event.totalBytes > 0
         ? Math.min(99, Math.round(event.downloadedBytes / event.totalBytes * 100))
@@ -259,7 +263,6 @@ export class DesktopVideoDownloadManager {
     if (event.stage === "preparing") this.publish(runtime, "active", "Preparing", event.progress);
     if (event.stage === "downloading") this.publish(runtime, "active", "Downloading", runtime.progress);
     if (event.stage === "processing") this.publish(runtime, "active", "Processing", null, "Merging video and audio");
-    if (event.stage === "uploading") this.publish(runtime, "active", "Uploading", event.progress);
     if (event.stage === "complete" && event.result) {
       if (runtime.cancelRequested) {
         void this.cancelJob(runtime, runtime.ownerChanged);
@@ -499,32 +502,52 @@ export class DesktopVideoDownloadManager {
         if (!runtime.cloudResult) {
           this.assertCurrentOwner(runtime);
           this.publish(runtime, "active", "Creating upload", null, "Preparing cloud upload");
+          const uploadAttempt = ++runtime.cloudUploadAttempt;
+          const isCurrentUploadAttempt = () =>
+            runtime.cloudUploadAttempt === uploadAttempt && !runtime.cancelRequested;
           const source: DesktopVideoUploadSource = runtime.temporaryDownloadAvailable && !runtime.nativeCleaned
             ? { kind: "download-job", jobId: runtime.jobId }
             : runtime.asset?.assetId
               ? { kind: "local-asset", assetId: runtime.asset.assetId }
               : (() => { throw new Error("The downloaded video source is no longer available for upload."); })();
-          const cloudResult = await this.deps.uploadToCloud(
-            source,
-            `${runtime.displayName}.mp4`,
-            { churchId: runtime.owner.churchId, mediaId: runtime.media.id, title: runtime.displayName },
-            {
-              isCancelled: () => runtime.cancelRequested,
-              setCancelUpload: (cancel) => { runtime.cancelCloudUpload = cancel; },
-              onStageUpdate: (stage, message) => {
-                if (stage === "creating" || stage === "processing") runtime.lastBytes = undefined;
-                const displayStage = stage === "creating" ? "Creating upload" : stage === "uploading" ? "Uploading" : "Processing";
-                this.publish(runtime, "active", displayStage, stage === "uploading" ? runtime.progress : null, message);
+          let cloudResult: MuxUploadResult;
+          try {
+            cloudResult = await this.deps.uploadToCloud(
+              source,
+              `${runtime.displayName}.mp4`,
+              { churchId: runtime.owner.churchId, mediaId: runtime.media.id, title: runtime.displayName },
+              {
+                isCancelled: () => runtime.cancelRequested,
+                setCancelUpload: (cancel) => {
+                  if (runtime.cloudUploadAttempt === uploadAttempt) runtime.cancelCloudUpload = cancel;
+                },
+                onStageUpdate: (stage, message) => {
+                  if (!isCurrentUploadAttempt()) return;
+                  if (stage === "creating" || stage === "processing") runtime.lastBytes = undefined;
+                  const displayStage = stage === "creating" ? "Creating upload" : stage === "uploading" ? "Uploading" : "Processing";
+                  this.publish(runtime, "active", displayStage, stage === "uploading" ? runtime.progress : null, message);
+                },
+                onProgress: (progress) => {
+                  if (!isCurrentUploadAttempt() || runtime.stage !== "Uploading" || !Number.isFinite(progress)) return;
+                  runtime.progress = Math.max(0, Math.min(100, progress));
+                  this.publish(runtime, "active", "Uploading", runtime.progress, runtime.detail);
+                },
+                onStatusUpdate: (status) => {
+                  if (!isCurrentUploadAttempt()) return;
+                  this.publish(
+                    runtime,
+                    "active",
+                    runtime.stage === "Processing" ? "Processing" : "Uploading",
+                    runtime.progress,
+                    status,
+                  );
+                },
               },
-              onStatusUpdate: (status) => this.publish(
-                runtime,
-                "active",
-                runtime.stage === "Processing" ? "Processing" : "Uploading",
-                runtime.progress,
-                status,
-              ),
-            },
-          );
+            );
+          } finally {
+            // A settled attempt cannot publish late events while failed, registering, or during retry.
+            if (runtime.cloudUploadAttempt === uploadAttempt) runtime.cloudUploadAttempt += 1;
+          }
           // The provider asset is now successful and must survive cancellation
           // while its Media Library reference is being persisted.
           runtime.cloudResult = cloudResult;

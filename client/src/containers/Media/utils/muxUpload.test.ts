@@ -240,6 +240,126 @@ describe("church-scoped Mux upload and temporary conversion", () => {
     expect(onProgress).toHaveBeenCalledWith(50);
   });
 
+  it("classifies browser HTTP upload failures with the shared HTTP status message", async () => {
+    const xhr = new TestXmlHttpRequest();
+    xhr.status = 403;
+    global.XMLHttpRequest = jest.fn(() => xhr) as unknown as typeof XMLHttpRequest;
+
+    await expect(uploadVideoToMux(
+      new File(["video"], "camera.mp4", { type: "video/mp4" }),
+      { churchId: "church-1", mediaId: "media-1" },
+    )).rejects.toMatchObject({
+      name: "MuxUploadError",
+      stage: "transport",
+      message: "The cloud service rejected the video upload (HTTP 403).",
+    });
+  });
+
+  it("classifies native HTTP upload failures with the same status message", async () => {
+    const onVideoDownloadProgress = jest.fn(() => jest.fn());
+    window.electronAPI = {
+      uploadDownloadedVideoToMux: jest.fn(async () => {
+        throw new Error("The cloud service rejected the video upload (HTTP 403).");
+      }),
+      onVideoDownloadProgress,
+      cancelVideoDownload: jest.fn(async () => true),
+    } as unknown as typeof window.electronAPI;
+
+    await expect(uploadDownloadedVideoToMux(
+      "job-http-error",
+      "camera.mp4",
+      { churchId: "church-1", mediaId: "media-1" },
+    )).rejects.toMatchObject({
+      name: "MuxUploadError",
+      stage: "transport",
+      message: "The cloud service rejected the video upload (HTTP 403).",
+    });
+    expect(onVideoDownloadProgress).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps native timeout failures distinct from HTTP and transport failures", async () => {
+    window.electronAPI = {
+      uploadDownloadedVideoToMux: jest.fn(async () => {
+        throw new Error("The cloud upload timed out. Check your connection and retry.");
+      }),
+      onVideoDownloadProgress: jest.fn(() => jest.fn()),
+      cancelVideoDownload: jest.fn(async () => true),
+    } as unknown as typeof window.electronAPI;
+
+    await expect(uploadDownloadedVideoToMux(
+      "job-timeout",
+      "camera.mp4",
+      { churchId: "church-1", mediaId: "media-1" },
+    )).rejects.toMatchObject({
+      stage: "transport",
+      message: "The cloud upload timed out. Check your connection and retry.",
+    });
+  });
+
+  it.each([
+    [
+      "The cloud upload address is invalid. Retry the cloud upload or contact support.",
+      "validation",
+      "The cloud upload address is invalid. Retry the cloud upload or contact support.",
+    ],
+    [
+      "The local video could not be read. Check that it is available and retry.",
+      "file-read",
+      "The local video could not be read. Check that it is available and retry.",
+    ],
+    [
+      "The cloud upload connection failed. Check your connection and retry.",
+      "transport",
+      "The cloud upload connection failed. Check your connection and retry.",
+    ],
+  ])("preserves %s as a %s failure", async (detail, stage, message) => {
+    window.electronAPI = {
+      uploadDownloadedVideoToMux: jest.fn(async () => {
+        throw new Error(detail);
+      }),
+      onVideoDownloadProgress: jest.fn(() => jest.fn()),
+      cancelVideoDownload: jest.fn(async () => true),
+    } as unknown as typeof window.electronAPI;
+
+    await expect(uploadDownloadedVideoToMux(
+      "job-distinct-failure",
+      "camera.mp4",
+      { churchId: "church-1", mediaId: "media-1" },
+    )).rejects.toMatchObject({ stage, message });
+  });
+
+  it("redacts upload URLs and credentials from user-facing errors and diagnostics", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const uploadUrl = "https://upload.mux.com/private-upload?token=token-secret&signature=query-secret";
+    window.electronAPI = {
+      uploadDownloadedVideoToMux: jest.fn(async () => {
+        throw new Error(`Upload failed for ${uploadUrl} signature=path-secret`);
+      }),
+      onVideoDownloadProgress: jest.fn(() => jest.fn()),
+      cancelVideoDownload: jest.fn(async () => true),
+    } as unknown as typeof window.electronAPI;
+
+    let failure: unknown;
+    try {
+      await uploadDownloadedVideoToMux(
+        "job-redaction",
+        "camera.mp4",
+        { churchId: "church-1", mediaId: "media-1" },
+      );
+    } catch (error) {
+      failure = error;
+    }
+
+    const publicMessage = failure instanceof Error ? failure.message : String(failure);
+    const diagnostics = JSON.stringify(warn.mock.calls);
+    [uploadUrl, "token-secret", "query-secret", "path-secret"].forEach((secret) => {
+      expect(publicMessage).not.toContain(secret);
+      expect(diagnostics).not.toContain(secret);
+    });
+    expect(publicMessage).toContain("[URL]");
+    expect(diagnostics).toContain("[MuxUpload]");
+  });
+
   it("cleans a newly-created Mux upload without starting disk streaming if cancellation arrived during upload creation", async () => {
     const uploadDownloadedVideo = jest.fn().mockResolvedValue(undefined);
     window.electronAPI = {

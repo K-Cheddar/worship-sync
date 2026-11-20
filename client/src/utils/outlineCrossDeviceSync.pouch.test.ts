@@ -4,6 +4,7 @@ import PouchDB from "pouchdb-browser";
 import { Cloudinary } from "@cloudinary/url-gen";
 import type { DBItemListDetails, DBItemLists, ServiceItem } from "../types";
 import { formatItemList } from "./formatItemList";
+import { CLOUDINARY_CLOUD_NAME } from "./cloudinaryConfig";
 import { persistItemListsRegistry, registrySnapshot } from "./persistItemListsRegistry";
 import {
   inspectServiceListRevisions,
@@ -69,7 +70,7 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
     const shared = new PouchDB(`outline-formatted-delete-shared-${suffix}`);
     const clientA = new PouchDB(`outline-formatted-delete-a-${suffix}`);
     const clientB = new PouchDB(`outline-formatted-delete-b-${suffix}`);
-    const cloud = new Cloudinary({ cloud: { cloudName: "worshipsync" } });
+    const cloud = new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } });
     const baseline: ServiceItem[] = [
       { ...row("target", "Target row"), ...itemFields },
       {
@@ -115,7 +116,7 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
     const shared = new PouchDB(`outline-formatted-branches-shared-${suffix}`);
     const clientA = new PouchDB(`outline-formatted-branches-a-${suffix}`);
     const clientB = new PouchDB(`outline-formatted-branches-b-${suffix}`);
-    const cloud = new Cloudinary({ cloud: { cloudName: "worshipsync" } });
+    const cloud = new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } });
     const baseline: ServiceItem[] = [
       { ...row("video", "Sermon video"), type: "video", background: "media/sermon-thumbnail" },
       row("song", "Opening song"),

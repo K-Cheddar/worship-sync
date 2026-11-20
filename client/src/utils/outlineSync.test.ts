@@ -1,7 +1,8 @@
 import type { ServiceItem } from "../types";
 import { Cloudinary } from "@cloudinary/url-gen";
-import { createOutlineMoveIntent, getOutlineItemConflicts, reconcileOutlineItems } from "./outlineSync";
+import { createOutlineMoveIntent, getOutlineItemConflicts, outlineBackgroundsEqual, reconcileOutlineItems } from "./outlineSync";
 import { formatItemList } from "./formatItemList";
+import { CLOUDINARY_CLOUD_NAME } from "./cloudinaryConfig";
 
 const row = (listId: string, name: string, type = "song"): ServiceItem => ({
   _id: `${listId}-doc`,
@@ -57,7 +58,7 @@ describe("reconcileOutlineItems", () => {
     ];
     const formattedBaseline = formatItemList(
       baseline,
-      new Cloudinary({ cloud: { cloudName: "worshipsync" } }),
+      new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } }),
     );
     const local = [formattedBaseline[1]];
     const remote = JSON.parse(JSON.stringify(baseline)) as ServiceItem[];
@@ -66,6 +67,24 @@ describe("reconcileOutlineItems", () => {
 
     expect(formattedBaseline[0].background).not.toBe(baseline[0].background);
     expect(result).toEqual({ kind: "merged", items: [remote[1]], remoteItems: remote });
+  });
+
+  it("keeps matching public IDs from other Cloudinary accounts distinct", () => {
+    const baseline = [{ ...row("row-a", "Video"), type: "video", background: "media/sermon-thumbnail" }];
+    const formattedBaseline = formatItemList(
+      baseline,
+      new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } }),
+    );
+    const generated = formattedBaseline[0].background as string;
+    const otherAccount = generated.replace(
+      `/res.cloudinary.com/${CLOUDINARY_CLOUD_NAME}/`,
+      "/res.cloudinary.com/another-account/",
+    );
+    const remote = [{ ...baseline[0], background: otherAccount }];
+
+    expect(outlineBackgroundsEqual("media/sermon-thumbnail", generated)).toBe(true);
+    expect(outlineBackgroundsEqual("media/sermon-thumbnail", otherAccount)).toBe(false);
+    expect(reconcileOutlineItems(formattedBaseline, [], remote).kind).toBe("conflict");
   });
 
   it("treats missing optional JSON values as persisted equivalents without ignoring media fields", () => {
@@ -86,7 +105,7 @@ describe("reconcileOutlineItems", () => {
     }];
     const formattedBaseline = formatItemList(
       baseline,
-      new Cloudinary({ cloud: { cloudName: "worshipsync" } }),
+      new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } }),
     );
     const local: ServiceItem[] = [];
     const remote = JSON.parse(JSON.stringify(baseline)) as ServiceItem[];
@@ -106,7 +125,7 @@ describe("reconcileOutlineItems", () => {
     const baseline = [{ ...row("row-a", "Video"), type: "video", background: "media/old-thumbnail" }];
     const formattedBaseline = formatItemList(
       baseline,
-      new Cloudinary({ cloud: { cloudName: "worshipsync" } }),
+      new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } }),
     );
     const remote = [{ ...baseline[0], background: "media/new-thumbnail" }];
 
@@ -117,7 +136,7 @@ describe("reconcileOutlineItems", () => {
 
     const transformedRemote = [{
       ...baseline[0],
-      background: "https://res.cloudinary.com/worshipsync/image/upload/c_fill/v1/media/old-thumbnail",
+      background: "https://res.cloudinary.com/portable-media/image/upload/c_fill/v1/media/old-thumbnail",
     }];
     expect(reconcileOutlineItems(formattedBaseline, [], transformedRemote).kind).toBe("conflict");
   });
