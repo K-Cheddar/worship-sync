@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { SlidersHorizontal } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Drawer from "../../../components/Drawer/Drawer";
@@ -20,6 +20,10 @@ type AllToolsDrawerProps = {
   onClose: () => void;
   onToggle: () => void;
   isMobile: boolean;
+  /** Present mode can open the same sheet without rendering edit shortcuts. */
+  showToolbarControls?: boolean;
+  /** Indicator shortcut opens the existing sheet at its routing controls. */
+  scrollToOutputTargets?: boolean;
   showBibleMode: boolean;
   showStreamFormatting: boolean;
   showOutputTargets: boolean;
@@ -31,6 +35,8 @@ const AllToolsDrawer = ({
   onClose,
   onToggle,
   isMobile,
+  showToolbarControls = true,
+  scrollToOutputTargets = false,
   showBibleMode,
   showStreamFormatting,
   showOutputTargets,
@@ -45,6 +51,12 @@ const AllToolsDrawer = ({
   const [boxLayout, setBoxLayout] = useState<HTMLElement | null>(null);
   const [streamFormatting, setStreamFormatting] = useState<HTMLElement | null>(null);
   const [outputTargets, setOutputTargets] = useState<HTMLElement | null>(null);
+  const outputTargetsSectionRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isOpen || !scrollToOutputTargets) return;
+    outputTargetsSectionRef.current?.scrollIntoView?.({ block: "start" });
+  }, [isOpen, scrollToOutputTargets]);
 
   const targets = {
     quickFontSize,
@@ -60,61 +72,63 @@ const AllToolsDrawer = ({
 
   return (
     <>
-      <div className="flex min-w-0 flex-1 items-center gap-2">
-        <div
-          className={isMobile ? "min-w-0 flex-1 overflow-x-auto scrollbar-variable" : "min-w-0 overflow-x-auto scrollbar-variable"}
-          data-testid="quick-editing-toolbar-scroll"
-        >
+      {showToolbarControls && (
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <div
-            className="flex min-w-max items-center gap-0.5 px-1"
-            data-testid="quick-editing-toolbar-groups"
+            className={isMobile ? "min-w-0 flex-1 overflow-x-auto scrollbar-variable" : "min-w-0 overflow-x-auto scrollbar-variable"}
+            data-testid="quick-editing-toolbar-scroll"
           >
             <div
-              ref={setQuickFontSize}
-              data-testid="quick-toolbar-font-size"
-              className="flex shrink-0 items-center gap-1 px-1"
-            />
-            <div
-              ref={setQuickBoxLayout}
-              data-testid="quick-toolbar-box-layout"
-              className="flex shrink-0 items-center gap-1 border-l border-gray-600 px-2"
-            />
-            <div
-              ref={setQuickBoxHeight}
-              data-testid="quick-toolbar-box-height"
-              className="flex shrink-0 items-center gap-1 border-l border-gray-600 px-2"
-            />
-            <div
-              ref={setQuickBrightness}
-              data-testid="quick-toolbar-brightness"
-              className="flex shrink-0 items-center gap-1 border-l border-gray-600 px-2"
-            />
-            {showBibleMode && (
+              className="flex min-w-max items-center gap-0.5 px-1"
+              data-testid="quick-editing-toolbar-groups"
+            >
               <div
-                ref={setQuickBibleMode}
-                data-testid="quick-toolbar-bible-mode"
+                ref={setQuickFontSize}
+                data-testid="quick-toolbar-font-size"
+                className="flex shrink-0 items-center gap-1 px-1"
+              />
+              <div
+                ref={setQuickBoxLayout}
+                data-testid="quick-toolbar-box-layout"
                 className="flex shrink-0 items-center gap-1 border-l border-gray-600 px-2"
               />
-            )}
+              <div
+                ref={setQuickBoxHeight}
+                data-testid="quick-toolbar-box-height"
+                className="flex shrink-0 items-center gap-1 border-l border-gray-600 px-2"
+              />
+              <div
+                ref={setQuickBrightness}
+                data-testid="quick-toolbar-brightness"
+                className="flex shrink-0 items-center gap-1 border-l border-gray-600 px-2"
+              />
+              {showBibleMode && (
+                <div
+                  ref={setQuickBibleMode}
+                  data-testid="quick-toolbar-bible-mode"
+                  className="flex shrink-0 items-center gap-1 border-l border-gray-600 px-2"
+                />
+              )}
+            </div>
           </div>
+          <div
+            aria-hidden="true"
+            className="h-8 shrink-0 border-l border-gray-600"
+          />
+          <Button
+            type="button"
+            variant={isOpen ? "secondary" : "tertiary"}
+            svg={SlidersHorizontal}
+            aria-label="All Tools"
+            aria-expanded={isOpen}
+            onClick={onToggle}
+            className="shrink-0"
+            iconSize="sm"
+          >
+            All Tools
+          </Button>
         </div>
-        <div
-          aria-hidden="true"
-          className="h-8 shrink-0 border-l border-gray-600"
-        />
-        <Button
-          type="button"
-          variant={isOpen ? "secondary" : "tertiary"}
-          svg={SlidersHorizontal}
-          aria-label="All Tools"
-          aria-expanded={isOpen}
-          onClick={onToggle}
-          className="shrink-0"
-          iconSize="sm"
-        >
-          All Tools
-        </Button>
-      </div>
+      )}
 
       <Drawer
         isOpen={isOpen}
@@ -145,7 +159,10 @@ const AllToolsDrawer = ({
           </section>
         )}
         {showOutputTargets && (
-          <section className="flex min-w-0 flex-col gap-3">
+          <section
+            ref={outputTargetsSectionRef}
+            className="flex min-w-0 flex-col gap-3"
+          >
             <div className="flex flex-col gap-1">
               <h2 className="text-base font-semibold">Show On</h2>
               <p className="text-xs text-gray-400">

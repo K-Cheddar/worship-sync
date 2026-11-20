@@ -12,6 +12,9 @@ import DisplayBox from "../../components/DisplayWindow/DisplayBox";
 import MonitorBandBackground from "../../components/DisplayWindow/MonitorBandBackground";
 import MonitorDisplayBox from "../../components/DisplayWindow/MonitorDisplayBox";
 import VerseDisplay from "../../components/DisplayWindow/VerseDisplay";
+import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
+import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 
 type StaticMonitorThumbnailProps = {
   slide: ItemSlideType;
@@ -50,6 +53,17 @@ const StaticMonitorThumbnail = ({
     Boolean(nextSlide) &&
     slide.boxes.every((box, index) => index === 0 || box.height <= 55);
   const showClockTimer = settings.showClock || settings.showTimer;
+  const localVideoInputStatus = getLocalVideoInputPreviewStatus(
+    slide.mediaSource?.kind === "local-video-input"
+      ? slide.mediaSource
+      : undefined,
+  );
+  const localVideoThumbnail = useLocalVideoFileUrl(
+    showNextSlide && settings.showBackground
+      ? monitorSlide.boxes[0]?.mediaInfo?.localVideoFile
+      : undefined,
+    "thumbnail",
+  );
   const contentHeight = showClockTimer
     ? REFERENCE_HEIGHT - MONITOR_BAND_CLOCK_TIMER_PX
     : REFERENCE_HEIGHT;
@@ -150,7 +164,13 @@ const StaticMonitorThumbnail = ({
                 <div className="absolute inset-0 bg-black/60" />
               </div>
             ) : settings.showBackground ? (
-              <MonitorBandBackground box={monitorSlide.boxes[0]} />
+              <MonitorBandBackground
+                box={monitorSlide.boxes[0]}
+                showLocalSourceStatus
+                scaleFactor={scaleFactor}
+                statusSize="thumbnail"
+                localVideoThumbnailUrl={localVideoThumbnail.url}
+              />
             ) : null}
             <div
               className="relative z-10 flex justify-center overflow-hidden shrink-0"
@@ -235,6 +255,10 @@ const StaticMonitorThumbnail = ({
                     width={100}
                     showBackground={settings.showBackground}
                     index={index}
+                    showLocalSourceStatus={settings.showBackground}
+                    statusScaleFactor={scaleFactor}
+                    localSourceStatusSize="thumbnail"
+                    allowLocalVideoThumbnailGeneration
                     timerInfo={timerInfo}
                     paintBackground={
                       !(localVideoInputThumbnailUrl && index === 0)
@@ -247,6 +271,14 @@ const StaticMonitorThumbnail = ({
           </div>
         )}
       </div>
+      {localVideoInputStatus ? (
+        <LocalSourceStatus
+          {...localVideoInputStatus}
+          {...(localVideoInputThumbnailUrl
+            ? { variant: "indicator" as const }
+            : { size: "thumbnail" as const, scaleFactor: 1 })}
+        />
+      ) : null}
     </div>
   );
 };

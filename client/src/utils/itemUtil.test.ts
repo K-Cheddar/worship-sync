@@ -22,6 +22,7 @@ import {
 } from "./itemUtil";
 import type { DBItem, ItemState, MediaType, ServiceItem, BibleInfo, verseType } from "../types";
 import { isBibleDocumentActivityIdle } from "./contentReplicationActivity";
+import { setAuditSnapshot } from "./pouchAudit";
 
 jest.mock("./generateRandomId", () => ({
   __esModule: true,
@@ -35,6 +36,8 @@ jest.mock("./overflow", () => ({
 }));
 
 describe("itemUtil", () => {
+  afterEach(() => setAuditSnapshot({ displayName: "" }));
+
   it.each(["song", "free"])("returns an existing legacy ID even when creation requested a different type, existing=%s", async (type) => {
     const existing = { _id: "Legacy name", _rev: "1-existing", name: "Legacy name",
       type, selectedArrangement: 0, arrangements: [], slides: [],
@@ -74,6 +77,31 @@ describe("itemUtil", () => {
       item: createItemFromProps({ _id: "new-song" }), db: db as never,
     })).rejects.toThrow("failed write");
     expect(docs.size).toBe(0);
+  });
+
+  it("stamps new custom documents with current audit metadata", async () => {
+    setAuditSnapshot({ displayName: "Custom Author" });
+    const put = jest.fn().mockResolvedValue({ ok: true, id: "custom-new", rev: "1-new" });
+    const db = {
+      get: jest.fn().mockRejectedValue({ status: 404 }),
+      put,
+    };
+    const startedAt = Date.now();
+
+    await createNewItemInDb({
+      item: createItemFromProps({ _id: "custom-new", name: "New custom", type: "free" }),
+      db: db as never,
+    });
+
+    const persisted = put.mock.calls[0][0] as DBItem;
+    expect(persisted).toMatchObject({
+      _id: "custom-new",
+      type: "free",
+      createdBy: "Custom Author",
+      updatedBy: "Custom Author",
+    });
+    expect(Date.parse(persisted.createdAt!)).toBeGreaterThanOrEqual(startedAt);
+    expect(persisted.updatedAt).toBe(persisted.createdAt);
   });
 
   it("returns the persisted song revision while retaining transient editor fields", async () => {
@@ -914,9 +942,11 @@ Let Your fire fall`;
     });
 
     it("stores the timer document before returning the created item", async () => {
+      setAuditSnapshot({ displayName: "Timer Author" });
+      const put = jest.fn().mockResolvedValue({ ok: true, id: "Durable Timer" });
       const db = {
         get: jest.fn().mockRejectedValue({ status: 404 }),
-        put: jest.fn().mockResolvedValue({ ok: true, id: "Durable Timer" }),
+        put,
       } as unknown as PouchDB.Database;
 
       const item = await createNewTimer({
@@ -931,15 +961,20 @@ Let Your fire fall`;
         brightness: 100,
       });
 
-      expect(db.put).toHaveBeenCalledWith(
+      expect(put).toHaveBeenCalledWith(
         expect.objectContaining({
           _id: "Durable Timer",
           name: "Durable Timer",
           type: "timer",
           background: "navy",
           timerInfo: expect.objectContaining({ id: "Durable Timer" }),
+          createdBy: "Timer Author",
+          updatedBy: "Timer Author",
+          createdAt: expect.any(String),
+          updatedAt: expect.any(String),
         }),
       );
+      expect(put.mock.calls[0][0].updatedAt).toBe(put.mock.calls[0][0].createdAt);
       expect(item._id).toBe("Durable Timer");
     });
   });

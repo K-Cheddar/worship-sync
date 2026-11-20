@@ -1,0 +1,7 @@
+{
+  "id": "2026-11-18-custom-item-autosave-reliability",
+  "date": "2026-11-18",
+  "type": "improved",
+  "title": "More reliable custom item editing",
+  "description": "Custom item changes save more reliably during busy editing, and failed saves keep your draft open with a retry option."
+}

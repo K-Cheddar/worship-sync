@@ -1876,6 +1876,9 @@ describe("MySchedule", () => {
       expect(openService).toHaveClass("items-center", "gap-2", "w-full");
       expect(screen.getByRole("list", { name: "My scheduled services" })).toHaveClass(
         "grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))]",
+        "w-full",
+      );
+      expect(screen.getByRole("list", { name: "My scheduled services" })).not.toHaveClass(
         "max-w-[90rem]",
       );
       expect(screen.getByText("6")).toHaveClass("text-[21px]");

@@ -1,8 +1,5 @@
 import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
   CheckCircle2,
   FileText,
   Plus,
@@ -13,6 +10,7 @@ import {
 import AppWorkspaceShell from "../components/AppPageShell/AppWorkspaceShell";
 import Button from "../components/Button/Button";
 import Checkbox from "../components/Checkbox/Checkbox";
+import SortableColumnButton from "../components/SortableColumnButton";
 import Input from "../components/Input/Input";
 import ConfirmDialog from "../components/Modal/ConfirmDialog";
 import { resolvePreviewSource } from "../components/ContentPreview/contentPreview";
@@ -366,12 +364,13 @@ const ResourcesPage = () => {
                           ["source", "Source", "w-[24%]"],
                         ] as const).map(([key, label, width]) => (
                           <th key={key} scope="col" aria-sort={sortKey === key ? sortDirection === "asc" ? "ascending" : "descending" : "none"} className={`${width} px-4 py-1.5`}>
-                            <Button type="button" variant="none" padding="p-0" className="flex max-md:min-h-0 cursor-pointer items-center gap-1 text-left text-sm font-normal hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400" onClick={() => changeSort(key)}>
-                              {label}
-                              {sortKey === key && sortDirection === "asc" ? <ArrowUp className="size-3.5" aria-hidden /> : null}
-                              {sortKey === key && sortDirection === "desc" ? <ArrowDown className="size-3.5" aria-hidden /> : null}
-                              {sortKey !== key ? <ArrowUpDown className="size-3.5" aria-hidden /> : null}
-                            </Button>
+                            <SortableColumnButton
+                              label={label}
+                              direction={sortKey === key && sortDirection
+                                ? sortDirection === "asc" ? "ascending" : "descending"
+                                : undefined}
+                              onClick={() => changeSort(key)}
+                            />
                           </th>
                         ))}
                       </tr>

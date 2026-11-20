@@ -1,9 +1,9 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ServicePublicView from "./ServicePublicView";
 import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
 import { buildServicePlanFlowSnapshot } from "./buildServicePlanFlowSnapshot";
-import { createServicePlanTextResource } from "./Services/servicePlanResources";
+import * as servicePlanResources from "./Services/servicePlanResources";
 
 const detailedSnapshot: PublicServiceFlowSnapshot = {
   success: true,
@@ -73,6 +73,7 @@ describe("ServicePublicView equipment assignments", () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+    jest.useRealTimers();
     if (scrollIntoViewWasPatched) {
       if (originalScrollIntoView) {
         Object.defineProperty(HTMLElement.prototype, "scrollIntoView", originalScrollIntoView);
@@ -212,6 +213,91 @@ describe("ServicePublicView equipment assignments", () => {
     expect(screen.queryByLabelText(/Live-adjusted time/)).not.toBeInTheDocument();
   });
 
+  it("keeps first-match progress timing when item IDs repeat across sections", () => {
+    const nowMs = Date.parse("2026-09-25T18:05:00.000Z");
+    jest.spyOn(Date, "now").mockReturnValue(nowMs);
+    const snapshot: PublicServiceFlowSnapshot = {
+      ...detailedSnapshot,
+      serverNowMs: nowMs,
+      service: {
+        ...detailedSnapshot.service,
+        startsAt: "2026-09-25T18:00:00.000Z",
+        timelineStartsAt: "2026-09-25T18:00:00.000Z",
+        timezone: "UTC",
+        sections: [
+          {
+            id: "first-section",
+            title: "First section",
+            items: [
+              { id: "repeat", title: "First repeat", durationSeconds: 60, notes: { blocks: [] } },
+              { id: "middle", title: "Middle", durationSeconds: 60, notes: { blocks: [] } },
+            ],
+          },
+          {
+            id: "second-section",
+            title: "Second section",
+            items: [
+              { id: "repeat", title: "Second repeat", durationSeconds: 600, notes: { blocks: [] } },
+              { id: "live-now", title: "Live now", durationSeconds: 300, notes: { blocks: [] } },
+            ],
+          },
+        ],
+        live: { mode: "manual", currentItemId: "live-now" },
+      },
+    };
+
+    render(<ServicePublicView snapshot={snapshot} />);
+
+    const lists = screen.getAllByRole("list");
+    const firstSectionList = lists.find((list) =>
+      within(list).queryByRole("heading", { name: "First repeat" }),
+    );
+    const secondSectionList = lists.find((list) =>
+      within(list).queryByRole("heading", { name: "Second repeat" }),
+    );
+    expect(firstSectionList).toBeDefined();
+    expect(secondSectionList).toBeDefined();
+    expect(within(firstSectionList!).getAllByRole("listitem")[0]).toHaveClass("bg-neutral-950/40");
+    expect(within(secondSectionList!).getAllByRole("listitem")[0]).toHaveClass("bg-neutral-950/40");
+  });
+
+  it("keeps static resource rendering out of the one-second progress updates", () => {
+    const nowMs = Date.parse("2026-09-25T18:01:00.000Z");
+    jest.useFakeTimers().setSystemTime(nowMs);
+    const resourceDefinition = jest.spyOn(
+      servicePlanResources,
+      "getServicePlanResourceDefinition",
+    );
+    const snapshot: PublicServiceFlowSnapshot = {
+      ...detailedSnapshot,
+      serverNowMs: nowMs,
+      service: {
+        ...detailedSnapshot.service,
+        startsAt: "2026-09-25T18:00:00.000Z",
+        timelineStartsAt: "2026-09-25T18:00:00.000Z",
+        timezone: "UTC",
+        sections: [{
+          id: "worship",
+          title: "Worship",
+          items: [{
+            ...detailedSnapshot.service.sections[0].items[0],
+            resources: [servicePlanResources.createServicePlanTextResource({ title: "Call sheet", text: { blocks: [] } })],
+          }],
+        }],
+        live: { mode: "schedule" },
+      },
+    };
+
+    render(<ServicePublicView snapshot={snapshot} />);
+    const initialCalls = resourceDefinition.mock.calls.length;
+    expect(initialCalls).toBe(1);
+
+    act(() => jest.advanceTimersByTime(1_000));
+
+    expect(resourceDefinition).toHaveBeenCalledTimes(initialCalls);
+    expect(screen.getByTitle("Notes: Call sheet")).toBeInTheDocument();
+  });
+
   it("keeps the anonymous public plan's equipment panel below its existing page top", () => {
     render(<ServicePublicView snapshot={detailedSnapshot} />);
 
@@ -310,8 +396,8 @@ describe("ServicePublicView equipment assignments", () => {
         name: "Service", sections: [{ id: "main", name: "Main", elements: [{
           id: "cues", type: "free", title: { blocks: [] },
           resources: [
-            createServicePlanTextResource({ title: "Title only", text: { blocks: [] } }),
-            createServicePlanTextResource({ title: "", text: notes }),
+            servicePlanResources.createServicePlanTextResource({ title: "Title only", text: { blocks: [] } }),
+            servicePlanResources.createServicePlanTextResource({ title: "", text: notes }),
           ],
         }] }],
       },

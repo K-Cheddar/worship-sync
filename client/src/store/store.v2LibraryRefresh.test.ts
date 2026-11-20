@@ -7,13 +7,18 @@ const song = (name = "Song"): DBItem => ({
     slides: [{ id: "s", name: "Verse", type: "Verse", boxes: [{ id: "box", words: name, width: 1920, height: 1080 }] }],
   }], slides: [],
 } as unknown as DBItem);
-const flush = async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); };
+const legacySong = (name = "Legacy song", revision = "1-legacy"): DBItem => ({
+  ...song(name),
+  docType: undefined,
+  _rev: revision,
+} as unknown as DBItem);
+const flush = async () => { for (let attempt = 0; attempt < 12; attempt += 1) await Promise.resolve(); };
 const setup = () => {
   let storeModule!: typeof import("./store");
   let itemModule!: typeof import("./itemSlice");
   let docsModule!: typeof import("./allDocsSlice");
   let deferredModule!: typeof import("./deferredItemMutations");
-  const database: any = { name: "active-v2-refresh-test-db", get: jest.fn(), allDocs: jest.fn() };
+  const database: any = { name: "active-song-refresh-test-db", get: jest.fn(), allDocs: jest.fn() };
   let activeDb: any = database;
   const load = jest.fn().mockResolvedValue(song("Remote"));
   const globalFireDbInfo = {
@@ -56,15 +61,20 @@ const setup = () => {
     store: storeModule.default,
     item: itemModule.itemSlice.actions,
     docs: docsModule.allDocsSlice.actions,
+    database,
     load,
     songV2DocumentsChanged: storeModule.songV2DocumentsChanged,
-    setActiveOwner: (owner: import("../types").ItemContentOwner) => deferredModule.setActiveContentDatabase(owner, database),
+    setActiveOwner: (
+      owner: import("../types").ItemContentOwner,
+      ownerDatabase: unknown = database,
+    ) => deferredModule.setActiveContentDatabase(owner, ownerDatabase as never),
     setDatabase: (next: unknown) => { activeDb = next; },
   };
 };
 
-describe("active v2 song library refresh", () => {
+describe("active song library refresh", () => {
   afterEach(() => {
+    jest.useRealTimers();
     jest.dontMock("../context/controllerInfo");
     jest.dontMock("../context/globalInfo");
     jest.dontMock("../utils/songPersistence");
@@ -169,6 +179,79 @@ describe("active v2 song library refresh", () => {
     const active = store.getState().undoable.present.item;
     expect(active.name).toBe("Song");
     expect(active.pendingRemoteItem?.arrangements[0].slides[0].boxes[0].words).toBe("Remote");
+  });
+  it("adopts a remote legacy-song revision after its allDocs cache update", async () => {
+    const env = setup();
+    const owner = { scopeId: "user-a-owner", databaseKey: "db-a", churchId: "church-a", accountId: "user-a" };
+    env.setActiveOwner(owner);
+    const baseline = legacySong();
+    const remote = { ...legacySong("Remote legacy title", "2-remote"), updatedAt: "remote-update" };
+    env.database.get.mockResolvedValue(remote);
+    env.store.dispatch(env.item.setActiveItem({ ...baseline, listId: "outline-entry", contentOwner: owner }));
+
+    env.store.dispatch(env.docs.applyItemDocumentChange({ id: baseline._id, doc: remote }));
+    await flush();
+
+    const active = env.store.getState().undoable.present.item;
+    expect(env.database.get).toHaveBeenCalledWith(baseline._id, { conflicts: true });
+    expect(active.name).toBe("Remote legacy title");
+    expect(active.baseItem?._rev).toBe("2-remote");
+    expect(active.hasPendingUpdate).toBe(false);
+    expect(active.hasRemoteUpdate).toBe(false);
+  });
+  it("retains a dirty legacy-song draft and offers an overlapping remote edit for review", async () => {
+    jest.useFakeTimers();
+    const env = setup();
+    const owner = { scopeId: "user-a-owner", databaseKey: "db-a", churchId: "church-a", accountId: "user-a" };
+    env.setActiveOwner(owner);
+    const baseline = legacySong();
+    const remote = legacySong("Remote legacy title", "2-remote");
+    env.database.get.mockResolvedValue(remote);
+    env.store.dispatch(env.item.setActiveItem({ ...baseline, listId: "outline-entry", contentOwner: owner }));
+    env.store.dispatch(env.item._setName("Local legacy draft"));
+
+    env.store.dispatch(env.docs.applyItemDocumentChange({ id: baseline._id, doc: remote }));
+    await flush();
+
+    const active = env.store.getState().undoable.present.item;
+    expect(active.name).toBe("Local legacy draft");
+    expect(active.baseItem?._rev).toBe("1-legacy");
+    expect(active.pendingRemoteItem?.name).toBe("Remote legacy title");
+    expect(active.pendingRemoteItem?._rev).toBe("2-remote");
+    expect(active.hasPendingUpdate).toBe(true);
+    expect(active.hasRemoteUpdate).toBe(true);
+  });
+  it("does not apply a legacy refresh after the same item opens under another church database", async () => {
+    const env = setup();
+    const ownerA = { scopeId: "user-a-church-a", databaseKey: "db-a", churchId: "church-a", accountId: "user-a" };
+    const ownerB = { scopeId: "user-a-church-b", databaseKey: "db-b", churchId: "church-b", accountId: "user-a" };
+    const databaseB = {
+      name: "church-b-db",
+      get: jest.fn().mockResolvedValue(legacySong("Church B remote current", "2-church-b")),
+    };
+    let resolveChurchA!: (document: DBItem) => void;
+    env.database.get.mockReturnValue(new Promise<DBItem>((resolve) => { resolveChurchA = resolve; }));
+    env.setActiveOwner(ownerA);
+    const baselineA = legacySong("Church A");
+    const remoteA = legacySong("Stale Church A update", "2-church-a");
+    env.store.dispatch(env.item.setActiveItem({ ...baselineA, listId: "outline-entry", contentOwner: ownerA }));
+    env.store.dispatch(env.docs.applyItemDocumentChange({ id: baselineA._id, doc: remoteA }));
+    expect(env.database.get).toHaveBeenCalledWith(baselineA._id, { conflicts: true });
+
+    env.setDatabase(databaseB);
+    env.setActiveOwner(ownerB, databaseB);
+    env.store.dispatch(env.item.setActiveItem({ ...legacySong("Church B", "1-church-b"), listId: "outline-entry", contentOwner: ownerB }));
+    env.store.dispatch(env.docs.applyItemDocumentChange({
+      id: baselineA._id,
+      doc: legacySong("Church B remote current", "2-church-b"),
+    }));
+    await flush();
+    resolveChurchA(remoteA);
+    await flush();
+
+    expect(env.store.getState().undoable.present.item.name).toBe("Church B remote current");
+    expect(env.store.getState().undoable.present.item.baseItem?._rev).toBe("2-church-b");
+    expect(databaseB.get).toHaveBeenCalledWith(baselineA._id, { conflicts: true });
   });
   it("ignores completion after the active item changes, including a return to the same logical ID", async () => {
     const { store, item, docs, load } = setup();

@@ -11,7 +11,6 @@ import {
 } from "../../utils/localImageAssets";
 import {
   buildLocalVideoFileUrl,
-  deleteLocalVideoThumbnail,
   getLocalVideoContentType,
   readVideoMetadataFromLocalAsset,
   readVideoMetadata,
@@ -21,6 +20,28 @@ import {
 import { getImageContentType } from "../../utils/mediaFileTypes";
 import { detectFileType } from "./utils/fileUtils";
 import { normalizeMediaLibraryDisplayName } from "./mediaLibraryMeta";
+
+export type LocalVideoImportMethod = "copy" | "link";
+
+const LOCAL_VIDEO_IMPORT_METHOD_KEY = "worshipsync_local_video_import_method";
+
+export const getRememberedLocalVideoImportMethod = (): LocalVideoImportMethod => {
+  try {
+    return window.localStorage.getItem(LOCAL_VIDEO_IMPORT_METHOD_KEY) === "link"
+      ? "link"
+      : "copy";
+  } catch {
+    return "copy";
+  }
+};
+
+export const rememberLocalVideoImportMethod = (method: LocalVideoImportMethod) => {
+  try {
+    window.localStorage.setItem(LOCAL_VIDEO_IMPORT_METHOD_KEY, method);
+  } catch {
+    // The current choice still applies if this browser cannot write local storage.
+  }
+};
 
 export class LocalImagePlaybackError extends Error {
   constructor(cause: unknown) {
@@ -117,6 +138,8 @@ export const createLocalMediaFromDownloadedVideo = async ({
   const fileName = `${normalizeMediaLibraryDisplayName(displayName) || "Downloaded video"}.mp4`;
   const localVideo = {
     id: asset.assetId,
+    ...(asset.contentHash ? { contentHash: asset.contentHash } : {}),
+    contentRevision: asset.contentHash || asset.updatedAt || now,
     workspaceId,
     fileName,
     contentType: "video/mp4",
@@ -197,10 +220,11 @@ export const createLocalMediaFromLinkedVideo = async ({
   ) || "Linked video";
   const contentRevision = asset.contentHash || asset.updatedAt || now;
   if (!validateOnly) {
-    await deleteLocalVideoThumbnail(asset.assetId);
     await saveLocalVideoFile(
       {
         id: asset.assetId,
+        ...(asset.contentHash ? { contentHash: asset.contentHash } : {}),
+        contentRevision,
         workspaceId,
         fileName: asset.fileName,
         contentType: asset.contentType,
@@ -210,7 +234,7 @@ export const createLocalMediaFromLinkedVideo = async ({
         duration: metadata.duration,
         createdAt: now,
       },
-      { deferThumbnail: true },
+      { deferThumbnail: true, invalidateThumbnail: true },
     );
   }
   return {
@@ -333,6 +357,7 @@ const createLocalVideoMedia = async (
   const contentType = getLocalVideoContentType(file);
   const localVideo = {
     id: assetId,
+    contentRevision: now,
     workspaceId,
     blob: file,
     fileName: file.name,

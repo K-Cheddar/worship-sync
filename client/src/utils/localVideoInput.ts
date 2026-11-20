@@ -3,6 +3,7 @@ import type {
   LocalVideoInputMediaSource,
   LocalVideoInputPresentation,
 } from "../types";
+import { getOrCreateDeviceId } from "./authStorage";
 import generateRandomId from "./generateRandomId";
 
 const MAX_DEVICE_ID_LENGTH = 512;
@@ -47,6 +48,61 @@ export const getLocalVideoInputSourceFieldLabel = (
   if (captureKind === "screen") return "Screen";
   if (captureKind === "window") return "Window";
   return "Video input";
+};
+
+export type LocalVideoInputPreviewStatus = {
+  heading: string;
+  sourceLabel: string;
+  ownerLabel?: string;
+  detail?: string;
+};
+
+/** Read-only preview status from persisted ownership and this profile's binding. */
+export const getLocalVideoInputPreviewStatus = (
+  source: LocalVideoInputMediaSource | LocalVideoInputPresentation | undefined,
+  currentDeviceId = getOrCreateDeviceId(),
+): LocalVideoInputPreviewStatus | undefined => {
+  const normalized = source && "kind" in source
+    ? normalizeLocalVideoInputMediaSource(source)
+    : source
+      ? {
+          kind: "local-video-input" as const,
+          sourceId: source.sourceId,
+          label: source.deviceLabel,
+          captureKind: source.captureKind,
+          ownerDeviceId: source.ownerDeviceId,
+          ownerLabel: source.ownerLabel,
+        }
+      : undefined;
+  if (!normalized) return undefined;
+
+  const kindLabel = getLocalVideoInputKindLabel(normalized.captureKind);
+  const sourceLabel = `${kindLabel} · ${normalized.label || kindLabel}`;
+  if (
+    normalized.ownerDeviceId &&
+    normalized.ownerDeviceId !== currentDeviceId
+  ) {
+    return {
+      heading: "Local source on another device",
+      sourceLabel,
+      ...(normalized.ownerLabel ? { ownerLabel: normalized.ownerLabel } : {}),
+    };
+  }
+
+  if (!resolveLocalVideoInputBinding(normalized.sourceId)) {
+    const target = normalized.captureKind === "screen"
+      ? "screen share"
+      : normalized.captureKind === "window"
+        ? "window share"
+        : "video input";
+    return {
+      heading: `${kindLabel} unavailable`,
+      sourceLabel,
+      detail: `Open Media on this device and relink the ${target}.`,
+    };
+  }
+
+  return undefined;
 };
 
 /**

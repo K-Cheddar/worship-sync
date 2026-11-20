@@ -59,6 +59,12 @@ export type StoredLocalImageThumbnail = {
   width: number;
   height: number;
   createdAt: string;
+  /** Present only when this shared thumbnail belongs to a local video file. */
+  videoThumbnail?: {
+    source: "generated" | "supplied";
+    contentRevision: string;
+    generatorVersion?: number;
+  };
 };
 
 export type LocalImageUploadJobStatus =
@@ -425,6 +431,8 @@ export const saveLocalImageThumbnail = async (
 export const saveLocalVideoThumbnail = async (
   thumbnail: StoredLocalImageThumbnail,
   expectedContentHash?: string,
+  expectedContentRevision?: string,
+  allowReplaceExisting = false,
 ) => {
   const db = await openLocalAssetDb();
   let saved = false;
@@ -438,9 +446,47 @@ export const saveLocalVideoThumbnail = async (
         .objectStore(LOCAL_VIDEO_STORE_NAME)
         .get(thumbnail.id);
       videoRequest.onsuccess = () => {
-        if (!videoRequest.result || videoRequest.result.contentHash !== expectedContentHash) return;
-        transaction.objectStore(THUMBNAIL_STORE_NAME).put(thumbnail);
-        saved = true;
+        const video = videoRequest.result as
+          | {
+              contentHash?: string;
+              contentRevision?: string;
+              createdAt?: string;
+              size?: number;
+            }
+          | undefined;
+        if (!video || video.contentHash !== expectedContentHash) return;
+        const contentRevision =
+          video.contentHash ||
+          video.contentRevision ||
+          `${video.createdAt ?? "legacy"}:${video.size ?? 0}`;
+        if (
+          expectedContentRevision &&
+          contentRevision !== expectedContentRevision
+        ) {
+          return;
+        }
+        const thumbnailStore = transaction.objectStore(THUMBNAIL_STORE_NAME);
+        const existingRequest = thumbnailStore.get(thumbnail.id);
+        existingRequest.onsuccess = () => {
+          const existing = existingRequest.result as
+            | StoredLocalImageThumbnail
+            | undefined;
+          if (existing) {
+            const existingVideoThumbnail = existing.videoThumbnail;
+            // Pre-provenance records may be user-supplied posters. Preserve
+            // them, and never replace a current supplied poster with a frame.
+            if (!existingVideoThumbnail) return;
+            if (
+              existingVideoThumbnail.source === "supplied" &&
+              existingVideoThumbnail.contentRevision === contentRevision
+            ) {
+              return;
+            }
+            if (!allowReplaceExisting) return;
+          }
+          thumbnailStore.put(thumbnail);
+          saved = true;
+        };
       };
       transaction.oncomplete = () => resolve();
       transaction.onerror = () =>

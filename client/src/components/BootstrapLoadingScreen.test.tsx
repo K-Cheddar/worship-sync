@@ -23,6 +23,7 @@ describe("BootstrapLoadingScreen", () => {
     expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
     expect(screen.getByText("Preparing your workspace…")).toBeInTheDocument();
     expect(screen.getByRole("main")).toHaveAttribute("aria-busy", "true");
+    expect(jest.getTimerCount()).toBe(1);
     const logoImage = screen.getByRole("img", { name: "WorshipSync" });
     const logoContainer = screen.getByTestId("loading-logo");
     expect(logoImage).toHaveClass("loading-logo__image");
@@ -47,6 +48,7 @@ describe("BootstrapLoadingScreen", () => {
         <BootstrapLoadingScreen />
       </StrictMode>,
     );
+    expect(jest.getTimerCount()).toBe(1);
     expect(screen.getByText("Getting everything in place…")).toBeInTheDocument();
     const logoContainerAfterRemount = screen.getByTestId("loading-logo");
     expect(

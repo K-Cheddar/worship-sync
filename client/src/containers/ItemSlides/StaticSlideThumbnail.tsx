@@ -19,6 +19,9 @@ import {
   type ResolvedDisplaySettings,
 } from "../../utils/displaySettings";
 import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
+import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
+import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
+import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 
 type StaticSlideThumbnailProps = {
   slide: ItemSlideType;
@@ -65,6 +68,18 @@ const StaticSlideThumbnail = ({
   scaleFactor = 0,
   localVideoInputThumbnailUrl,
 }: StaticSlideThumbnailProps) => {
+  const isStreamFormat = previewMode === "stream";
+  const streamVideoReference = isStreamFormat
+    ? slide.boxes[0]?.mediaInfo?.localVideoFile
+    : undefined;
+  const streamVideoThumbnail = useLocalVideoFileUrl(
+    streamVideoReference,
+    "thumbnail",
+  );
+  const streamVideoSource = useLocalVideoFileUrl(
+    streamVideoReference,
+    "display",
+  );
   if (previewMode === "monitor") {
     return (
       <StaticMonitorThumbnail
@@ -82,11 +97,15 @@ const StaticSlideThumbnail = ({
     );
   }
 
-  const isStreamFormat = previewMode === "stream";
   // Preserve the historical `slide` profile for the default Projector preview.
   const displayType = isStreamFormat ? "stream" : "slide";
   const profile = resolveDisplayRenderProfile(displayType, slide.boxes);
   const formatted = getFormattedTextDisplayInfo(slide, itemType);
+  const localVideoInputStatus = getLocalVideoInputPreviewStatus(
+    slide.mediaSource?.kind === "local-video-input"
+      ? slide.mediaSource
+      : undefined,
+  );
   return (
     <div
       className={`relative aspect-video w-full overflow-hidden overflow-anywhere border border-gray-500 text-white ${
@@ -109,6 +128,28 @@ const StaticSlideThumbnail = ({
           isolation: "isolate",
         }}
       >
+        {isStreamFormat &&
+        (streamVideoThumbnail.url ||
+          slide.boxes[0]?.mediaInfo?.placeholderImage) ? (
+          <img
+            src={
+              streamVideoThumbnail.url ||
+              slide.boxes[0]?.mediaInfo?.placeholderImage ||
+              ""
+            }
+            alt=""
+            aria-hidden
+            data-testid="static-local-video-thumbnail"
+            className={`absolute inset-0 h-full w-full ${
+              slide.boxes[0]?.shouldKeepAspectRatio
+                ? "object-contain"
+                : "object-cover"
+            }`}
+            style={{
+              filter: `brightness(${profile.backgroundBrightness ?? slide.boxes[0]?.brightness ?? 100}%)`,
+            }}
+          />
+        ) : null}
         {localVideoInputThumbnailUrl ? (
           <img
             src={localVideoInputThumbnailUrl}
@@ -132,6 +173,10 @@ const StaticSlideThumbnail = ({
               showBackground={
                 profile.supportsBackground || Boolean(localVideoInputThumbnailUrl)
               }
+              showLocalSourceStatus={profile.supportsBackground}
+              statusScaleFactor={scaleFactor}
+              localSourceStatusSize="thumbnail"
+              allowLocalVideoThumbnailGeneration
               index={index}
               paintBackground={!(localVideoInputThumbnailUrl && index === 0)}
               timerInfo={timerInfo}
@@ -170,6 +215,49 @@ const StaticSlideThumbnail = ({
           ))
         )}
       </div>
+      {localVideoInputStatus ? (
+        <LocalSourceStatus
+          {...localVideoInputStatus}
+          {...(localVideoInputThumbnailUrl
+            ? { variant: "indicator" as const }
+            : {
+                size: "thumbnail" as const,
+                scaleFactor: 1,
+                transparentBackground: isStreamFormat,
+              })}
+        />
+      ) : null}
+      {isStreamFormat &&
+      streamVideoSource.isLocalVideoFile &&
+      streamVideoSource.status !== "ready" &&
+      streamVideoSource.status !== "not-local" ? (
+        <LocalSourceStatus
+          sourceLabel={`Local video · ${slide.boxes[0]?.mediaInfo?.localVideoFile?.fileName || "Background"}`}
+          ownerLabel={
+            streamVideoSource.isOwner
+              ? undefined
+              : slide.boxes[0]?.mediaInfo?.localVideoFile?.ownerLabel
+          }
+          heading={
+            streamVideoSource.status === "loading"
+              ? "Loading local video"
+              : streamVideoSource.isOwner
+                ? "Local video unavailable"
+                : undefined
+          }
+          state={
+            streamVideoSource.status === "loading" ? "loading" : undefined
+          }
+          detail={
+            streamVideoSource.isOwner
+              ? "Open Media on this device and relink the file."
+              : undefined
+          }
+          size="thumbnail"
+          scaleFactor={1}
+          transparentBackground
+        />
+      ) : null}
     </div>
   );
 };

@@ -31,6 +31,8 @@ const ControllerPageShell = ({
   mainClassName = "flex flex-1 relative min-h-0 bg-homepage-canvas",
   layoutRef,
 }: ControllerPageShellProps) => {
+  const isStartupLoading = dbProgress !== 100;
+
   return (
     <ThumbnailPreviewModeProvider>
       <div
@@ -48,12 +50,18 @@ const ControllerPageShell = ({
           user={user}
           churchName={churchName}
         />
-        <Toolbar
-          variant={toolbarVariant}
-          className="flex shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
-        />
-        <div id="controller-main" className={mainClassName} ref={layoutRef}>
-          {children}
+        <div
+          data-testid="controller-interaction-layer"
+          inert={isStartupLoading}
+          className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        >
+          <Toolbar
+            variant={toolbarVariant}
+            className="flex shrink-0 overflow-y-hidden border-b-2 border-gray-500 bg-homepage-canvas text-sm"
+          />
+          <div id="controller-main" className={mainClassName} ref={layoutRef}>
+            {children}
+          </div>
         </div>
       </div>
     </ThumbnailPreviewModeProvider>

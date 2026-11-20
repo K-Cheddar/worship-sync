@@ -75,6 +75,14 @@ describe("estimateFilteredItemRowHeight", () => {
 
     expect(longTitle).toBeGreaterThan(shortTitle);
   });
+
+  it("estimates the stacked action row for compact library columns", () => {
+    const item = baseItem();
+    const desktopLibraryRow = estimateFilteredItemRowHeight(item, false, false, true);
+    const compactLibraryRow = estimateFilteredItemRowHeight(item, false, false, true, true);
+
+    expect(compactLibraryRow).toBeGreaterThan(desktopLibraryRow);
+  });
 });
 
 describe("getLibraryItemVirtualKey", () => {

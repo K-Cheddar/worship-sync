@@ -12,7 +12,7 @@ The aggregates run sequentially. A failed suite does not stop later suites. Each
 
 ## GitHub Actions checks
 
-Every pull request and manual `Checks` run uses the same four ordinary Jest shards; CI does not collect or enforce coverage. The final required status remains **`npm run checks`** and aggregates all four client shards, server tests, lint/type checking, and Heroku and Electron builds. Local coverage commands remain available for development.
+Every pull request and manual `Checks` run uses the same four ordinary Jest shards; CI does not collect or enforce coverage. Concurrency cancels stale pushes for the same branch, stale runs for the same PR, and older manual runs for the same ref. Event-specific groups keep manual runs independent from automated push and PR validation. The final required status remains **`npm run checks`** and aggregates all four client shards, server tests, lint/type checking, and Heroku and Electron builds. Local coverage commands remain available for development.
 
 ## E2E inventory and individual commands
 

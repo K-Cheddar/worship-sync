@@ -8,6 +8,7 @@ import {
   Route,
   Routes,
   useLocation,
+  useNavigate,
 } from "react-router-dom";
 
 import FilteredItems from "./FilteredItems";
@@ -19,6 +20,7 @@ import { createItemSlice, initialCreateItemState } from "../../store/createItemS
 import { createMockControllerContext, createMockGlobalContext } from "../../test/mocks";
 import { ControllerInfoContext } from "../../context/controllerInfo";
 import { GlobalInfoContext } from "../../context/globalInfo";
+import { TransferProvider } from "../../context/transferContext";
 import { searchLrclibTracks } from "../../api/lrclib";
 import { deleteSongAudioWithRetry } from "../../api/auth";
 import { PresentationControllerModeProvider } from "../../context/presentationControllerMode";
@@ -53,6 +55,9 @@ const createTestStore = () =>
   configureStore({
     reducer: {
       createItem: createItemSlice.reducer,
+      allDocs: (state = { session: 1 }) => state,
+      undoable: (state = { present: { itemList: { outlineOwnerKey: "owner-1", loadedOutlineId: "outline-1" } } }) => state,
+      timers: (state = { timers: [], shouldUpdateTimers: false }) => state,
     },
     preloadedState: {
       createItem: initialCreateItemState,
@@ -98,6 +103,7 @@ describe("FilteredItems", () => {
 
   afterEach(() => {
     getBoundingClientRectSpy.mockRestore();
+    window.localStorage.removeItem("worshipsync_presentation_controller_mode");
     window.localStorage.removeItem("worshipsync_presentation_controller_mode");
   });
 
@@ -358,7 +364,151 @@ describe("FilteredItems", () => {
     expect(await screen.findByTitle(song.name)).toBeInTheDocument();
   });
 
-  it("shows no column headers in All Items and defaults creation by filter", async () => {
+  it("keeps a sorted row's lyrics expansion action attached to its source result", async () => {
+    const sourceItems = [
+      { _id: "z-song", name: "Zulu Chorus Song", type: "song", listId: "z-song", matchedWords: "red chorus passage" },
+      { _id: "a-song", name: "Alpha Song", type: "song", listId: "a-song", matchedWords: "blue chorus passage" },
+    ] as any[];
+    const documents = [
+      { ...sourceItems[0], arrangements: [{ formattedLyrics: [{ words: "red chorus passage" }] }] },
+      { ...sourceItems[1], arrangements: [{ formattedLyrics: [{ words: "blue chorus passage" }] }] },
+    ] as any[];
+    const Harness = () => {
+      const [filter, setFilter] = React.useState<LibraryFilter>("all");
+      return <FilteredItems list={sourceItems} type="all" heading="All Items" label="item"
+        isLoading={false} allDocs={documents} searchValue="chorus" setSearchValue={jest.fn()}
+        libraryFilter={filter} onLibraryFilterChange={setFilter} />;
+    };
+    render(<Provider store={createTestStore()}><MemoryRouter>
+      <ControllerInfoContext.Provider value={createMockControllerContext() as never}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as never}><Harness /></GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    </MemoryRouter></Provider>);
+
+    const results = screen.getByTestId("filtered-items-results");
+    await waitFor(() => expect(results).toHaveAttribute("data-search-query", "chorus"));
+    fireEvent.click(screen.getByRole("button", { name: "Sort by Name" }));
+    const sortedRows = within(results).getAllByRole("listitem");
+    expect(sortedRows.map((row) => row.getAttribute("data-item-id"))).toEqual(["a-song", "z-song"]);
+    expect(sortedRows[0]).toHaveTextContent(/blue chorus passage/i);
+    expect(sortedRows[1]).not.toHaveTextContent(/red chorus passage/i);
+
+    fireEvent.click(within(sortedRows[0]).getAllByRole("button")[0]);
+
+    const updatedRows = within(results).getAllByRole("listitem");
+    expect(updatedRows[0]).not.toHaveTextContent(/blue chorus passage/i);
+    expect(updatedRows[1]).not.toHaveTextContent(/red chorus passage/i);
+  });
+
+  it("selects every matching result across virtualized rows and clears selection when search or type changes", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "edit");
+    const items = Array.from({ length: 35 }, (_, index) => ({
+      _id: `custom-${index}`,
+      name: `${index < 10 ? "Custom" : "Other"} ${String(index).padStart(2, "0")}`,
+      type: "free",
+      listId: `custom-${index}`,
+    })) as any[];
+    const docs = items.map((item) => ({ ...item, slides: [] }));
+    const Harness = () => {
+      const [filter, setFilter] = React.useState<LibraryFilter>("all");
+      const [query, setQuery] = React.useState("");
+      return <FilteredItems
+        list={items}
+        allDocs={docs as never}
+        type="all"
+        heading="All Items"
+        label="item"
+        isLoading={false}
+        searchValue={query}
+        setSearchValue={setQuery}
+        libraryFilter={filter}
+        onLibraryFilterChange={setFilter}
+      />;
+    };
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <PresentationControllerModeProvider>
+              <MemoryRouter><Harness /></MemoryRouter>
+            </PresentationControllerModeProvider>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    const selectAll = await screen.findByRole("checkbox", { name: "Select all results" });
+    await waitFor(() => expect(selectAll).toBeEnabled());
+    await user.click(selectAll);
+    expect(screen.getByText("Delete selected (35)")).toBeInTheDocument();
+    expect(screen.getAllByRole("checkbox", { name: /^Select Custom/ }).length).toBeLessThan(items.length);
+
+    fireEvent.change(screen.getByLabelText(/Search/), { target: { value: "Custom" } });
+    expect(screen.getByText("Delete selected (0)")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("filtered-items-results")).toHaveAttribute("data-search-query", "Custom"));
+    await waitFor(() => expect(screen.getByRole("checkbox", { name: "Select all results" })).toBeEnabled());
+    await user.click(screen.getByRole("checkbox", { name: "Select all results" }));
+    expect(screen.getByText("Delete selected (10)")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Songs" }));
+    expect(screen.getByText("Delete selected (0)")).toBeInTheDocument();
+  });
+
+  it("selects only saved library matches, excluding pinned and external results", async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem("worshipsync_presentation_controller_mode", "edit");
+    mockedSearchLrclibTracks.mockResolvedValue([{
+      source: "genius",
+      geniusId: 52,
+      geniusUrl: "https://genius.com/external-only-lyrics",
+      trackName: "External-only lyrics",
+      artistName: "External Artist",
+      albumName: "",
+      plainLyrics: "External words",
+      syncedLyrics: null,
+    }]);
+    const item = { _id: "saved-song", name: "Amazing Grace", type: "song", listId: "saved-song" } as any;
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider value={createMockControllerContext() as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter>
+              <FilteredItems
+                list={[item]}
+                type="all"
+                heading="All Items"
+                label="item"
+                isLoading={false}
+                allDocs={[item] as never}
+                searchValue="Amazing Grace"
+                setSearchValue={jest.fn()}
+                libraryFilter="song"
+                onLibraryFilterChange={jest.fn()}
+                pinnedTopContent={<div role="listitem">Upcoming service</div>}
+              />
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    expect(await screen.findByTitle("Amazing Grace")).toBeInTheDocument();
+    expect(screen.getByText("Upcoming service")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("filtered-items-results")).toHaveAttribute("data-search-query", "Amazing Grace"));
+    await user.click(screen.getByRole("button", { name: "Search external lyrics" }));
+    expect(await screen.findByText("External lyrics")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Create song" })).toBeInTheDocument();
+
+    const selectAll = await screen.findByRole("checkbox", { name: "Select all results" });
+    await waitFor(() => expect(selectAll).toBeEnabled());
+    await user.click(selectAll);
+    expect(screen.getByText("Delete selected (1)")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select Upcoming service" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "Select External-only lyrics" })).not.toBeInTheDocument();
+  });
+
+  it("shows sortable metadata columns in All Items and defaults creation by filter", async () => {
     const song = {
       _id: "all-song",
       name: "All Song",
@@ -407,8 +557,12 @@ describe("FilteredItems", () => {
 
     expect(screen.queryByText("Artist")).not.toBeInTheDocument();
     expect(screen.queryByText("Actions")).not.toBeInTheDocument();
-    expect(screen.queryByText("Type")).not.toBeInTheDocument();
-    expect(screen.queryByText("Name")).not.toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "Type" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "song" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort by Name" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort by Updated" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sort by Updated by" })).toBeInTheDocument();
+    expect(screen.queryAllByRole("columnheader")).toHaveLength(0);
     expect(screen.getByRole("button", { name: "All Items" })).toHaveClass(
       "bg-cyan-500/20",
       "border-cyan-300/50",
@@ -584,16 +738,18 @@ describe("FilteredItems", () => {
         >
           <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
             <MemoryRouter>
-              <FilteredItems
-                list={[song]}
-                type="song"
-                heading="Songs"
-                label="song"
-                isLoading={false}
-                allDocs={[song]}
-                searchValue=""
-                setSearchValue={jest.fn()}
-              />
+              <TransferProvider>
+                <FilteredItems
+                  list={[song]}
+                  type="song"
+                  heading="Songs"
+                  label="song"
+                  isLoading={false}
+                  allDocs={[song]}
+                  searchValue=""
+                  setSearchValue={jest.fn()}
+                />
+              </TransferProvider>
             </MemoryRouter>
           </GlobalInfoContext.Provider>
         </ControllerInfoContext.Provider>
@@ -609,6 +765,131 @@ describe("FilteredItems", () => {
       songId: "song-1",
       audio,
     });
+  });
+
+  it("keeps partial deletion cleanup in Activity after navigation and retries without deleting the document again", async () => {
+    const audio = {
+      id: "audio-retry",
+      key: "churches/church-1/songs/song-retry/audio-retry.mp3",
+      fileName: "retry.mp3",
+      contentType: "audio/mpeg" as const,
+      sizeBytes: 100,
+      uploadedAt: "2026-08-06T00:00:00.000Z",
+    };
+    const song = { _id: "song-retry", name: "Retry Song", type: "song", songAudio: audio } as any;
+    const remove = jest.fn().mockResolvedValue({ ok: true });
+    const db = {
+      name: "library-retry-db",
+      get: jest.fn(async (id: string) => {
+        if (id !== song._id) throw Object.assign(new Error("Not found"), { status: 404 });
+        return song;
+      }),
+      remove,
+    } as any;
+    mockedDeleteSongAudio
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockResolvedValueOnce({ success: true });
+    const NavigateAwayButton = () => {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate("/elsewhere")}>Navigate away</button>;
+    };
+
+    render(
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider value={createMockControllerContext({ db }) as any}>
+          <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+            <MemoryRouter initialEntries={["/library"]}>
+              <TransferProvider>
+                <Routes>
+                  <Route path="/library" element={<>
+                    <FilteredItems list={[song]} type="song" heading="Songs" label="song"
+                      isLoading={false} allDocs={[song]} searchValue="" setSearchValue={jest.fn()} />
+                    <NavigateAwayButton />
+                  </>} />
+                  <Route path="/elsewhere" element={<p>Elsewhere</p>} />
+                </Routes>
+              </TransferProvider>
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Delete Retry Song" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Forever" }));
+    const retry = await screen.findByRole("button", { name: "Retry unfinished deletion" });
+    await waitFor(() => expect(mockedDeleteSongAudio).toHaveBeenCalledTimes(1));
+
+    const beforeUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(beforeUnload);
+    expect(beforeUnload.defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Navigate away" }));
+    expect(screen.getByText("Elsewhere")).toBeInTheDocument();
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(mockedDeleteSongAudio).toHaveBeenCalledTimes(2));
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(mockedDeleteSongAudio).toHaveBeenLastCalledWith({
+      churchId: "church-1",
+      songId: "song-retry",
+      audio,
+    });
+  });
+
+  it("pauses a late deletion completion after identity changes and never redirects it to the new database", async () => {
+    let resolveRemove!: (value: { ok: true }) => void;
+    const removePending = new Promise<{ ok: true }>((resolve) => { resolveRemove = resolve; });
+    const item = { _id: "late-item", name: "Late Item", type: "free", listId: "late-item" } as any;
+    const originalDb = {
+      name: "original-db",
+      get: jest.fn().mockResolvedValue(item),
+      remove: jest.fn(() => removePending),
+    } as any;
+    const nextDb = {
+      name: "next-db",
+      get: jest.fn(),
+      remove: jest.fn(),
+    } as any;
+    const NavigateAwayButton = () => {
+      const navigate = useNavigate();
+      return <button onClick={() => navigate("/elsewhere")}>Navigate away</button>;
+    };
+    const contextValue = createMockGlobalContext();
+    const tree = (db: any, globalInfo: any) => (
+      <Provider store={createTestStore()}>
+        <ControllerInfoContext.Provider value={createMockControllerContext({ db }) as any}>
+          <GlobalInfoContext.Provider value={globalInfo}>
+            <MemoryRouter initialEntries={["/library"]}>
+              <TransferProvider>
+                <Routes>
+                  <Route path="/library" element={<>
+                    <FilteredItems list={[item]} type="free" heading="Custom" label="custom item"
+                      isLoading={false} allDocs={[item]} searchValue="" setSearchValue={jest.fn()} />
+                    <NavigateAwayButton />
+                  </>} />
+                  <Route path="/elsewhere" element={<p>Elsewhere</p>} />
+                </Routes>
+              </TransferProvider>
+            </MemoryRouter>
+          </GlobalInfoContext.Provider>
+        </ControllerInfoContext.Provider>
+      </Provider>
+    );
+    const view = render(tree(originalDb, contextValue));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Delete Late Item" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Delete Forever" }));
+    await waitFor(() => expect(originalDb.remove).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "Navigate away" }));
+    view.rerender(tree(nextDb, createMockGlobalContext({ userId: "different-user", database: "next-db" })));
+    resolveRemove({ ok: true });
+
+    const retry = await screen.findByRole("button", { name: "Retry unfinished deletion" });
+    fireEvent.click(retry);
+    await screen.findByRole("button", { name: "Retry unfinished deletion" });
+    expect(nextDb.get).not.toHaveBeenCalled();
+    expect(nextDb.remove).not.toHaveBeenCalled();
+    expect(originalDb.remove).toHaveBeenCalledTimes(1);
   });
 
   it("hides library delete controls in controller present mode", async () => {

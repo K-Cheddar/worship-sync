@@ -90,6 +90,15 @@ describe("mediaSlice", () => {
 
       expect(isMediaLoadSettled(store.getState().media)).toBe(false);
     });
+
+    it("lets controller startup continue while first-time media sync is pending", () => {
+      const store = createStore();
+
+      store.dispatch(setLoadStatus("waiting"));
+
+      expect(store.getState().media.isInitialized).toBe(false);
+      expect(isMediaLoadSettled(store.getState().media)).toBe(true);
+    });
   });
 
   describe("initiateMediaList", () => {
@@ -148,6 +157,20 @@ describe("mediaSlice", () => {
   });
 
   describe("v2 replicated changes", () => {
+    it("keeps media read-only until a complete snapshot initializes the library", () => {
+      const store = createStore();
+      store.dispatch(setLoadStatus("waiting"));
+
+      store.dispatch(upsertMediaItemFromRemote(makeMedia("partial")));
+      store.dispatch(updateMediaFoldersFromRemote([makeFolder("partial-folder")]));
+
+      expect(store.getState().media.list).toEqual([makeMedia("partial")]);
+      expect(store.getState().media.folders).toEqual([makeFolder("partial-folder")]);
+      expect(store.getState().media.isInitialized).toBe(false);
+      expect(store.getState().media.loadStatus).toBe("waiting");
+      expect(isMediaLoadSettled(store.getState().media)).toBe(true);
+    });
+
     it("replaces authoritative item documents, applies folders, and removes tombstones", () => {
       const store = createStore();
       store.dispatch(initiateMediaFromDoc({ list: [makeMedia("existing")], folders: [] }));

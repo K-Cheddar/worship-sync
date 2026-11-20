@@ -46,11 +46,15 @@ import {
 } from "../../hooks/useCachedMediaUrl";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
+import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
 import LocalVideoInputView from "../../components/DisplayWindow/LocalVideoInputView";
 import {
   buildLocalVideoInputPresentation,
   isDesktopCaptureKind,
+  getLocalVideoInputPreviewStatus,
 } from "../../utils/localVideoInput";
+import { getLocalMediaPreviewStatus } from "./localMediaPreviewStatus";
+import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
 import { getOrCreateDeviceId } from "../../utils/authStorage";
 import { getTrustedDeviceLabel } from "../../utils/deviceInfo";
 import {
@@ -204,7 +208,6 @@ type MediaModalProps = {
   onAddScreenShare?: () => void;
   onRelinkVideoInput?: (media: MediaType) => void;
   onRelinkLocalVideoFile?: (media: MediaType) => void;
-  onLinkVideo?: () => void;
   onImportFromCanva?: (sourceMedia?: MediaType) => void;
   /** When true, adding media is blocked (library still loading or failed). */
   mediaUploadDisabled?: boolean;
@@ -248,7 +251,6 @@ const MediaModal = ({
   onAddScreenShare,
   onRelinkVideoInput,
   onRelinkLocalVideoFile,
-  onLinkVideo,
   onImportFromCanva,
   mediaUploadDisabled = false,
   isGuestSession = false,
@@ -316,7 +318,6 @@ const MediaModal = ({
       onAddVideoInput={onAddVideoInput}
       onAddScreenShare={onAddScreenShare}
       onImportFromCanva={onImportFromCanva ? () => onImportFromCanva() : undefined}
-      onLinkVideo={onLinkVideo}
       mediaUploadDisabled={mediaUploadDisabled}
       isGuestSession={isGuestSession}
     />
@@ -404,6 +405,20 @@ const MediaModal = ({
   const localVideoAutoRetrySourcesRef = useRef(new Set<string>());
   const [localVideoPreviewFailureSources, setLocalVideoPreviewFailureSources] =
     useState<Set<string>>(() => new Set());
+  const startLocalVideoPreviewAttempt = useCallback((sourceKey: string) => {
+    if (!sourceKey) return;
+    localVideoAutoRetrySourcesRef.current.delete(sourceKey);
+    setLocalVideoPreviewFailureSources((current) => {
+      if (!current.has(sourceKey)) return current;
+      const next = new Set(current);
+      next.delete(sourceKey);
+      return next;
+    });
+    setLocalVideoRefresh((current) => ({
+      sourceKey,
+      key: current.sourceKey === sourceKey ? current.key + 1 : 1,
+    }));
+  }, []);
   const localPreviewVideoSourceKey = getLocalVideoPreviewSourceKey(modalPreviewMedia);
   const localVideoRefreshKey = localVideoRefresh.sourceKey === localPreviewVideoSourceKey
     ? localVideoRefresh.key
@@ -835,17 +850,47 @@ const MediaModal = ({
     "display",
     localVideoRefreshKey,
   );
-  const localVideoInputPreview = useMemo(
-    () =>
-      modalPreviewMedia?.localVideoInput
-        ? buildLocalVideoInputPresentation(
+  const localVideoInputStatus = getLocalVideoInputPreviewStatus(
+    modalPreviewMedia?.localVideoInput,
+  );
+  const localVideoInputPreview =
+    modalPreviewMedia?.localVideoInput && !localVideoInputStatus
+      ? buildLocalVideoInputPresentation(
           modalPreviewMedia.localVideoInput,
           getOrCreateDeviceId(),
           getTrustedDeviceLabel(),
         )
-        : undefined,
-    [modalPreviewMedia?.localVideoInput],
-  );
+      : undefined;
+  const previewImageUrl =
+    localPreviewImage.url ||
+    (isLocalMediaReferenceUrl(modalPreviewMedia?.background)
+      ? undefined
+      : resolvedPreviewImageUrl);
+  const previewVideoUrl =
+    localPreviewVideo.url ||
+    (isLocalMediaReferenceUrl(modalPreviewMedia?.background)
+      ? undefined
+      : resolvedPreviewVideoUrl);
+  const localPreviewImageStatus = getLocalMediaPreviewStatus({
+    kind: "image",
+    isLocal: localPreviewImage.isLocalImage,
+    isOwner: localPreviewImage.isOwner,
+    status: localPreviewImage.status,
+    fileName: modalPreviewMedia?.localImage?.fileName,
+    mediaName: modalPreviewMedia?.name,
+    ownerLabel: modalPreviewMedia?.localImage?.ownerLabel,
+    previewUrl: previewImageUrl,
+  });
+  const localPreviewVideoStatus = getLocalMediaPreviewStatus({
+    kind: "video",
+    isLocal: localPreviewVideo.isLocalVideoFile,
+    isOwner: localPreviewVideo.isOwner,
+    status: localPreviewVideo.status,
+    fileName: modalPreviewMedia?.localVideoFile?.fileName,
+    mediaName: modalPreviewMedia?.name,
+    ownerLabel: modalPreviewMedia?.localVideoFile?.ownerLabel,
+    previewUrl: previewVideoUrl,
+  });
 
   useEffect(() => {
     if (!isOpen || !modalGridRef.current) return;
@@ -873,12 +918,7 @@ const MediaModal = ({
   useEffect(() => {
     if (isOpen && !wasModalOpenRef.current) {
       const sourceKey = getLocalVideoPreviewSourceKey(previewMedia);
-      if (sourceKey) {
-        setLocalVideoRefresh((current) => ({
-          sourceKey,
-          key: current.sourceKey === sourceKey ? current.key + 1 : 1,
-        }));
-      }
+      startLocalVideoPreviewAttempt(sourceKey);
       setModalSelectedMedia(selectedMedia);
       setModalSelectedMediaIds(new Set(selectedMediaIds));
       setModalPreviewMedia(previewMedia);
@@ -926,6 +966,7 @@ const MediaModal = ({
     setModalSelectedMediaIds,
     setModalPreviewMedia,
     clearModalSelection,
+    startLocalVideoPreviewAttempt,
   ]);
 
   useEffect(
@@ -983,7 +1024,7 @@ const MediaModal = ({
         >
           {modalPreviewMedia && modalPreviewMedia.type === "image" && (
             <>
-              <div className="absolute top-2 right-2 z-10 flex gap-2">
+              <div className="absolute top-2 right-2 z-40 flex gap-2">
                 <Button
                   variant="secondary"
                   svg={Minimize}
@@ -1000,14 +1041,21 @@ const MediaModal = ({
                   title="Hide Preview"
                 />
               </div>
-              <img
-                src={resolvedPreviewImageUrl}
-                alt={modalPreviewMedia.name}
-                className="w-full h-full object-contain transition-transform duration-300 ease-in-out"
-                style={{
-                  transform: isExpanded ? "scale(1)" : "scale(0.95)",
-                }}
-              />
+              {localPreviewImageStatus ? (
+                <LocalSourceStatus
+                  {...localPreviewImageStatus}
+                  size="preview"
+                />
+              ) : (
+                <img
+                  src={previewImageUrl}
+                  alt={modalPreviewMedia.name}
+                  className="w-full h-full object-contain transition-transform duration-300 ease-in-out"
+                  style={{
+                    transform: isExpanded ? "scale(1)" : "scale(0.95)",
+                  }}
+                />
+              )}
             </>
           )}
         </div>
@@ -1034,7 +1082,7 @@ const MediaModal = ({
             {modalPreviewMedia && (
               <div className="relative flex max-h-full w-full max-w-full flex-1 min-h-0 items-center justify-center">
                 <div className="relative aspect-video max-h-full w-full max-w-full overflow-hidden rounded-md bg-black/25">
-                  <div className="absolute right-2 top-2 z-10 flex gap-2">
+                  <div className="absolute right-2 top-2 z-40 flex gap-2">
                     {modalPreviewMedia.type === "image" && (
                       <Button
                         variant="secondary"
@@ -1051,7 +1099,12 @@ const MediaModal = ({
                     />
                   </div>
                   <div className="flex h-full w-full items-center justify-center">
-                    {localVideoInputPreview ? (
+                    {localVideoInputStatus ? (
+                      <LocalSourceStatus
+                        {...localVideoInputStatus}
+                        size="preview"
+                      />
+                    ) : localVideoInputPreview ? (
                       <LocalVideoInputView
                         input={localVideoInputPreview}
                         playAudio={false}
@@ -1060,17 +1113,19 @@ const MediaModal = ({
                         publishPreview
                         showErrors
                       />
+                    ) : localPreviewVideoStatus &&
+                      modalPreviewMedia.type === "video" ? (
+                      <LocalSourceStatus
+                        {...localPreviewVideoStatus}
+                        size="preview"
+                      />
                     ) : localPreviewVideoFailed ? (
                       <div role="alert" className="px-4 text-center text-sm text-gray-300">
                         This video file could not be played.
                       </div>
                     ) : modalPreviewMedia.type === "video" ? (
                       <video
-                        src={
-                          localPreviewVideo.isLocalVideoFile
-                            ? localPreviewVideo.url
-                            : resolvedPreviewVideoUrl
-                        }
+                        src={previewVideoUrl}
                         className="max-h-full max-w-full w-full h-full object-contain"
                         controls
                         autoPlay
@@ -1097,13 +1152,14 @@ const MediaModal = ({
                           });
                         }}
                       />
+                    ) : localPreviewImageStatus ? (
+                      <LocalSourceStatus
+                        {...localPreviewImageStatus}
+                        size="preview"
+                      />
                     ) : (
                       <img
-                        src={
-                          localPreviewImage.isLocalImage
-                            ? localPreviewImage.url
-                            : resolvedPreviewImageUrl
-                        }
+                        src={previewImageUrl}
                         alt={modalPreviewMedia.name}
                         className="max-h-full max-w-full h-full w-full object-contain"
                       />

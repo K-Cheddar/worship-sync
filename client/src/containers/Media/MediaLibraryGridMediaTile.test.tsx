@@ -183,6 +183,49 @@ describe("MediaLibraryGridMediaTile", () => {
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
+  it("adds a compact indicator when a saved capture thumbnail has no local source", () => {
+    const remoteInput: MediaType = {
+      path: "",
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      format: "live",
+      height: 1080,
+      width: 1920,
+      name: "Main camera",
+      publicId: "input-remote",
+      type: "video",
+      id: "input-remote",
+      background: "local-video-input://source-remote",
+      thumbnail: "",
+      source: "local",
+      localVideoInput: {
+        kind: "local-video-input",
+        sourceId: "source-remote",
+        label: "Main camera",
+        ownerDeviceId: "origin-device",
+        ownerLabel: "Booth PC",
+      },
+    };
+
+    render(
+      <MediaLibraryGridMediaTile
+        mediaItem={remoteInput}
+        index={0}
+        isSelected={false}
+        isMultiSelected={false}
+        mediaMultiSelectMode={false}
+        onMediaTileClick={jest.fn()}
+        onEnterMediaMultiSelectMode={jest.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("status")).toHaveAttribute(
+      "aria-label",
+      "Local source on another device · Video input · Main camera · Available on Booth PC",
+    );
+    expect(screen.getByRole("status")).toHaveTextContent("Unavailable");
+  });
+
   it("shows a saved local thumbnail with a live-input indicator", () => {
     const localVideoInput: MediaType = {
       path: "",
@@ -210,6 +253,8 @@ describe("MediaLibraryGridMediaTile", () => {
         kind: "local-video-input",
         sourceId: "source-1",
         label: "Main camera",
+        ownerDeviceId: "remote-device-for-preview-test",
+        ownerLabel: "Booth PC",
       },
     };
     mockUseLocalImageUrl.mockReturnValue({
@@ -235,7 +280,10 @@ describe("MediaLibraryGridMediaTile", () => {
       "src",
       "blob:thumbnail-1",
     );
-    expect(screen.getByLabelText("Live video input")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("Video input unavailable on this device"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Unavailable");
   });
 
   it("falls back to the cloud thumbnail when a local asset is unavailable", () => {

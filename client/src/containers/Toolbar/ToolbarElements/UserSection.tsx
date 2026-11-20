@@ -352,6 +352,7 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
           </div>}
         </Button>
       }
+      bodyClassName="max-h-[calc(100dvh-6rem)] overflow-y-auto overscroll-contain"
     >
       <div className="flex min-w-[240px] max-w-sm flex-col gap-3 pt-1">
         <ChatLauncher onOpen={() => setIsAccountPopoverOpen(false)} />

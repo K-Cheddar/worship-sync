@@ -6,6 +6,7 @@ import { getTransferOverview, TransferProvider, useTransferActions, useTransfers
 import type { Transfer } from "./transferModel";
 import { MediaAddControl } from "../containers/Media/MediaAddControl";
 import { CanvaMediaReconciliationRequiredError } from "../utils/canvaMediaReplacement";
+import DeleteModal from "../components/Modal/DeleteModal";
 
 jest.mock("../hooks", () => ({ useDispatch: () => jest.fn() }));
 
@@ -106,7 +107,7 @@ test("invokes producer-neutral actions and unregisters handlers cleanly", async 
   expect(screen.queryByText("Generic work")).not.toBeInTheDocument();
 });
 
-test("dismisses completed Canva transfers through their registered action", async () => {
+test("dismisses completed Canva transfers from the Activity header", async () => {
   const user = userEvent.setup();
   const DismissHarness = () => {
     const { startCanvaTransfer } = useTransfers();
@@ -119,7 +120,10 @@ test("dismisses completed Canva transfers through their registered action", asyn
   render(<MemoryRouter><TransferProvider><DismissHarness /></TransferProvider></MemoryRouter>);
   await user.click(screen.getByRole("button", { name: "Import dismissible deck" }));
   expect(await screen.findByText("Dismissible deck")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Dismiss" }));
+  expect(screen.getByRole("button", { name: "Dismiss activity" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Minimize activity" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Dismiss activity" }));
   expect(screen.queryByText("Dismissible deck")).not.toBeInTheDocument();
 });
 
@@ -177,7 +181,8 @@ test("uses attention counts and amber Activity state for failed work", async () 
   expect(await screen.findByRole("heading", { name: "Activity · 1 needs attention" })).toBeInTheDocument();
   expect(screen.queryByText("Activity · 0 active")).not.toBeInTheDocument();
   expect(screen.getByTestId("activity-icon")).toHaveClass("text-amber-300");
-  expect(screen.getByRole("button", { name: "Dismiss" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Dismiss activity" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Dismiss" })).not.toBeInTheDocument();
 });
 
 test("combines active and attention counts in the Activity header", async () => {
@@ -639,9 +644,9 @@ test("starts a second folder deletion while the first runs, preserves FIFO order
   const Harness = () => {
     const activity = useTransferActions();
     return <>
-      <button onClick={() => activity.enqueueMediaFolderDeletion({
+      <button onClick={() => activity.enqueueMediaDeletion({
         id: "folder-delete-first",
-        folderId: "folder-first",
+        target: { kind: "folder", folderId: "folder-first" },
         scope: folderDeletionScope,
         transfer: folderDeletionTransfer("folder-delete-first", "First"),
         run: async () => {
@@ -654,9 +659,9 @@ test("starts a second folder deletion while the first runs, preserves FIFO order
         cancelRequested: () => undefined,
         cancelUnavailable: () => undefined,
       })}>Start first deletion</button>
-      <button onClick={() => activity.enqueueMediaFolderDeletion({
+      <button onClick={() => activity.enqueueMediaDeletion({
         id: "folder-delete-second",
-        folderId: "folder-second",
+        target: { kind: "folder", folderId: "folder-second" },
         scope: folderDeletionScope,
         transfer: folderDeletionTransfer("folder-delete-second", "Second"),
         run: async () => {
@@ -691,13 +696,13 @@ test("cancels a queued folder deletion without starting it", async () => {
   const Harness = () => {
     const activity = useTransferActions();
     return <>
-      <button onClick={() => activity.enqueueMediaFolderDeletion({
-        id: "queued-delete-first", folderId: "first", scope: folderDeletionScope, transfer: folderDeletionTransfer("queued-delete-first", "First"),
+      <button onClick={() => activity.enqueueMediaDeletion({
+        id: "queued-delete-first", target: { kind: "folder", folderId: "first" }, scope: folderDeletionScope, transfer: folderDeletionTransfer("queued-delete-first", "First"),
         run: async () => firstGate.promise,
         cancelQueued: () => undefined, cancelRequested: () => undefined, cancelUnavailable: () => undefined,
       })}>Start first deletion</button>
-      <button onClick={() => activity.enqueueMediaFolderDeletion({
-        id: "queued-delete-second", folderId: "second", scope: folderDeletionScope, transfer: folderDeletionTransfer("queued-delete-second", "Second"),
+      <button onClick={() => activity.enqueueMediaDeletion({
+        id: "queued-delete-second", target: { kind: "folder", folderId: "second" }, scope: folderDeletionScope, transfer: folderDeletionTransfer("queued-delete-second", "Second"),
         run: secondRun,
         cancelQueued: () => { secondCancel(); activity.updateTransfer({ ...folderDeletionTransfer("queued-delete-second", "Second"), status: "cancelled", phase: { key: "cancelled", label: "Deletion cancelled" }, canCancel: false, blocksUnload: false }); },
         cancelRequested: () => undefined, cancelUnavailable: () => undefined,
@@ -722,8 +727,8 @@ test("supports active cancellation before folder deletion reaches its safe stop 
   const cancelled = jest.fn();
   const Harness = () => {
     const activity = useTransferActions();
-    return <button onClick={() => activity.enqueueMediaFolderDeletion({
-      id: "active-delete", folderId: "active-folder", scope: folderDeletionScope, transfer: folderDeletionTransfer("active-delete", "Active"),
+    return <button onClick={() => activity.enqueueMediaDeletion({
+      id: "active-delete", target: { kind: "folder", folderId: "active-folder" }, scope: folderDeletionScope, transfer: folderDeletionTransfer("active-delete", "Active"),
       run: async (control) => {
         activity.updateTransfer({ ...folderDeletionTransfer("active-delete", "Active"), status: "active", phase: { key: "active", label: "Stopping cloud uploads" }, actions: [{ key: "cancel", label: "Cancel Delete folder Active" }] });
         await gate.promise;
@@ -756,8 +761,8 @@ test("rejects cancellation after a folder deletion marks its mutation boundary",
     const activity = useTransfers();
     const actions = useTransferActions();
     return <>
-      <button onClick={() => actions.enqueueMediaFolderDeletion({
-        id: "irreversible-delete", folderId: "irreversible-folder", transfer: folderDeletionTransfer("irreversible-delete", "Irreversible"),
+      <button onClick={() => actions.enqueueMediaDeletion({
+        id: "irreversible-delete", target: { kind: "folder", folderId: "irreversible-folder" }, transfer: folderDeletionTransfer("irreversible-delete", "Irreversible"),
         scope: folderDeletionScope,
         run: async (control) => {
           control.setCancellationAvailable(false);
@@ -794,16 +799,16 @@ test("queues overlapping parent and child folder requests in order", async () =>
   const Harness = () => {
     const activity = useTransferActions();
     return <>
-      <button onClick={() => outcomes.push(activity.enqueueMediaFolderDeletion({
-        id: "parent-delete", folderId: "parent", scope: folderDeletionScope, transfer: folderDeletionTransfer("parent-delete", "Parent"),
+      <button onClick={() => outcomes.push(activity.enqueueMediaDeletion({
+        id: "parent-delete", target: { kind: "folder", folderId: "parent" }, scope: folderDeletionScope, transfer: folderDeletionTransfer("parent-delete", "Parent"),
         run: async () => { started.push("parent"); await gate.promise; }, cancelQueued: () => undefined, cancelRequested: () => undefined, cancelUnavailable: () => undefined,
       }) ? "accepted" : null)}>Start parent deletion</button>
-      <button onClick={() => outcomes.push(activity.enqueueMediaFolderDeletion({
-        id: "child-delete", folderId: "child", scope: folderDeletionScope, transfer: folderDeletionTransfer("child-delete", "Child"),
+      <button onClick={() => outcomes.push(activity.enqueueMediaDeletion({
+        id: "child-delete", target: { kind: "folder", folderId: "child" }, scope: folderDeletionScope, transfer: folderDeletionTransfer("child-delete", "Child"),
         run: async () => { started.push("child"); }, cancelQueued: () => undefined, cancelRequested: () => undefined, cancelUnavailable: () => undefined,
       }) ? "accepted" : null)}>Start child deletion</button>
-      <button onClick={() => outcomes.push(activity.enqueueMediaFolderDeletion({
-        id: "child-delete-duplicate", folderId: "child", scope: folderDeletionScope, transfer: folderDeletionTransfer("child-delete-duplicate", "Child duplicate"),
+      <button onClick={() => outcomes.push(activity.enqueueMediaDeletion({
+        id: "child-delete-duplicate", target: { kind: "folder", folderId: "child" }, scope: folderDeletionScope, transfer: folderDeletionTransfer("child-delete-duplicate", "Child duplicate"),
         run: async () => undefined, cancelQueued: () => undefined, cancelRequested: () => undefined, cancelUnavailable: () => undefined,
       }) ? "accepted" : null)}>Repeat child deletion</button>
     </>;
@@ -825,8 +830,8 @@ test("keeps folder deletion activity alive while the Activity panel is closed", 
   const user = userEvent.setup();
   const Harness = () => {
     const activity = useTransferActions();
-    return <button onClick={() => activity.enqueueMediaFolderDeletion({
-      id: "panel-close-delete", folderId: "panel-close-folder", scope: folderDeletionScope, transfer: folderDeletionTransfer("panel-close-delete", "Panel close"),
+    return <button onClick={() => activity.enqueueMediaDeletion({
+      id: "panel-close-delete", target: { kind: "folder", folderId: "panel-close-folder" }, scope: folderDeletionScope, transfer: folderDeletionTransfer("panel-close-delete", "Panel close"),
       run: async () => {
         await gate.promise;
         activity.updateTransfer({ ...folderDeletionTransfer("panel-close-delete", "Panel close"), status: "complete", phase: { key: "complete", label: "Folder deletion complete" }, canCancel: false, blocksUnload: false, actions: [{ key: "dismiss", label: "Dismiss" }] });
@@ -841,5 +846,190 @@ test("keeps folder deletion activity alive while the Activity panel is closed", 
   await act(async () => gate.resolve());
   await user.click(screen.getByRole("button", { name: /Show Activity/ }));
   expect(screen.getByText("Complete", { exact: true })).toBeInTheDocument();
+});
+
+test("submits an item deletion from DeleteModal into the Activity queue immediately", async () => {
+  const firstGate = deferred<void>();
+  const user = userEvent.setup();
+  const started: string[] = [];
+  const outcomes: Array<string | null> = [];
+  const Harness = () => {
+    const activity = useTransferActions();
+    const [dialogOpen, setDialogOpen] = useState(false);
+    const [mediaId, setMediaId] = useState("media-first");
+    const firstTransfer: Transfer = {
+      ...folderDeletionTransfer("item-first", "first item"),
+      name: "Delete first item",
+    };
+    const secondTransfer: Transfer = {
+      ...folderDeletionTransfer("item-second", "second item"),
+      name: "Delete second item",
+    };
+    const confirm = () => {
+      const transfer = mediaId === "media-first" ? firstTransfer : secondTransfer;
+      const accepted = activity.enqueueMediaDeletion({
+        id: mediaId === "media-first" ? "item-overlap" : "item-second",
+        target: { kind: "items", mediaIds: [mediaId] },
+        scope: folderDeletionScope,
+        transfer,
+        run: async () => {
+          if (mediaId !== "media-second") return;
+          started.push("second");
+          activity.updateTransfer({ ...transfer, status: "complete", phase: { key: "complete", label: "Deletion complete" }, canCancel: false, blocksUnload: false });
+        },
+        cancelQueued: () => undefined,
+        cancelRequested: () => undefined,
+        cancelUnavailable: () => undefined,
+      });
+      outcomes.push(accepted ? "accepted" : null);
+      if (accepted) setDialogOpen(false);
+    };
+    return <>
+      <button onClick={() => activity.enqueueMediaDeletion({
+        id: "item-first",
+        target: { kind: "items", mediaIds: ["media-first"] },
+        scope: folderDeletionScope,
+        transfer: firstTransfer,
+        run: async () => {
+          started.push("first");
+          activity.updateTransfer({ ...firstTransfer, status: "active", phase: { key: "active", label: "Deleting first item" } });
+          await firstGate.promise;
+          throw new Error("First item deletion failed.");
+        },
+        cancelQueued: () => undefined,
+        cancelRequested: () => undefined,
+        cancelUnavailable: () => undefined,
+      })}>Start first item deletion</button>
+      <button onClick={() => setDialogOpen(true)}>Open delete confirmation</button>
+      <button onClick={() => setMediaId("media-second")}>Select second item</button>
+      <DeleteModal
+        isOpen={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        onConfirm={confirm}
+        title="Delete media"
+        confirmText="Delete"
+      />
+    </>;
+  };
+  render(<MemoryRouter><TransferProvider><Harness /></TransferProvider></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: "Start first item deletion" }));
+  await waitFor(() => expect(started).toEqual(["first"]));
+  await user.click(screen.getByRole("button", { name: "Open delete confirmation" }));
+  await user.click(screen.getByRole("button", { name: "Delete" }));
+  expect(outcomes).toEqual([null]);
+  expect(screen.getByRole("dialog", { name: "Delete media" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+  await user.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog", { name: "Delete media" })).not.toBeInTheDocument();
+
+  await user.click(screen.getByRole("button", { name: "Select second item" }));
+  await user.click(screen.getByRole("button", { name: "Open delete confirmation" }));
+  await user.click(screen.getByRole("button", { name: "Delete" }));
+  expect(outcomes).toEqual([null, "accepted"]);
+  expect(screen.queryByRole("dialog", { name: "Delete media" })).not.toBeInTheDocument();
+  expect(started).toEqual(["first"]);
+
+  await act(async () => firstGate.reject(new Error("First item deletion failed.")));
+  await waitFor(() => expect(started).toEqual(["first", "second"]));
+  expect(screen.getByText("Failed", { exact: true })).toBeInTheDocument();
+  expect(screen.getByText("Complete", { exact: true })).toBeInTheDocument();
+});
+
+test("runs item jobs before later folder jobs and cancels queued item work", async () => {
+  const firstGate = deferred<void>();
+  const user = userEvent.setup();
+  const started: string[] = [];
+  const cancelQueued = jest.fn();
+  const Harness = () => {
+    const activity = useTransferActions();
+    return <>
+      <button onClick={() => activity.enqueueMediaDeletion({
+        id: "item-before-folder",
+        target: { kind: "items", mediaIds: ["item-before-folder"] },
+        scope: folderDeletionScope,
+        transfer: { ...folderDeletionTransfer("item-before-folder", "item before folder"), name: "Delete item before folder" },
+        run: async () => { started.push("item"); await firstGate.promise; },
+        cancelQueued: () => undefined,
+        cancelRequested: () => undefined,
+        cancelUnavailable: () => undefined,
+      })}>Start item job</button>
+      <button onClick={() => activity.enqueueMediaDeletion({
+        id: "folder-after-item",
+        target: { kind: "folder", folderId: "folder-after-item" },
+        scope: folderDeletionScope,
+        transfer: folderDeletionTransfer("folder-after-item", "after item"),
+        run: async () => { started.push("folder"); },
+        cancelQueued: () => undefined,
+        cancelRequested: () => undefined,
+        cancelUnavailable: () => undefined,
+      })}>Start folder after item</button>
+      <button onClick={() => activity.enqueueMediaDeletion({
+        id: "queued-item-cancel",
+        target: { kind: "items", mediaIds: ["queued-item-cancel"] },
+        scope: folderDeletionScope,
+        transfer: { ...folderDeletionTransfer("queued-item-cancel", "queued item"), name: "Delete queued item" },
+        run: async () => { started.push("cancelled item"); },
+        cancelQueued,
+        cancelRequested: () => undefined,
+        cancelUnavailable: () => undefined,
+      })}>Queue item to cancel</button>
+    </>;
+  };
+  render(<MemoryRouter><TransferProvider><Harness /></TransferProvider></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: "Start item job" }));
+  await waitFor(() => expect(started).toEqual(["item"]));
+  await user.click(screen.getByRole("button", { name: "Start folder after item" }));
+  await user.click(screen.getByRole("button", { name: "Queue item to cancel" }));
+  await user.click(screen.getByRole("button", { name: "Cancel Delete queued item" }));
+  expect(cancelQueued).toHaveBeenCalledTimes(1);
+  expect(started).toEqual(["item"]);
+  await act(async () => firstGate.resolve());
+  await waitFor(() => expect(started).toEqual(["item", "folder"]));
+  expect(started).not.toContain("cancelled item");
+});
+
+test("rejects overlapping item ID sets only within the same church and database", async () => {
+  const gate = deferred<void>();
+  const user = userEvent.setup();
+  const results: Array<string | null> = [];
+  const started: string[] = [];
+  const otherChurchScope = { churchId: "other-church", databaseName: "media-test" };
+  const otherDatabaseScope = { churchId: folderDeletionScope.churchId, databaseName: "other-database" };
+  const makeJob = (id: string, mediaIds: string[], scope = folderDeletionScope, wait = false) => ({
+    id,
+    target: { kind: "items" as const, mediaIds },
+    scope,
+    transfer: { ...folderDeletionTransfer(id, id), name: `Delete ${id}` },
+    run: async () => {
+      started.push(id);
+      if (wait) await gate.promise;
+    },
+    cancelQueued: () => undefined,
+    cancelRequested: () => undefined,
+    cancelUnavailable: () => undefined,
+  });
+  const Harness = () => {
+    const activity = useTransferActions();
+    return <>
+      <button onClick={() => results.push(activity.enqueueMediaDeletion(makeJob("bulk", ["media-a", "media-b"], folderDeletionScope, true)) ? "accepted" : null)}>Queue bulk</button>
+      <button onClick={() => results.push(activity.enqueueMediaDeletion(makeJob("overlap", ["media-b", "media-c"])) ? "accepted" : null)}>Queue overlap</button>
+      <button onClick={() => results.push(activity.enqueueMediaDeletion(makeJob("other-church", ["media-b"], otherChurchScope)) ? "accepted" : null)}>Queue same ID in other church</button>
+      <button onClick={() => results.push(activity.enqueueMediaDeletion(makeJob("other-database", ["media-b"], otherDatabaseScope)) ? "accepted" : null)}>Queue same ID in other database</button>
+    </>;
+  };
+  render(<MemoryRouter><TransferProvider><Harness /></TransferProvider></MemoryRouter>);
+
+  await user.click(screen.getByRole("button", { name: "Queue bulk" }));
+  await waitFor(() => expect(started).toEqual(["bulk"]));
+  await user.click(screen.getByRole("button", { name: "Queue overlap" }));
+  await user.click(screen.getByRole("button", { name: "Queue same ID in other church" }));
+  await user.click(screen.getByRole("button", { name: "Queue same ID in other database" }));
+  expect(results).toEqual(["accepted", null, "accepted", "accepted"]);
+
+  await act(async () => gate.resolve());
+  await waitFor(() => expect(started).toEqual(["bulk", "other-church", "other-database"]));
 });
 

@@ -7,6 +7,7 @@ export type MediaLibraryGridProps = {
   isPanelVariant: boolean;
   isMediaExpanded: boolean;
   isMediaLoading: boolean;
+  isMediaWaitingForSync?: boolean;
   hasMediaLoadError: boolean;
   mediaItemsPerRow: number;
   mediaListRef: RefObject<HTMLElement | null>;
@@ -42,6 +43,7 @@ export default function MediaLibraryGrid({
   isPanelVariant,
   isMediaExpanded,
   isMediaLoading,
+  isMediaWaitingForSync = false,
   hasMediaLoadError,
   mediaItemsPerRow,
   mediaListRef,
@@ -94,7 +96,7 @@ export default function MediaLibraryGrid({
             isPanelVariant ? "flex-1 min-h-0" : "h-full",
           )}
         >
-          Loading media...
+          {isMediaWaitingForSync ? "Preparing media library..." : "Loading media..."}
         </h3>
       )}
       {hasMediaLoadError && isMediaExpanded && (

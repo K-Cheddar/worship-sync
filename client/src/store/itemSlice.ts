@@ -101,9 +101,11 @@ const initialState: ItemState = {
   isItemFormatting: false,
   hasPendingUpdate: false,
   hasRemoteUpdate: false,
+  itemPersistenceError: null,
   remoteUpdateReason: null,
   baseItem: null,
   pendingRemoteItem: null,
+  pendingItemRevisionConflict: undefined,
   shouldSendTo: defaultShouldSendTo,
   restoreFocusToBox: null,
   songMetadata: undefined,
@@ -178,7 +180,7 @@ const defaultBibleInfoForCompare: BibleInfo = {
 
 /** Align optional fields so DB docs missing nested objects match in-memory item state. */
 function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
-  return {
+  const normalized = {
     ...snap,
     shouldSkipTitle: snap.shouldSkipTitle ?? false,
     background: snap.background ?? "",
@@ -189,6 +191,9 @@ function normalizeSnapshotForEditorCompare(snap: DBItem): DBItem {
     shouldSendTo: snap.shouldSendTo ?? defaultShouldSendTo,
     songLinks: snap.songLinks ?? [],
   };
+  // PouchDB stores JSON documents, so own-save echoes omit undefined-valued
+  // object fields. Compare the JSON-persisted shape to avoid false conflicts.
+  return JSON.parse(JSON.stringify(normalized)) as DBItem;
 }
 
 /** Strips Couch metadata so echo/sync round-trips match the editor despite new `_rev` / timestamps. */
@@ -206,8 +211,16 @@ export function itemDocMatchesEditorState(
   doc: DBItem,
   currentItem: ItemState,
 ): boolean {
-  const snapDoc = createItemSnapshot(doc);
-  const snapState = createItemSnapshot(currentItem);
+  return itemDocsMatchPersistedContent(doc, currentItem);
+}
+
+/** Compare database documents and editor snapshots using the same persisted shape. */
+export function itemDocsMatchPersistedContent(
+  left: Partial<ItemState> | DBItem,
+  right: Partial<ItemState> | DBItem,
+): boolean {
+  const snapDoc = createItemSnapshot(left);
+  const snapState = createItemSnapshot(right);
   if (!snapDoc || !snapState) return false;
   return _.isEqual(
     omitItemSyncMetadata(normalizeSnapshotForEditorCompare(snapDoc)),
@@ -241,7 +254,11 @@ export const getItemPersistenceChanges = (
   const itemSnapshot = createItemSnapshot(item);
   if (!itemSnapshot) return [];
   const current = normalizeSnapshotForEditorCompare(itemSnapshot);
-  const base = normalizeSnapshotForEditorCompare(baseline);
+  // Normalize the baseline through the same load boundary as the editor. In
+  // particular, legacy custom items can derive monitorLayout from their slides
+  // even though the stored Pouch document has no monitorLayout field yet.
+  const baseSnapshot = createItemSnapshot(baseline) ?? baseline;
+  const base = normalizeSnapshotForEditorCompare(baseSnapshot);
   return ITEM_PERSISTED_FIELDS.filter(
     (field) => !_.isEqual(current[field], base[field]),
   );
@@ -255,8 +272,10 @@ export const getItemPersistenceConflicts = (
   const itemSnapshot = createItemSnapshot(item);
   if (!itemSnapshot) return [];
   const current = normalizeSnapshotForEditorCompare(itemSnapshot);
-  const base = normalizeSnapshotForEditorCompare(baseline);
-  const remote = normalizeSnapshotForEditorCompare(latest);
+  const baseSnapshot = createItemSnapshot(baseline) ?? baseline;
+  const latestSnapshot = createItemSnapshot(latest) ?? latest;
+  const base = normalizeSnapshotForEditorCompare(baseSnapshot);
+  const remote = normalizeSnapshotForEditorCompare(latestSnapshot);
   return getItemPersistenceChanges(itemSnapshot, baseline).filter(
     (field) => {
       // The v2 writer validates arrangement and slide documents separately.
@@ -363,9 +382,11 @@ export const itemSlice = createSlice({
       resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(action.payload);
       state.pendingRemoteItem = null;
+      state.pendingItemRevisionConflict = undefined;
       state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
       state.remoteUpdateReason = null;
+      state.itemPersistenceError = null;
     },
     restoreUndoRedoState: (state, action: PayloadAction<{
       current: ItemState;
@@ -386,6 +407,8 @@ export const itemSlice = createSlice({
       state.pendingSongV2Conflicts = current.pendingSongV2Conflicts;
       state.hasRemoteUpdate = current.hasRemoteUpdate;
       state.remoteUpdateReason = current.remoteUpdateReason;
+      state.itemPersistenceError = current.itemPersistenceError;
+      state.pendingItemRevisionConflict = current.pendingItemRevisionConflict;
       state.selectedSlide = current.selectedSlide;
       state.selectedBox = current.selectedBox;
       state.isLyricsEditorOpen = current.isLyricsEditorOpen;
@@ -660,11 +683,13 @@ export const itemSlice = createSlice({
         }
         const persistedSnapshot = createItemSnapshot(action.payload);
         state.baseItem = persistedSnapshot;
+        state.itemPersistenceError = null;
         state.hasPendingUpdate = getItemPersistenceChanges(
           state, persistedSnapshot ?? action.payload,
         ).length > 0 || !!state.pendingSongV2Conflicts?.length || !!state.remoteUpdateReason;
         if (!state.hasPendingUpdate) {
           state.pendingRemoteItem = null;
+          state.pendingItemRevisionConflict = undefined;
           state.pendingSongV2Conflicts = undefined;
           state.hasRemoteUpdate = false;
           state.remoteUpdateReason = null;
@@ -681,16 +706,49 @@ export const itemSlice = createSlice({
         action.payload,
       ).length > 0 || !!state.pendingSongV2Conflicts?.length || !!state.remoteUpdateReason;
     },
+    mergeRemoteItemUpdate: (state, action: PayloadAction<{
+      document: DBItem;
+      authoredBaseline: DBItem;
+    }>) => {
+      if (state._id !== action.payload.document._id) return;
+      const locallyChanged = new Set(
+        getItemPersistenceChanges(state, action.payload.authoredBaseline),
+      );
+      for (const field of ITEM_PERSISTED_FIELDS) {
+        if (locallyChanged.has(field)) continue;
+        (state as unknown as Record<PersistedItemField, unknown>)[field] =
+          action.payload.document[field];
+      }
+      const persistedSnapshot = createItemSnapshot(action.payload.document);
+      state.baseItem = persistedSnapshot;
+      state.hasPendingUpdate = getItemPersistenceChanges(
+        state,
+        persistedSnapshot ?? action.payload.document,
+      ).length > 0 || !!state.pendingSongV2Conflicts?.length || !!state.remoteUpdateReason;
+    },
     bufferRemoteItemUpdate: (state, action: PayloadAction<DBItem>) => {
       if (state._id !== action.payload._id) return;
       state.pendingRemoteItem = action.payload;
+      state.pendingItemRevisionConflict = undefined;
       state.hasRemoteUpdate = true;
+    },
+    bufferItemRevisionConflict: (state, action: PayloadAction<{
+      item: DBItem;
+      revisions: string[];
+    }>) => {
+      if (state._id !== action.payload.item._id) return;
+      state.pendingRemoteItem = action.payload.item;
+      state.pendingItemRevisionConflict = { revisions: [...action.payload.revisions].sort() };
+      state.pendingSongV2Conflicts = undefined;
+      state.hasRemoteUpdate = true;
+      state.hasPendingUpdate = true;
     },
     bufferSongV2RevisionConflict: (state, action: PayloadAction<{
       item: DBItem; conflicts: NonNullable<ItemState["pendingSongV2Conflicts"]>;
     }>) => {
       if (state._id !== action.payload.item._id) return;
       state.pendingRemoteItem = action.payload.item;
+      state.pendingItemRevisionConflict = undefined;
       state.pendingSongV2Conflicts = action.payload.conflicts;
       state.hasRemoteUpdate = true;
       state.hasPendingUpdate = true;
@@ -698,8 +756,15 @@ export const itemSlice = createSlice({
     setRemoteUpdateReason: (state, action: PayloadAction<ItemState["remoteUpdateReason"]>) => {
       state.remoteUpdateReason = action.payload ?? null;
     },
+    setItemPersistenceError: (state, action: PayloadAction<number | null>) => {
+      state.itemPersistenceError = action.payload;
+    },
+    retryItemSave: (state) => {
+      state.itemPersistenceError = null;
+    },
     discardPendingRemoteItem: (state) => {
       state.pendingRemoteItem = null;
+      state.pendingItemRevisionConflict = undefined;
       state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
       state.remoteUpdateReason = null;
@@ -711,6 +776,7 @@ export const itemSlice = createSlice({
       if (!state.pendingRemoteItem) return;
       if (state.pendingRemoteItem._id !== state._id) {
         state.pendingRemoteItem = null;
+        state.pendingItemRevisionConflict = undefined;
         state.hasRemoteUpdate = false;
         return;
       }
@@ -724,9 +790,11 @@ export const itemSlice = createSlice({
       resetBackgroundTargetUi(state);
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
+      state.pendingItemRevisionConflict = undefined;
       state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
       state.remoteUpdateReason = null;
+      state.itemPersistenceError = null;
       },
     },
     keepLocalItemChanges: (state) => {
@@ -734,9 +802,11 @@ export const itemSlice = createSlice({
       const hasRevisionConflicts = !!state.pendingSongV2Conflicts?.length;
       state.baseItem = createItemSnapshot(state.pendingRemoteItem);
       state.pendingRemoteItem = null;
+      state.pendingItemRevisionConflict = undefined;
       state.pendingSongV2Conflicts = undefined;
       state.hasRemoteUpdate = false;
       state.remoteUpdateReason = null;
+      state.itemPersistenceError = null;
       state.hasPendingUpdate = hasRevisionConflicts || !itemDocMatchesEditorState(
         state.baseItem!,
         state,
@@ -1376,12 +1446,16 @@ export const {
   setShouldSendTo,
   forceUpdate,
   bufferRemoteItemUpdate,
+  bufferItemRevisionConflict,
   bufferSongV2RevisionConflict,
   discardPendingRemoteItem,
   applyPendingRemoteItem,
   keepLocalItemChanges,
+  setItemPersistenceError,
+  retryItemSave,
   restorePendingItemEdits,
   rebaseItemPersistence,
+  mergeRemoteItemUpdate,
   markItemPersisted,
   toggleBackgroundTargetSlideId,
   setBackgroundTargetSlideIds,

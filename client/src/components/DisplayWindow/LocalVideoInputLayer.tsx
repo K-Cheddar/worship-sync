@@ -14,6 +14,8 @@ type LocalVideoInputLayerProps = {
   publishPreview?: boolean;
   showErrors?: boolean;
   showLocalSourceStatus?: boolean;
+  statusSize?: "compact" | "preview" | "canvas";
+  statusScaleFactor?: number;
   transparentBackground?: boolean;
   contentVisible?: boolean;
   outputId?: string;
@@ -33,6 +35,8 @@ const LocalVideoInputLayer = ({
   publishPreview,
   showErrors,
   showLocalSourceStatus,
+  statusSize,
+  statusScaleFactor,
   transparentBackground,
   contentVisible = true,
   outputId,
@@ -74,6 +78,8 @@ const LocalVideoInputLayer = ({
         publishPreview={publishPreview}
         showErrors={showErrors}
         showLocalSourceStatus={showLocalSourceStatus}
+        statusSize={statusSize}
+        statusScaleFactor={statusScaleFactor}
         transparentBackground={transparentBackground}
         outputId={outputId}
         windowRole={windowRole}

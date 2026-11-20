@@ -32,6 +32,7 @@ import {
   beginContentDatabaseSession,
   type ContentReplicationActivity,
   hasSuccessfulInitialContentReplication,
+  recordVerifiedInitialContentReplication,
   subscribeToContentActivity,
 } from "../utils/contentReplicationActivity";
 import { cancelBibleItemCleanupRetry } from "../utils/bibleItemCleanup";
@@ -882,21 +883,32 @@ const ControllerInfoProvider = ({ children }: any) => {
           })
           .on("complete", (result: { status?: string; ok?: boolean; errors?: unknown[] }) => {
             if (!isCurrentSession() || pullFailed || result?.status === "cancelled" || result?.ok === false || result?.errors?.length) return;
-            contentDatabaseSession.markInitialReplicationComplete();
-            activePullActivity.release();
-            if (initialContentReplicationActivityRef.current === activePullActivity) {
-              initialContentReplicationActivityRef.current = null;
-            }
-            setDbProgress(100);
-            initialRemoteDatabaseRef.current = localDb;
-            contentDbRef.current = localDb;
-            scheduleSongV2CleanupMaintenance(localDb, true);
-            if (broadcastDatabaseKey) {
-              updateGlobalBroadcast(broadcastDatabaseKey);
-            }
-            if (isAuthenticatedSession) {
-              syncDb(localDb, remoteDb, activeDatabaseKey);
-            }
+            void (async () => {
+              try {
+                await recordVerifiedInitialContentReplication(localDb, remoteSourceDbName);
+              } catch (error) {
+                // The current session is still ready from the successful pull;
+                // without this local-only record, a later offline restart will
+                // safely wait for another successful initial pull.
+                console.error("Could not save the local content replication checkpoint:", error);
+              }
+              if (!isCurrentSession()) return;
+              contentDatabaseSession.markInitialReplicationComplete();
+              activePullActivity.release();
+              if (initialContentReplicationActivityRef.current === activePullActivity) {
+                initialContentReplicationActivityRef.current = null;
+              }
+              setDbProgress(100);
+              initialRemoteDatabaseRef.current = localDb;
+              contentDbRef.current = localDb;
+              scheduleSongV2CleanupMaintenance(localDb, true);
+              if (broadcastDatabaseKey) {
+                updateGlobalBroadcast(broadcastDatabaseKey);
+              }
+              if (isAuthenticatedSession) {
+                syncDb(localDb, remoteDb, activeDatabaseKey);
+              }
+            })();
           });
       } catch (error) {
         pullActivity?.release();

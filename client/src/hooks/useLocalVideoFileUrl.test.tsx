@@ -77,6 +77,7 @@ describe("useLocalVideoFileUrl", () => {
     expect(mockAcquireLocalVideoFileThumbnailUrl).toHaveBeenCalledWith(
       "video-1",
       "revision-1",
+      true,
     );
     expect(mockAcquireLocalVideoFileUrl).not.toHaveBeenCalled();
   });
@@ -100,6 +101,48 @@ describe("useLocalVideoFileUrl", () => {
       status: "unavailable",
     });
     expect(mockAcquireLocalVideoFileThumbnailUrl).not.toHaveBeenCalled();
+  });
+
+  it("never returns a preferred cloud playback URL as an image thumbnail", async () => {
+    mockAcquireLocalVideoFileThumbnailUrl.mockReturnValue({
+      url: Promise.resolve(undefined),
+      release: mockRelease,
+    });
+    const cloudPlaybackUrl = "https://stream.mux.com/playback.m3u8";
+
+    const { result } = renderHook(() =>
+      useLocalVideoFileUrl(
+        {
+          ...reference,
+          cloudUrl: cloudPlaybackUrl,
+          preferCloudPlayback: true,
+        },
+        "thumbnail",
+      ),
+    );
+
+    await waitFor(() => expect(result.current.status).toBe("unavailable"));
+    expect(result.current.url).toBeUndefined();
+    expect(mockAcquireLocalVideoFileUrl).not.toHaveBeenCalled();
+    expect(mockAcquireLocalVideoFileThumbnailUrl).toHaveBeenCalledWith(
+      "video-1",
+      "revision-1",
+      true,
+    );
+  });
+
+  it("can read a saved thumbnail without starting extraction", async () => {
+    const { result } = renderHook(() =>
+      useLocalVideoFileUrl(reference, "thumbnail", 0, false),
+    );
+
+    await waitFor(() => expect(result.current.status).toBe("unavailable"));
+    expect(mockAcquireLocalVideoFileThumbnailUrl).toHaveBeenCalledWith(
+      "video-1",
+      "revision-1",
+      false,
+    );
+    expect(mockAcquireLocalVideoFileUrl).not.toHaveBeenCalled();
   });
 
   it("uses cloud playback while still detecting an unavailable local file", async () => {

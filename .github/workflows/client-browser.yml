@@ -12,6 +12,7 @@ on:
           - both
           - responsive-navigation
           - board-controller-mobile
+          - schedule-quick-member
 
 permissions:
   contents: read
@@ -49,6 +50,7 @@ jobs:
           case "$BROWSER_SUITE" in
             responsive-navigation) npm run test:e2e:responsive-navigation --prefix client ;;
             board-controller-mobile) npm run test:e2e:board-controller-mobile --prefix client ;;
+            schedule-quick-member) npm run test:e2e:schedule-quick-member --prefix client ;;
             both) npm run test:e2e:browser --prefix client ;;
             *) echo "Unsupported browser suite: $BROWSER_SUITE" >&2; exit 1 ;;
           esac

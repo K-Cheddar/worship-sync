@@ -76,6 +76,11 @@ export const E2E_SUITES = [
     client: true,
   },
   {
+    name: "Service public efficiency",
+    script: "test:e2e:service-public-efficiency",
+    client: true,
+  },
+  {
     name: "Availability workspace",
     script: "test:e2e:availability-workspace",
     client: true,

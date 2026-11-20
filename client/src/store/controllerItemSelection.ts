@@ -3,6 +3,7 @@ import type { AppDispatch, RootState } from "./store";
 import type { DBItem, ItemState, ServiceItem } from "../types";
 import { selectItemDocuments } from "./itemLibrarySelectors";
 import { bufferSongV2RevisionConflict, setActiveItem, setActiveItemOccurrence, setItemIsLoading, setSelectedSlide } from "./itemSlice";
+import { requestSelectedSlideNavigation } from "./slideNavigationSlice";
 import { setActiveItemInList } from "./itemListSlice";
 import { prepareItemForEditor } from "../utils/outlineSlideSections";
 import { normalizeItemSlides } from "../utils/activeItemSlides";
@@ -123,7 +124,11 @@ export const selectControllerItem = (
     if (active.listId !== target.listId) {
       dispatch(setActiveItemOccurrence(target.listId));
       dispatch(setSelectedSlide(selectedSlide ?? 0));
-    } else if (selectedSlide != null) dispatch(setSelectedSlide(selectedSlide));
+      if (selectedSlide != null) dispatch(requestSelectedSlideNavigation());
+    } else if (selectedSlide != null) {
+      dispatch(setSelectedSlide(selectedSlide));
+      dispatch(requestSelectedSlideNavigation());
+    }
     dispatch(setItemIsLoading(false));
     return Promise.resolve();
   }
