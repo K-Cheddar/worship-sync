@@ -121,3 +121,25 @@ answers and per-occurrence revision, and accept revision-aware edits through the
 existing recipient and response records. Saving an answer does not send SMS or
 email, create a reminder, activate a provider, or change consent. The separate
 My Availability interface reads and edits those answers in Phase 2B-2.
+
+## Historical grouped-occurrence projection (Phase 2B-4, 2026-11-20)
+
+Some already-issued forms contain both a grouped service occurrence and a
+standalone occurrence for the same date. The volunteer read model combines
+those rows only when the issued form contains the exact expected IDs, the
+current service catalog proves the standalone belongs to that active group,
+and a saved schedule snapshot in the form's Team scope proves an unambiguous
+matching group membership on the same church-local date. Missing, capped,
+ambiguous or conflicting evidence leaves the original rows separate. Same-day
+independent services remain separate.
+
+Projection does not rewrite the issued form, recipient scope or response
+records. The displayed group retains all raw occurrence IDs and revision
+counters; saving one answer writes through to each ID using every original
+revision. Different saved answers require explicit three-state reconciliation
+while the request is open; a closed request directs the volunteer to an
+administrator. The November 7, 14, 21 and 28 reported pairs are resolved only
+when each pair passes these checks. Unproven or conflicting records remain
+available for administrative review. Auto-fill recognizes an explicit
+unavailable answer on a historical individual ID only for its proven
+group/date; unanswered values remain neutral.

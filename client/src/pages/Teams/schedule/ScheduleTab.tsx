@@ -84,6 +84,7 @@ import ScheduleWorkspaceToolbar, {
 import ScheduleSendScopeNotice from "./ScheduleSendScopeNotice";
 import { getScheduleSendScope, resolveScheduleWorkspace } from "./scheduleWorkspaceModel";
 import { isPersistedScheduleId } from "./scheduleNotificationHistory";
+import { hasUnavailableAvailabilityAnswer } from "./serviceAvailability";
 import { useScheduleNotificationHistory } from "./useScheduleNotificationHistory";
 import RangeSelector from "../components/RangeSelector";
 import { shiftRange } from "../rangeSelection";
@@ -2897,12 +2898,13 @@ const ScheduleTab = ({
   const getServiceAvailabilityWarning = useCallback(
     (memberId: string, occurrenceId: string) => {
       const member = data.members.find((item) => item.memberId === memberId);
-      if (member?.serviceAvailability?.[occurrenceId] === "unavailable") {
+      const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === occurrenceId);
+      if (hasUnavailableAvailabilityAnswer(member, occurrence, serviceTimeZone)) {
         return "Marked this service unavailable on intake";
       }
       return "";
     },
-    [data.members],
+    [data.members, scheduleOccurrences, serviceTimeZone],
   );
 
   const getBlockoutWarning = useCallback(
@@ -7750,7 +7752,7 @@ const ScheduleTab = ({
                     if (holderId && selectedSchedule.responses?.[occurrence.occurrenceId]?.[column.columnKey]?.response !== "declined") return [];
                     return [{ occurrenceId: occurrence.occurrenceId, cellKey: column.columnKey,
                       label: `${occurrence.name} · ${formatOccurrenceRowLabel(occurrence, { sharedWeekday: null, sharedTime: null }, serviceTimeZone)} · ${column.label}`,
-                      memberIds: activeTeamMembers.filter((member) => member.memberId !== holderId && member.positionIds.includes(column.positionId) && member.serviceAvailability?.[occurrence.occurrenceId] !== "unavailable").map((member) => member.memberId),
+                      memberIds: activeTeamMembers.filter((member) => member.memberId !== holderId && member.positionIds.includes(column.positionId) && !hasUnavailableAvailabilityAnswer(member, occurrence, serviceTimeZone)).map((member) => member.memberId),
                     }];
                   }))}
                   onPrepareReplacement={async (vacancy, memberId) => {

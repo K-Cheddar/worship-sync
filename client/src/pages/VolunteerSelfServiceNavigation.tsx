@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { CalendarCheck, CalendarClock, CircleAlert, Menu as MenuIcon } from "lucide-react";
-import { Link, useLocation } from "react-router-dom";
+import { CalendarCheck, CalendarClock, ChevronLeft, ChevronRight, CircleAlert, Menu as MenuIcon } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import Button from "../components/Button/Button";
 import Icon from "../components/Icon/Icon";
-import Sidebar from "../components/Sidebar/Sidebar";
+import Sidebar, { APP_SIDEBAR_WIDTH_CLASS } from "../components/Sidebar/Sidebar";
 import {
   Sheet,
   SheetContent,
@@ -12,6 +12,7 @@ import {
 } from "../components/ui/sheet";
 import type { MenuItemType } from "../types";
 import type { PersonalScheduleAccess } from "./myScheduleOperations";
+import VolunteerNavigationLink, { useVolunteerNavigationGuard } from "./VolunteerNavigationGuard";
 
 type VolunteerPage = "schedule" | "availability";
 
@@ -32,44 +33,70 @@ const navigationLinkClass = (active: boolean) =>
       : "text-gray-300 hover:bg-gray-800 hover:text-white"
   }`;
 
-/** Shared desktop and mobile page navigation for the two volunteer workspaces. */
+/** Desktop sidebar and mobile bottom bar for both volunteer workspaces. */
 const VolunteerSelfServiceNavigation = ({
   access,
   active,
+  collapsed,
+  onToggleCollapsed,
 }: {
   access?: PersonalScheduleAccess;
   active: VolunteerPage;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) => {
   const links = linksFor(access);
   return (
     <>
-      <Sidebar className="hidden w-44 flex-col gap-1 border-r lg:flex">
-        <h2 className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
-          My workspace
-        </h2>
-        <nav aria-label="Volunteer pages" className="flex flex-col gap-1">
+      <Sidebar
+        data-testid="volunteer-desktop-sidebar"
+        className={`relative hidden min-w-0 flex-col gap-1 transition-[width,padding] duration-300 ease-in-out lg:flex lg:border-r ${
+          collapsed ? "w-14 lg:p-2" : `${APP_SIDEBAR_WIDTH_CLASS} lg:p-2`
+        }`}
+      >
+        <Button
+          type="button"
+          variant="tertiary"
+          padding="p-0"
+          position="absolute"
+          className="right-0 top-1/2 z-20 flex size-8 min-h-0 shrink-0 -translate-y-1/2 items-center justify-center rounded-full border border-gray-700 bg-gray-950 shadow-sm max-md:min-h-0"
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand sections" : "Collapse sections"}
+          onClick={onToggleCollapsed}
+        >
+          {collapsed ? <ChevronRight className="size-4 shrink-0" aria-hidden /> : <ChevronLeft className="size-4 shrink-0" aria-hidden />}
+        </Button>
+        {!collapsed ? (
+          <h2 className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            My workspace
+          </h2>
+        ) : null}
+        <nav aria-label="Volunteer pages" className={`flex flex-col gap-1 ${collapsed ? "items-center" : ""}`}>
           {links.map((link) => (
-            <Link
+            <VolunteerNavigationLink
               key={link.id}
               to={link.to}
+              aria-label={link.label}
               aria-current={active === link.id ? "page" : undefined}
-              className={navigationLinkClass(active === link.id)}
+              title={collapsed ? link.label : undefined}
+              className={`${navigationLinkClass(active === link.id)} ${collapsed ? "size-10 min-h-10 justify-center px-0" : ""}`}
             >
               <span aria-hidden="true"><Icon svg={link.icon} size="sm" /></span>
-              {link.label}
-            </Link>
+              {!collapsed ? <span className="min-w-0 truncate">{link.label}</span> : null}
+            </VolunteerNavigationLink>
           ))}
         </nav>
       </Sidebar>
 
       <nav
         aria-label="Volunteer pages"
+        data-testid="volunteer-mobile-bottom-navigation"
         className="fixed inset-x-0 bottom-0 z-30 flex h-[calc(57px_+_env(safe-area-inset-bottom))] items-center border-t border-gray-800/80 bg-gray-950 pl-[max(0.25rem,env(safe-area-inset-left))] pr-[max(0.25rem,env(safe-area-inset-right))] pb-[env(safe-area-inset-bottom)] lg:hidden"
       >
         {links.map((link) => {
           const selected = active === link.id;
           return (
-            <Link
+            <VolunteerNavigationLink
               key={link.id}
               to={link.to}
               aria-current={selected ? "page" : undefined}
@@ -81,7 +108,7 @@ const VolunteerSelfServiceNavigation = ({
                 <Icon svg={link.icon} size="md" />
               </span>
               <span>{link.label}</span>
-            </Link>
+            </VolunteerNavigationLink>
           );
         })}
       </nav>
@@ -89,8 +116,7 @@ const VolunteerSelfServiceNavigation = ({
   );
 };
 
-/** App menu drawer plus volunteer page links, without Teams-only providers. */
-export const VolunteerSelfServiceDrawer = ({
+const VolunteerSelfServiceDrawer = ({
   access,
   active,
   menuItems = [],
@@ -103,6 +129,7 @@ export const VolunteerSelfServiceDrawer = ({
 }) => {
   const [open, setOpen] = useState(false);
   const { pathname, search, hash } = useLocation();
+  const { requestNavigation } = useVolunteerNavigationGuard();
   const links = linksFor(access);
 
   useEffect(() => setOpen(false), [pathname, search, hash]);
@@ -145,9 +172,14 @@ export const VolunteerSelfServiceDrawer = ({
                   className="w-full justify-start rounded-lg px-2 py-1.5 text-sm text-gray-200 hover:bg-gray-800 hover:text-white max-md:min-h-10 max-md:[&>div]:min-h-0"
                   component={item.to ? "link" : "button"}
                   to={item.to}
-                  onClick={() => {
+                  onClick={(event) => {
                     item.onClick?.();
-                    if (!item.to) setOpen(false);
+                    if (item.to) {
+                      event.preventDefault();
+                      requestNavigation(item.to, { onNavigated: () => setOpen(false) });
+                    } else {
+                      setOpen(false);
+                    }
                   }}
                 >
                   {content}
@@ -159,18 +191,16 @@ export const VolunteerSelfServiceDrawer = ({
             <p className="px-2 pb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">My workspace</p>
             <nav aria-label="Volunteer pages" className="flex flex-col gap-1">
               {links.map((link) => (
-                <Link
+                <VolunteerNavigationLink
                   key={link.id}
                   to={link.to}
                   aria-current={active === link.id ? "page" : undefined}
                   className={navigationLinkClass(active === link.id)}
-                  onClick={(event) => {
-                    if (!event.defaultPrevented) setOpen(false);
-                  }}
+                  onNavigate={() => setOpen(false)}
                 >
                   <span aria-hidden="true"><Icon svg={link.icon} size="sm" /></span>
                   {link.label}
-                </Link>
+                </VolunteerNavigationLink>
               ))}
             </nav>
           </div>
@@ -181,3 +211,4 @@ export const VolunteerSelfServiceDrawer = ({
 };
 
 export default VolunteerSelfServiceNavigation;
+export { VolunteerSelfServiceDrawer };

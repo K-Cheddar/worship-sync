@@ -334,6 +334,40 @@ test("Firestore portal uses isolated cookies, CSRF and safe shared projections; 
       blockoutDates: [{ startDate: "2099-11-01", endDate: "2099-11-01" }], expectedUpdatedAt: "baseline" }), timeOff);
     assert.equal(timeOff.statusCode, 200);
     assert.doesNotMatch(JSON.stringify(timeOff.payload), /PRIVATE/);
+    const availability = res(); await authHandlers.getVolunteerPersonalAvailability(req(headers), availability);
+    assert.equal(availability.statusCode, 200);
+    assert.equal(availability.payload.schedulingPreferences.servingFrequency, "as_needed");
+    const preferenceBaseline = (await roster.get()).data();
+    const noPreferenceCsrf = res(); await authHandlers.saveVolunteerPersonalSchedulingPreferences(req({ cookie, origin }, {
+      servingFrequency: "weekly",
+      recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
+      expectedUpdatedAt: preferenceBaseline.updatedAt || "",
+      memberId: "forged-member",
+      firstName: "Forged",
+    }), noPreferenceCsrf);
+    assert.equal(noPreferenceCsrf.statusCode, 403);
+    const preferences = res(); await authHandlers.saveVolunteerPersonalSchedulingPreferences(req(headers, {
+      servingFrequency: "weekly",
+      recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
+      expectedUpdatedAt: preferenceBaseline.updatedAt || "",
+      memberId: "forged-member",
+      firstName: "Forged",
+    }), preferences);
+    assert.equal(preferences.statusCode, 200, JSON.stringify(preferences.payload));
+    const savedMember = (await roster.get()).data();
+    assert.equal(savedMember.servingFrequency, "weekly");
+    assert.deepEqual(savedMember.recurringAvailability, { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false });
+    assert.equal(savedMember.firstName, "Private");
+    assert.equal(savedMember.memberId, memberId);
+    await roster.update({ updatedAt: "2099-10-31T12:00:00.000Z", firstName: "Administrator updated" });
+    const stalePreferences = res(); await authHandlers.saveVolunteerPersonalSchedulingPreferences(req(headers, {
+      servingFrequency: "monthly",
+      recurringAvailability: { weeksOfMonth: [], includeLastWeekOfMonth: false },
+      expectedUpdatedAt: savedMember.updatedAt,
+    }), stalePreferences);
+    assert.equal(stalePreferences.statusCode, 409);
+    assert.equal((await roster.get()).get("firstName"), "Administrator updated");
+    assert.equal((await roster.get()).get("servingFrequency"), "weekly");
     const revoked = res(); await authHandlers.revokeVolunteerPersonalAccess(req(humanHeaders), revoked);
     assert.equal(revoked.statusCode, 200);
     const after = res(); await authHandlers.getVolunteerPersonalSchedule(req(headers), after);

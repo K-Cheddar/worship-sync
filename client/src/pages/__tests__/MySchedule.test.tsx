@@ -1,7 +1,7 @@
 /* eslint-disable testing-library/no-node-access -- Compare the decorative icon SVG directly to verify its identity. */
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { Provider } from "react-redux";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import store from "../../store/store";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
@@ -131,6 +131,11 @@ const futureCalendarDate = (daysAhead: number) => {
   return date;
 };
 
+const CurrentPath = () => {
+  const location = useLocation();
+  return <span data-testid="current-location">{location.pathname}</span>;
+};
+
 const calendarDayName = (date: Date) => {
   const day = date.getDate();
   const suffix = day % 100 >= 11 && day % 100 <= 13
@@ -171,6 +176,7 @@ const pageElement = (role = "member", churchId = "church-1") => (
         }
       >
         <MySchedule />
+        <CurrentPath />
       </GlobalInfoContext.Provider>
     </MemoryRouter>
   </Provider>
@@ -234,7 +240,7 @@ describe("MySchedule", () => {
     });
   });
 
-  it("keeps its toolbar full width above centered schedule content", () => {
+  it("keeps its toolbar full width above the shared full-width volunteer workspace", () => {
     respond([]);
     renderPage();
 
@@ -242,10 +248,14 @@ describe("MySchedule", () => {
     const toolbar = shell?.querySelector("[data-app-toolbar]");
     expect(toolbar).toHaveClass("w-full");
     expect(toolbar).not.toHaveClass("max-w-[90rem]");
-    expect(shell?.lastElementChild).toHaveClass(
+    const workspace = shell?.querySelector("[data-volunteer-workspace]");
+    expect(workspace).toHaveClass("w-full", "min-w-0");
+    expect(workspace).not.toHaveClass("max-w-[90rem]");
+    expect(screen.getByTestId("volunteer-workspace-scrollport").firstElementChild).toHaveClass(
       "mx-auto",
       "w-full",
-      "max-w-[90rem]",
+      "max-w-[80rem]",
+      "min-w-0",
     );
     const title = screen.getByRole("heading", { name: "My schedule" });
     const titleIcon = title.querySelector("svg");
@@ -1105,6 +1115,25 @@ describe("MySchedule", () => {
       expect(screen.getByRole("textbox", { name: "Day you're away" })).toHaveValue(dateValue);
       expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Draft trip");
       expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
+      expect(mockUpdateMyBlockoutDates).not.toHaveBeenCalled();
+    });
+
+    it("keeps a dirty Time Off draft when volunteer navigation is canceled", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()], { memberId: "m1", updatedAt: STAMP, blockoutDates: [away] });
+      renderPage();
+
+      await expandTimeOff(user);
+      await user.click(screen.getByRole("button", { name: /Remove blockout/i }));
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
+      await user.click(screen.getAllByRole("link", { name: "My Availability" })[0]);
+
+      const navigationWarning = await screen.findByRole("dialog", { name: "Unsaved changes" });
+      expect(screen.getByTestId("current-location")).toHaveTextContent("/");
+      await user.click(within(navigationWarning).getByRole("button", { name: "Stay" }));
+
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
+      expect(screen.getByTestId("current-location")).toHaveTextContent("/");
       expect(mockUpdateMyBlockoutDates).not.toHaveBeenCalled();
     });
 

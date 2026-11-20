@@ -6,6 +6,7 @@ import Input from "../components/Input/Input";
 import { readVolunteerIngress, clearVolunteerIngress } from "../public/volunteerIngress";
 import MySchedule from "./MySchedule";
 import MyAvailability from "./MyAvailability";
+import { VolunteerNavigationGuardProvider } from "./VolunteerNavigationGuard";
 
 const VolunteerPortal = () => {
   const [searchParams] = useSearchParams();
@@ -70,9 +71,13 @@ const VolunteerPortal = () => {
     } catch { if (mounted.current) setMessage("Could not verify this code. Try again or request a new code."); }
     finally { if (mounted.current) setPending(false); }
   };
-  if (access) return activePage === "availability"
-    ? <MyAvailability access={access} />
-    : <MySchedule access={access} />;
+  if (access) return (
+    <VolunteerNavigationGuardProvider>
+      {activePage === "availability"
+        ? <MyAvailability access={access} navigationGuardProvided />
+        : <MySchedule access={access} navigationGuardProvided />}
+    </VolunteerNavigationGuardProvider>
+  );
   return <main className="flex h-dvh items-center justify-center overflow-y-auto bg-neutral-950 px-4 text-white">
     <div className="flex w-full max-w-md flex-col gap-4 py-8">
       <h1 className="text-xl font-semibold">My Schedule</h1>

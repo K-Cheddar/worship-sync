@@ -5,6 +5,7 @@ import type {
   VolunteerAvailabilityRead,
   VolunteerAvailabilitySave,
   VolunteerAvailabilitySaveResult,
+  VolunteerSchedulingPreferences,
 } from "../pages/myScheduleOperations";
 import { clearVolunteerIngress, readVolunteerIngress } from "../public/volunteerIngress";
 
@@ -122,6 +123,10 @@ export const personalScheduleAccess = (session: VolunteerSession): PersonalSched
       occurrenceAvailability: payload.availability,
       availabilityRevision: payload.availabilityRevision,
     }),
+    saveSchedulingPreferences: (payload) => request<{
+      success: boolean;
+      schedulingPreferences: VolunteerSchedulingPreferences;
+    }>("preferences", payload),
   };
   return { churchId: session.churchId, memberId: session.memberId, sessionKey: session.csrfToken, operations };
 };

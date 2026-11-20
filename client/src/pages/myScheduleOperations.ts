@@ -3,23 +3,42 @@ import type { TeamRosterMember } from "../api/authTypes";
 
 export type MyScheduleMember = Pick<TeamRosterMember, "memberId" | "churchId" | "firstName" | "lastName" | "blockoutDates" | "updatedAt">;
 export type VolunteerAvailabilityAnswer = "available" | "unavailable";
+export type VolunteerSchedulingPreferences = {
+  servingFrequency: NonNullable<TeamRosterMember["servingFrequency"]>;
+  recurringAvailability: NonNullable<TeamRosterMember["recurringAvailability"]>;
+  updatedAt: string;
+};
 export type VolunteerAvailabilityRequest = {
   recipientId: string; formId: string; name: string; responseDeadline: string;
   availabilityMessage: string;
   /** Server-owned submission metadata; saved answer entries alone do not mean submitted. */
   respondedAt: string; submissionId: string; editable: boolean;
-  occurrences: { occurrenceId: string; name: string; startsAt: string; serviceDate?: string }[];
+  occurrences: {
+    occurrenceId: string;
+    name: string;
+    startsAt: string;
+    serviceDate?: string;
+    /** Raw issued-form occurrence IDs represented by this projected logical occurrence. */
+    responseOccurrenceIds?: string[];
+    hasConflictingAnswers?: boolean;
+  }[];
   availability: Record<string, VolunteerAvailabilityAnswer>;
   /** Dates inside the form scope with no explicit saved answer. */
   unansweredOccurrenceIds: string[];
   /** Per-occurrence preconditions returned by the server for the next save. */
   availabilityRevision: Record<string, number>;
+  conflictingOccurrenceIds?: string[];
 };
 export type VolunteerAvailabilityRead = {
   success: boolean;
   serviceTimeZone?: string | null;
   requests: VolunteerAvailabilityRequest[];
+  schedulingPreferences?: VolunteerSchedulingPreferences | null;
 };
+export type VolunteerSchedulingPreferencesSave = Pick<
+  VolunteerSchedulingPreferences,
+  "servingFrequency" | "recurringAvailability"
+> & { expectedUpdatedAt: string };
 export type VolunteerAvailabilitySave = {
   recipientId: string;
   availability: VolunteerAvailabilityRequest["availability"];
@@ -33,6 +52,10 @@ export type VolunteerAvailabilitySaveResult = {
 export type VolunteerAvailabilityOperations = {
   loadAvailability: () => Promise<VolunteerAvailabilityRead>;
   saveAvailability: (request: VolunteerAvailabilitySave) => Promise<VolunteerAvailabilitySaveResult>;
+  saveSchedulingPreferences?: (request: VolunteerSchedulingPreferencesSave) => Promise<{
+    success: boolean;
+    schedulingPreferences: VolunteerSchedulingPreferences;
+  }>;
 };
 export type VolunteerBulkResult = AcceptPendingAssignmentsResponse;
 export type MyScheduleOperations = {

@@ -200,5 +200,27 @@ export const formatAvailabilityOccurrence = (
   return `${dateLabel} · ${timeLabel}`;
 };
 
+/** Date-grouped cards already show the date in their section heading. */
+export const formatAvailabilityOccurrenceTime = (
+  occurrence: AvailabilityOccurrence,
+  serviceTimeZone: string | null | undefined,
+) => {
+  if (!serviceTimeZone || !Number.isFinite(Date.parse(occurrence.startsAt))) return "";
+  return new Date(occurrence.startsAt).toLocaleTimeString(undefined, {
+    timeZone: serviceTimeZone,
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+};
+
+export const isAvailabilityOccurrencePast = (
+  occurrence: AvailabilityOccurrence,
+  now = Date.now(),
+) => {
+  const startsAt = Date.parse(occurrence.startsAt);
+  return Number.isFinite(startsAt) && startsAt < now;
+};
+
 export const formatAvailabilityDeadline = (deadline: string) =>
   deadline ? formatPlainDateRangeLabel(deadline, deadline) : "";

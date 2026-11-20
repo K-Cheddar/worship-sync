@@ -160,6 +160,102 @@ public positive-selection checkboxes, submissions and response APIs remain
 compatible. No reminder automation, preference storage or new endpoint is
 introduced.
 
+## Volunteer workspace layout and navigation (owner request, 2026-11-20)
+
+### Before behavior
+
+My Schedule and My Availability centered and capped the combined sidebar and
+content frame. Their separate page markup had no shared collapsed-sidebar
+state. Volunteer section links could change routes while Time Off or an
+availability response was dirty.
+
+### After behavior
+
+Both pages use the same full-width workspace frame: the desktop sidebar starts
+at the available workspace edge below the application header, while the main
+column owns vertical scrolling and its readable-width content. The sidebar
+reuses the shared sidebar surface and width, collapses to labeled icon links,
+and keeps its collapsed state between the two sections. Mobile keeps the
+existing drawer and fixed bottom navigation. Workspace links, app-menu links,
+and browser history protect unsaved edits and block navigation during saves.
+
+### Behavior intentionally unchanged
+
+Availability forms retain their occurrence scopes, answers, unanswered keys,
+revision snapshots, request deadlines, authorization and save semantics. Past
+occurrences remain in an editable form while its server-owned deadline allows
+responses. Their compact group-level past indicator does not disable editing. Time Off
+continues to use its existing conflict and revision checks. No service
+occurrence, form, response or schedule data is migrated by this layout change.
+
+### Historical grouped and individual occurrences
+
+New availability forms already omit a standalone occurrence when the saved
+schedule and current service catalog prove it belongs to the same grouped
+service/date. Form updates preserve issued occurrence scopes. For historical
+forms, My Availability projects an exact grouped/standalone pair as one logical
+card only when the current service group and a saved schedule snapshot confirm
+the same church-local date and service identity. The projection is read-only:
+the original form occurrence IDs, `serviceAvailability` entries and individual
+revision counters remain stored. Saving from the one card writes the selected
+answer through to every original ID and submits every original revision.
+
+When the saved answers agree, or only one ID has an answer, the card displays
+that answer. When the IDs contain different answers, the card does not choose
+one. An editable request offers Available, Unavailable and Not answered and
+requires an explicit choice before saving; a closed request stays read-only and
+asks the volunteer to contact an administrator. Forms with no matching saved
+schedule, missing identity evidence, a changed service group, multiple distinct
+saved group memberships or incomplete schedule evidence keep the original rows
+visible. Independent services on the same date remain separate. The reported
+November 7/14/21/28 records are resolved only where these checks pass;
+unresolved pairs stay visible for administrative review. No broad migration,
+form rewrite or response-history deletion occurs.
+
+Auto-fill continues to honor an explicit unavailable answer on the same saved
+group/date when it is stored under one of that grouped service's historical
+individual IDs. Unanswered responses remain neutral, and ranking behavior is
+unchanged.
+
+## Volunteer workspace consolidation and preference self-service (Phase 2B-4, 2026-11-20)
+
+The home launcher presents one **My Schedule** card at `/my-schedule`,
+described as **Assignments, availability, and time off.** The shared workspace
+sidebar and mobile navigation continue to link to both My Schedule and My
+Availability. Signed-in `/my-availability`, accountless `/s?view=availability`,
+schedule links and existing `/a/:token` request links remain direct routes.
+Time Off stays with assignments inside My Schedule.
+
+My Availability removes the standing overview, unanswered-date and Time Off
+paragraphs, routine checkbox instructions and repeated per-card past labels.
+It keeps the request name/deadline, action heading, compact group-level past
+counts and concise three-state guidance only when that editing mode is in use.
+The shared service-occurrence grid, whole-card `Checkbox`, existing
+`SegmentedControl` and design-system `Select` are reused. The first all-empty
+response still requires confirmation, partial responses retain the three
+states, and revision/409/uncertain-save recovery remains active.
+
+The **Scheduling preferences** section below requests shows the member's saved
+serving frequency and recurring availability, collapsed to a summary until
+**Edit preferences** is selected. Saving is explicit. Signed-in and personal
+link callers use self-scoped writes; the server derives the member from the
+session, validates only serving frequency and recurring-week values, compares
+`expectedUpdatedAt` transactionally, and updates only these two fields plus
+revision/audit stamps. A stale or concurrent profile change returns 409. Drafts
+remain until the volunteer reviews the latest values and explicitly keeps or
+replaces them. Empty recurring-week selections still mean every week is
+eligible; selected weeks remain hard scheduling eligibility rules.
+
+General intake remains the existing onboarding and administrator-requested
+form system. It may collect enabled personal details, positions, availability,
+scheduling preferences, serving frequency, blockout dates and notes. Dedicated
+`team_availability` forms continue to collect service-date availability. My
+Availability provides recurring response editing and preference maintenance;
+My Schedule provides assignments and Time Off. Existing form links, submissions,
+history and review remain intact. An intake response still changes only the
+enabled, explicitly submitted fields under its existing rules, so volunteers
+are not asked to resubmit the whole onboarding form each month.
+
 
 ## Personal credential foundation: Phase 2 contract (2026-10-21)
 

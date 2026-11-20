@@ -110,5 +110,36 @@ export const createVolunteerMutations = ({
       : enqueueMember(memberId, () => mutate(null));
   };
 
-  return { writeAssignmentResponses, saveBlockouts };
+  const saveSchedulingPreferences = async ({
+    churchId, memberId, actorUid, servingFrequency, recurringAvailability,
+    expectedUpdatedAt, authorize, actorId,
+  }) => {
+    const db = requireFirestore();
+    const mutate = async (transaction) => {
+      await authorize?.(transaction);
+      const ref = db?.collection(COLLECTIONS.teamRosterMembers).doc(memberId);
+      const snapshot = transaction ? await transaction.get(ref) : null;
+      const member = transaction
+        ? (snapshot.exists ? snapshot.data() : null)
+        : await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+      assertMember(member, { churchId, memberId, actorUid });
+      if ((member.updatedAt || "") !== expectedUpdatedAt) {
+        throw httpError(409, "Your scheduling preferences changed somewhere else. Review the latest values and save again.");
+      }
+      const patch = {
+        servingFrequency,
+        recurringAvailability,
+        updatedAt: nextUpdatedAt(member.updatedAt),
+        ...(actorUid || actorId ? { updatedByUid: actorUid || actorId } : {}),
+      };
+      if (transaction) transaction.update(ref, patch);
+      else await updateDocFields(COLLECTIONS.teamRosterMembers, memberId, patch);
+      return { member: { memberId, ...member, ...patch } };
+    };
+    return db
+      ? db.runTransaction(mutate)
+      : enqueueMember(memberId, () => mutate(null));
+  };
+
+  return { writeAssignmentResponses, saveBlockouts, saveSchedulingPreferences };
 };

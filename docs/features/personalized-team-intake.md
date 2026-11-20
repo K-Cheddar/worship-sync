@@ -195,3 +195,18 @@ per-occurrence revisions, recipient authorization, and 409 recovery remain the
 write contract. Public `/a/:token` forms keep their original positive-selection
 checkbox meaning and established submission behavior. No new availability
 storage, route, reminder, or dispatch behavior is added.
+
+## Volunteer workspace responsibilities (Phase 2B-4, 2026-11-20)
+
+Use general intake primarily for onboarding and administrator-requested
+updates to personal information, positions, service-date availability,
+scheduling preferences, serving frequency, blockout dates and notes. Dedicated
+`team_availability` forms request service-date availability only. Volunteers
+use My Availability for recurring availability responses and maintaining their
+saved serving frequency and recurring-week eligibility settings; My Schedule
+is for assignments and Time Off. Existing general intake links, submissions,
+history and review remain available. A monthly availability request does not
+require a volunteer to resubmit unrelated intake fields. Each workflow keeps
+its existing field-scoped update behavior; saving availability or scheduling
+preferences does not overwrite personal details, notes, blockouts or
+assignments.

@@ -113,6 +113,7 @@
     "test:e2e:modal-mobile-focus": "node e2e/run-browser-suite.mjs modal-mobile-focus.mjs",
     "test:e2e:schedule-quick-member": "node e2e/run-browser-suite.mjs schedule-quick-member.mjs",
     "test:e2e:my-schedule-cards": "node e2e/run-browser-suite.mjs my-schedule-service-cards.mjs",
+    "test:e2e:volunteer-workspace": "node e2e/run-browser-suite.mjs volunteer-workspace-layout.mjs",
     "test:e2e:service-plan-refresh": "node e2e/run-browser-suite.mjs service-plan-refresh.mjs",
     "test:e2e:availability-workspace": "node e2e/run-browser-suite.mjs availability-workspace.mjs",
     "test:e2e:resources-responsive": "node e2e/resources-responsive.mjs",

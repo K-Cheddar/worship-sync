@@ -46,6 +46,7 @@ import { useDocumentPageTitle } from "./hooks/useDocumentPageTitle";
 import WebUpdateCoordinator from "./components/WebUpdateCoordinator/WebUpdateCoordinator";
 import { RehearsalPlaybackProvider } from "./components/RehearsalPlayer/RehearsalPlaybackContext";
 import RehearsalPlayerHost from "./components/RehearsalPlayer/RehearsalPlayerHost";
+import { VolunteerNavigationGuardProvider } from "./pages/VolunteerNavigationGuard";
 
 /**
  * Route-level code splitting.
@@ -263,7 +264,7 @@ const RouteChunkSplash = ({
   );
 };
 
-export const AppRoutes = () => {
+const AppRoutesContent = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
   const initialRoutePendingRef = useRef(true);
@@ -424,7 +425,7 @@ export const AppRoutes = () => {
                 path="/my-schedule"
                 element={
                   <AuthGate allowedKinds={["human"]}>
-                    <MySchedule />
+                    <MySchedule navigationGuardProvided />
                   </AuthGate>
                 }
               />
@@ -432,7 +433,7 @@ export const AppRoutes = () => {
                 path="/my-availability"
                 element={
                   <AuthGate allowedKinds={["human"]}>
-                    <MyAvailability />
+                    <MyAvailability navigationGuardProvided />
                   </AuthGate>
                 }
               />
@@ -589,6 +590,12 @@ export const AppRoutes = () => {
     </>
   );
 };
+
+export const AppRoutes = () => (
+  <VolunteerNavigationGuardProvider>
+    <AppRoutesContent />
+  </VolunteerNavigationGuardProvider>
+);
 
 const App: React.FC = () => {
   useEffect(() => {

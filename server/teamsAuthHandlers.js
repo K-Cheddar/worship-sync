@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { createVolunteerMutations } from "./volunteerMutations.js";
 import { createVolunteerPersonalAccess, DEFAULT_VOLUNTEER_ACCESS_TTL_MS } from "./volunteerPersonalAccess.js";
 import { createVolunteerPortalHandlers } from "./volunteerPortalHandlers.js";
+import { projectVolunteerAvailabilityResponse } from "./volunteerAvailabilityProjection.js";
 import { createVolunteerRecovery } from "./volunteerRecovery.js";
 import { volunteerContactIndexFields } from "./volunteerContactIndex.js";
 import { sendSmsConsentVerificationCode } from "./smsConsent.js";
@@ -793,7 +794,7 @@ export const createTeamsAuthHandlers = ({
    * batch: with one link covering a whole schedule, an owner reshuffling one
    * date must not block the reader from answering the other three.
    */
-  const { writeAssignmentResponses, saveBlockouts } = createVolunteerMutations({
+  const { writeAssignmentResponses, saveBlockouts, saveSchedulingPreferences } = createVolunteerMutations({
     COLLECTIONS, requireFirestore, getDoc, updateDocFields, nowIso, httpError,
     enqueueSchedule: enqueueInMemoryScheduleSave,
     enqueueMember: enqueueInMemoryRosterMemberMutation,
@@ -914,6 +915,30 @@ export const createTeamsAuthHandlers = ({
     );
 
     return { success: true, member: projectVolunteerMember(saved, access) };
+  };
+
+  const saveVolunteerSchedulingPreferences = async ({ churchId, memberId, actorUid, actorId, authorize }, body) => {
+    const expectedUpdatedAt = normalizeShortText(body?.expectedUpdatedAt, { max: 64 });
+    const servingFrequency = normalizeTeamMemberServingFrequency(body?.servingFrequency);
+    const recurringAvailability = normalizeTeamMemberRecurringAvailability(body?.recurringAvailability);
+    const { member } = await saveSchedulingPreferences({
+      churchId, memberId, actorUid, actorId, authorize,
+      expectedUpdatedAt, servingFrequency, recurringAvailability,
+    });
+    await addSecurityEvent({
+      type: "team_roster_member_scheduling_preferences_self_updated",
+      churchId, userId: actorUid || actorId, memberId,
+    }).catch((error) => logAuthEvent("warn", "schedule.preferences.audit-error", {
+      churchId, memberId, errorMessage: error?.message || "audit failed",
+    }));
+    return {
+      success: true,
+      schedulingPreferences: {
+        servingFrequency: member.servingFrequency,
+        recurringAvailability: member.recurringAvailability,
+        updatedAt: member.updatedAt || "",
+      },
+    };
   };
 
   const respondToVolunteerAssignment = async (identity, body) => {
@@ -9208,41 +9233,115 @@ export const createTeamsAuthHandlers = ({
   };
 
   const getVolunteerAvailability = async (identity) => {
+    await identity.authorize?.();
     const church = await getDoc(COLLECTIONS.churches, identity.churchId);
+    const linkedMember = identity.memberId
+      ? await getDoc(COLLECTIONS.teamRosterMembers, identity.memberId)
+      : null;
+    const preferencesMember = linkedMember &&
+      linkedMember.churchId === identity.churchId &&
+      !linkedMember.archivedAt &&
+      (!identity.actorUid || linkedMember.userId === identity.actorUid)
+      ? linkedMember
+      : null;
     const recipients = await queryDocs(COLLECTIONS.teamIntakeRecipients, [
       { field: "churchId", value: identity.churchId },
       { field: "memberId", value: identity.memberId },
     ], { limit: TEAM_COLLECTION_QUERY_LIMIT });
-    const requests = [];
+    const contexts = [];
     for (const recipient of recipients) {
       try {
         const { form, member, recipient: current } = await getVolunteerAvailabilityContext(
           identity, recipient.recipientId || recipient.id, { forRead: true },
         );
-        const occurrenceIds = getFormAvailabilityOccurrenceIds(form);
-        const availability = Object.fromEntries(occurrenceIds
-          .filter((id) => member.serviceAvailability?.[id] === "available" ||
-            member.serviceAvailability?.[id] === "unavailable")
-          .map((id) => [id, member.serviceAvailability[id]]));
+        contexts.push({ form, member, current });
+      } catch (error) {
+        // Revoked/closed/out-of-scope requests disappear; datastore failures do not.
+        if (![400, 403, 404, 409].includes(error?.status || error?.statusCode)) throw error;
+      }
+    }
+
+    const hasPossibleHistoricalPair = contexts.some(({ form }) => {
+      const occurrences = form.availabilityOccurrences || [];
+      return occurrences.some((occurrence) => String(occurrence.occurrenceId || "").startsWith("group:")) &&
+        occurrences.some((occurrence) => occurrence.serviceId && !String(occurrence.occurrenceId || "").startsWith("group:"));
+    });
+    let services = [];
+    let schedules = [];
+    let evidenceComplete = Boolean(isValidPortableTimeZone(church?.serviceTimeZone));
+    if (hasPossibleHistoricalPair && evidenceComplete) {
+      try {
+        services = await readChurchServiceTimes(identity.churchId);
+        const formsWithPossiblePair = contexts.filter(({ form }) => {
+          const rows = form.availabilityOccurrences || [];
+          return rows.some((occurrence) => {
+            const group = String(occurrence.occurrenceId || "").match(/^group:(.+)@(\d{4}-\d{2}-\d{2})$/);
+            return group && rows.some((candidate) => {
+              const candidateIdentity = candidate?.serviceId && !String(candidate.occurrenceId || "").startsWith("group:")
+                ? resolveOccurrenceIdentity(candidate, church.serviceTimeZone)
+                : null;
+              const service = services.find((item) => (item.serviceId || item.id) === candidate?.serviceId);
+              return candidateIdentity?.serviceDate === group[2] && service?.serviceGroupId === group[1];
+            });
+          });
+        });
+        if (formsWithPossiblePair.length) {
+          const teamIds = [...new Set(formsWithPossiblePair.flatMap(({ form }) =>
+            (form.teamIds || []).filter((teamId) => typeof teamId === "string" && teamId.trim()),
+          ))];
+          const schedulesByTeam = await Promise.all(teamIds.map((teamId) => queryDocs(COLLECTIONS.teamSchedules, [
+            { field: "churchId", value: identity.churchId },
+            { field: "teamId", value: teamId },
+          ], { limit: TEAM_COLLECTION_QUERY_LIMIT })));
+          schedules = schedulesByTeam.flat();
+          if (schedulesByTeam.some((rows) => rows.length >= TEAM_COLLECTION_QUERY_LIMIT)) evidenceComplete = false;
+        }
+      } catch (error) {
+        evidenceComplete = false;
+        logAuthEvent("warn", "availability.projection.evidence-error", {
+          churchId: identity.churchId,
+          errorMessage: error?.message || "schedule evidence unavailable",
+        });
+      }
+    }
+
+    const requests = [];
+    for (const { form, member, current } of contexts) {
+        const projection = projectVolunteerAvailabilityResponse({
+          form, member, serviceTimeZone: church?.serviceTimeZone,
+          services, schedules, evidenceComplete,
+        });
         const responseDeadline = form.responseDeadline || form.endDate || "";
         requests.push({
           recipientId: current.recipientId, formId: form.formId, name: form.name,
           responseDeadline,
           availabilityMessage: form.availabilityMessage || "",
-          occurrences: (form.availabilityOccurrences || []).map((item) => ({
-            occurrenceId: item.occurrenceId, name: item.name || "Service", startsAt: item.startsAt || "",
-            ...(item.serviceDate ? { serviceDate: item.serviceDate } : {}),
-          })),
-          availability,
-          unansweredOccurrenceIds: occurrenceIds.filter((id) => !Object.hasOwn(availability, id)),
-          availabilityRevision: getServiceAvailabilityRevisionSnapshot(member, occurrenceIds),
+          occurrences: projection.occurrences,
+          availability: projection.availability,
+          unansweredOccurrenceIds: projection.unansweredOccurrenceIds,
+          availabilityRevision: projection.availabilityRevision,
+          conflictingOccurrenceIds: projection.conflictingOccurrenceIds,
           respondedAt: current.respondedAt || "",
           submissionId: current.submissionId || "",
           editable: Boolean(form.active && (!responseDeadline || responseDeadline >= new Date().toISOString().slice(0, 10))),
         });
+    }
+    let schedulingPreferences = null;
+    if (preferencesMember) {
+      try {
+        schedulingPreferences = {
+          servingFrequency: TEAM_MEMBER_SERVING_FREQUENCIES.has(preferencesMember.servingFrequency)
+            ? preferencesMember.servingFrequency
+            : "as_needed",
+          recurringAvailability: normalizeTeamMemberRecurringAvailability(preferencesMember.recurringAvailability),
+          updatedAt: preferencesMember.updatedAt || "",
+        };
       } catch (error) {
-        // Revoked/closed/out-of-scope requests disappear; datastore failures do not.
-        if (![400, 403, 404, 409].includes(error?.status || error?.statusCode)) throw error;
+        logAuthEvent("warn", "availability.preferences.invalid", {
+          churchId: identity.churchId,
+          memberId: identity.memberId,
+          errorMessage: error?.message || "stored preferences are invalid",
+        });
       }
     }
     return {
@@ -9251,6 +9350,7 @@ export const createTeamsAuthHandlers = ({
         ? church.serviceTimeZone
         : null,
       requests,
+      schedulingPreferences,
     };
   };
 
@@ -13886,6 +13986,7 @@ export const createTeamsAuthHandlers = ({
       getSchedule: getVolunteerSchedule, respond: respondToVolunteerAssignment,
       acceptUnanswered: acceptUnansweredVolunteerAssignments,
       saveBlockouts: saveVolunteerBlockouts, getAvailability: getVolunteerAvailability,
+      saveSchedulingPreferences: saveVolunteerSchedulingPreferences,
       submitAvailability: submitVolunteerAvailability,
     }),
     recoverPendingTeamSchedulePublicationEvents,
@@ -18354,7 +18455,7 @@ export const createTeamsAuthHandlers = ({
     async getMyVolunteerAvailability(req, res) {
       try {
         const identity = await resolveHumanVolunteer(req);
-        if (!identity.memberId) return res.json({ success: true, requests: [] });
+        if (!identity.memberId) return res.json({ success: true, requests: [], schedulingPreferences: null });
         return res.json(await getVolunteerAvailability(identity));
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load your availability requests.");
@@ -18369,6 +18470,20 @@ export const createTeamsAuthHandlers = ({
         return res.json(await submitVolunteerAvailability(identity, req.body));
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save your availability.");
+      }
+    },
+
+    async updateMySchedulingPreferences(req, res) {
+      try {
+        await assertCsrf(req);
+        const identity = await resolveHumanVolunteer(req);
+        if (!identity.memberId) {
+          if (identity.hasArchivedLinkedMember) throw httpError(403, "Your member record is archived. Ask an admin to restore it.");
+          throw httpError(404, "Your account is not linked to a team member yet.");
+        }
+        return res.json(await saveVolunteerSchedulingPreferences(identity, req.body));
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save your scheduling preferences.");
       }
     },
 

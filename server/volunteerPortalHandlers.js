@@ -18,7 +18,8 @@ const equal = (first, second) => {
 export const createVolunteerPortalHandlers = ({
   getAccessStore, getRecoveryStore, appBaseUrl, httpError, requireAdminSession, assertCsrf,
   enforceRateLimit, getClientIp, addSecurityEvent, logAuthEvent,
-  getSchedule, respond, acceptUnanswered, saveBlockouts, getAvailability, submitAvailability,
+  getSchedule, respond, acceptUnanswered, saveBlockouts, saveSchedulingPreferences,
+  getAvailability, submitAvailability,
 }) => {
   const origin = new URL(appBaseUrl).origin;
   const assertOrigin = (req) => {
@@ -170,6 +171,8 @@ export const createVolunteerPortalHandlers = ({
     respondToVolunteerPersonalAssignment: handle(async (req, res) => res.json(await respond(await sessionIdentity(req, true), req.body))),
     acceptVolunteerPersonalUnanswered: handle(async (req, res) => res.json(await acceptUnanswered(await sessionIdentity(req, true), req.body))),
     saveVolunteerPersonalBlockouts: handle(async (req, res) => res.json(await saveBlockouts(await sessionIdentity(req, true), req.body))),
+    saveVolunteerPersonalSchedulingPreferences: handle(async (req, res) => res.json(await saveSchedulingPreferences(await sessionIdentity(req, true), req.body)),
+      "Could not save your scheduling preferences. Try again in a moment."),
     getVolunteerPersonalAvailability: handle(
       async (req, res) => res.json(await getAvailability(await sessionIdentity(req))),
       "Could not load your availability requests. Try again in a moment.",

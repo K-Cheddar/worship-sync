@@ -40,6 +40,7 @@ type MyScheduleBlockoutsProps = {
   saveBlockouts?: MyScheduleOperations["saveBlockouts"];
   /** Lets the page skip a background refresh while an edit is open. */
   onDirtyChange: (dirty: boolean) => void;
+  onSavingChange: (saving: boolean) => void;
   /** Called when the record moved underneath this edit, to pick up the change. */
   onStale: () => Promise<boolean> | undefined;
   savedDatesLoad: SavedDatesLoadState;
@@ -96,6 +97,7 @@ const MyScheduleBlockouts = ({
   occurrences,
   onSaved,
   onDirtyChange,
+  onSavingChange,
   onStale,
   savedDatesLoad,
   saveBlockouts,
@@ -201,6 +203,11 @@ const MyScheduleBlockouts = ({
   }, [hasOpenEditor, isDirty, onDirtyChange]);
 
   useEffect(() => {
+    onSavingChange(saving);
+    return () => onSavingChange(false);
+  }, [onSavingChange, saving]);
+
+  useEffect(() => {
     if (!open) setHasOpenEditor(false);
   }, [open]);
 
@@ -223,6 +230,7 @@ const MyScheduleBlockouts = ({
   const save = async () => {
     if (savingRef.current || hasConflict || hasIncompleteDraft) return;
     savingRef.current = true;
+    onSavingChange(true);
     setSaving(true);
     try {
       // Entries hidden from the editor are sent back untouched. Editing what is
@@ -249,6 +257,7 @@ const MyScheduleBlockouts = ({
       showApiErrorToast(showToast, error, "Could not save your time off.");
     } finally {
       savingRef.current = false;
+      onSavingChange(false);
       if (mounted.current) setSaving(false);
     }
   };

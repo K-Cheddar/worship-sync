@@ -7,6 +7,8 @@ import type {
   VolunteerAvailabilityRequest,
   VolunteerAvailabilitySaveResult,
   VolunteerBulkResult,
+  VolunteerSchedulingPreferencesSave,
+  VolunteerSchedulingPreferences,
 } from "../pages/myScheduleOperations";
 import {
   getCsrfToken,
@@ -2245,6 +2247,16 @@ export const submitMyVolunteerAvailability = (
     body: JSON.stringify({ recipientId, occurrenceAvailability, availabilityRevision }),
   },
 );
+export const updateMySchedulingPreferences = (
+  churchId: string,
+  preferences: VolunteerSchedulingPreferencesSave,
+) => apiFetch<{
+  success: boolean;
+  schedulingPreferences: VolunteerSchedulingPreferences;
+}>(`api/churches/${churchId}/my-scheduling-preferences`, {
+  method: "POST",
+  body: JSON.stringify(preferences),
+});
 
 export const manageVolunteerPersonalAccess = (churchId: string, memberId: string,
   action: "status" | "prepare" | "replace" | "revoke" | "restore" | "verify-contact/start" | "verify-contact/complete", body: unknown = {}) => apiFetch<{

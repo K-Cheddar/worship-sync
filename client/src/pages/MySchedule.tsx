@@ -58,7 +58,9 @@ import {
   myScheduleServiceGroupKey,
 } from "./myScheduleTimeline";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
-import VolunteerSelfServiceNavigation, { VolunteerSelfServiceDrawer } from "./VolunteerSelfServiceNavigation";
+import { VolunteerSelfServiceDrawer } from "./VolunteerSelfServiceNavigation";
+import VolunteerWorkspaceFrame from "./VolunteerWorkspaceFrame";
+import { VolunteerNavigationGuardProvider, useVolunteerNavigationGuard } from "./VolunteerNavigationGuard";
 import {
   findBlockoutRangeForDate,
   formatBlockoutDateRangeLabel,
@@ -851,6 +853,7 @@ const OccurrenceDetail = ({
 const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAccess; openTimeOff: boolean }) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
+  const { setDirtySource, setSavingSource } = useVolunteerNavigationGuard();
   const churchId = access?.churchId || context?.churchId || "";
   const operations = useMemo<MyScheduleOperations>(() => access?.operations || ({
     load: () => getMyTeamAssignments(churchId),
@@ -981,7 +984,12 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
 
   const handleTimeOffDirtyChange = useCallback((dirty: boolean) => {
     timeOffDirtyRef.current = dirty;
-  }, []);
+    setDirtySource("my-schedule-time-off", dirty);
+  }, [setDirtySource]);
+
+  const handleTimeOffSavingChange = useCallback((saving: boolean) => {
+    setSavingSource("my-schedule-time-off", saving);
+  }, [setSavingSource]);
 
   const handleBlockoutsSaved = useCallback((member: MyScheduleMember) => {
     if (churchIdRef.current !== churchId) return;
@@ -1456,10 +1464,7 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
         <VolunteerSelfServiceDrawer access={access} active="schedule" menuItems={menuItems} updateReady={updateReady} />
       )}
     >
-      <section className="mx-auto flex min-h-0 w-full max-w-[90rem] flex-1 flex-col overflow-hidden border border-gray-700 bg-gray-900/40 lg:grid lg:grid-cols-[11rem_minmax(0,1fr)]">
-        <VolunteerSelfServiceNavigation access={access} active="schedule" />
-        <div data-mobile-header-scroll-owner="workspace" className="min-h-0 min-w-0 flex-1 overflow-y-auto px-3 py-4 sm:px-6">
-        <div className="mx-auto flex w-full flex-col gap-4">
+      <VolunteerWorkspaceFrame access={access} active="schedule">
         {status === "loading" ? (
           <MyScheduleLoadingSkeleton showSmsPreferences={Boolean(access)} />
         ) : null}
@@ -1534,6 +1539,7 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
                   onSaved={handleBlockoutsSaved}
                   saveBlockouts={operations.saveBlockouts}
                   onDirtyChange={handleTimeOffDirtyChange}
+                  onSavingChange={handleTimeOffSavingChange}
                   onStale={refreshAfterConflict}
                   savedDatesLoad={savedDatesLoad}
                   initiallyOpen={openTimeOff}
@@ -1682,18 +1688,22 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
             ) : null}
           </>
         ) : null}
-        </div>
-        </div>
-      </section>
+      </VolunteerWorkspaceFrame>
     </AppWorkspaceShell>
   );
 };
 
-const MySchedule = ({ access }: { access?: PersonalScheduleAccess }) => {
+const MySchedule = ({ access, navigationGuardProvided = false }: {
+  access?: PersonalScheduleAccess;
+  navigationGuardProvided?: boolean;
+}) => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
   const identity = access ? `personal:${access.churchId}:${access.memberId}` : `human:${context?.churchId || ""}:${context?.userId || ""}`;
-  return <MyScheduleView key={identity} access={access} openTimeOff={location.hash === "#time-off"} />;
+  const view = <MyScheduleView key={identity} access={access} openTimeOff={location.hash === "#time-off"} />;
+  return navigationGuardProvided ? view : (
+    <VolunteerNavigationGuardProvider>{view}</VolunteerNavigationGuardProvider>
+  );
 };
 
 export default MySchedule;

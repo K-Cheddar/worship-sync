@@ -198,8 +198,9 @@ describe("Home", () => {
       );
     }
     expect(screen.getByRole("link", { name: /^Administration\b/ })).toHaveAttribute("href", "/account");
-    expect(screen.getByRole("link", { name: /^My availability\b/i })).toHaveAttribute("href", "/my-availability");
-    expect(screen.getByRole("link", { name: /^My schedule\b/ })).toHaveAttribute("href", "/my-schedule");
+    expect(screen.getByRole("link", { name: /^My Schedule\b/ })).toHaveAttribute("href", "/my-schedule");
+    expect(screen.getByRole("link", { name: /^My Schedule\b/ })).toHaveTextContent("Assignments, availability, and time off.");
+    expect(screen.queryByRole("link", { name: /^My availability\b/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Church administration" })).not.toBeInTheDocument();
   });
 
@@ -220,10 +221,9 @@ describe("Home", () => {
     expect(
       screen.queryByRole("link", { name: /^Teams and Services\b/ }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /^My availability\b/i }))
-      .toHaveAttribute("href", "/my-availability");
-    expect(screen.getByRole("link", { name: /^My schedule\b/ }))
+    expect(screen.getByRole("link", { name: /^My Schedule\b/ }))
       .toHaveAttribute("href", "/my-schedule");
+    expect(screen.queryByRole("link", { name: /^My availability\b/i })).not.toBeInTheDocument();
   });
 
   it("renders fixed launcher appearances from the shared map", () => {
@@ -231,7 +231,7 @@ describe("Home", () => {
       ["churchAdministration", "Administration"],
       ["teamsAndServices", "Teams and Services"],
       ["resources", "Resources"],
-      ["mySchedule", "My schedule"],
+      ["mySchedule", "My Schedule"],
       ["serviceWorkspace", "Service Workspace"],
       ["currentServiceViewer", "Current Service"],
       ["boardModeration", "Board moderation"],

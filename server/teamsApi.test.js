@@ -24205,6 +24205,84 @@ test("my availability uses current recipient scope without disclosing tokens or 
   assert.deepEqual(read.payload.requests[0].availability, {});
   assert.deepEqual(read.payload.requests[0].unansweredOccurrenceIds, [assigned.occurrenceId]);
   assert.deepEqual(read.payload.requests[0].availabilityRevision, { [assigned.occurrenceId]: 0 });
+  const memberBeforePreferences = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  await setDoc(COLLECTIONS.teamRosterMembers, assigned.memberId, {
+    servingFrequency: "twice_monthly",
+    recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
+    notes: "Keep this member note",
+  }, { merge: true });
+  const preferenceRead = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.deepEqual(preferenceRead.payload.schedulingPreferences, {
+    servingFrequency: "twice_monthly",
+    recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
+    updatedAt: memberBeforePreferences.updatedAt || "",
+  });
+  const preferencesSaved = await callHandler(authHandlers.updateMySchedulingPreferences, {
+    context,
+    body: {
+      servingFrequency: "monthly",
+      recurringAvailability: { weeksOfMonth: [2, 4], includeLastWeekOfMonth: false },
+      expectedUpdatedAt: memberBeforePreferences.updatedAt || "",
+      memberId: "someone-else",
+      firstName: "Forged name",
+      notes: "Forged note",
+      blockoutDates: [],
+    },
+  });
+  assert.equal(preferencesSaved.statusCode, 200, JSON.stringify(preferencesSaved.payload));
+  assert.deepEqual(preferencesSaved.payload.schedulingPreferences, {
+    servingFrequency: "monthly",
+    recurringAvailability: { weeksOfMonth: [2, 4], includeLastWeekOfMonth: false },
+    updatedAt: (await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId)).updatedAt,
+  });
+  const memberAfterPreferences = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  assert.equal(memberAfterPreferences.memberId, assigned.memberId);
+  assert.equal(memberAfterPreferences.firstName, memberBeforePreferences.firstName);
+  assert.equal(memberAfterPreferences.notes, "Keep this member note");
+  assert.deepEqual(memberAfterPreferences.positionIds, memberBeforePreferences.positionIds);
+  assert.deepEqual(memberAfterPreferences.blockoutDates || [], memberBeforePreferences.blockoutDates || []);
+  assert.deepEqual(memberAfterPreferences.serviceAvailability || {}, memberBeforePreferences.serviceAvailability || {});
+  const stalePreferences = await callHandler(authHandlers.updateMySchedulingPreferences, {
+    context,
+    body: {
+      servingFrequency: "weekly",
+      recurringAvailability: { weeksOfMonth: [1], includeLastWeekOfMonth: false },
+      expectedUpdatedAt: memberBeforePreferences.updatedAt || "",
+    },
+  });
+  assert.equal(stalePreferences.statusCode, 409, JSON.stringify(stalePreferences.payload));
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId)).servingFrequency, "monthly");
+  const invalidFrequency = await callHandler(authHandlers.updateMySchedulingPreferences, {
+    context,
+    body: {
+      servingFrequency: "daily",
+      recurringAvailability: { weeksOfMonth: [], includeLastWeekOfMonth: false },
+      expectedUpdatedAt: memberAfterPreferences.updatedAt,
+    },
+  });
+  assert.equal(invalidFrequency.statusCode, 400);
+  const competingPreferenceWrites = await Promise.all(["weekly", "monthly"].map((servingFrequency) =>
+    callHandler(authHandlers.updateMySchedulingPreferences, {
+      context,
+      body: {
+        servingFrequency,
+        recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
+        expectedUpdatedAt: memberAfterPreferences.updatedAt,
+      },
+    }),
+  ));
+  assert.deepEqual(competingPreferenceWrites.map(({ statusCode }) => statusCode).sort(), [200, 409]);
+  const memberAfterCompetingWrites = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  assert.equal(memberAfterCompetingWrites.firstName, memberBeforePreferences.firstName);
+  assert.equal(memberAfterCompetingWrites.notes, "Keep this member note");
+  assert.deepEqual(memberAfterCompetingWrites.blockoutDates || [], memberBeforePreferences.blockoutDates || []);
+  await setDoc(COLLECTIONS.teamRosterMembers, assigned.memberId, {
+    recurringAvailability: { weeksOfMonth: [6], includeLastWeekOfMonth: false },
+  }, { merge: true });
+  const malformedPreferencesRead = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.equal(malformedPreferencesRead.statusCode, 200);
+  assert.equal(malformedPreferencesRead.payload.schedulingPreferences, null,
+    "an invalid saved recurring restriction must not be presented as an unrestricted default");
   assert.doesNotMatch(JSON.stringify(read.payload), /private-hash|private-ciphertext|someone-else/);
   const saved = await callHandler(authHandlers.submitMyVolunteerAvailability, {
     context, body: { recipientId, occurrenceAvailability: { [assigned.occurrenceId]: "unavailable", forbidden: "available" },
@@ -24262,6 +24340,128 @@ test("my availability uses current recipient scope without disclosing tokens or 
   });
   assert.equal(revoked.statusCode, 404);
   assert.deepEqual((await callHandler(authHandlers.getMyVolunteerAvailability, { context })).payload.requests, []);
+});
+
+test("issued availability forms project proven grouped occurrences and write through every raw revision", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability_grouped_projection");
+  const timeZone = "America/New_York";
+  const groupId = "1jrege3bu2c6hs0lrc7c";
+  const serviceId = "1j8r6dqu4anb91e4jac8";
+  const secondServiceId = "grouped-second-service";
+  const date = "2026-11-07";
+  const groupOccurrenceId = `group:${groupId}@${date}`;
+  const standaloneOccurrenceId = `${serviceId}@${date}`;
+  const independentOccurrenceId = `independent-same-day@${date}`;
+  await setDoc(COLLECTIONS.churches, context.churchId, { serviceTimeZone: timeZone }, { merge: true });
+  const assigned = await seedAssignedSchedule(context, "grouped_projection");
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, { memberIds: [assigned.memberId] }, { merge: true });
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [
+      { id: serviceId, name: "Sabbath Service", reccurence: "weekly", dayOfWeek: 6, time: "09:00", serviceGroupId: groupId },
+      { id: secondServiceId, name: "2nd service", reccurence: "weekly", dayOfWeek: 6, time: "11:00", serviceGroupId: groupId },
+      { id: "independent-same-day", name: "Independent service", reccurence: "weekly", dayOfWeek: 6, time: "12:00" },
+    ],
+  });
+  const groupSnapshot = {
+    occurrenceId: groupOccurrenceId,
+    serviceId,
+    serviceIds: [serviceId, secondServiceId],
+    groupId,
+    name: "Sabbath Service & 2nd service",
+    startsAt: "2026-11-07T14:00:00.000Z",
+    serviceDate: date,
+  };
+  await setDoc(COLLECTIONS.teamSchedules, assigned.scheduleId, {
+    occurrences: [
+      groupSnapshot,
+      { occurrenceId: standaloneOccurrenceId, serviceId, serviceIds: [serviceId], name: "Sabbath Service", startsAt: groupSnapshot.startsAt, serviceDate: date },
+    ],
+  }, { merge: true });
+  const formId = "volunteer_availability_grouped_form";
+  const recipientId = "volunteer_availability_grouped_recipient";
+  const occurrences = [
+    { occurrenceId: groupOccurrenceId, serviceId, name: "Sabbath Service & 2nd service", startsAt: groupSnapshot.startsAt, serviceDate: date },
+    { occurrenceId: standaloneOccurrenceId, serviceId, name: "Sabbath Service", startsAt: groupSnapshot.startsAt, serviceDate: date },
+    { occurrenceId: independentOccurrenceId, serviceId: "independent-same-day", name: "Independent service", startsAt: "2026-11-07T17:00:00.000Z", serviceDate: date },
+  ];
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId, churchId: context.churchId, name: "November availability", purpose: "team_availability",
+    teamIds: [assigned.media.teamId], active: true, enabledFields: ["availability"],
+    startDate: "2026-11-01", endDate: "2026-11-30", responseDeadline: "2099-11-30",
+    availabilityOccurrences: occurrences,
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+    recipientId, formId, memberId: assigned.memberId, churchId: context.churchId, revokedAt: null,
+  });
+
+  const initial = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.equal(initial.statusCode, 200, JSON.stringify(initial.payload));
+  assert.deepEqual(initial.payload.requests[0].occurrences.map(({ occurrenceId }) => occurrenceId), [
+    groupOccurrenceId, independentOccurrenceId,
+  ]);
+  assert.deepEqual(initial.payload.requests[0].unansweredOccurrenceIds, [groupOccurrenceId, independentOccurrenceId]);
+  assert.deepEqual(initial.payload.requests[0].availabilityRevision, {
+    [groupOccurrenceId]: 0,
+    [standaloneOccurrenceId]: 0,
+    [independentOccurrenceId]: 0,
+  });
+  const formBefore = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+  const firstSave = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context,
+    body: {
+      recipientId,
+      occurrenceAvailability: {
+        [groupOccurrenceId]: "available",
+        [standaloneOccurrenceId]: "unavailable",
+        [independentOccurrenceId]: "available",
+      },
+      availabilityRevision: initial.payload.requests[0].availabilityRevision,
+    },
+  });
+  assert.equal(firstSave.statusCode, 200, JSON.stringify(firstSave.payload));
+  const conflict = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.deepEqual(conflict.payload.requests[0].conflictingOccurrenceIds, [groupOccurrenceId]);
+  assert.equal(conflict.payload.requests[0].availability[groupOccurrenceId], undefined);
+  assert.deepEqual(conflict.payload.requests[0].availabilityRevision, {
+    [groupOccurrenceId]: 1,
+    [standaloneOccurrenceId]: 1,
+    [independentOccurrenceId]: 1,
+  });
+
+  const reconciled = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context,
+    body: {
+      recipientId,
+      occurrenceAvailability: {
+        [groupOccurrenceId]: "unavailable",
+        [standaloneOccurrenceId]: "unavailable",
+        [independentOccurrenceId]: "available",
+      },
+      availabilityRevision: conflict.payload.requests[0].availabilityRevision,
+    },
+  });
+  assert.equal(reconciled.statusCode, 200, JSON.stringify(reconciled.payload));
+  const latest = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.deepEqual(latest.payload.requests[0].availability, {
+    [groupOccurrenceId]: "unavailable",
+    [independentOccurrenceId]: "available",
+  });
+  assert.deepEqual(latest.payload.requests[0].conflictingOccurrenceIds, []);
+  const stale = await callHandler(authHandlers.submitMyVolunteerAvailability, {
+    context,
+    body: {
+      recipientId,
+      occurrenceAvailability: {},
+      availabilityRevision: initial.payload.requests[0].availabilityRevision,
+    },
+  });
+  assert.equal(stale.statusCode, 409);
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
+  assert.equal(member.serviceAvailability[groupOccurrenceId], "unavailable");
+  assert.equal(member.serviceAvailability[standaloneOccurrenceId], "unavailable");
+  assert.deepEqual((await getDoc(COLLECTIONS.teamIntakeForms, formId)).availabilityOccurrences, formBefore.availabilityOccurrences);
 });
 
 test("availability revisions survive unrelated member edits and fence concurrent administrator answers", async (t) => {

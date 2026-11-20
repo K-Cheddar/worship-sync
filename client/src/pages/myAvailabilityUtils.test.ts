@@ -1,10 +1,12 @@
 import {
   createAvailabilityCheckboxSubmission,
   formatAvailabilityOccurrence,
+  formatAvailabilityOccurrenceTime,
   formatAvailabilityRequestDateRange,
   getAvailabilityRequestGroup,
   getAvailabilityRequestStatus,
   hasAvailabilityResponseSubmission,
+  isAvailabilityOccurrencePast,
   organizeAvailabilityOccurrences,
   setAvailabilityChoice,
 } from "./myAvailabilityUtils";
@@ -44,6 +46,33 @@ it("uses the occurrence's plain service date when no timezone is configured", ()
     startsAt: "2025-01-01T01:00:00.000Z",
     serviceDate: "2025-01-01",
   }, null)).toContain("January 01");
+});
+
+it("formats only the service time for cards grouped under a date heading", () => {
+  expect(formatAvailabilityOccurrenceTime({
+    occurrenceId: "service-1@2026-11-07",
+    name: "Sabbath Service",
+    startsAt: "2026-11-07T14:00:00.000Z",
+    serviceDate: "2026-11-07",
+  }, "America/New_York")).toMatch(/^9:00 AM EST$/);
+  expect(formatAvailabilityOccurrenceTime({
+    occurrenceId: "service-1@2026-11-07",
+    name: "Sabbath Service",
+    startsAt: "2026-11-07T14:00:00.000Z",
+    serviceDate: "2026-11-07",
+  }, null)).toBe("");
+});
+
+it("marks occurrences past by their start instant without imposing a save rule", () => {
+  const occurrence = {
+    occurrenceId: "service-1@2026-11-07",
+    name: "Sabbath Service",
+    startsAt: "2026-11-07T14:00:00.000Z",
+    serviceDate: "2026-11-07",
+  };
+  expect(isAvailabilityOccurrencePast(occurrence, Date.parse("2026-11-07T14:01:00.000Z"))).toBe(true);
+  expect(isAvailabilityOccurrencePast(occurrence, Date.parse("2026-11-07T13:59:00.000Z"))).toBe(false);
+  expect(isAvailabilityOccurrencePast({ ...occurrence, startsAt: "invalid" }, Date.now())).toBe(false);
 });
 
 it("uses submission metadata rather than saved answers to determine response status", () => {
