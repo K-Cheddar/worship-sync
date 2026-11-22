@@ -108,10 +108,21 @@ const canonicalBackground = (value: unknown) => {
     if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com" ||
       url.port || url.username || url.password || url.hash ||
       segments[0] !== CLOUDINARY_CLOUD_NAME ||
-      segments.length < 5 || segments[1] !== "image" || segments[2] !== "upload" ||
-      segments[3] !== "v1" || queryKeys.length !== 1 || queryKeys[0] !== "_a" ||
-      !url.searchParams.get("_a")) return value;
-    return segments.slice(4).map((segment) => decodeURIComponent(segment)).join("/");
+      segments[1] !== "image" || segments[2] !== "upload" ||
+      queryKeys.length !== 1 || queryKeys[0] !== "_a" || !url.searchParams.get("_a")) return value;
+
+    // URLGen emits /upload/v1/folder/id for foldered public IDs, but omits
+    // v1 for a single-segment ID such as "thumbnail". The latter is accepted
+    // only as exactly one path segment, so transformation segments remain
+    // distinguishable and are never mistaken for a stored ID.
+    const publicIdSegments = segments[3] === "v1"
+      ? segments.slice(4)
+      : segments.length === 4 ? [segments[3]] : [];
+    const decodedSegments = publicIdSegments.map((segment) => decodeURIComponent(segment));
+    if (!decodedSegments.length || decodedSegments.some((segment) => segment.includes("/") || segment.includes("\\"))) {
+      return value;
+    }
+    return decodedSegments.join("/");
   } catch {
     return value;
   }

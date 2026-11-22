@@ -7,6 +7,7 @@ import {
   resolveOutlineConflict,
   setActiveItemInList,
   retryItemListLoad,
+  forceUpdate as forceItemListUpdate,
 } from "../../store/itemListSlice";
 import { useLocation, useNavigate } from "react-router-dom";
 import { DndContext, useDroppable, DragEndEvent, DragStartEvent, DragOverlay } from "@dnd-kit/core";
@@ -81,12 +82,18 @@ const ServiceItems = () => {
       ? itemList.remoteConflicts?.[itemList.loadedOutlineId]
       : undefined;
   });
+  const pendingRevisionResolution = useSelector((state) => {
+    const itemList = state.undoable.present.itemList;
+    return itemList.loadedOutlineId
+      ? itemList.pendingRevisionResolutions?.[itemList.loadedOutlineId]
+      : undefined;
+  });
   const [outlineReviewOwner, setOutlineReviewOwner] = useState<string>();
   let conflictMessage = "Some outline changes need a decision before they can be saved.";
-  if (remoteOutlineConflict?.resolutionChoice) {
-    conflictMessage = "Saving your choice. Your draft stays open until it finishes.";
-  } else if (remoteOutlineConflict?.saveError) {
+  if (remoteOutlineConflict?.saveError) {
     conflictMessage = "Could not save your choice. Review the changes and try again.";
+  } else if (remoteOutlineConflict?.resolutionChoice) {
+    conflictMessage = "Saving your choice. Your draft stays open until it finishes.";
   }
   const mediaList = useSelector((state) => state.media.list);
   const allSongDocs = useSelector((state) => state.allDocs.allSongDocs);
@@ -847,6 +854,10 @@ const ServiceItems = () => {
               variant="secondary"
               onClick={() => setOutlineReviewOwner(outlineReviewIdentity)}
             >Review changes</Button>}
+            {!isViewOnlyAccess(access) && remoteOutlineConflict.saveError && pendingRevisionResolution && <Button
+              variant="secondary"
+              onClick={() => dispatch(forceItemListUpdate())}
+            >Retry save</Button>}
             {!isViewOnlyAccess(access) && <OutlineRevisionReview
               isOpen={outlineReviewOpen}
               onClose={() => setOutlineReviewOwner(undefined)}

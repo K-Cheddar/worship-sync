@@ -327,8 +327,48 @@ describe("desktop video download lifecycle manager", () => {
     });
     const detail = harness.transfers.get(`video-download-${jobId}`)?.detail ?? "";
     expect(detail).toContain("Audio 20%");
-    expect(detail).toContain("Video 100% (1 KB of 1 KB) · 2.0 MB/s · About 0 seconds remaining");
+    expect(detail).toContain("Video 100% (1 KB of 1 KB)");
+    expect(detail).not.toContain("Video 100% (1 KB of 1 KB) · 2.0 MB/s");
     expect(detail).toContain("Audio 20% (0 KB of 1 KB) · 1.2 MB/s · About 2 seconds remaining");
+  });
+
+  it("clears omitted speed and ETA for the active stream while keeping its byte history", () => {
+    const harness = makeHarness();
+    const jobId = harness.start();
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: 100,
+      streamId: "video-137",
+      streamLabel: "Video",
+      downloadedBytes: 800,
+      totalBytes: 800,
+    });
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: 20,
+      streamId: "audio-140",
+      streamLabel: "Audio",
+      downloadedBytes: 200,
+      totalBytes: 1000,
+      speedBytesPerSecond: 1.2 * 1024 * 1024,
+      etaSeconds: 2,
+    });
+    harness.manager.handleProgress({
+      jobId,
+      stage: "downloading",
+      progress: 25,
+      streamId: "audio-140",
+      streamLabel: "Audio",
+      downloadedBytes: 250,
+      totalBytes: 1000,
+    });
+
+    const detail = harness.transfers.get(`video-download-${jobId}`)?.detail ?? "";
+    expect(detail).toContain("Audio 25% (0 KB of 1 KB)");
+    expect(detail).not.toContain("1.2 MB/s");
+    expect(detail).not.toContain("About 2 seconds remaining");
   });
 
   it("refreshes the same canonical video identity on retry and imports its refreshed thumbnail", async () => {

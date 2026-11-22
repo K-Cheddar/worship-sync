@@ -9635,6 +9635,10 @@ describe("item list outline persistence", () => {
       revisionSelection: { kind: "rows", review, choices: { '["a","name"]': "remote" } },
       reviewedRevisionConflict: env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"].revisionConflict,
     }));
+    // An identical winner refresh must not retire the explicit leaf choice or
+    // turn its persistence into an ordinary row save.
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: first }));
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"]).toBeDefined();
     // Editing during debounce must not change the previewed commit or prevent
     // the subsequent ordinary autosave of newer work.
     if (stage === "write") await jest.advanceTimersByTimeAsync(1500);
@@ -9650,6 +9654,73 @@ describe("item list outline persistence", () => {
     expect({ stage: "after autosave", items: current.items, pending: env.store.getState().undoable.present.itemList.hasPendingUpdate }).toEqual({ stage: "after autosave", items: [...second, later], pending: false });
     expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
     expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    jest.useRealTimers();
+  });
+
+  it("retains a failed explicit revision choice and retries that same operation", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const base = [createServiceItem({ _id: "welcome", listId: "a", name: "Welcome" })];
+    const winnerItems = [{ ...base[0], name: "Welcome winner" }];
+    const losingItems = [{ ...base[0], name: "Welcome other" }];
+    const common = { _id: "outline-a", name: "Sunday", overlays: ["overlay"] };
+    const winner = { ...common, items: winnerItems, _rev: "2-winner", _revisions: { start: 2, ids: ["winner", "base"] } };
+    const loser = { ...common, items: losingItems, _rev: "2-loser", _revisions: { start: 2, ids: ["loser", "base"] } };
+    let current: Record<string, any> = winner;
+    let conflicts = ["2-loser"];
+    env.db.get.mockImplementation(async (_id: string, options?: { rev?: string }) => {
+      if (options?.rev === "1-base") return { ...common, items: base, _rev: "1-base" };
+      if (options?.rev === "2-loser") return loser;
+      return { ...current, _conflicts: conflicts };
+    });
+    let putCount = 0;
+    env.db.put.mockImplementation(async (doc: Record<string, any>) => {
+      putCount += 1;
+      if (putCount === 1) throw new Error("offline");
+      current = { ...doc, _rev: "3-resolved", _revisions: { start: 3, ids: ["resolved", "winner", "base"] } };
+      return { rev: "3-resolved" };
+    });
+    const remove = jest.fn(async () => { conflicts = []; });
+    Object.assign(env.db, { remove });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: winnerItems }));
+    const revisionConflict = {
+      graph: {
+        winningRevision: "2-winner",
+        conflictRevisions: ["2-loser"],
+        histories: { "2-winner": ["2-winner", "1-base"], "2-loser": ["2-loser", "1-base"] },
+      },
+      versions: [
+        { revision: "2-winner", items: winnerItems },
+        { revision: "2-loser", items: losingItems },
+      ],
+    };
+    env.store.dispatch(env.itemListSlice.actions.recordOutlineConflict({
+      outlineId: "outline-a", baselineItems: base, localItems: winnerItems,
+      remoteItems: winnerItems, revisionConflict,
+    }));
+    env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({
+      outlineId: "outline-a", choice: "keep-local", draftItems: winnerItems,
+      reviewedItems: winnerItems, revisionSelection: { kind: "whole", revision: "2-winner" },
+      reviewedRevisionConflict: revisionConflict,
+    }));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"].saveError).toBe(true);
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"]).toMatchObject({
+      items: winnerItems,
+      selection: { kind: "whole", revision: "2-winner" },
+    });
+
+    env.store.dispatch(env.itemListSlice.actions.forceUpdate());
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"]).toBeUndefined();
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"]).toBeUndefined();
     jest.useRealTimers();
   });
 
