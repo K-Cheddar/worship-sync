@@ -16,6 +16,7 @@ import type {
   VolunteerAvailabilityOperations,
   VolunteerAvailabilityRead,
   VolunteerAvailabilityRequest,
+  VolunteerAvailabilityRequestSummary,
   VolunteerAvailabilitySave,
   VolunteerAvailabilitySaveResult,
   VolunteerSchedulingPreferences,
@@ -1046,12 +1047,19 @@ const MyAvailabilityView = ({
   const [loadError, setLoadError] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [availabilityNeedsRefresh, setAvailabilityNeedsRefresh] = useState(false);
+  const [pastRequests, setPastRequests] = useState<VolunteerAvailabilityRequestSummary[] | null>(null);
+  const [pastRequestsVisible, setPastRequestsVisible] = useState(false);
+  const [pastRequestsLoading, setPastRequestsLoading] = useState(false);
+  const [pastRequestsError, setPastRequestsError] = useState("");
+  const [pastRequestToRetry, setPastRequestToRetry] = useState<VolunteerAvailabilityRequestSummary | null>(null);
+  const [openingPastRecipientId, setOpeningPastRecipientId] = useState("");
   const [editorRequest, setEditorRequest] = useState<VolunteerAvailabilityRequest | null>(null);
   const [saving, setSaving] = useState(false);
   const mountedRef = useRef(false);
   const ownerKeyRef = useRef(ownerKey);
   ownerKeyRef.current = ownerKey;
   const readSequenceRef = useRef(0);
+  const pastReadSequenceRef = useRef(0);
   const activeRequest = editorRequest;
 
   const updateDirty = useCallback((dirty: boolean) => {
@@ -1120,9 +1128,79 @@ const MyAvailabilityView = ({
     return read?.schedulingPreferences || null;
   }, [refreshAvailability]);
 
-  const needsResponse = requests.filter((request) => getAvailabilityRequestGroup(request) === "needs-response");
-  const submittedResponses = requests.filter((request) => getAvailabilityRequestGroup(request) === "submitted-responses");
-  const closedRequests = requests.filter((request) => getAvailabilityRequestGroup(request) === "closed");
+  const loadPastRequests = useCallback(async () => {
+    setPastRequestsVisible(true);
+    setPastRequestsError("");
+    if (pastRequests) return;
+    const sequence = ++pastReadSequenceRef.current;
+    const requestedOwner = ownerKey;
+    setPastRequestsLoading(true);
+    try {
+      const result = await operations.loadAvailability({ summary: true, history: true });
+      if (!mountedRef.current || ownerKeyRef.current !== requestedOwner ||
+          sequence !== pastReadSequenceRef.current) return;
+      if (!result?.success || !Array.isArray(result.requestSummaries)) {
+        throw new Error("Could not load past availability requests.");
+      }
+      setPastRequests(result.requestSummaries.filter((request) => !request.editable));
+      if (result.serviceTimeZone) setServiceTimeZone(result.serviceTimeZone);
+    } catch (error) {
+      if (!mountedRef.current || ownerKeyRef.current !== requestedOwner ||
+          sequence !== pastReadSequenceRef.current) return;
+      setPastRequestsError(error instanceof Error && error.message
+        ? error.message
+        : "Could not load past availability requests. Try again.");
+    } finally {
+      if (mountedRef.current && ownerKeyRef.current === requestedOwner &&
+          sequence === pastReadSequenceRef.current) setPastRequestsLoading(false);
+    }
+  }, [operations, ownerKey, pastRequests]);
+
+  const openPastRequest = useCallback(async (request: VolunteerAvailabilityRequestSummary) => {
+    if (openingPastRecipientId) return;
+    const sequence = ++pastReadSequenceRef.current;
+    const requestedOwner = ownerKey;
+    setOpeningPastRecipientId(request.recipientId);
+    setPastRequestToRetry(request);
+    setPastRequestsError("");
+    try {
+      const result = await operations.loadAvailability({ recipientId: request.recipientId });
+      if (!mountedRef.current || ownerKeyRef.current !== requestedOwner ||
+          sequence !== pastReadSequenceRef.current) return;
+      const fullRequest = result?.success && Array.isArray(result.requests)
+        ? result.requests.find((candidate) => candidate.recipientId === request.recipientId)
+        : null;
+      if (!fullRequest) {
+        setPastRequests(null);
+        setPastRequestToRetry(null);
+        throw new Error("This past request is no longer available. Reload past requests to update the list.");
+      }
+      if (fullRequest.editable) {
+        setRequests((current) => [
+          ...current.filter((candidate) => candidate.recipientId !== fullRequest.recipientId),
+          fullRequest,
+        ]);
+        setPastRequests((current) => current?.filter((candidate) => candidate.recipientId !== fullRequest.recipientId) ?? null);
+      }
+      if (result.serviceTimeZone) setServiceTimeZone(result.serviceTimeZone);
+      setPastRequestToRetry(null);
+      setEditorRequest(fullRequest);
+      updateDirty(false);
+    } catch (error) {
+      if (!mountedRef.current || ownerKeyRef.current !== requestedOwner ||
+          sequence !== pastReadSequenceRef.current) return;
+      setPastRequestsError(error instanceof Error && error.message
+        ? error.message
+        : "Could not open this past request. Try again.");
+    } finally {
+      if (mountedRef.current && ownerKeyRef.current === requestedOwner &&
+          sequence === pastReadSequenceRef.current) setOpeningPastRecipientId("");
+    }
+  }, [operations, openingPastRecipientId, ownerKey, updateDirty]);
+
+  const activeRequests = requests.filter((request) => request.editable);
+  const needsResponse = activeRequests.filter((request) => getAvailabilityRequestGroup(request) === "needs-response");
+  const submittedResponses = activeRequests.filter((request) => getAvailabilityRequestGroup(request) === "submitted-responses");
 
   const handleSaved = useCallback((
     answers: AnswerMap,
@@ -1221,10 +1299,11 @@ const MyAvailabilityView = ({
         ) : null}
 
         {loadState === "ready" && !activeRequest ? (
-          requests.length === 0 ? (
-            <p className="text-sm text-gray-300">No availability requests right now.</p>
-          ) : (
-            <div className="space-y-6">
+          <div className="space-y-6">
+            {activeRequests.length === 0 ? (
+              <p className="text-sm text-gray-300">No availability requests right now.</p>
+            ) : (
+              <div className="space-y-6">
               <section aria-labelledby="availability-needs-response-heading" className="space-y-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <h2 id="availability-needs-response-heading" className="text-sm font-semibold text-gray-100">Needs response</h2>
@@ -1255,20 +1334,68 @@ const MyAvailabilityView = ({
                   </ul>
                 </section>
               ) : null}
+              </div>
+            )}
 
-              {closedRequests.length ? (
-                <section aria-labelledby="availability-closed-heading" className="space-y-3">
-                  <h2 id="availability-closed-heading" className="text-sm font-semibold text-gray-100">Closed</h2>
-                  <ul className="space-y-2">
-                    {closedRequests.map((request) => (
-                      <RequestCard key={requestKey(request)} request={request} serviceTimeZone={serviceTimeZone}
-                        onOpen={() => openRequest(request)} disabled={availabilityNeedsRefresh} />
-                    ))}
-                  </ul>
-                </section>
+            <section aria-labelledby="availability-past-requests-heading" className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 id="availability-past-requests-heading" className="text-sm font-semibold text-gray-100">Past requests</h2>
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  aria-expanded={pastRequestsVisible}
+                  disabled={pastRequestsLoading || Boolean(openingPastRecipientId)}
+                  isLoading={pastRequestsLoading}
+                  onClick={() => {
+                    if (pastRequestsVisible) setPastRequestsVisible(false);
+                    else void loadPastRequests();
+                  }}
+                >
+                  {pastRequestsVisible ? "Hide past requests" : "Show past requests"}
+                </Button>
+              </div>
+              {pastRequestsVisible ? (
+                <div className="space-y-3">
+                  {pastRequestsLoading ? <p role="status" className="text-sm text-gray-400">Loading past requests…</p> : null}
+                  {pastRequestsError ? (
+                    <div role="alert" className="space-y-2 text-sm text-amber-200">
+                      <p>{pastRequestsError}</p>
+                      <Button type="button" variant="secondary" disabled={pastRequestsLoading || Boolean(openingPastRecipientId)}
+                        onClick={() => pastRequestToRetry
+                          ? void openPastRequest(pastRequestToRetry)
+                          : void loadPastRequests()}>
+                        Try again
+                      </Button>
+                    </div>
+                  ) : null}
+                  {pastRequests && pastRequests.length === 0 && !pastRequestsLoading ? (
+                    <p className="text-sm text-gray-400">No past requests.</p>
+                  ) : null}
+                  {pastRequests?.length ? (
+                    <ul className="space-y-2">
+                      {pastRequests.map((request) => (
+                        <li key={request.formId + ":" + request.recipientId}>
+                          <Button type="button" variant="secondary" className="w-full justify-between gap-3 text-left"
+                            disabled={pastRequestsLoading || Boolean(openingPastRecipientId)}
+                            isLoading={openingPastRecipientId === request.recipientId}
+                            onClick={() => void openPastRequest(request)}>
+                            <span className="min-w-0">
+                              <span className="block truncate">{request.name || "Availability request"}</span>
+                              <span className="block text-xs text-gray-400">
+                                {request.respondedAt || request.submissionId ? "Response submitted" : "No response submitted"}
+                                {request.responseDeadline ? ` · Closed ${formatAvailabilityDeadline(request.responseDeadline)}` : " · Closed"}
+                              </span>
+                            </span>
+                            <span aria-hidden="true">›</span>
+                          </Button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
               ) : null}
+            </section>
             </div>
-          )
         ) : null}
 
         {activeRequest ? (
@@ -1310,7 +1437,9 @@ const MyAvailability = ({ access, navigationGuardProvided = false }: {
     ? "personal:" + churchId + ":" + access.memberId + ":" + (access.sessionKey || "session")
     : "human:" + churchId + ":" + (context?.userId || "");
   const signedInOperations = useMemo<VolunteerAvailabilityOperations>(() => ({
-    loadAvailability: () => getMyVolunteerAvailability(churchId),
+    loadAvailability: (options) => options
+      ? getMyVolunteerAvailability(churchId, options)
+      : getMyVolunteerAvailability(churchId),
     saveAvailability: (request) => submitMyVolunteerAvailability(
       churchId,
       request.recipientId,

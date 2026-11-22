@@ -4,6 +4,7 @@ import {
 } from "../utils/environment";
 import type {
   VolunteerAvailabilityRead,
+  VolunteerAvailabilityReadOptions,
   VolunteerAvailabilityRequest,
   VolunteerAvailabilitySaveResult,
   VolunteerBulkResult,
@@ -2273,9 +2274,20 @@ export const acceptPendingMyAssignments = async (
 export const acceptMyUnansweredAssignments = (churchId: string, afterScheduleId?: string) => apiFetch<VolunteerBulkResult>(
   `api/churches/${churchId}/my-assignments/accept-unanswered`, { method: "POST", body: JSON.stringify(afterScheduleId ? { afterScheduleId } : {}) },
 );
-export const getMyVolunteerAvailability = (churchId: string) => apiFetch<VolunteerAvailabilityRead>(
-  `api/churches/${churchId}/my-availability`,
-);
+export const getMyVolunteerAvailability = (
+  churchId: string,
+  options: VolunteerAvailabilityReadOptions = {},
+) => {
+  const query = new URLSearchParams();
+  if (options.summary) query.set("summary", "1");
+  if (options.history) query.set("history", "1");
+  if (options.recipientId) query.set("recipientId", options.recipientId);
+  const search = query.toString();
+  const suffix = search ? `?${search}` : "";
+  return apiFetch<VolunteerAvailabilityRead>(
+    `api/churches/${churchId}/my-availability${suffix}`,
+  );
+};
 export const submitMyVolunteerAvailability = (
   churchId: string,
   recipientId: string,

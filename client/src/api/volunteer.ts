@@ -3,6 +3,7 @@ import type {
   PersonalScheduleAccess,
   VolunteerAvailabilityOperations,
   VolunteerAvailabilityRead,
+  VolunteerAvailabilityReadOptions,
   VolunteerAvailabilitySave,
   VolunteerAvailabilitySaveResult,
   VolunteerSchedulingPreferences,
@@ -113,11 +114,20 @@ export const openVolunteerSession = async (): Promise<VolunteerSession> => {
 
 export const personalScheduleAccess = (session: VolunteerSession): PersonalScheduleAccess => {
   const request = <T>(path: string, body?: unknown) => volunteerRequest<T>(path, body, session.csrfToken);
+  const availabilityPath = (options: VolunteerAvailabilityReadOptions = {}) => {
+    const query = new URLSearchParams();
+    if (options.summary) query.set("summary", "1");
+    if (options.history) query.set("history", "1");
+    if (options.recipientId) query.set("recipientId", options.recipientId);
+    const search = query.toString();
+    const suffix = search ? `?${search}` : "";
+    return `availability${suffix}`;
+  };
   const operations: MyScheduleOperations & VolunteerAvailabilityOperations = {
     load: () => request("schedule"), respond: (body) => request<{ success: boolean; response: "accepted" | "declined" }>("respond", body),
     saveBlockouts: (blockoutDates, expectedUpdatedAt) => request("blockouts", { blockoutDates, expectedUpdatedAt }),
     acceptUnanswered: (afterScheduleId) => request("accept-unanswered", afterScheduleId ? { afterScheduleId } : {}),
-    loadAvailability: () => request<VolunteerAvailabilityRead>("availability"),
+    loadAvailability: (options) => request<VolunteerAvailabilityRead>(availabilityPath(options)),
     saveAvailability: (payload) => request<VolunteerAvailabilitySaveResult>("availability", {
       recipientId: payload.recipientId,
       occurrenceAvailability: payload.availability,
@@ -131,12 +141,22 @@ export const personalScheduleAccess = (session: VolunteerSession): PersonalSched
   return { churchId: session.churchId, memberId: session.memberId, sessionKey: session.csrfToken, operations };
 };
 
-export const getVolunteerAvailability = (session: VolunteerSession) =>
-  volunteerRequest<VolunteerAvailabilityRead>(
-    "availability",
+export const getVolunteerAvailability = (
+  session: VolunteerSession,
+  options: VolunteerAvailabilityReadOptions = {},
+) => {
+  const query = new URLSearchParams();
+  if (options.summary) query.set("summary", "1");
+  if (options.history) query.set("history", "1");
+  if (options.recipientId) query.set("recipientId", options.recipientId);
+  const search = query.toString();
+  const suffix = search ? `?${search}` : "";
+  return volunteerRequest<VolunteerAvailabilityRead>(
+    `availability${suffix}`,
     undefined,
     session.csrfToken,
   );
+};
 
 export const submitVolunteerAvailability = (
   session: VolunteerSession,

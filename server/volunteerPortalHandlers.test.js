@@ -5,7 +5,7 @@ import { createVolunteerPortalHandlers, VOLUNTEER_SESSION_COOKIE } from "./volun
 
 const makeError = (status, message) => Object.assign(new Error(message), { status });
 
-const fixture = () => {
+const fixture = ({ getAvailability = async () => ({}) } = {}) => {
   const member = {
     churchId: "church-a",
     memberId: "member-a",
@@ -77,13 +77,13 @@ const fixture = () => {
         },
       };
     },
-    getAvailability: async () => ({}),
+    getAvailability,
     submitAvailability: async () => ({}),
   });
   return { member, handlers };
 };
 
-const invoke = async (handler, headers, body) => {
+const invoke = async (handler, headers, body, query) => {
   const response = {
     statusCode: 200,
     payload: null,
@@ -91,7 +91,7 @@ const invoke = async (handler, headers, body) => {
     status(code) { this.statusCode = code; return this; },
     json(payload) { this.payload = payload; return this; },
   };
-  await handler({ headers, body }, response);
+  await handler({ headers, body, query }, response);
   return response;
 };
 
@@ -137,4 +137,29 @@ test("accountless scheduling preference writes use the session member and reject
   const stale = await invoke(save, validHeaders, { ...preferenceBody, servingFrequency: "monthly" });
   assert.equal(stale.statusCode, 409);
   assert.equal(member.servingFrequency, "twice_monthly");
+});
+
+test("accountless availability reads forward summary and detail filters under the session identity", async () => {
+  const availabilityCalls = [];
+  const getAvailability = async (...args) => {
+    availabilityCalls.push(args);
+    return { success: true, requests: [] };
+  };
+  const { handlers } = fixture({ getAvailability });
+
+  const result = await invoke(
+    handlers.getVolunteerPersonalAvailability,
+    validHeaders,
+    undefined,
+    { summary: "1", history: "1", recipientId: "recipient-a" },
+  );
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(availabilityCalls.length, 1);
+  assert.equal(availabilityCalls[0][0].churchId, "church-a");
+  assert.equal(availabilityCalls[0][0].memberId, "member-a");
+  assert.equal(availabilityCalls[0][0].access, "personal");
+  assert.equal(availabilityCalls[0][1].summaryOnly, true);
+  assert.equal(availabilityCalls[0][1].historyOnly, true);
+  assert.equal(availabilityCalls[0][1].recipientId, "recipient-a");
 });

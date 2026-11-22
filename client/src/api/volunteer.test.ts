@@ -1,4 +1,4 @@
-import { openVolunteerSession, VolunteerApiError } from "./volunteer";
+import { getVolunteerAvailability, openVolunteerSession, VolunteerApiError } from "./volunteer";
 import { clearVolunteerIngress, readVolunteerIngress, scrubVolunteerIngress } from "../public/volunteerIngress";
 
 const session = { csrfToken: "synthetic-csrf", churchId: "church", memberId: "member", expiresAt: 9e12 };
@@ -11,6 +11,19 @@ const ingress = (token = "synthetic-personal-link") => {
 const originalFetch = global.fetch;
 beforeEach(() => { global.fetch = jest.fn(); });
 afterEach(() => { global.fetch = originalFetch; clearVolunteerIngress(); });
+
+it("requests a scoped lightweight accountless availability summary", async () => {
+  const fetcher = jest.mocked(global.fetch).mockResolvedValueOnce(response({
+    success: true, requests: [], requestSummaries: [],
+  }));
+
+  await getVolunteerAvailability(session, { summary: true, history: true, recipientId: "recipient-a" });
+
+  expect(fetcher).toHaveBeenCalledWith(
+    "/api/volunteer/availability?summary=1&history=1&recipientId=recipient-a",
+    expect.objectContaining({ method: "GET", credentials: "include", cache: "no-store" }),
+  );
+});
 
 it.each([429, 500, 503])("retains ingress only in memory for an explicit retry after HTTP %s", async (status) => {
   const token = ingress();

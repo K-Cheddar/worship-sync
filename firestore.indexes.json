@@ -204,6 +204,35 @@
       ]
     },
     {
+      "collectionGroup": "teamIntakeRecipients",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "memberId", "order": "ASCENDING" },
+        { "fieldPath": "formId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "teamIntakeForms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "purpose", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "responseDeadline", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "teamIntakeForms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "purpose", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "endDate", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "churchStorageQuotaReservations",
       "queryScope": "COLLECTION",
       "fields": [

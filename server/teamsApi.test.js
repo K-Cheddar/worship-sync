@@ -24367,6 +24367,483 @@ test("team-scoped editors cannot read or update church-wide member availability"
   assert.equal(update.statusCode, 403);
 });
 
+test("availability endpoint diagnostics show active-only reads, latency, and payload size", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability_performance_baseline");
+  const assigned = await seedAssignedSchedule(context, "availability_performance_baseline");
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, {
+    memberIds: [assigned.memberId],
+  }, { merge: true });
+  const occurrence = {
+    occurrenceId: assigned.occurrenceId,
+    serviceId: `svc-availability_performance_baseline`,
+    name: "Sunday Gathering",
+    startsAt: "2026-11-29T14:00:00.000Z",
+  };
+  const activeFormId = "volunteer_availability_performance_active_form";
+  await setDoc(COLLECTIONS.teamIntakeForms, activeFormId, {
+    formId: activeFormId,
+    churchId: context.churchId,
+    name: "Current availability",
+    purpose: "team_availability",
+    teamIds: [assigned.media.teamId],
+    active: true,
+    responseDeadline: calendarDaysFromToday(7),
+    availabilityOccurrences: [occurrence],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, "availability_performance_active_recipient", {
+    recipientId: "availability_performance_active_recipient",
+    churchId: context.churchId,
+    memberId: assigned.memberId,
+    formId: activeFormId,
+  });
+  const historicalGroupId = "availability-performance-closed-group";
+  const historicalServiceId = "availability-performance-closed-service";
+  const historicalDate = calendarDaysFromToday(30);
+  seedChurchServiceTimesForServerTests({
+    churchId: context.churchId,
+    services: [{
+      id: historicalServiceId,
+      serviceGroupId: historicalGroupId,
+      recurrence: "weekly",
+      dayOfWeek: 0,
+      time: "09:00",
+    }],
+  });
+  const closedHistoricalPair = [
+    {
+      occurrenceId: `group:${historicalGroupId}@${historicalDate}`,
+      groupId: historicalGroupId,
+      serviceId: historicalServiceId,
+      serviceIds: [historicalServiceId],
+      serviceDate: historicalDate,
+      name: "Grouped historical service",
+      startsAt: `${historicalDate}T14:00:00.000Z`,
+    },
+    {
+      occurrenceId: `${historicalServiceId}@${historicalDate}`,
+      serviceId: historicalServiceId,
+      serviceIds: [historicalServiceId],
+      serviceDate: historicalDate,
+      name: "Standalone historical service",
+      startsAt: `${historicalDate}T14:00:00.000Z`,
+    },
+  ];
+  for (let index = 0; index < 12; index += 1) {
+    const formId = `volunteer_availability_performance_closed_form_${index}`;
+    const recipientId = `volunteer_availability_performance_closed_recipient_${index}`;
+    await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+      formId,
+      churchId: context.churchId,
+      name: "Closed availability request",
+      purpose: "team_availability",
+      teamIds: [assigned.media.teamId],
+      active: false,
+      responseDeadline: calendarDaysFromToday(-30),
+      availabilityOccurrences: closedHistoricalPair,
+    });
+    await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+      recipientId,
+      churchId: context.churchId,
+      memberId: assigned.memberId,
+      formId,
+    });
+  }
+
+  const measurements = [];
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    const reads = [];
+    setAuthReadObserverForServerTests((read) => reads.push(read));
+    const startedAt = performance.now();
+    let result;
+    try {
+      result = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+    } finally {
+      setAuthReadObserverForServerTests(null);
+    }
+    const durationMs = performance.now() - startedAt;
+    const readCounts = reads.reduce((counts, read) => {
+      const key = `${read.type}:${read.collectionName}`;
+      counts[key] = (counts[key] || 0) + 1;
+      return counts;
+    }, {});
+    measurements.push({
+      statusCode: result.statusCode,
+      requests: result.payload?.requests?.length || 0,
+      databaseOperations: reads.length,
+      readCounts,
+      payloadBytes: Buffer.byteLength(JSON.stringify(result.payload || {})),
+      durationMs: Number(durationMs.toFixed(2)),
+    });
+  }
+
+  assert.ok(measurements.every(({ statusCode }) => statusCode === 200));
+  assert.ok(measurements.every(({ requests }) => requests === 1));
+  assert.ok(measurements.every(({ databaseOperations }) => databaseOperations < 60));
+  assert.ok(measurements.every(({ payloadBytes }) => payloadBytes < 9410));
+  assert.ok(measurements.every(({ readCounts }) =>
+    !readCounts["getDoc:teamIntakeForms"] &&
+    !readCounts["getDoc:teamIntakeRecipients"] &&
+    readCounts["queryDocs:teamIntakeForms"] === 3 &&
+    readCounts["queryDocs:teamIntakeRecipients"] === 1 &&
+    !readCounts["queryDocs:teamSchedules"],
+  ));
+  if (process.env.WORSHIPSYNC_AVAILABILITY_BENCHMARK === "1") {
+    console.log("availability endpoint in-memory after", JSON.stringify(measurements));
+  }
+
+  const summary = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context,
+    query: { summary: "1" },
+  });
+  assert.equal(summary.statusCode, 200);
+  assert.deepEqual(summary.payload.requests, []);
+  assert.deepEqual(summary.payload.requestSummaries, [{
+    recipientId: "availability_performance_active_recipient",
+    formId: activeFormId,
+    name: "Current availability",
+    responseDeadline: calendarDaysFromToday(7),
+    respondedAt: "",
+    submissionId: "",
+    editable: true,
+  }]);
+  const detailReads = [];
+  setAuthReadObserverForServerTests((read) => detailReads.push(read));
+  let detail;
+  try {
+    detail = await callHandler(authHandlers.getMyVolunteerAvailability, {
+      context,
+      query: { recipientId: "availability_performance_active_recipient" },
+    });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+  assert.equal(detail.statusCode, 200);
+  assert.equal(detail.payload.requests.length, 1);
+  assert.equal(detailReads.filter(({ type, collectionName }) =>
+    type === "queryDocs" && collectionName === COLLECTIONS.teamIntakeRecipients).length, 1);
+  assert.equal(detailReads.filter(({ type, collectionName }) =>
+    type === "queryDocs" && collectionName === COLLECTIONS.teamIntakeForms).length, 1);
+  assert.equal(detailReads.some(({ type, collectionName }) =>
+    type === "getDoc" && [COLLECTIONS.teamIntakeForms, COLLECTIONS.teamIntakeRecipients].includes(collectionName)), false);
+  assert.equal(detailReads.some(({ type, collectionName }) =>
+    type === "queryDocs" && collectionName === COLLECTIONS.teamSchedules), false);
+  const history = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context,
+    query: { summary: "1", history: "1" },
+  });
+  assert.equal(history.statusCode, 200, JSON.stringify(history.payload));
+  assert.deepEqual(history.payload.requests, []);
+  assert.equal(history.payload.requestSummaries.length, 12);
+  assert.ok(history.payload.requestSummaries.every((request) => request.editable === false));
+  assert.ok(history.payload.requestSummaries.every((request) => !Object.hasOwn(request, "occurrences")));
+  const pastDetail = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context,
+    query: { recipientId: "volunteer_availability_performance_closed_recipient_0" },
+  });
+  assert.equal(pastDetail.statusCode, 200, JSON.stringify(pastDetail.payload));
+  assert.equal(pastDetail.payload.requests.length, 1, JSON.stringify(pastDetail.payload));
+  assert.equal(pastDetail.payload.requests[0].editable, false);
+  assert.ok(pastDetail.payload.requests[0].occurrences.length > 0);
+  const malformedDetail = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context,
+    query: { recipientId: "availability_performance_active_recipient/other" },
+  });
+  assert.equal(malformedDetail.statusCode, 200);
+  assert.deepEqual(malformedDetail.payload.requests, []);
+});
+
+test("availability reads batch large recipient sets and reuse repeated team scope", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability_large_read");
+  const assigned = await seedAssignedSchedule(context, "availability_large_read");
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, {
+    memberIds: [assigned.memberId],
+  }, { merge: true });
+  const responseDeadline = calendarDaysFromToday(14);
+  const formCount = 65;
+  for (let index = 0; index < formCount; index += 1) {
+    const formId = `availability_large_form_${index}`;
+    const occurrenceId = `availability-large-service-${index}@${calendarDaysFromToday(21)}`;
+    await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+      formId,
+      churchId: context.churchId,
+      name: `Availability ${index}`,
+      purpose: "team_availability",
+      teamIds: [assigned.media.teamId],
+      active: true,
+      responseDeadline,
+      availabilityOccurrences: [{
+        occurrenceId,
+        serviceId: `availability-large-service-${index}`,
+        name: `Service ${index}`,
+        startsAt: `${calendarDaysFromToday(21)}T14:00:00.000Z`,
+      }],
+    });
+    await setDoc(COLLECTIONS.teamIntakeRecipients, `availability_large_recipient_${index}`, {
+      recipientId: `availability_large_recipient_${index}`,
+      churchId: context.churchId,
+      memberId: assigned.memberId,
+      formId,
+      ...(index === 0 ? { respondedAt: "2026-11-20T12:00:00.000Z", submissionId: "submitted-0" } : {}),
+    });
+  }
+  await setDoc(COLLECTIONS.teamIntakeRecipients, "availability_large_recipient_shared_form", {
+    recipientId: "availability_large_recipient_shared_form",
+    churchId: context.churchId,
+    memberId: assigned.memberId,
+    formId: "availability_large_form_0",
+  });
+
+  const reads = [];
+  setAuthReadObserverForServerTests((read) => reads.push(read));
+  const startedAt = performance.now();
+  let result;
+  try {
+    result = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+  const durationMs = Number((performance.now() - startedAt).toFixed(2));
+  const payloadBytes = Buffer.byteLength(JSON.stringify(result.payload || {}));
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.equal(result.payload.requests.length, formCount + 1);
+  assert.equal(result.payload.requests.filter(({ formId }) => formId === "availability_large_form_0").length, 2);
+  assert.equal(result.payload.requests.find(({ recipientId }) =>
+    recipientId === "availability_large_recipient_0")?.submissionId, "submitted-0");
+  assert.equal(reads.filter(({ type, collectionName }) =>
+    type === "queryDocs" && collectionName === COLLECTIONS.teamIntakeForms).length, 3);
+  assert.equal(reads.filter(({ type, collectionName }) =>
+    type === "queryDocs" && collectionName === COLLECTIONS.teamIntakeRecipients).length, 3);
+  assert.equal(reads.filter(({ type, collectionName }) =>
+    type === "getDoc" && collectionName === COLLECTIONS.teams).length, 1);
+  assert.equal(reads.some(({ type, collectionName }) =>
+    type === "getDoc" && [COLLECTIONS.teamIntakeForms, COLLECTIONS.teamIntakeRecipients].includes(collectionName)), false);
+  assert.equal(reads.some(({ type, collectionName }) =>
+    type === "queryDocs" && collectionName === COLLECTIONS.teamSchedules), false);
+  if (process.env.WORSHIPSYNC_AVAILABILITY_BENCHMARK === "1") {
+    console.log("availability endpoint in-memory after large-active", JSON.stringify({
+      requests: result.payload.requests.length,
+      databaseOperations: reads.length,
+      formQueries: reads.filter(({ type, collectionName }) =>
+        type === "queryDocs" && collectionName === COLLECTIONS.teamIntakeForms).length,
+      recipientQueries: reads.filter(({ type, collectionName }) =>
+        type === "queryDocs" && collectionName === COLLECTIONS.teamIntakeRecipients).length,
+      teamReads: reads.filter(({ type, collectionName }) =>
+        type === "getDoc" && collectionName === COLLECTIONS.teams).length,
+      scheduleQueries: reads.filter(({ type, collectionName }) =>
+        type === "queryDocs" && collectionName === COLLECTIONS.teamSchedules).length,
+      payloadBytes,
+      durationMs,
+    }));
+  }
+});
+
+test("availability reads stay scoped to the linked church and member", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const owner = await createAdminContext("volunteer_availability_scope_owner");
+  const other = await createAdminContext("volunteer_availability_scope_other");
+  const assigned = await seedAssignedSchedule(other, "availability_scope_other");
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, {
+    memberIds: [assigned.memberId],
+  }, { merge: true });
+  const formId = "availability_scope_other_form";
+  const recipientId = "availability_scope_other_recipient";
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId,
+    churchId: other.churchId,
+    purpose: "team_availability",
+    teamIds: [assigned.media.teamId],
+    active: true,
+    responseDeadline: calendarDaysFromToday(7),
+    availabilityOccurrences: [],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+    recipientId,
+    churchId: other.churchId,
+    memberId: assigned.memberId,
+    formId,
+  });
+
+  const ownerRead = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context: owner,
+    query: { recipientId },
+  });
+  assert.equal(ownerRead.statusCode, 200);
+  assert.deepEqual(ownerRead.payload.requests, []);
+  const ownerHistory = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context: owner,
+    query: { summary: "1", history: "1" },
+  });
+  assert.equal(ownerHistory.statusCode, 200);
+  assert.deepEqual(ownerHistory.payload.requestSummaries, []);
+  const otherRead = await callHandler(authHandlers.getMyVolunteerAvailability, { context: other });
+  assert.equal(otherRead.statusCode, 200);
+  assert.deepEqual(otherRead.payload.requests.map(({ recipientId: id }) => id), [recipientId]);
+});
+
+test("unlinked volunteers do not receive another roster member's availability requests", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability_unlinked");
+  const assigned = await seedAssignedSchedule(context, "availability_unlinked", { link: false });
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, {
+    memberIds: [assigned.memberId],
+  }, { merge: true });
+  const formId = "availability_unlinked_form";
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId,
+    churchId: context.churchId,
+    purpose: "team_availability",
+    teamIds: [assigned.media.teamId],
+    active: true,
+    responseDeadline: calendarDaysFromToday(7),
+    availabilityOccurrences: [],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, "availability_unlinked_recipient", {
+    recipientId: "availability_unlinked_recipient",
+    churchId: context.churchId,
+    memberId: assigned.memberId,
+    formId,
+  });
+
+  const result = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(result.payload.requests, []);
+  assert.equal(result.payload.schedulingPreferences, null);
+});
+
+test("availability reads include open legacy forms with a blank response deadline until their end date", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability_legacy_deadline");
+  const assigned = await seedAssignedSchedule(context, "availability_legacy_deadline");
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, {
+    memberIds: [assigned.memberId],
+  }, { merge: true });
+  const formId = "availability_legacy_deadline_form";
+  const recipientId = "availability_legacy_deadline_recipient";
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId,
+    churchId: context.churchId,
+    purpose: "team_availability",
+    teamIds: [assigned.media.teamId],
+    active: true,
+    responseDeadline: "",
+    endDate: calendarDaysFromToday(7),
+    availabilityOccurrences: [],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, recipientId, {
+    recipientId,
+    churchId: context.churchId,
+    memberId: assigned.memberId,
+    formId,
+  });
+
+  const result = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.equal(result.statusCode, 200, JSON.stringify(result.payload));
+  assert.deepEqual(result.payload.requests.map(({ recipientId: id }) => id), [recipientId]);
+  assert.equal(result.payload.requests[0].responseDeadline, calendarDaysFromToday(7));
+});
+
+test("availability reads fail when team-scope data cannot be read", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability_read_failure");
+  const assigned = await seedAssignedSchedule(context, "availability_read_failure");
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, {
+    memberIds: [assigned.memberId],
+  }, { merge: true });
+  const formId = "availability_read_failure_form";
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId,
+    churchId: context.churchId,
+    purpose: "team_availability",
+    teamIds: [assigned.media.teamId],
+    active: true,
+    responseDeadline: calendarDaysFromToday(7),
+    availabilityOccurrences: [],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, "availability_read_failure_recipient", {
+    recipientId: "availability_read_failure_recipient",
+    churchId: context.churchId,
+    memberId: assigned.memberId,
+    formId,
+  });
+
+  setAuthReadObserverForServerTests(({ type, collectionName, id }) => {
+    if (type === "getDoc" && collectionName === COLLECTIONS.teams && id === assigned.media.teamId) {
+      throw new Error("Injected team-scope read failure");
+    }
+  });
+  let result;
+  try {
+    result = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  } finally {
+    setAuthReadObserverForServerTests(null);
+  }
+  assert.equal(result.statusCode, 500);
+  assert.match(result.payload.errorMessage, /could not load your availability requests/i);
+});
+
+test("availability preferences remain available with no current requests", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+  const context = await createAdminContext("volunteer_availability_no_current_requests");
+  const assigned = await seedAssignedSchedule(context, "availability_no_current_requests");
+  await setDoc(COLLECTIONS.teams, assigned.media.teamId, {
+    memberIds: [assigned.memberId],
+  }, { merge: true });
+  await setDoc(COLLECTIONS.teamRosterMembers, assigned.memberId, {
+    servingFrequency: "twice_monthly",
+    recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
+  }, { merge: true });
+  const formId = "availability_no_current_requests_form";
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, {
+    formId,
+    churchId: context.churchId,
+    purpose: "team_availability",
+    teamIds: [assigned.media.teamId],
+    active: true,
+    responseDeadline: calendarDaysFromToday(-1),
+    availabilityOccurrences: [],
+  });
+  await setDoc(COLLECTIONS.teamIntakeRecipients, "availability_no_current_requests_recipient", {
+    recipientId: "availability_no_current_requests_recipient",
+    churchId: context.churchId,
+    memberId: assigned.memberId,
+    formId,
+  });
+
+  const measurements = [];
+  for (let iteration = 0; iteration < 3; iteration += 1) {
+    const reads = [];
+    setAuthReadObserverForServerTests((read) => reads.push(read));
+    const startedAt = performance.now();
+    let result;
+    try {
+      result = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+    } finally {
+      setAuthReadObserverForServerTests(null);
+    }
+    measurements.push({
+      result,
+      databaseOperations: reads.length,
+      payloadBytes: Buffer.byteLength(JSON.stringify(result.payload || {})),
+      durationMs: Number((performance.now() - startedAt).toFixed(2)),
+    });
+  }
+  assert.ok(measurements.every(({ result }) => result.statusCode === 200));
+  assert.ok(measurements.every(({ result }) => result.payload.requests.length === 0));
+  assert.ok(measurements.every(({ result }) => result.payload.schedulingPreferences?.servingFrequency === "twice_monthly"));
+  if (process.env.WORSHIPSYNC_AVAILABILITY_BENCHMARK === "1") {
+    console.log("availability endpoint in-memory after no-active", JSON.stringify(measurements.map(({
+      result, databaseOperations, payloadBytes, durationMs,
+    }) => ({
+      requests: result.payload.requests.length,
+      databaseOperations,
+      payloadBytes,
+      durationMs,
+    }))));
+  }
+});
+
 test("my availability uses current recipient scope without disclosing tokens or another member", async (t) => {
   if (skipUnlessInMemoryAuth(t)) return;
   const context = await createAdminContext("volunteer_availability");
@@ -24509,19 +24986,35 @@ test("my availability uses current recipient scope without disclosing tokens or 
   assert.deepEqual(latest.payload.requests[0].availabilityRevision, { [assigned.occurrenceId]: 2 });
   await setDoc(COLLECTIONS.teamIntakeForms, formId, { responseDeadline: "2000-01-01" }, { merge: true });
   const expiredRead = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
-  assert.equal(expiredRead.payload.requests[0].editable, false);
+  assert.deepEqual(expiredRead.payload.requests, []);
   const expiredWrite = await callHandler(authHandlers.submitMyVolunteerAvailability, {
     context, body: { recipientId, occurrenceAvailability: {}, availabilityRevision: { [assigned.occurrenceId]: 2 } },
   });
   assert.equal(expiredWrite.statusCode, 409);
   await setDoc(COLLECTIONS.teamIntakeForms, formId, { responseDeadline: "2099-11-01", active: false }, { merge: true });
   const closedRead = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
-  assert.equal(closedRead.payload.requests[0].editable, false);
+  assert.deepEqual(closedRead.payload.requests, []);
+  const closedHistory = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context,
+    query: { summary: "1", history: "1" },
+  });
+  assert.deepEqual(closedHistory.payload.requestSummaries.map(({ recipientId: id, editable }) => ({ id, editable })), [
+    { id: recipientId, editable: false },
+  ]);
   const closedWrite = await callHandler(authHandlers.submitMyVolunteerAvailability, {
     context, body: { recipientId, occurrenceAvailability: {}, availabilityRevision: { [assigned.occurrenceId]: 2 } },
   });
   assert.equal(closedWrite.statusCode, 400);
   await setDoc(COLLECTIONS.teamIntakeForms, formId, { active: true }, { merge: true });
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, { archivedAt: "2026-11-20T12:00:00.000Z" }, { merge: true });
+  const archivedRead = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  assert.deepEqual(archivedRead.payload.requests, []);
+  const archivedHistory = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context,
+    query: { summary: "1", history: "1" },
+  });
+  assert.deepEqual(archivedHistory.payload.requestSummaries, []);
+  await setDoc(COLLECTIONS.teamIntakeForms, formId, { archivedAt: null }, { merge: true });
   const other = await callHandler(authHandlers.submitMyVolunteerAvailability, {
     context, body: { recipientId: `${recipientId}_other`, occurrenceAvailability: {} },
   });
@@ -24532,6 +25025,11 @@ test("my availability uses current recipient scope without disclosing tokens or 
   });
   assert.equal(revoked.statusCode, 404);
   assert.deepEqual((await callHandler(authHandlers.getMyVolunteerAvailability, { context })).payload.requests, []);
+  const revokedHistory = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context,
+    query: { summary: "1", history: "1" },
+  });
+  assert.deepEqual(revokedHistory.payload.requestSummaries, []);
 });
 
 test("issued availability forms project proven grouped occurrences and write through every raw revision", async (t) => {

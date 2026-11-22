@@ -84,7 +84,7 @@ remained focused on assigned services and Time Off.
   session at `/s?view=availability`; this does not require a new account or
   credential. Both entry points use the same request list and editor.
 - Open requests with unanswered service dates appear under **Needs response**;
-  submitted and closed requests appear under **Previous responses**. Each date
+  submitted open requests appear under **Submitted responses**. Each date
   offers **Available**, **Unavailable**, or **Not answered**. An unanswered
   choice is neutral and does not count as unavailable.
 - Saving sends one complete answer map for that request's occurrence scope and
@@ -141,9 +141,10 @@ submitted, and closed requests shared the previous-responses group.
   completion from an answer-map match alone.
 - Open requests without submission metadata appear under **Needs response**;
   open requests with submission metadata appear under **Submitted responses**,
-  with unanswered dates called out. Every non-editable request appears under
-  **Closed**, with either **No response submitted** or its saved response
-  summary.
+  with unanswered dates called out. Routine reads omit closed or expired
+  requests. Volunteers can explicitly choose **Show past requests** to load
+  read-only summaries, then open one authorized request at a time. Revoked or
+  archived requests remain unavailable.
 - Request cards show a compact service-date range, service count, deadline and
   accurate response summary. Full service names, dates and times remain inside
   the request and use the church timezone.
@@ -154,11 +155,52 @@ Both signed-in `/my-availability` and accountless `/s?view=availability` keep
 their existing authorization and recipient scope. Saves still use the complete
 form-scoped availability map and per-occurrence revision snapshot. HTTP 409
 review, uncertain-save reconciliation, dirty-draft preservation, navigation
-protection and closed-request restrictions remain. The three-state backend
-model and Auto-fill interpretation are unchanged. Existing `/a/:token` links,
+protection and the existing three-state backend
+model and Auto-fill interpretation remain unchanged. Existing `/a/:token` links,
 public positive-selection checkboxes, submissions and response APIs remain
-compatible. No reminder automation, preference storage or new endpoint is
-introduced.
+compatible. No reminder automation or preference storage is introduced.
+
+## Active availability reads and unified-page integration (2026-11-20)
+
+**Approval source:** Current product-owner request, “Optimize Volunteer
+Availability API and Prepare for Unified My Schedule,” 2026-11-20.
+
+- Routine reads return only active, unarchived `team_availability` forms whose
+  response deadline (or legacy form end date) has not passed on the church's
+  calendar date. Recipient and current Team membership are checked under the
+  server-resolved church/member identity; revoked and out-of-scope recipients
+  are omitted. Open unanswered and open submitted requests remain editable.
+- Expired, inactive, archived, revoked and no-longer-in-scope requests are
+  omitted from volunteer reads. Their stored records and answers remain intact;
+  administrative form, reporting and audit paths retain their historical
+  records. There is no new volunteer history endpoint or client-controlled
+  authorization bypass.
+- Existing callers retain the full `requests` response by default, now scoped
+  to current requests. `summary=1` returns minimal `requestSummaries` and
+  scheduling preferences without occurrence projection or revision snapshots.
+  A full read may include `recipientId`; the server checks that exact recipient
+  against the resolved identity before loading its form details. Signed-in and
+  personal-link API adapters support both options.
+- Preferences remain in the availability response even when no current
+  requests exist. Existing schedule data already supplies member identity,
+  revision, blockout dates and service timezone. Its signed-in member object
+  currently includes preference fields; the accountless member projection
+  omits them. Reuse schedule data where present, and use the availability
+  summary preferences for accountless access. Keep the summary operation
+  independent so a delayed or failed availability read cannot hold back
+  assignments. Load full request details and revision snapshots when the
+  volunteer opens a summary.
+- Routine full reads reconcile only returned active requests that can contain
+  a matching identity; active summaries and past-request summaries skip that
+  work. Opening one past request may reconcile that selected form. Closed
+  history never triggers reconciliation during a routine read. If evidence is
+  incomplete or conflicting, the projection retains its integrity-safe
+  behavior and revision checks.
+- Firestore uses bounded form and recipient queries, deduplicates forms and
+  Team reads, and caps each collection's work. The required composite indexes
+  are declared in `firestore.indexes.json`; deploy them before production use.
+  See [the API performance record](../volunteer-availability-api-performance.md)
+  for measured results and emulator limitations.
 
 ## Volunteer workspace layout and navigation (owner request, 2026-11-20)
 

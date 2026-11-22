@@ -109,7 +109,7 @@ test("Firestore human availability operation shares the recipient transaction an
   const formId = `volunteer_form_${suffix}`;
   const recipientId = `volunteer_recipient_${suffix}`;
   const session = { destroy(callback) { callback?.(); } };
-  const request = (headers = {}, body = {}) => ({ headers, body, params: { churchId }, session });
+  const request = (headers = {}, body = {}, query = {}) => ({ headers, body, query, params: { churchId }, session });
   const refs = [
     db.collection(COLLECTIONS.churches).doc(churchId),
     db.collection(COLLECTIONS.teamRosterMembers).doc(memberId),
@@ -149,6 +149,21 @@ test("Firestore human availability operation shares the recipient transaction an
     assert.deepEqual(read.payload.requests[0].unansweredOccurrenceIds, ["own"]);
     assert.deepEqual(read.payload.requests[0].availabilityRevision, { own: 0 });
     assert.doesNotMatch(JSON.stringify(read.payload), /private|elsewhere/);
+    const summary = response();
+    await authHandlers.getMyVolunteerAvailability(request(headers, {}, { summary: "1" }), summary);
+    assert.equal(summary.statusCode, 200, JSON.stringify(summary.payload));
+    assert.deepEqual(summary.payload.requests, []);
+    assert.deepEqual(summary.payload.requestSummaries.map(({ recipientId: id, formId: summaryFormId }) => ({
+      recipientId: id,
+      formId: summaryFormId,
+    })), [{ recipientId, formId }]);
+    assert.deepEqual(summary.payload.requestSummaries[0].editable, true);
+    assert.equal(Object.hasOwn(summary.payload.requestSummaries[0], "occurrences"), false);
+    const detail = response();
+    await authHandlers.getMyVolunteerAvailability(request(headers, {}, { recipientId }), detail);
+    assert.equal(detail.statusCode, 200, JSON.stringify(detail.payload));
+    assert.equal(detail.payload.requests.length, 1);
+    assert.equal(detail.payload.requests[0].recipientId, recipientId);
     const saved = response();
     await authHandlers.submitMyVolunteerAvailability(request(headers, {
       recipientId, occurrenceAvailability: { own: "unavailable", outside: "available" },
@@ -186,6 +201,18 @@ test("Firestore human availability operation shares the recipient transaction an
     }), revoked);
     assert.equal(revoked.statusCode, 404);
     assert.equal((await refs[1].get()).data().serviceAvailability.own, "unavailable");
+    await refs[4].update({ revokedAt: null });
+    await refs[3].update({ active: false });
+    const pastSummary = response();
+    await authHandlers.getMyVolunteerAvailability(request(headers, {}, { summary: "1", history: "1" }), pastSummary);
+    assert.equal(pastSummary.statusCode, 200, JSON.stringify(pastSummary.payload));
+    assert.deepEqual(pastSummary.payload.requests, []);
+    assert.equal(pastSummary.payload.requestSummaries[0]?.recipientId, recipientId);
+    assert.equal(pastSummary.payload.requestSummaries[0]?.editable, false);
+    const pastDetail = response();
+    await authHandlers.getMyVolunteerAvailability(request(headers, {}, { recipientId }), pastDetail);
+    assert.equal(pastDetail.statusCode, 200, JSON.stringify(pastDetail.payload));
+    assert.equal(pastDetail.payload.requests[0]?.editable, false);
   } finally {
     if (submissionId) refs.push(db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId));
     await Promise.all(refs.map((ref) => ref.delete()));

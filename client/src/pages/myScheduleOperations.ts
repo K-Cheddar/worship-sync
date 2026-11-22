@@ -29,10 +29,23 @@ export type VolunteerAvailabilityRequest = {
   availabilityRevision: Record<string, number>;
   conflictingOccurrenceIds?: string[];
 };
+export type VolunteerAvailabilityRequestSummary = Pick<
+  VolunteerAvailabilityRequest,
+  "recipientId" | "formId" | "name" | "responseDeadline" | "respondedAt" | "submissionId" | "editable"
+>;
+export type VolunteerAvailabilityReadOptions = {
+  /** Return active request status only; load occurrence details when one opens. */
+  summary?: boolean;
+  /** Load past request summaries only after a volunteer asks to view history. */
+  history?: boolean;
+  /** Narrow a full read to one request after the server verifies volunteer scope. */
+  recipientId?: string;
+};
 export type VolunteerAvailabilityRead = {
   success: boolean;
   serviceTimeZone?: string | null;
   requests: VolunteerAvailabilityRequest[];
+  requestSummaries?: VolunteerAvailabilityRequestSummary[];
   schedulingPreferences?: VolunteerSchedulingPreferences | null;
 };
 export type VolunteerSchedulingPreferencesSave = Pick<
@@ -50,7 +63,7 @@ export type VolunteerAvailabilitySaveResult = {
   submittedAt?: string;
 };
 export type VolunteerAvailabilityOperations = {
-  loadAvailability: () => Promise<VolunteerAvailabilityRead>;
+  loadAvailability: (options?: VolunteerAvailabilityReadOptions) => Promise<VolunteerAvailabilityRead>;
   saveAvailability: (request: VolunteerAvailabilitySave) => Promise<VolunteerAvailabilitySaveResult>;
   saveSchedulingPreferences?: (request: VolunteerSchedulingPreferencesSave) => Promise<{
     success: boolean;

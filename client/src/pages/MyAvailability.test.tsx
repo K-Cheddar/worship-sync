@@ -813,7 +813,7 @@ it("lets a legacy saved answer be cleared back to unanswered and finalized", asy
     .toHaveTextContent("Response submitted · 3 unanswered");
 });
 
-it("groups closed requests with and without a submission separately from open requests", async () => {
+it("shows active requests and omits closed requests from the routine list", async () => {
   const noSubmission = makeRequest({
     name: "Open request",
     respondedAt: "",
@@ -844,15 +844,13 @@ it("groups closed requests with and without a submission separately from open re
 
   const needsResponse = await screen.findByRole("region", { name: "Needs response" });
   const submitted = screen.getByRole("region", { name: "Submitted responses" });
-  const closed = screen.getByRole("region", { name: "Closed" });
   expect(within(needsResponse).getByRole("button", { name: "Open Open request" }))
     .toHaveTextContent("Not yet submitted");
   expect(within(submitted).getByRole("button", { name: "Open Submitted request" }))
     .toHaveTextContent("Response submitted · 1 unanswered");
-  expect(within(closed).getByRole("button", { name: "Open Closed without response" }))
-    .toHaveTextContent("Closed · No response submitted");
-  expect(within(closed).getByRole("button", { name: "Open Closed with response" }))
-    .toHaveTextContent("Closed · Response submitted");
+  expect(screen.queryByText("Closed without response")).not.toBeInTheDocument();
+  expect(screen.queryByText("Closed with response")).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Closed" })).not.toBeInTheDocument();
 });
 
 it("reopens saved answers and lets the volunteer clear one back to unanswered", async () => {
@@ -887,7 +885,7 @@ it("reopens saved answers and lets the volunteer clear one back to unanswered", 
   }));
 });
 
-it("shows submitted and closed requests, then saves the complete scoped map with its revisions", async () => {
+it("shows submitted requests and saves the complete scoped map with its revisions", async () => {
   const user = userEvent.setup();
   const openRequest = makeRequest();
   const closedRequest = makeRequest({
@@ -914,8 +912,8 @@ it("shows submitted and closed requests, then saves the complete scoped map with
   const submittedResponses = await screen.findByRole("region", { name: "Submitted responses" });
   expect(within(submittedResponses).getByRole("button", { name: "Open November availability" }))
     .toHaveTextContent("1 available · 1 unavailable · 1 unanswered");
-  expect(screen.getByRole("region", { name: "Closed" }))
-    .toHaveTextContent("October availability");
+  expect(screen.queryByText("October availability")).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Closed" })).not.toBeInTheDocument();
   expect(screen.queryByText("An unanswered date means you haven't responded. It doesn't mean you're unavailable."))
     .not.toBeInTheDocument();
 
@@ -1090,15 +1088,130 @@ it("keeps an uncertain draft and requires a refresh before retry when the read i
   expect(saveAvailability).toHaveBeenCalledTimes(2);
 });
 
-it("keeps closed requests read-only", async () => {
-  const user = userEvent.setup();
+it("does not display closed requests even if a stale read contains one", async () => {
   const closed = makeRequest({ editable: false, availability: Object.fromEntries(ids.map((id) => [id, "unavailable"])), unansweredOccurrenceIds: [] });
-  renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([closed])), jest.fn()));
+  renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([closed], "America/New_York", {
+    servingFrequency: "twice_monthly",
+    recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
+    updatedAt: "preference-revision",
+  })), jest.fn()));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
-  expect(screen.getByText(/Closed/)).toBeInTheDocument();
-  screen.getAllByRole("checkbox").forEach((checkbox) => expect(checkbox).toBeDisabled());
+  expect(await screen.findByText("No availability requests right now.")).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Open November availability" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Closed" })).not.toBeInTheDocument();
+  const preferences = screen.getByRole("region", { name: "Scheduling preferences" });
+  expect(within(preferences).getByText("Serving frequency:")).toBeInTheDocument();
+  expect(within(preferences).queryByText("Preferences are unavailable for this account.")).not.toBeInTheDocument();
+});
+
+it("loads past request summaries only on demand and opens one past response read-only", async () => {
+  const user = userEvent.setup();
+  const closedRequest = makeRequest({ editable: false });
+  const loadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([]))
+    .mockResolvedValueOnce({
+      ...makeRead([]),
+      requestSummaries: [{
+        recipientId: closedRequest.recipientId,
+        formId: closedRequest.formId,
+        name: closedRequest.name,
+        responseDeadline: closedRequest.responseDeadline,
+        respondedAt: closedRequest.respondedAt,
+        submissionId: closedRequest.submissionId,
+        editable: false,
+      }],
+    })
+    .mockResolvedValueOnce(makeRead([closedRequest]));
+
+  renderPage(makeAccess(loadAvailability, jest.fn()));
+
+  expect(await screen.findByText("No availability requests right now.")).toBeInTheDocument();
+  expect(loadAvailability.mock.calls[0]).toEqual([]);
+  await user.click(screen.getByRole("button", { name: "Show past requests" }));
+  const pastRequestButton = await screen.findByRole("button", { name: /November availability.*Response submitted/ });
+  await waitFor(() => expect(pastRequestButton).toBeEnabled());
+  expect(loadAvailability.mock.calls[1][0]).toEqual({ summary: true, history: true });
+
+  await user.click(pastRequestButton);
+  expect(await screen.findByRole("button", { name: "Back to requests" })).toBeInTheDocument();
+  expect(loadAvailability.mock.calls[2][0]).toEqual({ recipientId: closedRequest.recipientId });
   expect(screen.queryByRole("button", { name: "Save response" })).not.toBeInTheDocument();
+});
+
+it("reloads past summaries after a selected request is revoked or archived", async () => {
+  const user = userEvent.setup();
+  const closedRequest = makeRequest({ editable: false });
+  const summary = {
+    recipientId: closedRequest.recipientId,
+    formId: closedRequest.formId,
+    name: closedRequest.name,
+    responseDeadline: closedRequest.responseDeadline,
+    respondedAt: closedRequest.respondedAt,
+    submissionId: closedRequest.submissionId,
+    editable: false,
+  };
+  const loadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([]))
+    .mockResolvedValueOnce({ ...makeRead([]), requestSummaries: [summary] })
+    .mockResolvedValueOnce(makeRead([]))
+    .mockResolvedValueOnce({ ...makeRead([]), requestSummaries: [] });
+
+  renderPage(makeAccess(loadAvailability, jest.fn()));
+  await user.click(await screen.findByRole("button", { name: "Show past requests" }));
+  const pastRequestButton = await screen.findByRole("button", { name: /November availability.*Response submitted/ });
+  await waitFor(() => expect(pastRequestButton).toBeEnabled());
+  await user.click(pastRequestButton);
+  expect(await screen.findByText("This past request is no longer available. Reload past requests to update the list.")).toBeInTheDocument();
+
+  const retryButton = screen.getByRole("button", { name: "Try again" });
+  await waitFor(() => expect(retryButton).toBeEnabled());
+  await user.click(retryButton);
+  expect(await screen.findByText("No past requests.")).toBeInTheDocument();
+  expect(loadAvailability).toHaveBeenCalledTimes(4);
+  expect(loadAvailability.mock.calls[3][0]).toEqual({ summary: true, history: true });
+});
+
+it("ignores a past-request read after the volunteer identity changes", async () => {
+  const user = userEvent.setup();
+  const pendingHistory = deferred<VolunteerAvailabilityRead>();
+  const oldLoadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([]))
+    .mockReturnValueOnce(pendingHistory.promise);
+  const nextLoadAvailability = jest.fn().mockResolvedValue(makeRead([]));
+  const oldAccess = makeAccess(oldLoadAvailability, jest.fn(), "member-old");
+  const nextAccess = makeAccess(nextLoadAvailability, jest.fn(), "member-new");
+  const renderWithAccess = (access: PersonalScheduleAccess) => (
+    <Provider store={store}>
+      <MemoryRouter initialEntries={["/my-availability"]}>
+        <MyAvailability access={access} />
+      </MemoryRouter>
+    </Provider>
+  );
+  const view = render(renderWithAccess(oldAccess));
+
+  await screen.findByText("No availability requests right now.");
+  await user.click(screen.getByRole("button", { name: "Show past requests" }));
+  expect(oldLoadAvailability.mock.calls[1][0]).toEqual({ summary: true, history: true });
+
+  view.rerender(renderWithAccess(nextAccess));
+  await screen.findByText("No availability requests right now.");
+  await act(async () => {
+    pendingHistory.resolve({
+      ...makeRead([]),
+      requestSummaries: [{
+        recipientId: "old-recipient",
+        formId: "old-form",
+        name: "Old volunteer history",
+        responseDeadline: "2026-10-01",
+        respondedAt: "2026-09-20T12:00:00.000Z",
+        submissionId: "old-submission",
+        editable: false,
+      }],
+    });
+  });
+
+  expect(screen.queryByText("Old volunteer history")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Show past requests" })).toBeInTheDocument();
 });
 
 it("guards volunteer navigation when a response draft is dirty", async () => {

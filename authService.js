@@ -1537,18 +1537,26 @@ export const queryDocs = async (
     orderById = false,
     startAfterId = "",
     includeDocumentId = false,
+    select = [],
   } = {},
 ) => {
   authReadObserverForServerTests?.({
     type: "queryDocs",
     collectionName,
     filters,
+    select,
   });
   const db = requireFirestore();
   if (db) {
     let query = db.collection(collectionName);
     for (const filter of filters) {
-      query = query.where(filter.field, filter.op || "==", filter.value);
+      const field = filter.field === "__name__"
+        ? FieldPath.documentId()
+        : filter.field;
+      query = query.where(field, filter.op || "==", filter.value);
+    }
+    if (Array.isArray(select) && select.length) {
+      query = query.select(...select);
     }
     if (orderById) {
       query = query.orderBy(FieldPath.documentId());
@@ -1572,15 +1580,19 @@ export const queryDocs = async (
     .filter((item) =>
       filters.every((filter) => {
         const operator = filter.op || "==";
-        if (operator === "==") return item[filter.field] === filter.value;
+        const actual = filter.field === "__name__" ? item.id : item[filter.field];
+        if (operator === "==") return actual === filter.value;
         if (operator === "in") {
           return (
             Array.isArray(filter.value) &&
-            filter.value.includes(item[filter.field])
+            filter.value.includes(actual)
           );
         }
         if (operator === ">") {
-          return item[filter.field] > filter.value;
+          return actual > filter.value;
+        }
+        if (operator === ">=") {
+          return actual >= filter.value;
         }
         return false;
       }),
@@ -1592,7 +1604,17 @@ export const queryDocs = async (
     .sort((left, right) => orderById
       ? Buffer.compare(Buffer.from(left.id, "utf8"), Buffer.from(right.id, "utf8"))
       : 0)
-    .slice(0, limit || undefined);
+    .slice(0, limit || undefined)
+    .map((item) => {
+      if (!Array.isArray(select) || !select.length) return item;
+      return {
+        id: item.id,
+        ...Object.fromEntries(select
+          .filter((field) => Object.hasOwn(item, field))
+          .map((field) => [field, item[field]])),
+        ...(includeDocumentId ? { documentId: item.documentId } : {}),
+      };
+    });
 };
 
 const encryptPendingInviteToken = (token) => {

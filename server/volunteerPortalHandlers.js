@@ -174,7 +174,21 @@ export const createVolunteerPortalHandlers = ({
     saveVolunteerPersonalSchedulingPreferences: handle(async (req, res) => res.json(await saveSchedulingPreferences(await sessionIdentity(req, true), req.body)),
       "Could not save your scheduling preferences. Try again in a moment."),
     getVolunteerPersonalAvailability: handle(
-      async (req, res) => res.json(await getAvailability(await sessionIdentity(req))),
+      async (req, res) => {
+        const endpointStartedAt = performance.now();
+        const identityStartedAt = performance.now();
+        const identity = await sessionIdentity(req);
+        const identityResolutionMs = performance.now() - identityStartedAt;
+        return res.json(await getAvailability(identity, {
+          summaryOnly: req.query?.summary === "1",
+          historyOnly: req.query?.history === "1",
+          recipientId: typeof req.query?.recipientId === "string"
+            ? req.query.recipientId.trim()
+            : "",
+          endpointStartedAt,
+          identityResolutionMs,
+        }));
+      },
       "Could not load your availability requests. Try again in a moment.",
     ),
     submitVolunteerPersonalAvailability: handle(
