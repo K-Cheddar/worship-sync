@@ -331,6 +331,18 @@ request latency. The index and production verification requirements remain in
 [deployment prerequisites](../volunteer-portal-deployment.md) and the
 [availability read-path record](../volunteer-availability-api-performance.md).
 
+After a confirmed Time Off or Scheduling Preferences save, the server returns a
+minimal member snapshot from that same transaction, including the shared
+revision and the saved fields needed by both editors. An explicit conflict or
+uncertain-save refresh can request the same safe member projection from the
+existing availability read, without an extra member lookup. Routine startup
+summaries stay compact. My Schedule adopts snapshots without refreshing
+assignment responses. A clean editor can use the latest saved state on its next
+edit; a dirty editor keeps its draft and original revision and uses the existing
+explicit conflict review. A rejected mutation is never retried automatically.
+Confirmed by the product-owner request for the Unified My Schedule reliability
+review, 2026-11-23.
+
 
 ## Personal credential foundation: Phase 2 contract (2026-10-21)
 

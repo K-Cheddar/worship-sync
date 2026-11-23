@@ -361,9 +361,13 @@ test("Firestore portal uses isolated cookies, CSRF and safe shared projections; 
       blockoutDates: [{ startDate: "2099-11-01", endDate: "2099-11-01" }], expectedUpdatedAt: "baseline" }), timeOff);
     assert.equal(timeOff.statusCode, 200);
     assert.doesNotMatch(JSON.stringify(timeOff.payload), /PRIVATE/);
-    const availability = res(); await authHandlers.getVolunteerPersonalAvailability(req(headers), availability);
+    const savedBlockouts = timeOff.payload.memberSnapshot.blockoutDates;
+    const availabilityRequest = req(headers); availabilityRequest.query = { includeMemberSnapshot: "1" };
+    const availability = res(); await authHandlers.getVolunteerPersonalAvailability(availabilityRequest, availability);
     assert.equal(availability.statusCode, 200);
     assert.equal(availability.payload.schedulingPreferences.servingFrequency, "as_needed");
+    assert.equal(availability.payload.memberSnapshot.updatedAt, (await roster.get()).get("updatedAt"));
+    assert.equal("notes" in availability.payload.memberSnapshot, false);
     const preferenceBaseline = (await roster.get()).data();
     const noPreferenceCsrf = res(); await authHandlers.saveVolunteerPersonalSchedulingPreferences(req({ cookie, origin }, {
       servingFrequency: "weekly",
@@ -381,6 +385,10 @@ test("Firestore portal uses isolated cookies, CSRF and safe shared projections; 
       firstName: "Forged",
     }), preferences);
     assert.equal(preferences.statusCode, 200, JSON.stringify(preferences.payload));
+    assert.equal(preferences.payload.memberSnapshot.updatedAt, preferences.payload.schedulingPreferences.updatedAt);
+    assert.deepEqual(preferences.payload.memberSnapshot.blockoutDates, savedBlockouts);
+    assert.deepEqual(preferences.payload.memberSnapshot.recurringAvailability, { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false });
+    assert.equal("notes" in preferences.payload.memberSnapshot, false);
     const savedMember = (await roster.get()).data();
     assert.equal(savedMember.servingFrequency, "weekly");
     assert.deepEqual(savedMember.recurringAvailability, { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false });

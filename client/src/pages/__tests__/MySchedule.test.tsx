@@ -1341,6 +1341,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", blockoutDates: [second] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [second] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1388,6 +1389,7 @@ describe("MySchedule", () => {
         saveRequest.resolve({
           success: true,
           member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
+          memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
         } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       });
       expect(screen.queryByRole("button", { name: /^Save time off$/i })).not.toBeInTheDocument();
@@ -1410,6 +1412,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", blockoutDates: [over] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [over] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1481,6 +1484,7 @@ describe("MySchedule", () => {
         mockUpdateMyBlockoutDates.mockResolvedValue({
           success: true,
           member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: withHistory ? [history] : [] },
+          memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: withHistory ? [history] : [] },
         } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
         renderPage();
 
@@ -1533,6 +1537,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [existing, added] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [existing, added] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1567,6 +1572,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [updated] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [updated] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1596,6 +1602,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1710,10 +1717,20 @@ describe("MySchedule", () => {
             updatedAt: savedStamp,
             blockoutDates: [otherDraftDate],
           },
+          memberSnapshot: {
+            memberId: "m1",
+            updatedAt: savedStamp,
+            blockoutDates: [otherDraftDate],
+          },
         } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>)
         .mockResolvedValueOnce({
           success: true,
           member: {
+            memberId: "m1",
+            updatedAt: "2099-04-01T00:00:00.000Z",
+            blockoutDates: [],
+          },
+          memberSnapshot: {
             memberId: "m1",
             updatedAt: "2099-04-01T00:00:00.000Z",
             blockoutDates: [],

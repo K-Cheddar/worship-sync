@@ -239,11 +239,15 @@ const MyScheduleBlockouts = ({
         ? saveBlockouts(draft, baseline.updatedAt)
         : updateMyBlockoutDates(churchId, draft, baseline.updatedAt));
       if (!mounted.current) return;
-      const saved = result.member?.blockoutDates || [];
+      if (!result?.success || !result.memberSnapshot) {
+        throw new Error("Could not confirm your time off was saved.");
+      }
+      const savedMember = result.memberSnapshot;
+      const saved = savedMember.blockoutDates || [];
       // Re-seed from the server so its normalization is what stays on screen.
       // Seeding also moves the baseline, leaving the editor clean after save.
-      seedDraft(saved, result.member.updatedAt || "");
-      onSaved(result.member);
+      seedDraft(saved, savedMember.updatedAt || "");
+      onSaved(savedMember);
       showToast("Time off saved.", "success");
     } catch (error) {
       if (!mounted.current) return;

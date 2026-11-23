@@ -36,6 +36,8 @@ export type VolunteerAvailabilityRequestSummary = Pick<
 export type VolunteerAvailabilityReadOptions = {
   /** Return active request status only; load occurrence details when one opens. */
   summary?: boolean;
+  /** Include a minimal roster snapshot when an editor needs conflict recovery. */
+  includeMemberSnapshot?: boolean;
   /** Load past request summaries only after a volunteer asks to view history. */
   history?: boolean;
   /** Narrow a full read to one request after the server verifies volunteer scope. */
@@ -47,6 +49,8 @@ export type VolunteerAvailabilityRead = {
   requests: VolunteerAvailabilityRequest[];
   requestSummaries?: VolunteerAvailabilityRequestSummary[];
   schedulingPreferences?: VolunteerSchedulingPreferences | null;
+  /** Safe roster fields from the same member read as schedulingPreferences. */
+  memberSnapshot?: MyScheduleMember | null;
 };
 export type VolunteerSchedulingPreferencesSave = Pick<
   VolunteerSchedulingPreferences,
@@ -68,13 +72,19 @@ export type VolunteerAvailabilityOperations = {
   saveSchedulingPreferences?: (request: VolunteerSchedulingPreferencesSave) => Promise<{
     success: boolean;
     schedulingPreferences: VolunteerSchedulingPreferences;
+    /** Authoritative member fields and revision from the same committed write. */
+    memberSnapshot: MyScheduleMember;
   }>;
 };
 export type VolunteerBulkResult = AcceptPendingAssignmentsResponse;
 export type MyScheduleOperations = {
   load: () => Promise<{ success: boolean; serviceTimeZone?: string; churchName?: string; member: MyScheduleMember | null; occurrences: MyScheduleOccurrence[] }>;
   respond: (body: { scheduleId: string; occurrenceId: string; cellKey: string; response: "accepted" | "declined" }) => Promise<{ success: boolean; response: "accepted" | "declined" }>;
-  saveBlockouts: (ranges: TeamRosterMember["blockoutDates"], expectedUpdatedAt: string) => Promise<{ success: boolean; member: MyScheduleMember }>;
+  saveBlockouts: (ranges: TeamRosterMember["blockoutDates"], expectedUpdatedAt: string) => Promise<{
+    success: boolean;
+    member: MyScheduleMember;
+    memberSnapshot: MyScheduleMember;
+  }>;
   acceptUnanswered: (afterScheduleId?: string) => Promise<VolunteerBulkResult>;
 };
 

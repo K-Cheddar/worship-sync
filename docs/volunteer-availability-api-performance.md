@@ -22,6 +22,15 @@ The before run preceded adding grouped and standalone historical occurrence data
 
 The four-second delay was not reproduced: the before handler ran in 1.18–3.05 ms in memory. A Firestore emulator was unavailable (`FIRESTORE_EMULATOR_HOST` was unset and Java was not installed), and this environment runs Node 22 although the repository declares Node 24. No remote or emulator query timings are claimed.
 
+## Unified My Schedule review (2026-11-23)
+
+This review did not capture end-to-end durations for assignment load, availability
+summary/detail, preference save, Time Off save, or assignment response. The
+workspace still has no `FIRESTORE_EMULATOR_HOST` and no Java runtime, so the
+Firestore-backed paths could not be benchmarked here. The figures above remain
+the November 20 in-memory handler comparison; they do not measure production
+network latency or frontend rendering and must not be read as production timing.
+
 ## Work removed and bounded
 
 - Routine forms are fetched only when active, for `team_availability`, and current under the configured church calendar date. Three indexed queries cover the current `responseDeadline`, legacy `endDate`, and blank-response-deadline cases.
@@ -44,7 +53,7 @@ The indexes must be deployed before the new Firestore query paths are used in pr
 
 ## Unified-page integration
 
-The unified My Schedule page starts the assignment/Time Off/member read and `loadAvailability({ summary: true })` independently. It renders each section when its data is ready, with separate loading and retry boundaries so either read can fail without blocking the other. The summary carries active request cards and scheduling preferences, including when no active requests exist, so no separate preference read is needed. The page loads full occurrence details and revisions only after the volunteer opens a request, using that authorized `recipientId`.
+The unified My Schedule page starts the assignment/Time Off/member read and `loadAvailability({ summary: true })` independently. It renders each section when its data is ready, with separate loading and retry boundaries so either read can fail without blocking the other. The routine summary carries active request cards and scheduling preferences, including when no active requests exist, so no separate preference read is needed. An explicit preference conflict or uncertain-save refresh can request a safe member snapshot from that same existing roster read; routine startup and request-detail payloads do not include it. The page loads full occurrence details and revisions only after the volunteer opens a request, using that authorized `recipientId`.
 
 The existing schedule response carries member identity/revision, blockout dates, and service timezone. Its signed-in member projection includes preference fields; the accountless member projection intentionally omits them. The page uses signed-in schedule preferences when available, otherwise it uses the availability summary, and it keeps the summary read independent from assignment processing.
 

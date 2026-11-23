@@ -37,6 +37,17 @@ const mockUpdateMySchedulingPreferences = jest.mocked(updateMySchedulingPreferen
 
 const ids = ["service-a@2099-11-08", "service-b@2099-11-15", "service-c@2099-11-22"];
 
+const memberSnapshotFor = (preferences: VolunteerSchedulingPreferences) => ({
+  memberId: "member-1",
+  churchId: "church-1",
+  firstName: "Test",
+  lastName: "Volunteer",
+  blockoutDates: [],
+  servingFrequency: preferences.servingFrequency,
+  recurringAvailability: preferences.recurringAvailability,
+  updatedAt: preferences.updatedAt,
+});
+
 const makeRequest = (
   overrides: Partial<VolunteerAvailabilityRequest> = {},
 ): VolunteerAvailabilityRequest => ({
@@ -86,6 +97,7 @@ const makeAccess = (
   saveSchedulingPreferences?: (request: VolunteerSchedulingPreferencesSave) => Promise<{
     success: boolean;
     schedulingPreferences: VolunteerSchedulingPreferences;
+    memberSnapshot: ReturnType<typeof memberSnapshotFor>;
   }>,
 ): PersonalScheduleAccess => ({
   churchId: "church-1",
@@ -202,7 +214,9 @@ it("shows stored scheduling preferences and saves explicit accountless edits", a
     recurringAvailability: { weeksOfMonth: [1, 2, 3], includeLastWeekOfMonth: false },
     updatedAt: "preferences-2",
   };
-  const savePreferences = jest.fn().mockResolvedValue({ success: true, schedulingPreferences: saved });
+  const savePreferences = jest.fn().mockResolvedValue({
+    success: true, schedulingPreferences: saved, memberSnapshot: memberSnapshotFor(saved),
+  });
   renderPage(makeAccess(
     jest.fn().mockResolvedValue(makeRead([], "America/New_York", existing)),
     jest.fn(),
@@ -241,7 +255,9 @@ it("keeps a confirmed preference save when the initial summary resolves afterwar
   };
   const pendingSummary = deferred<VolunteerAvailabilityRead>();
   const loadAvailability = jest.fn().mockReturnValue(pendingSummary.promise);
-  const savePreferences = jest.fn().mockResolvedValue({ success: true, schedulingPreferences: saved });
+  const savePreferences = jest.fn().mockResolvedValue({
+    success: true, schedulingPreferences: saved, memberSnapshot: memberSnapshotFor(saved),
+  });
   renderPage(makeAccess(loadAvailability, jest.fn(), "member-1", savePreferences), existing);
 
   await user.click(screen.getByRole("button", { name: "Edit preferences" }));
@@ -272,11 +288,16 @@ it("saves signed-in preferences through the church-scoped self-service API", asy
     updatedAt: "signed-in-revision",
   };
   mockGetMyVolunteerAvailability.mockResolvedValue(makeRead([], "America/New_York", preferences));
-  mockUpdateMySchedulingPreferences.mockResolvedValue({ success: true, schedulingPreferences: {
+  const savedPreferences: VolunteerSchedulingPreferences = {
     ...preferences,
     servingFrequency: "monthly",
     updatedAt: "signed-in-revision-2",
-  } });
+  };
+  mockUpdateMySchedulingPreferences.mockResolvedValue({
+    success: true,
+    schedulingPreferences: savedPreferences,
+    memberSnapshot: memberSnapshotFor(savedPreferences),
+  });
   render(
     <Provider store={store}>
       <MemoryRouter initialEntries={["/my-availability"]}>
@@ -328,6 +349,25 @@ it("uses current preference defaults and canceling does not mutate them", async 
   expect(screen.getByText("Every week")).toBeInTheDocument();
 });
 
+it("drops fallback preferences after the summary confirms they are unavailable", async () => {
+  const pendingSummary = deferred<VolunteerAvailabilityRead>();
+  const fallback: VolunteerSchedulingPreferences = {
+    servingFrequency: "monthly",
+    recurringAvailability: { weeksOfMonth: [2], includeLastWeekOfMonth: false },
+    updatedAt: "stale-member-revision",
+  };
+  renderPage(makeAccess(() => pendingSummary.promise, jest.fn()), fallback);
+
+  expect(screen.getByText("Once a month")).toBeInTheDocument();
+  await act(async () => {
+    pendingSummary.resolve(makeRead([]));
+    await pendingSummary.promise;
+  });
+
+  await waitFor(() => expect(screen.queryByText("Once a month")).not.toBeInTheDocument());
+  expect(screen.queryByRole("button", { name: "Edit preferences" })).not.toBeInTheDocument();
+});
+
 it("keeps preference edits across a stale-revision conflict until explicitly reconciled", async () => {
   const user = userEvent.setup();
   const existing: VolunteerSchedulingPreferences = {
@@ -350,7 +390,11 @@ it("keeps preference edits across a stale-revision conflict until explicitly rec
       servingFrequency: "monthly",
       recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
       updatedAt: "preferences-3",
-    } });
+    }, memberSnapshot: memberSnapshotFor({
+      servingFrequency: "monthly",
+      recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
+      updatedAt: "preferences-3",
+    }) });
   renderPage(makeAccess(loadAvailability, jest.fn(), "member-1", savePreferences));
 
   await user.click(await screen.findByRole("button", { name: "Edit preferences" }));

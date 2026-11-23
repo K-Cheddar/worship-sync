@@ -21,6 +21,7 @@ import type {
   VolunteerAvailabilitySaveResult,
   VolunteerSchedulingPreferences,
   VolunteerSchedulingPreferencesSave,
+  MyScheduleMember,
 } from "./myScheduleOperations";
 import {
   DEFAULT_SERVING_FREQUENCY,
@@ -143,6 +144,7 @@ const RequestCard = ({
       <button
         type="button"
         className="flex min-h-[44px] w-full flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-gray-700/80 bg-gray-900/40 p-3 text-left transition-colors hover:border-gray-600 hover:bg-gray-900/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 disabled:cursor-not-allowed disabled:opacity-60 sm:p-4"
+        data-availability-request-key={requestKey(request)}
         onClick={onOpen}
         disabled={disabled}
         aria-label={`${action} ${request.name || "availability request"}`}
@@ -437,7 +439,7 @@ const AvailabilityRequestEditor = ({
     <section className="space-y-4" aria-labelledby="availability-editor-title">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 id="availability-editor-title" className="text-base font-semibold text-gray-100">
+          <h2 id="availability-editor-title" tabIndex={-1} className="text-base font-semibold text-gray-100">
             {request.name || "Availability request"}
           </h2>
           <p className="mt-1 text-xs text-gray-400">
@@ -744,9 +746,10 @@ const SchedulingPreferencesPanel = ({
   savePreferences?: (request: VolunteerSchedulingPreferencesSave) => Promise<{
     success: boolean;
     schedulingPreferences: VolunteerSchedulingPreferences;
+    memberSnapshot: MyScheduleMember;
   }>;
   refreshPreferences: () => Promise<VolunteerSchedulingPreferences | null>;
-  onSaved: (preferences: VolunteerSchedulingPreferences) => void;
+  onSaved: (preferences: VolunteerSchedulingPreferences, member: MyScheduleMember) => void;
 }) => {
   const { setDirtySource, setSavingSource } = useVolunteerNavigationGuard();
   const { showToast } = useToast();
@@ -760,6 +763,9 @@ const SchedulingPreferencesPanel = ({
   const [error, setError] = useState("");
   const savingRef = useRef(false);
   const mountedRef = useRef(true);
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const editButtonRef = useRef<HTMLButtonElement | null>(null);
+  const wasEditingRef = useRef(false);
   const latestBaseline = preferenceSnapshot(conflictLatest || preferences);
   const isDirty = !preferenceValuesMatch(draft, baseline);
   const hasConflict = editing && (rejectedAsStale || Boolean(
@@ -781,6 +787,15 @@ const SchedulingPreferencesPanel = ({
     setSavingSource("my-scheduling-preferences", saving);
     return () => setSavingSource("my-scheduling-preferences", false);
   }, [saving, setSavingSource]);
+
+  useEffect(() => {
+    if (editing && !wasEditingRef.current) {
+      sectionRef.current?.querySelector<HTMLElement>('[role="combobox"]')?.focus();
+    } else if (!editing && wasEditingRef.current) {
+      editButtonRef.current?.focus();
+    }
+    wasEditingRef.current = editing;
+  }, [editing]);
 
   useEffect(() => {
     if (editing) return;
@@ -843,7 +858,7 @@ const SchedulingPreferencesPanel = ({
         expectedUpdatedAt: baseline.updatedAt,
       });
       if (!mountedRef.current) return;
-      if (!result?.success || !result.schedulingPreferences) {
+      if (!result?.success || !result.schedulingPreferences || !result.memberSnapshot) {
         throw new Error("Could not confirm your scheduling preferences were saved.");
       }
       const saved = preferenceSnapshot(result.schedulingPreferences);
@@ -852,7 +867,7 @@ const SchedulingPreferencesPanel = ({
       setEditing(false);
       setRejectedAsStale(false);
       setConflictLatest(null);
-      onSaved(result.schedulingPreferences);
+      onSaved(result.schedulingPreferences, result.memberSnapshot);
       showToast("Scheduling preferences saved.", "success");
     } catch (saveError) {
       if (!mountedRef.current) return;
@@ -881,7 +896,6 @@ const SchedulingPreferencesPanel = ({
               setEditing(false);
               setRejectedAsStale(false);
               setConflictLatest(null);
-              onSaved(latest);
               showToast("Scheduling preferences are up to date.", "success");
             } else {
               setRejectedAsStale(true);
@@ -927,7 +941,7 @@ const SchedulingPreferencesPanel = ({
   const weekSummary = recurringAvailabilityLabel(summary.recurringAvailability);
 
   return (
-    <section aria-labelledby="scheduling-preferences-heading" className="space-y-3 rounded-lg border border-gray-700/80 bg-gray-900/40 p-3">
+    <section ref={sectionRef} aria-labelledby="scheduling-preferences-heading" className="space-y-3 rounded-lg border border-gray-700/80 bg-gray-900/40 p-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 id="scheduling-preferences-heading" tabIndex={-1} className="text-sm font-semibold text-gray-100">Scheduling preferences</h2>
@@ -942,7 +956,7 @@ const SchedulingPreferencesPanel = ({
           </p>}
         </div>
         {preferences && savePreferences && !editing ? (
-          <Button type="button" variant="secondary" onClick={beginEditing}>Edit preferences</Button>
+          <Button ref={editButtonRef} type="button" variant="secondary" onClick={beginEditing}>Edit preferences</Button>
         ) : null}
       </div>
 
@@ -1019,6 +1033,8 @@ type AvailabilityWorkspaceSectionsProps = {
   ownerKey: string;
   operations: VolunteerAvailabilityOperations;
   fallbackPreferences: VolunteerSchedulingPreferences | null;
+  onMemberUpdated?: (member: MyScheduleMember) => void;
+  onMemberObserved?: (member: MyScheduleMember) => void;
   initialRecipientId?: string;
   focusAvailability: boolean;
 };
@@ -1038,6 +1054,8 @@ const AvailabilityWorkspaceSectionsView = ({
   ownerKey,
   operations,
   fallbackPreferences,
+  onMemberUpdated,
+  onMemberObserved,
   initialRecipientId,
   focusAvailability,
 }: AvailabilityWorkspaceSectionsProps) => {
@@ -1076,9 +1094,20 @@ const AvailabilityWorkspaceSectionsView = ({
   const requestsRef = useRef<HTMLElement | null>(null);
   const preferencesRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<HTMLElement | null>(null);
+  const editorReturnFocusKeyRef = useRef<string | null>(null);
+  const wasEditorOpenRef = useRef(false);
   const didFocusRef = useRef(false);
   const activeRequest = editorRequest;
-  const schedulingPreferences = summaryLoaded ? summaryPreferences : fallbackPreferences;
+  const schedulingPreferences = (() => {
+    if (!summaryLoaded) return fallbackPreferences;
+    if (!summaryPreferences) return null;
+    if (!fallbackPreferences) return summaryPreferences;
+    const summaryRevision = Date.parse(summaryPreferences.updatedAt || "");
+    const memberRevision = Date.parse(fallbackPreferences.updatedAt || "");
+    return Number.isFinite(summaryRevision) && Number.isFinite(memberRevision) && memberRevision > summaryRevision
+      ? fallbackPreferences
+      : summaryPreferences;
+  })();
 
   const updateDirty = useCallback((dirty: boolean) => {
     setDirtySource("my-availability-response", dirty);
@@ -1098,7 +1127,10 @@ const AvailabilityWorkspaceSectionsView = ({
       : current.filter((item) => requestKey(item) !== key));
   }, []);
 
-  const loadSummary = useCallback(async ({ initial = false }: { initial?: boolean } = {}) => {
+  const loadSummary = useCallback(async ({
+    initial = false,
+    includeMemberSnapshot = false,
+  }: { initial?: boolean; includeMemberSnapshot?: boolean } = {}) => {
     if (!churchId) {
       setLoadError("Your church could not be loaded. Refresh the page and try again.");
       if (initial) setLoadState("error");
@@ -1112,7 +1144,10 @@ const AvailabilityWorkspaceSectionsView = ({
     else setRefreshing(true);
     setLoadError("");
     try {
-      const result = await operations.loadAvailability({ summary: true });
+      const result = await operations.loadAvailability({
+        summary: true,
+        ...(includeMemberSnapshot ? { includeMemberSnapshot: true } : {}),
+      });
       if (!mountedRef.current || ownerKeyRef.current !== requestedOwner || sequence !== readSequenceRef.current) return null;
       if (!result?.success || !Array.isArray(result.requestSummaries)) {
         throw new Error("Could not load your availability requests.");
@@ -1138,6 +1173,7 @@ const AvailabilityWorkspaceSectionsView = ({
       if (preferencesMutationSequenceRef.current === startedPreferencesMutationSequence) {
         setSummaryPreferences(result.schedulingPreferences || null);
       }
+      if (result.memberSnapshot) onMemberObserved?.(result.memberSnapshot);
       setSummaryLoaded(true);
       setServiceTimeZone(result.serviceTimeZone || null);
       setLoadState("ready");
@@ -1155,7 +1191,7 @@ const AvailabilityWorkspaceSectionsView = ({
         setRefreshing(false);
       }
     }
-  }, [churchId, operations, ownerKey]);
+  }, [churchId, onMemberObserved, operations, ownerKey]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -1193,9 +1229,9 @@ const AvailabilityWorkspaceSectionsView = ({
   }, [markSummaryMutation, operations, ownerKey, requestSummaries]);
 
   const refreshPreferences = useCallback(async () => {
-    const read = await loadSummary();
+    const read = await loadSummary({ includeMemberSnapshot: Boolean(onMemberObserved) });
     return read?.schedulingPreferences || null;
-  }, [loadSummary]);
+  }, [loadSummary, onMemberObserved]);
 
   const loadPastRequests = useCallback(async () => {
     setPastRequestsVisible(true);
@@ -1299,6 +1335,7 @@ const AvailabilityWorkspaceSectionsView = ({
 
   const openRequestAfterGuard = (request: VolunteerAvailabilityRequestSummary) => {
     requestDiscardAction(() => {
+      editorReturnFocusKeyRef.current = requestKey(request);
       void openRequest(request);
     });
   };
@@ -1317,6 +1354,7 @@ const AvailabilityWorkspaceSectionsView = ({
   useEffect(() => {
     if (!initialRecipientId || initialDetailRecipientRef.current === initialRecipientId) return;
     initialDetailRecipientRef.current = initialRecipientId;
+    editorReturnFocusKeyRef.current = null;
     const summary = requestSummaries.find((request) => request.recipientId === initialRecipientId) || {
       recipientId: initialRecipientId,
       formId: "",
@@ -1328,6 +1366,29 @@ const AvailabilityWorkspaceSectionsView = ({
     };
     void openRequest(summary);
   }, [initialRecipientId, openRequest, requestSummaries]);
+
+  useEffect(() => {
+    const editorOpen = Boolean(activeRequest);
+    if (editorOpen && !wasEditorOpenRef.current) {
+      editorRef.current?.scrollIntoView?.({ block: "nearest" });
+      editorRef.current?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+    } else if (!editorOpen && wasEditorOpenRef.current) {
+      const returnKey = editorReturnFocusKeyRef.current;
+      const returnTarget = returnKey
+        ? Array.from(requestsRef.current?.querySelectorAll<HTMLElement>("[data-availability-request-key]") || [])
+          .find((element) => element.dataset.availabilityRequestKey === returnKey) || null
+        : null;
+      if (returnTarget?.isConnected) {
+        returnTarget.focus({ preventScroll: true });
+      } else {
+        const fallback = requestsRef.current?.querySelector<HTMLElement>("h2") ||
+          preferencesRef.current?.querySelector<HTMLElement>("h2");
+        fallback?.focus({ preventScroll: true });
+      }
+      editorReturnFocusKeyRef.current = null;
+    }
+    wasEditorOpenRef.current = editorOpen;
+  }, [activeRequest]);
 
   useEffect(() => {
     if (!focusAvailability || didFocusRef.current || loadState === "loading") return;
@@ -1362,10 +1423,11 @@ const AvailabilityWorkspaceSectionsView = ({
           loading={preferenceLoading}
           savePreferences={operations.saveSchedulingPreferences}
           refreshPreferences={refreshPreferences}
-          onSaved={(preferences) => {
+          onSaved={(preferences, member) => {
             preferencesMutationSequenceRef.current += 1;
             setSummaryPreferences(preferences);
             setSummaryLoaded(true);
+            onMemberUpdated?.(member);
           }}
         />
       </div>
@@ -1521,6 +1583,8 @@ export const VolunteerAvailabilitySections = ({
   ownerKey,
   churchId: churchIdOverride,
   fallbackPreferences = null,
+  onMemberUpdated,
+  onMemberObserved,
   initialRecipientId,
   focusAvailability = false,
   navigationGuardProvided = false,
@@ -1529,6 +1593,8 @@ export const VolunteerAvailabilitySections = ({
   churchId?: string;
   ownerKey?: string;
   fallbackPreferences?: VolunteerSchedulingPreferences | null;
+  onMemberUpdated?: (member: MyScheduleMember) => void;
+  onMemberObserved?: (member: MyScheduleMember) => void;
   initialRecipientId?: string;
   focusAvailability?: boolean;
   navigationGuardProvided?: boolean;
@@ -1571,6 +1637,8 @@ export const VolunteerAvailabilitySections = ({
       ownerKey={stableOwnerKey}
       operations={operations}
       fallbackPreferences={fallbackPreferences}
+      onMemberUpdated={onMemberUpdated}
+      onMemberObserved={onMemberObserved}
       initialRecipientId={initialRecipientId}
       focusAvailability={focusAvailability}
     />

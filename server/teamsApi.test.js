@@ -13599,6 +13599,8 @@ test("my blockout dates rejects a save built on a stale record", async (t) => {
     },
   });
   assert.equal(retry.statusCode, 200);
+  assert.equal(retry.payload.memberSnapshot.updatedAt, retry.payload.member.updatedAt);
+  assert.deepEqual(retry.payload.memberSnapshot.blockoutDates, retry.payload.member.blockoutDates);
 });
 
 test("a stale Teams roster save cannot overwrite newer volunteer blockouts", async (t) => {
@@ -24871,6 +24873,8 @@ test("my availability uses current recipient scope without disclosing tokens or 
   assert.equal(read.payload.requests.length, 1);
   assert.equal(read.payload.requests[0].recipientId, recipientId);
   assert.equal(read.payload.requests[0].editable, true);
+  assert.equal("memberSnapshot" in read.payload, false,
+    "routine availability reads keep the member snapshot out of the payload");
   assert.deepEqual(read.payload.requests[0].availability, {});
   assert.deepEqual(read.payload.requests[0].unansweredOccurrenceIds, [assigned.occurrenceId]);
   assert.deepEqual(read.payload.requests[0].availabilityRevision, { [assigned.occurrenceId]: 0 });
@@ -24880,12 +24884,21 @@ test("my availability uses current recipient scope without disclosing tokens or 
     recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
     notes: "Keep this member note",
   }, { merge: true });
-  const preferenceRead = await callHandler(authHandlers.getMyVolunteerAvailability, { context });
+  const preferenceRead = await callHandler(authHandlers.getMyVolunteerAvailability, {
+    context,
+    query: { includeMemberSnapshot: "1" },
+  });
   assert.deepEqual(preferenceRead.payload.schedulingPreferences, {
     servingFrequency: "twice_monthly",
     recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
     updatedAt: memberBeforePreferences.updatedAt || "",
   });
+  assert.equal(preferenceRead.payload.memberSnapshot.updatedAt, memberBeforePreferences.updatedAt || "");
+  assert.deepEqual(preferenceRead.payload.memberSnapshot.blockoutDates, memberBeforePreferences.blockoutDates || []);
+  assert.deepEqual(preferenceRead.payload.memberSnapshot.recurringAvailability, {
+    weeksOfMonth: [1, 3], includeLastWeekOfMonth: true,
+  });
+  assert.equal("notes" in preferenceRead.payload.memberSnapshot, false);
   const preferencesSaved = await callHandler(authHandlers.updateMySchedulingPreferences, {
     context,
     body: {
@@ -24904,6 +24917,17 @@ test("my availability uses current recipient scope without disclosing tokens or 
     recurringAvailability: { weeksOfMonth: [2, 4], includeLastWeekOfMonth: false },
     updatedAt: (await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId)).updatedAt,
   });
+  assert.deepEqual(preferencesSaved.payload.memberSnapshot, {
+    memberId: assigned.memberId,
+    churchId: context.churchId,
+    firstName: memberBeforePreferences.firstName || "",
+    lastName: memberBeforePreferences.lastName || "",
+    blockoutDates: memberBeforePreferences.blockoutDates || [],
+    servingFrequency: "monthly",
+    recurringAvailability: { weeksOfMonth: [2, 4], includeLastWeekOfMonth: false },
+    updatedAt: preferencesSaved.payload.schedulingPreferences.updatedAt,
+  });
+  assert.equal("notes" in preferencesSaved.payload.memberSnapshot, false);
   const memberAfterPreferences = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
   assert.equal(memberAfterPreferences.memberId, assigned.memberId);
   assert.equal(memberAfterPreferences.firstName, memberBeforePreferences.firstName);

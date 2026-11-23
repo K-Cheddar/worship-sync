@@ -10,6 +10,7 @@ import type {
   VolunteerBulkResult,
   VolunteerSchedulingPreferencesSave,
   VolunteerSchedulingPreferences,
+  MyScheduleMember,
 } from "../pages/myScheduleOperations";
 import {
   getCsrfToken,
@@ -2280,6 +2281,7 @@ export const getMyVolunteerAvailability = (
 ) => {
   const query = new URLSearchParams();
   if (options.summary) query.set("summary", "1");
+  if (options.includeMemberSnapshot) query.set("includeMemberSnapshot", "1");
   if (options.history) query.set("history", "1");
   if (options.recipientId) query.set("recipientId", options.recipientId);
   const search = query.toString();
@@ -2305,6 +2307,7 @@ export const updateMySchedulingPreferences = (
 ) => apiFetch<{
   success: boolean;
   schedulingPreferences: VolunteerSchedulingPreferences;
+  memberSnapshot: MyScheduleMember;
 }>(`api/churches/${churchId}/my-scheduling-preferences`, {
   method: "POST",
   body: JSON.stringify(preferences),
@@ -2337,7 +2340,7 @@ export const updateMyBlockoutDates = async (
   blockoutDates: TeamRosterMember["blockoutDates"],
   expectedUpdatedAt: string,
 ) =>
-  apiFetch<{ success: boolean; member: TeamRosterMember }>(
+  apiFetch<{ success: boolean; member: TeamRosterMember; memberSnapshot: MyScheduleMember }>(
     `api/churches/${churchId}/my-blockout-dates`,
     {
       method: "POST",

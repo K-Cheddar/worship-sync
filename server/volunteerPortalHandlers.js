@@ -182,6 +182,7 @@ export const createVolunteerPortalHandlers = ({
         return res.json(await getAvailability(identity, {
           summaryOnly: req.query?.summary === "1",
           historyOnly: req.query?.history === "1",
+          includeMemberSnapshot: req.query?.includeMemberSnapshot === "1",
           recipientId: typeof req.query?.recipientId === "string"
             ? req.query.recipientId.trim()
             : "",

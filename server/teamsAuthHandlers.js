@@ -852,6 +852,20 @@ export const createTeamsAuthHandlers = ({
     blockoutDates: member.blockoutDates || [], updatedAt: member.updatedAt || "",
   } : member;
 
+  // A confirmed self-service write can advance the member revision shared by
+  // both editors. Return the fields needed to reconcile the other editor from
+  // the same transaction snapshot, while keeping the personal projection narrow.
+  const projectVolunteerMutationMember = (member) => ({
+    memberId: member.memberId,
+    churchId: member.churchId,
+    firstName: member.firstName || "",
+    lastName: member.lastName || "",
+    blockoutDates: member.blockoutDates || [],
+    servingFrequency: member.servingFrequency,
+    recurringAvailability: member.recurringAvailability,
+    updatedAt: member.updatedAt || "",
+  });
+
   const saveVolunteerBlockouts = async ({ churchId, memberId, actorUid, actorId, authorize, access }, body) => {
     const expectedUpdatedAt = normalizeShortText(body?.expectedUpdatedAt, { max: 64 });
 
@@ -928,7 +942,11 @@ export const createTeamsAuthHandlers = ({
       }),
     );
 
-    return { success: true, member: projectVolunteerMember(saved, access) };
+    return {
+      success: true,
+      member: projectVolunteerMember(saved, access),
+      memberSnapshot: projectVolunteerMutationMember(saved),
+    };
   };
 
   const saveVolunteerSchedulingPreferences = async ({ churchId, memberId, actorUid, actorId, authorize }, body) => {
@@ -952,6 +970,7 @@ export const createTeamsAuthHandlers = ({
         recurringAvailability: member.recurringAvailability,
         updatedAt: member.updatedAt || "",
       },
+      memberSnapshot: projectVolunteerMutationMember(member),
     };
   };
 
@@ -9282,6 +9301,7 @@ export const createTeamsAuthHandlers = ({
     {
       summaryOnly = false,
       historyOnly = false,
+      includeMemberSnapshot = false,
       recipientId = "",
       endpointStartedAt = null,
       identityResolutionMs = 0,
@@ -9691,6 +9711,11 @@ export const createTeamsAuthHandlers = ({
         serviceTimeZone,
         requests,
         schedulingPreferences,
+        ...(includeMemberSnapshot ? {
+          memberSnapshot: preferencesMember
+            ? projectVolunteerMutationMember(preferencesMember)
+            : null,
+        } : {}),
         ...(summaryOnly ? { requestSummaries } : {}),
       };
       const serializationStartedAt = performance.now();
@@ -19098,6 +19123,7 @@ export const createTeamsAuthHandlers = ({
         const options = {
           summaryOnly: req.query?.summary === "1",
           historyOnly: req.query?.history === "1",
+          includeMemberSnapshot: req.query?.includeMemberSnapshot === "1",
           recipientId: typeof req.query?.recipientId === "string"
             ? req.query.recipientId.trim()
             : "",

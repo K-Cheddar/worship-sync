@@ -75,6 +75,16 @@ const fixture = ({ getAvailability = async () => ({}) } = {}) => {
           recurringAvailability: saved.recurringAvailability,
           updatedAt: saved.updatedAt,
         },
+        memberSnapshot: {
+          memberId: saved.memberId,
+          churchId: saved.churchId,
+          firstName: saved.firstName || "",
+          lastName: saved.lastName || "",
+          blockoutDates: saved.blockoutDates || [],
+          servingFrequency: saved.servingFrequency,
+          recurringAvailability: saved.recurringAvailability,
+          updatedAt: saved.updatedAt || "",
+        },
       };
     },
     getAvailability,
@@ -129,6 +139,17 @@ test("accountless scheduling preference writes use the session member and reject
     recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
     updatedAt: "2026-11-20T12:00:00.000Z",
   });
+  assert.deepEqual(saved.payload.memberSnapshot, {
+    memberId: "member-a",
+    churchId: "church-a",
+    firstName: "Avery",
+    lastName: "",
+    blockoutDates: [{ startDate: "2026-12-24", endDate: "2026-12-25" }],
+    servingFrequency: "twice_monthly",
+    recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: true },
+    updatedAt: "2026-11-20T12:00:00.000Z",
+  });
+  assert.equal("notes" in saved.payload.memberSnapshot, false);
   assert.equal(member.memberId, "member-a");
   assert.equal(member.firstName, "Avery");
   assert.equal(member.notes, "Keep these notes");
@@ -151,7 +172,7 @@ test("accountless availability reads forward summary and detail filters under th
     handlers.getVolunteerPersonalAvailability,
     validHeaders,
     undefined,
-    { summary: "1", history: "1", recipientId: "recipient-a" },
+    { summary: "1", history: "1", recipientId: "recipient-a", includeMemberSnapshot: "1" },
   );
 
   assert.equal(result.statusCode, 200);
@@ -162,4 +183,5 @@ test("accountless availability reads forward summary and detail filters under th
   assert.equal(availabilityCalls[0][1].summaryOnly, true);
   assert.equal(availabilityCalls[0][1].historyOnly, true);
   assert.equal(availabilityCalls[0][1].recipientId, "recipient-a");
+  assert.equal(availabilityCalls[0][1].includeMemberSnapshot, true);
 });

@@ -7,6 +7,7 @@ import type {
   VolunteerAvailabilitySave,
   VolunteerAvailabilitySaveResult,
   VolunteerSchedulingPreferences,
+  MyScheduleMember,
 } from "../pages/myScheduleOperations";
 import { clearVolunteerIngress, readVolunteerIngress } from "../public/volunteerIngress";
 
@@ -117,6 +118,7 @@ export const personalScheduleAccess = (session: VolunteerSession): PersonalSched
   const availabilityPath = (options: VolunteerAvailabilityReadOptions = {}) => {
     const query = new URLSearchParams();
     if (options.summary) query.set("summary", "1");
+    if (options.includeMemberSnapshot) query.set("includeMemberSnapshot", "1");
     if (options.history) query.set("history", "1");
     if (options.recipientId) query.set("recipientId", options.recipientId);
     const search = query.toString();
@@ -125,7 +127,9 @@ export const personalScheduleAccess = (session: VolunteerSession): PersonalSched
   };
   const operations: MyScheduleOperations & VolunteerAvailabilityOperations = {
     load: () => request("schedule"), respond: (body) => request<{ success: boolean; response: "accepted" | "declined" }>("respond", body),
-    saveBlockouts: (blockoutDates, expectedUpdatedAt) => request("blockouts", { blockoutDates, expectedUpdatedAt }),
+    saveBlockouts: (blockoutDates, expectedUpdatedAt) => request<
+      Awaited<ReturnType<MyScheduleOperations["saveBlockouts"]>>
+    >("blockouts", { blockoutDates, expectedUpdatedAt }),
     acceptUnanswered: (afterScheduleId) => request("accept-unanswered", afterScheduleId ? { afterScheduleId } : {}),
     loadAvailability: (options) => request<VolunteerAvailabilityRead>(availabilityPath(options)),
     saveAvailability: (payload) => request<VolunteerAvailabilitySaveResult>("availability", {
@@ -136,6 +140,7 @@ export const personalScheduleAccess = (session: VolunteerSession): PersonalSched
     saveSchedulingPreferences: (payload) => request<{
       success: boolean;
       schedulingPreferences: VolunteerSchedulingPreferences;
+      memberSnapshot: MyScheduleMember;
     }>("preferences", payload),
   };
   return { churchId: session.churchId, memberId: session.memberId, sessionKey: session.csrfToken, operations };

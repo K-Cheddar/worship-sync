@@ -104,6 +104,18 @@ const access: PersonalScheduleAccess = {
     load: async () => ({ success: true, member, serviceTimeZone: "America/New_York", occurrences }),
     respond: async ({ response }) => ({ success: true, response }),
     saveBlockouts: async (blockoutDates) => ({ success: true, member: { ...member, blockoutDates } }),
+    saveSchedulingPreferences: async ({ servingFrequency, recurringAvailability }) => {
+      const savedPreferences = {
+        servingFrequency,
+        recurringAvailability,
+        updatedAt: "2098-01-02T00:00:00.000Z",
+      };
+      return {
+        success: true,
+        schedulingPreferences: savedPreferences,
+        memberSnapshot: { ...member, ...savedPreferences },
+      };
+    },
     acceptUnanswered: async () => ({
       success: true,
       newlyAccepted: 0,

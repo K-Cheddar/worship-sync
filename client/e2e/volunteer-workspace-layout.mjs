@@ -231,6 +231,12 @@ try {
       await inspectLayout(page, viewport, mode, "unified schedule");
       assert.equal(availabilityReads.length, 1, `${mode} ${viewport.label}: one initial availability read`);
       assert.deepEqual(availabilityReads[0], { recipientId: null, history: false, summary: true }, `${mode} ${viewport.label}: startup uses only the active summary`);
+      const editPreferences = page.getByRole("button", { name: "Edit preferences" });
+      await editPreferences.click();
+      const servingFrequency = page.getByRole("combobox", { name: "Serving frequency" });
+      assert.equal(await servingFrequency.evaluate((element) => document.activeElement === element), true, `${mode} ${viewport.label}: opening preferences focuses the first field`);
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      assert.equal(await editPreferences.evaluate((element) => document.activeElement === element), true, `${mode} ${viewport.label}: closing preferences restores focus to its trigger`);
       if (viewport.width === 1440 || viewport.width === 390) {
         await page.screenshot({ path: resolve(screenshots, `unified-schedule-${mode}-${viewport.label}.png`), fullPage: true });
       }
@@ -239,7 +245,9 @@ try {
       const availabilityCardBounds = await availabilityCard.boundingBox();
       assert(availabilityCardBounds && availabilityCardBounds.height >= 44, "Availability request cards have touch-friendly height");
       await availabilityCard.click();
-      await page.getByRole("heading", { name: "November Availability" }).waitFor();
+      const editorHeading = page.getByRole("heading", { name: "November Availability" });
+      await editorHeading.waitFor();
+      assert.equal(await editorHeading.evaluate((element) => document.activeElement === element), true, `${mode} ${viewport.label}: opening an availability request focuses its heading`);
       assert.deepEqual(availabilityReads[1], { recipientId: "fixture-recipient", history: false, summary: false }, `${mode} ${viewport.label}: opening a card loads only its recipient detail`);
       await inspectLayout(page, viewport, mode, "availability editor");
 
@@ -284,6 +292,20 @@ try {
       await page.getByRole("button", { name: "Back to requests" }).click();
       const discardWarning = page.getByRole("dialog", { name: "Unsaved changes" });
       await discardWarning.getByRole("button", { name: "Discard changes" }).click();
+      await availabilityCard.waitFor();
+      await discardWarning.waitFor({ state: "detached" });
+      assert.equal(await availabilityCard.evaluate((element) => document.activeElement === element), true, `${mode} ${viewport.label}: closing an availability request restores focus to its card`);
+
+      if (viewport.width === 1440) {
+        const historyAlias = mode === "accountless" ? "/s?view=availability" : "/my-availability";
+        await page.evaluate((path) => { window.location.hash = path; }, historyAlias);
+        await page.waitForFunction((path) => window.location.hash === `#${path}`, historyAlias);
+        await page.goBack();
+        await page.waitForFunction((path) => window.location.hash === `#${path}`, schedulePath);
+        await page.goForward();
+        await page.waitForFunction((path) => window.location.hash === `#${path}`, historyAlias);
+        assert.equal(availabilityReads.length, 2, `${mode} ${viewport.label}: Back and Forward do not duplicate the availability summary request`);
+      }
 
       const legacyAvailabilityPath = mode === "accountless"
         ? "/s?view=availability&availabilityRequest=fixture-recipient"

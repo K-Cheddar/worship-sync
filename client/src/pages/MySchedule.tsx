@@ -45,12 +45,11 @@ import {
   type MyScheduleOccurrence,
   type MyScheduleServing,
 } from "../api/auth";
-import type { TeamBlockoutDateRange } from "../api/authTypes";
 import {
   buildMyScheduleExportModelForOccurrences,
 } from "./buildMyScheduleExportModel";
 import MyScheduleBlockouts, { type SavedDatesLoadState } from "./MyScheduleBlockouts";
-import type { MyScheduleMember, MyScheduleOperations, PersonalScheduleAccess, VolunteerSchedulingPreferences } from "./myScheduleOperations";
+import type { MyScheduleMember, MyScheduleOperations, PersonalScheduleAccess } from "./myScheduleOperations";
 import { VolunteerAvailabilitySections } from "./VolunteerAvailabilitySections";
 import {
   groupMyScheduleByMonth,
@@ -761,6 +760,22 @@ const OccurrenceDetail = ({
   );
 };
 
+const preferNewerMemberSnapshot = (
+  current: MyScheduleMember | null,
+  incoming: MyScheduleMember | null,
+) => {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  const currentRevision = Date.parse(current.updatedAt || "");
+  const incomingRevision = Date.parse(incoming.updatedAt || "");
+  if (Number.isFinite(currentRevision) && Number.isFinite(incomingRevision)) {
+    return incomingRevision > currentRevision ? incoming : current;
+  }
+  if (current.updatedAt && !incoming.updatedAt) return current;
+  return incoming;
+};
+const EMPTY_MEMBER_BLOCKOUT_DATES: NonNullable<MyScheduleMember["blockoutDates"]> = [];
+
 const MyScheduleView = ({
   access,
   openTimeOff,
@@ -789,12 +804,17 @@ const MyScheduleView = ({
   const [occurrences, setOccurrences] = useState<MyScheduleOccurrence[]>([]);
   const [serviceTimeZone, setServiceTimeZone] = useState("UTC");
   const [hasMemberRecord, setHasMemberRecord] = useState(true);
-  const [blockoutDates, setBlockoutDates] = useState<TeamBlockoutDateRange[]>(
-    [],
-  );
-  const [memberPreferences, setMemberPreferences] = useState<VolunteerSchedulingPreferences | null>(null);
-  /** Precondition for the blockout write; see `updateMyBlockoutDates`. */
-  const [memberUpdatedAt, setMemberUpdatedAt] = useState("");
+  /** One authoritative roster snapshot feeds both self-service editors. */
+  const [memberSnapshot, setMemberSnapshot] = useState<MyScheduleMember | null>(null);
+  const blockoutDates = memberSnapshot?.blockoutDates || EMPTY_MEMBER_BLOCKOUT_DATES;
+  const memberUpdatedAt = memberSnapshot?.updatedAt || "";
+  const memberPreferences = useMemo(() => memberSnapshot?.servingFrequency && memberSnapshot.recurringAvailability
+    ? {
+        servingFrequency: memberSnapshot.servingFrequency,
+        recurringAvailability: memberSnapshot.recurringAvailability,
+        updatedAt: memberUpdatedAt,
+      }
+    : null, [memberSnapshot, memberUpdatedAt]);
   const [savedDatesLoad, setSavedDatesLoad] = useState<SavedDatesLoadState>({ status: "pending" });
   const [showPast, setShowPast] = useState(false);
   const [organizeMode, setOrganizeMode] = useState<"byMonth" | "byService">("byMonth");
@@ -812,6 +832,8 @@ const MyScheduleView = ({
   const mountedRef = useRef(true);
   /** Drops a response that a newer request has already superseded. */
   const requestRef = useRef(0);
+  /** Prevents older member reads from replacing a later confirmed/observed snapshot. */
+  const memberSnapshotSequenceRef = useRef(0);
   /** Scope async UI work to the church active when it started. */
   const churchIdRef = useRef(churchId);
   churchIdRef.current = churchId;
@@ -839,6 +861,7 @@ const MyScheduleView = ({
     }): Promise<MyScheduleLoadResult> => {
       if (!churchId) return Promise.resolve({ status: "failed" });
       const request = ++requestRef.current;
+      const memberSnapshotSequence = memberSnapshotSequenceRef.current;
       setSavedDatesLoad({ status: "pending" });
       if (showLoading) setStatus("loading");
       const applyFailure = (scheduleFailure: unknown) => {
@@ -875,15 +898,9 @@ const MyScheduleView = ({
         setHasMemberRecord(Boolean(member));
         // The editor retains its own draft/baseline. New saved props expose
         // conflicts without lending their revision to unsaved edits.
-        setBlockoutDates(member?.blockoutDates || []);
-        setMemberUpdatedAt(member?.updatedAt || "");
-        setMemberPreferences(member?.servingFrequency && member.recurringAvailability
-          ? {
-              servingFrequency: member.servingFrequency,
-              recurringAvailability: member.recurringAvailability,
-              updatedAt: member.updatedAt || "",
-            }
-          : null);
+        setMemberSnapshot((current) => memberSnapshotSequenceRef.current === memberSnapshotSequence
+          ? preferNewerMemberSnapshot(current, member)
+          : current);
         setStatus("ready");
         return { status: "applied", member, occurrences: loadedOccurrences };
       }).catch<MyScheduleLoadResult>((error: unknown) => {
@@ -921,13 +938,20 @@ const MyScheduleView = ({
     setSavingSource("my-schedule-time-off", saving);
   }, [setSavingSource]);
 
-  const handleBlockoutsSaved = useCallback((member: MyScheduleMember) => {
+  const handleMemberSaved = useCallback((member: MyScheduleMember) => {
     if (churchIdRef.current !== churchId) return;
-    // A load started before this commit may still contain the old dates/stamp.
-    ++requestRef.current;
+    // Member writes do not change assignments. Keep assignment reads alive and
+    // retire only their member projection so a slower read cannot roll this
+    // confirmed snapshot back.
+    ++memberSnapshotSequenceRef.current;
     setSavedDatesLoad({ status: "ready" });
-    setBlockoutDates(member?.blockoutDates || []);
-    setMemberUpdatedAt(member?.updatedAt || "");
+    setMemberSnapshot((current) => preferNewerMemberSnapshot(current, member));
+  }, [churchId]);
+
+  const handleMemberObserved = useCallback((member: MyScheduleMember) => {
+    if (churchIdRef.current !== churchId) return;
+    ++memberSnapshotSequenceRef.current;
+    setMemberSnapshot((current) => preferNewerMemberSnapshot(current, member));
   }, [churchId]);
 
   /**
@@ -1435,7 +1459,7 @@ const MyScheduleView = ({
               blockoutDates={blockoutDates}
               expectedUpdatedAt={memberUpdatedAt}
               occurrences={occurrences}
-              onSaved={handleBlockoutsSaved}
+              onSaved={handleMemberSaved}
               saveBlockouts={operations.saveBlockouts}
               onDirtyChange={handleTimeOffDirtyChange}
               onSavingChange={handleTimeOffSavingChange}
@@ -1452,6 +1476,8 @@ const MyScheduleView = ({
           churchId={churchId}
           ownerKey={availabilityOwnerKey}
           fallbackPreferences={memberPreferences}
+          onMemberUpdated={handleMemberSaved}
+          onMemberObserved={handleMemberObserved}
           focusAvailability={focusAvailability}
           initialRecipientId={availabilityRecipientId}
           navigationGuardProvided

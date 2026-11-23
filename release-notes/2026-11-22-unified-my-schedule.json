@@ -3,5 +3,5 @@
   "date": "2026-11-22",
   "type": "new",
   "title": "One My Schedule for Volunteers",
-  "description": "Volunteers can manage time off, scheduling preferences, availability responses and assignments in one place, with request details loaded when opened."
+  "description": "Volunteers can manage time off, scheduling preferences, availability responses and assignments in one place. Saved time off and preferences stay in sync, and drafts remain available if saved information changes while editing."
 }
