@@ -26,6 +26,7 @@ const AUTH_REDIRECT_EXACT_PATHS = new Set([
   "/current-service",
   "/current-service/view",
   "/my-schedule",
+  "/my-availability",
   "/resources",
 ]);
 

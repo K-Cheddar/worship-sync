@@ -50,7 +50,8 @@ import {
   buildMyScheduleExportModelForOccurrences,
 } from "./buildMyScheduleExportModel";
 import MyScheduleBlockouts, { type SavedDatesLoadState } from "./MyScheduleBlockouts";
-import type { MyScheduleMember, MyScheduleOperations, PersonalScheduleAccess } from "./myScheduleOperations";
+import type { MyScheduleMember, MyScheduleOperations, PersonalScheduleAccess, VolunteerSchedulingPreferences } from "./myScheduleOperations";
+import { VolunteerAvailabilitySections } from "./VolunteerAvailabilitySections";
 import {
   groupMyScheduleByMonth,
   groupMyScheduleByService,
@@ -58,7 +59,7 @@ import {
   myScheduleServiceGroupKey,
 } from "./myScheduleTimeline";
 import MyScheduleServicePlanPanel from "./MyScheduleServicePlanPanel";
-import { VolunteerSelfServiceDrawer } from "./VolunteerSelfServiceNavigation";
+import VolunteerSelfServiceNavigation from "./VolunteerSelfServiceNavigation";
 import VolunteerWorkspaceFrame from "./VolunteerWorkspaceFrame";
 import { VolunteerNavigationGuardProvider, useVolunteerNavigationGuard } from "./VolunteerNavigationGuard";
 import {
@@ -142,105 +143,15 @@ const occurrenceServiceLabel = (occurrence: MyScheduleOccurrence): string => {
   return "Service";
 };
 
-const LoadingPlaceholder = ({ className }: { className: string }) => (
-  <span
-    aria-hidden="true"
-    className={cn("block animate-pulse rounded bg-gray-700/70", className)}
-  />
-);
-
-const MyScheduleLoadingSkeleton = ({ showSmsPreferences }: { showSmsPreferences: boolean }) => (
-  <div
-    role="status"
-    aria-label="Loading your schedule"
-    aria-busy="true"
-    className="flex w-full flex-col gap-4"
-  >
-    {showSmsPreferences ? (
-      <div aria-hidden="true" className="h-5">
-        <LoadingPlaceholder className="h-4 w-28 rounded-sm" />
-      </div>
-    ) : null}
-
-    <section aria-hidden="true" className="rounded-xl border border-gray-700/80 bg-gray-900/40">
-      <div className="flex min-h-10 items-center justify-between gap-3 px-3 py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <LoadingPlaceholder className="size-4 shrink-0" />
-          <LoadingPlaceholder className="h-4 w-16" />
-          <LoadingPlaceholder className="h-3 w-20" />
-        </div>
-        <LoadingPlaceholder className="size-4 shrink-0" />
-      </div>
-    </section>
-
-    <div
-      aria-hidden="true"
-      className="grid items-end gap-2 sm:grid-cols-2 xl:grid-cols-[minmax(16rem,1fr)_repeat(3,minmax(9rem,13rem))]"
-    >
-      {Array.from({ length: 4 }, (_, index) => (
-        <div key={index} className="flex min-w-0 flex-col gap-1.5">
-          <LoadingPlaceholder className="h-3 w-14" />
-          <LoadingPlaceholder className="h-10 w-full rounded-md border border-gray-700 bg-gray-900/60" />
-        </div>
+const MyScheduleLoadingSkeleton = () => (
+  <section role="status" aria-label="Loading assignments" aria-busy="true" className="space-y-2">
+    <p className="text-sm text-gray-400">Loading assignments…</p>
+    <ul className={cn(SERVICE_OCCURRENCE_GRID_CLASS_NAME, "pt-1")}>
+      {Array.from({ length: 2 }, (_, index) => (
+        <li key={index} data-testid="my-schedule-loading-card" aria-hidden="true" className="h-24 animate-pulse rounded-lg border border-gray-700 bg-gray-800/60" />
       ))}
-    </div>
-
-    <section
-      aria-hidden="true"
-      className="flex flex-col gap-2 rounded-md border border-gray-700 bg-gray-900/45 p-3 sm:flex-row sm:items-center sm:justify-between"
-    >
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <LoadingPlaceholder className="h-4 w-56 max-w-full" />
-        <LoadingPlaceholder className="h-3 w-72 max-w-full" />
-      </div>
-      <LoadingPlaceholder className="h-9 w-full rounded-md sm:w-52" />
-    </section>
-
-    <section aria-hidden="true">
-      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-400">Upcoming</h2>
-      <section className="mb-4 space-y-2">
-        <LoadingPlaceholder className="h-4 w-24" />
-        <ul className={cn(SERVICE_OCCURRENCE_GRID_CLASS_NAME, "pt-3")}>
-          {Array.from({ length: 3 }, (_, index) => (
-            <li key={index} className="relative min-w-0">
-              <article data-testid="my-schedule-loading-card" className="overflow-hidden rounded-lg border border-gray-600/70 bg-gray-800/70">
-                <div className="flex min-h-[56px] items-center gap-2 px-2.5 py-2">
-                  <div className="relative flex w-[44px] shrink-0 flex-col items-center justify-center gap-px">
-                    <LoadingPlaceholder className="h-2.5 w-6" />
-                    <LoadingPlaceholder className="h-5 w-5" />
-                    <LoadingPlaceholder className="h-2.5 w-8" />
-                    <span aria-hidden="true" className="absolute inset-y-0 right-0 w-px bg-gray-700/80" />
-                  </div>
-                  <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
-                    <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                      <LoadingPlaceholder className="h-3.5 w-2/3 max-w-48" />
-                      <LoadingPlaceholder className="h-3 w-12" />
-                    </div>
-                    <LoadingPlaceholder className="size-2 shrink-0 rounded-full" />
-                  </div>
-                </div>
-                <div className="border-t border-gray-700/80 px-2.5 py-2 sm:px-3">
-                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
-                    <div className="flex min-w-0 flex-col">
-                      <LoadingPlaceholder className="h-2.5 w-12" />
-                      <div className="flex min-w-0 items-center gap-1.5">
-                        <LoadingPlaceholder className="h-3.5 w-24" />
-                        <LoadingPlaceholder className="h-3 w-14 shrink-0 rounded-full" />
-                      </div>
-                    </div>
-                    <div className="ml-auto flex shrink-0 gap-1.5">
-                      <LoadingPlaceholder className="h-9 w-16 rounded-md" />
-                      <LoadingPlaceholder className="h-9 w-16 rounded-md" />
-                    </div>
-                  </div>
-                </div>
-              </article>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </section>
-  </div>
+    </ul>
+  </section>
 );
 
 const myRoleLabel = (occurrence: MyScheduleOccurrence): string => {
@@ -850,7 +761,17 @@ const OccurrenceDetail = ({
   );
 };
 
-const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAccess; openTimeOff: boolean }) => {
+const MyScheduleView = ({
+  access,
+  openTimeOff,
+  focusAvailability,
+  availabilityRecipientId,
+}: {
+  access?: PersonalScheduleAccess;
+  openTimeOff: boolean;
+  focusAvailability: boolean;
+  availabilityRecipientId?: string;
+}) => {
   const context = useContext(GlobalInfoContext);
   const { showToast } = useToast();
   const { setDirtySource, setSavingSource } = useVolunteerNavigationGuard();
@@ -871,11 +792,13 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
   const [blockoutDates, setBlockoutDates] = useState<TeamBlockoutDateRange[]>(
     [],
   );
+  const [memberPreferences, setMemberPreferences] = useState<VolunteerSchedulingPreferences | null>(null);
   /** Precondition for the blockout write; see `updateMyBlockoutDates`. */
   const [memberUpdatedAt, setMemberUpdatedAt] = useState("");
   const [savedDatesLoad, setSavedDatesLoad] = useState<SavedDatesLoadState>({ status: "pending" });
   const [showPast, setShowPast] = useState(false);
   const [organizeMode, setOrganizeMode] = useState<"byMonth" | "byService">("byMonth");
+  const [organizeOpen, setOrganizeOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [teamFilter, setTeamFilter] = useState(ALL_TEAMS);
   const [serviceFilter, setServiceFilter] = useState(ALL_SERVICES);
@@ -954,6 +877,13 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
         // conflicts without lending their revision to unsaved edits.
         setBlockoutDates(member?.blockoutDates || []);
         setMemberUpdatedAt(member?.updatedAt || "");
+        setMemberPreferences(member?.servingFrequency && member.recurringAvailability
+          ? {
+              servingFrequency: member.servingFrequency,
+              recurringAvailability: member.recurringAvailability,
+              updatedAt: member.updatedAt || "",
+            }
+          : null);
         setStatus("ready");
         return { status: "applied", member, occurrences: loadedOccurrences };
       }).catch<MyScheduleLoadResult>((error: unknown) => {
@@ -1410,6 +1340,11 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
     query.trim().length > 0 ||
     teamFilter !== ALL_TEAMS ||
     serviceFilter !== ALL_SERVICES;
+  const hasFilterChoices = teamOptions.length > 2 || serviceOptions.length > 2;
+  const showOrganizer = upcoming.length > 3 || (showPast && past.length > 0) || hasFilters || hasFilterChoices;
+  const availabilityOwnerKey = access
+    ? `personal:${churchId}:${access.memberId}:${access.sessionKey || "session"}`
+    : `human:${churchId}:${context?.userId || ""}`;
 
   const unlinkedMessage = access
     ? "Your volunteer record is no longer available. Open your personal link again, or contact your church administrator."
@@ -1458,19 +1393,20 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
       title="My schedule"
       {...PAGE_APPEARANCES.mySchedule}
       showUserSection={!access}
-      className="max-lg:pb-[calc(57px_+_env(safe-area-inset-bottom))]"
-      toolbarNavigation={access ? <VolunteerSelfServiceDrawer access={access} active="schedule" /> : undefined}
-      workspaceNavigation={access ? undefined : (menuItems, updateReady) => (
-        <VolunteerSelfServiceDrawer access={access} active="schedule" menuItems={menuItems} updateReady={updateReady} />
+      workspaceNavigation={(menuItems, updateReady) => (
+        <VolunteerSelfServiceNavigation menuItems={menuItems} updateReady={updateReady} />
       )}
     >
-      <VolunteerWorkspaceFrame access={access} active="schedule">
+      <VolunteerWorkspaceFrame>
         {status === "loading" ? (
-          <MyScheduleLoadingSkeleton showSmsPreferences={Boolean(access)} />
+          <section aria-labelledby="time-off-loading-heading" className="rounded-lg border border-gray-700/80 bg-gray-900/40 p-3">
+            <h2 id="time-off-loading-heading" className="text-sm font-semibold text-gray-100">Time off</h2>
+            <p className="mt-1 text-xs text-gray-400">Loading saved dates…</p>
+          </section>
         ) : null}
 
         {scheduleError ? (
-          <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-400">
+          <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-red-300">
             <p>{scheduleError}</p>
             <Button variant="secondary" disabled={savedDatesLoad.status === "pending"}
               isLoading={savedDatesLoad.status === "pending"}
@@ -1488,6 +1424,40 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
               : unlinkedMessage}
           </p>
         ) : null}
+
+        {canShowSelfService ? (
+          <>
+            {access ? <a className="text-sm text-orange-300 underline" href={`/sms-opt-in/${encodeURIComponent(churchId)}`}>SMS preferences</a> : null}
+            <MyScheduleBlockouts
+              key={churchId}
+              churchId={churchId}
+              serviceTimeZone={serviceTimeZone}
+              blockoutDates={blockoutDates}
+              expectedUpdatedAt={memberUpdatedAt}
+              occurrences={occurrences}
+              onSaved={handleBlockoutsSaved}
+              saveBlockouts={operations.saveBlockouts}
+              onDirtyChange={handleTimeOffDirtyChange}
+              onSavingChange={handleTimeOffSavingChange}
+              onStale={refreshAfterConflict}
+              savedDatesLoad={savedDatesLoad}
+              initiallyOpen={openTimeOff}
+            />
+          </>
+        ) : null}
+
+        <VolunteerAvailabilitySections
+          key={availabilityOwnerKey}
+          access={access}
+          churchId={churchId}
+          ownerKey={availabilityOwnerKey}
+          fallbackPreferences={memberPreferences}
+          focusAvailability={focusAvailability}
+          initialRecipientId={availabilityRecipientId}
+          navigationGuardProvided
+        />
+
+        {status === "loading" ? <MyScheduleLoadingSkeleton /> : null}
 
         {canShowTimeline && selected ? (
           <OccurrenceDetail
@@ -1526,29 +1496,20 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
 
         {canShowTimeline && !selected ? (
           <>
-            {canShowSelfService ? (
-              <>
-                {access ? <a className="text-sm text-orange-300 underline" href={`/sms-opt-in/${encodeURIComponent(churchId)}`}>SMS preferences</a> : null}
-                <MyScheduleBlockouts
-                  key={churchId}
-                  churchId={churchId}
-                  serviceTimeZone={serviceTimeZone}
-                  blockoutDates={blockoutDates}
-                  expectedUpdatedAt={memberUpdatedAt}
-                  occurrences={occurrences}
-                  onSaved={handleBlockoutsSaved}
-                  saveBlockouts={operations.saveBlockouts}
-                  onDirtyChange={handleTimeOffDirtyChange}
-                  onSavingChange={handleTimeOffSavingChange}
-                  onStale={refreshAfterConflict}
-                  savedDatesLoad={savedDatesLoad}
-                  initiallyOpen={openTimeOff}
-                />
-              </>
-            ) : null}
-
-            {datedOccurrences.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-2">
+            {showOrganizer ? (
+              <div className="space-y-2">
+                <Button
+                  type="button"
+                  variant="tertiary"
+                  className="h-auto min-h-0 px-0 py-1 text-sm text-gray-300 underline underline-offset-2"
+                  aria-expanded={organizeOpen}
+                  onClick={() => setOrganizeOpen((current) => !current)}
+                >
+                  {organizeOpen
+                    ? "Hide filters and organize"
+                    : hasFilters ? "Filters active · Show controls" : "Filters and organize"}
+                </Button>
+                {organizeOpen ? <div className="flex flex-wrap items-center gap-2">
                 <Input
                   label="Search"
                   className="w-full min-w-0 sm:w-auto sm:min-w-[16rem] sm:flex-1"
@@ -1584,6 +1545,7 @@ const MyScheduleView = ({ access, openTimeOff }: { access?: PersonalScheduleAcce
                     onChange={(value) => setTeamFilter(String(value))}
                   />
                 ) : null}
+                </div> : null}
               </div>
             ) : null}
 
@@ -1699,8 +1661,21 @@ const MySchedule = ({ access, navigationGuardProvided = false }: {
 }) => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
-  const identity = access ? `personal:${access.churchId}:${access.memberId}` : `human:${context?.churchId || ""}:${context?.userId || ""}`;
-  const view = <MyScheduleView key={identity} access={access} openTimeOff={location.hash === "#time-off"} />;
+  const identity = access
+    ? `personal:${access.churchId}:${access.memberId}:${access.sessionKey || "session"}`
+    : `human:${context?.churchId || ""}:${context?.userId || ""}`;
+  const searchParams = new URLSearchParams(location.search);
+  const focusAvailability = location.pathname === "/my-availability" || searchParams.get("view") === "availability";
+  const availabilityRecipientId = searchParams.get("availabilityRequest")?.trim() || undefined;
+  const view = (
+    <MyScheduleView
+      key={identity}
+      access={access}
+      openTimeOff={location.hash === "#time-off"}
+      focusAvailability={focusAvailability}
+      availabilityRecipientId={availabilityRecipientId}
+    />
+  );
   return navigationGuardProvided ? view : (
     <VolunteerNavigationGuardProvider>{view}</VolunteerNavigationGuardProvider>
   );

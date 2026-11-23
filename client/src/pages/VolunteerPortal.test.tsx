@@ -8,8 +8,11 @@ jest.mock("../api/volunteer", () => ({
   ...jest.requireActual("../api/volunteer"),
   openVolunteerSession: jest.fn(),
 }));
-jest.mock("./MySchedule", () => () => <div>My Schedule content</div>);
-jest.mock("./MyAvailability", () => () => <div>My Availability content</div>);
+jest.mock("./MySchedule", () => () => {
+  const { useLocation } = require("react-router-dom");
+  const location = useLocation();
+  return <><div>My Schedule content</div><output data-testid="personal-workspace-url">{location.pathname + location.search}</output></>;
+});
 
 const setIngress = (token: string) => {
   window.history.replaceState({}, "", `/s#${token}`);
@@ -59,7 +62,7 @@ it("keeps the expired-link verification path for an authoritative expiration sta
   expect(readVolunteerIngress()).toBe(token);
 });
 
-it("opens the accountless availability section for its direct workspace URL", async () => {
+it("opens the unified schedule workspace for the accountless availability URL", async () => {
   jest.mocked(openVolunteerSession).mockResolvedValue({
     csrfToken: "session-csrf",
     churchId: "church-1",
@@ -69,5 +72,6 @@ it("opens the accountless availability section for its direct workspace URL", as
 
   renderPortal("/s?view=availability");
 
-  expect(await screen.findByText("My Availability content")).toBeInTheDocument();
+  expect(await screen.findByText("My Schedule content")).toBeInTheDocument();
+  expect(screen.getByTestId("personal-workspace-url")).toHaveTextContent("/s?view=availability");
 });

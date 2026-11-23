@@ -5,17 +5,19 @@ Approval source: product-owner request, 2026-10-18, “Unified My Schedule for A
 
 The October 21, 2026 “Simplify My Schedule Cards and Share the Service Card Design” request supersedes the My Schedule availability-card decision below. My Schedule is assignment-focused; this does not revoke or migrate any form, recipient, answer, intake link, or established form-submission API.
 
+**Current workspace decision (2026-11-22):** The unified My Schedule request supersedes the assignment-only page boundary above and the earlier two-destination volunteer navigation below. My Schedule is the single volunteer self-service workspace; prior phase sections record the behavior when those decisions were made.
+
 ## Product decisions
 
 - Personal links, recovery and administrator controls are available to every church. Required security configuration is documented in [deployment prerequisites](../volunteer-portal-deployment.md); missing configuration fails closed and never creates fallback authority. Approval: October 21, 2026 Remove Volunteer Portal Feature Flag request.
 - Phase 3 completion is an end-to-end workflow, not removal of the flag alone. An active roster member needs no account, Firebase login, human church membership or Teams permission. Volunteers with no assignments still have Time Off. Availability forms remain available through existing intake links. Temporary ingress/data failures offer an explicit retry; usable ingress remains only in memory until successful redemption or definitive denial. Background access failures keep mounted unsaved dates and provide personal-link guidance. Confirmed by the October 21, 2026 Complete and Enable Accountless My Schedule request.
 - Account and accountless volunteers use the same My Schedule renderer and volunteer business operations. The server resolves church/member scope from a human session or validated personal credential; request member IDs never establish identity.
 - Both identities can read their current and previous assignments and own responses, respond individually, accept all unanswered, manage time off, see conflicts and teammate display names, read permitted service details, and use applicable self-service preferences. Preserve signed-in filters, navigation, exports, history and account capabilities. Availability forms stay in their existing intake flow.
-- Phase 2B adds a separate My Availability surface for recipient-scoped availability requests. Signed-in volunteers and personal-link volunteers share its interface and underlying operations, and each may access only their own authorized requests. Availability requests are not My Schedule cards. Approval: current product-owner request, 2026-11-16.
+- Historical Phase 2B decision (superseded 2026-11-22): availability requests first used a separate recipient-scoped My Availability surface. The current unified workspace shows active requests within My Schedule; signed-in volunteers and personal-link volunteers still share the same scoped operations and may access only their own authorized requests. Approval of the earlier separation: current product-owner request, 2026-11-16.
 - Private notes, teammate contacts/responses, administrative data and Draft assignments are excluded. Missing schedule publication metadata retains legacy Published semantics. Publication and notification delivery remain separate.
 - Accept all unanswered checks persisted responses in each schedule transaction. Existing answers survive concurrent bulk acceptance. Multi-schedule outcomes identify committed schedules and failures; retry skips completed answers.
 - Both identities use Phase 1B's canonical pending-only acceptance over upcoming published primary assignments. Past occurrences, Drafts, existing answers and unrelated response metadata remain unchanged. Both clients follow bounded schedule pages and share partial-completion feedback. Personal credential/session generation and member authority are checked inside every independent schedule transaction, including retries. Confirmed by the October 21, 2026 Shared Volunteer Bulk Response fix request. Individual and legacy schedule-link responses retain explicit Accept/Decline semantics.
-- My Schedule lists assigned services only. Each card shows only the volunteer's actual positions and Teams; multiple primary and shadow assignments retain their existing identities and independent response semantics. Primary assignments have direct Accept/Decline controls, answered assignments show noninteractive Accepted/Declined status with Change response, and past answers remain read-only. Availability requests and availability-only cards are not part of My Schedule. Volunteers use their existing intake links, including `/a/:token`, to submit those forms. Existing recipient records, saved answers, links, public routes and established whole-form submission endpoints remain unchanged; this decision does not migrate or delete availability data. Confirmed by the October 21, 2026 “Simplify My Schedule Cards and Share the Service Card Design” request.
+- The October 21 assignment-card decision kept availability requests outside My Schedule at that time. The November 22 unified-workspace decision supersedes that page boundary while preserving the card behavior: each assignment shows only the volunteer's actual positions and Teams; primary and shadow assignments keep their existing identities and response semantics; past answers remain read-only. Existing intake links, including `/a/:token`, recipient records, saved answers, public routes and form-submission endpoints remain unchanged. No availability data is migrated or deleted.
 - Individual Accept/Decline changes display a new confirmed answer only after the operation returns `success: true` with the same response, or an authoritative schedule refresh shows that answer. After a rejected, malformed, or ambiguous write result, refresh the schedule without resubmitting. If that refresh fails, keep the prior confirmed answer and pending count, label the attempted response unconfirmed, and offer a refresh-only retry; block bulk acceptance until the individual response is resolved. Human-session and personal-link access use the same behavior. Confirmed by the October 21, 2026 “Shared Service Card and My Schedule Reliability Improvements” request.
 - Upcoming and past assigned services can be organized by month or service. Service groups use the occurrence's complete service ID set so a combined service appears once. Search and service/team filters use the assignment schedule and the volunteer's actual assignments; pending-only bulk acceptance remains separate and applies to all unanswered upcoming assignments regardless of filters. Time Off, service details and personal links remain available in their existing flows.
 - Unsaved time-off drafts own their baseline dates and revision together. Refreshes, other successful actions and HTTP 409 cannot rebase a dirty draft. Conflicts preserve edits and require explicit review/discard before re-editing against current saved dates. Successful saves invalidate older page loads. Confirmed by the October 19, 2026 Final Correctness and Pilot Readiness request.
@@ -67,7 +69,7 @@ See [implementation plan](../volunteer-portal-plan.md). Required milestones are
 A shared core, B personal access/recovery, C shared UI, D compact messaging.
 This contract records approved intent, not proof that those milestones have shipped.
 
-## My Availability: Phase 2B-2 (2026-11-18)
+## My Availability: Phase 2B-2 (2026-11-18; separate page superseded)
 
 **Approval source:** current product-owner request for Phase 2B-2, 2026-11-18.
 
@@ -77,12 +79,11 @@ Volunteers could respond to a request through its existing form link, but had
 no consolidated place to review their saved availability requests. My Schedule
 remained focused on assigned services and Time Off.
 
-### Initial behavior (current editor and groups are defined in Phase 2B-3 below)
+### Initial behavior at that milestone (editor behavior is defined in Phase 2B-3 below)
 
-- Signed-in volunteers open **My Availability** from the Home launcher at
-  `/my-availability`. Accountless volunteers use their existing personal
-  session at `/s?view=availability`; this does not require a new account or
-  credential. Both entry points use the same request list and editor.
+- At that milestone, signed-in volunteers opened **My Availability** at
+  `/my-availability` and accountless volunteers used `/s?view=availability`.
+  These URLs remain compatible and now focus availability within My Schedule.
 - Open requests with unanswered service dates appear under **Needs response**;
   submitted open requests appear under **Submitted responses**. Each date
   offers **Available**, **Unavailable**, or **Not answered**. An unanswered
@@ -96,18 +97,17 @@ remained focused on assigned services and Time Off.
 - Date and time labels use the configured church service timezone when present.
   If it is missing, the service date remains visible and the time is omitted
   rather than silently substituting the browser's timezone.
-- My Schedule remains assignment-only. Its existing Time Off workflow is
-  unchanged and remains linked from My Availability. No schedule answer is
-  required to be considered for scheduling.
+- My Schedule was assignment-only at that milestone. It now includes the
+  availability section; the existing Time Off and scheduling eligibility
+  behavior remains unchanged.
 
 ### Behavior intentionally unchanged
 
 Existing form links, submissions, recipient records, saved answers, and
-revision-aware APIs remain in place. My Availability does not change blockouts,
-recurring serving preferences, positions, profile data, consent, assignments,
-messages, or notification behavior. Recurring availability preferences remain
-deferred because there is no safe volunteer self-service read/write operation
-for them in the existing server contract.
+revision-aware APIs remain in place. The availability response editor does not
+change blockouts, recurring serving preferences, positions, profile data,
+consent, assignments, messages, or notification behavior. Preference
+self-service was added later under Phase 2B-4.
 
 ## My Availability response simplification (Phase 2B-3, 2026-11-19)
 
@@ -213,13 +213,12 @@ availability response was dirty.
 
 ### After behavior
 
-Both pages use the same full-width workspace frame: the desktop sidebar starts
-at the available workspace edge below the application header, while the main
-column owns vertical scrolling and its readable-width content. The sidebar
-reuses the shared sidebar surface and width, collapses to labeled icon links,
-and keeps its collapsed state between the two sections. Mobile keeps the
-existing drawer and fixed bottom navigation. Workspace links, app-menu links,
-and browser history protect unsaved edits and block navigation during saves.
+At that phase, both pages used the same full-width workspace frame and
+volunteer-specific sidebar/drawer navigation. This layout and its two-section
+navigation were superseded by the November 22 unified My Schedule workspace.
+The current workspace has one app Menu, no volunteer sidebar or volunteer
+bottom navigation, a readable-width content column, and safe-area scroll
+padding. Dirty editors still guard navigation and block it during saves.
 
 ### Behavior intentionally unchanged
 
@@ -259,14 +258,16 @@ group/date when it is stored under one of that grouped service's historical
 individual IDs. Unanswered responses remain neutral, and ranking behavior is
 unchanged.
 
-## Volunteer workspace consolidation and preference self-service (Phase 2B-4, 2026-11-20)
+## Volunteer workspace consolidation and preference self-service (Phase 2B-4, 2026-11-20; historical navigation superseded)
 
 The home launcher presents one **My Schedule** card at `/my-schedule`,
-described as **Assignments, availability, and time off.** The shared workspace
-sidebar and mobile navigation continue to link to both My Schedule and My
-Availability. Signed-in `/my-availability`, accountless `/s?view=availability`,
-schedule links and existing `/a/:token` request links remain direct routes.
-Time Off stays with assignments inside My Schedule.
+described as **Assignments, availability, and time off.** At that milestone,
+the shared workspace sidebar and mobile navigation linked to both My Schedule
+and My Availability. The November 22 unified-workspace request supersedes that
+navigation and page split. Signed-in `/my-availability`, accountless
+`/s?view=availability`, schedule links and existing `/a/:token` request links
+remain supported; `/my-availability` and `/s?view=availability` now focus the
+availability section within My Schedule.
 
 My Availability removes the standing overview, unanswered-date and Time Off
 paragraphs, routine checkbox instructions and repeated per-card past labels.
@@ -291,12 +292,44 @@ eligible; selected weeks remain hard scheduling eligibility rules.
 General intake remains the existing onboarding and administrator-requested
 form system. It may collect enabled personal details, positions, availability,
 scheduling preferences, serving frequency, blockout dates and notes. Dedicated
-`team_availability` forms continue to collect service-date availability. My
-Availability provides recurring response editing and preference maintenance;
-My Schedule provides assignments and Time Off. Existing form links, submissions,
+`team_availability` forms continue to collect service-date availability. The
+unified My Schedule workspace provides recurring response editing, preference
+maintenance, assignments and Time Off. Existing form links, submissions,
 history and review remain intact. An intake response still changes only the
 enabled, explicitly submitted fields under its existing rules, so volunteers
 are not asked to resubmit the whole onboarding form each month.
+
+## Unified volunteer workspace (2026-11-22)
+
+My Schedule is the single volunteer destination for Time Off, Scheduling
+Preferences, active availability requests, upcoming assignments and collapsed
+past assignments. The existing Home launcher card remains the entry point;
+there is no separate volunteer sidebar or bottom navigation. The normal app
+header and Menu remain.
+
+Signed-in and validated personal-link sessions use the same workspace. Legacy
+`/my-availability` and `/s?view=availability` destinations remain compatible
+and focus the availability section. `/my-schedule` and `/s?view=schedule`
+continue to open the same workspace. An optional `availabilityRequest` query
+selects a recipient-scoped request after authorization; it carries no personal
+session credential. Existing `/a/:token` intake links continue to use the
+public intake flow.
+
+Initial schedule/Time Off/member data and `loadAvailability({ summary: true })`
+load independently. The summary supplies active request cards and preferences
+without occurrence lists or answer revisions. Opening a request loads only its
+authorized `recipientId`; closed history is fetched only after the volunteer
+chooses its secondary history action. Assignment cards and availability remain
+usable when the other read fails. The page reuses the established Time Off,
+assignment-response, preference and availability editors, including their
+revision checks, conflicts, uncertain-save recovery and shared navigation
+guard. Small schedules omit search and filters until needed; larger schedules
+can open the existing controls.
+
+The code change does not deploy Firestore indexes or establish production
+request latency. The index and production verification requirements remain in
+[deployment prerequisites](../volunteer-portal-deployment.md) and the
+[availability read-path record](../volunteer-availability-api-performance.md).
 
 
 ## Personal credential foundation: Phase 2 contract (2026-10-21)

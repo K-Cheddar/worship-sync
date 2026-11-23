@@ -1,7 +1,7 @@
 import type { AcceptPendingAssignmentsResponse, MyScheduleOccurrence } from "../api/auth";
 import type { TeamRosterMember } from "../api/authTypes";
 
-export type MyScheduleMember = Pick<TeamRosterMember, "memberId" | "churchId" | "firstName" | "lastName" | "blockoutDates" | "updatedAt">;
+export type MyScheduleMember = Pick<TeamRosterMember, "memberId" | "churchId" | "firstName" | "lastName" | "blockoutDates" | "updatedAt" | "servingFrequency" | "recurringAvailability">;
 export type VolunteerAvailabilityAnswer = "available" | "unavailable";
 export type VolunteerSchedulingPreferences = {
   servingFrequency: NonNullable<TeamRosterMember["servingFrequency"]>;

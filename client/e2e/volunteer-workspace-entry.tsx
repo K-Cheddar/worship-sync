@@ -1,13 +1,13 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { HashRouter, useLocation } from "react-router-dom";
+import { HashRouter } from "react-router-dom";
 import { GlobalInfoContext } from "../src/context/globalInfo";
-import MyAvailability from "../src/pages/MyAvailability";
 import MySchedule from "../src/pages/MySchedule";
 import { VolunteerNavigationGuardProvider } from "../src/pages/VolunteerNavigationGuard";
 import type { MyScheduleOccurrence } from "../src/api/auth";
 import type { PersonalScheduleAccess } from "../src/pages/myScheduleOperations";
 import type { MyScheduleMember } from "../src/pages/myScheduleOperations";
+import { getVolunteerAvailability, type VolunteerSession } from "../src/api/volunteer";
 import "../src/index.css";
 
 const timestamp = (day: number) => new Date(Date.UTC(2099, 10, day, 15)).toISOString();
@@ -88,6 +88,12 @@ const member: MyScheduleMember = {
   blockoutDates: [],
   updatedAt: "2098-01-01T00:00:00.000Z",
 };
+const session: VolunteerSession = {
+  churchId: "fixture-church",
+  memberId: "fixture-member",
+  csrfToken: "fixture-csrf-token",
+  expiresAt: Date.UTC(2100, 0, 1),
+};
 
 const access: PersonalScheduleAccess = {
   churchId: "fixture-church",
@@ -110,7 +116,7 @@ const access: PersonalScheduleAccess = {
       hasMore: false,
       nextCursor: null,
     }),
-    loadAvailability: async () => ({ success: true, serviceTimeZone: "America/New_York", requests: [availabilityRequest] }),
+    loadAvailability: (options) => getVolunteerAvailability(session, options),
     saveAvailability: async () => ({ success: true, submissionId: "fixture-response" }),
   },
 };
@@ -123,11 +129,7 @@ const context = {
 } as never;
 
 const WorkspaceRoute = ({ accountless }: { accountless: boolean }) => {
-  const location = useLocation();
-  const availability = location.pathname === "/my-availability" || location.search.includes("view=availability");
-  const page = availability
-    ? <MyAvailability access={accountless ? access : undefined} navigationGuardProvided />
-    : <MySchedule access={accountless ? access : undefined} navigationGuardProvided />;
+  const page = <MySchedule access={accountless ? access : undefined} navigationGuardProvided />;
   return (
     <VolunteerNavigationGuardProvider>
       {accountless ? page : <GlobalInfoContext.Provider value={context}>{page}</GlobalInfoContext.Provider>}

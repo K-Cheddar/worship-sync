@@ -99,6 +99,9 @@ jobs:
       - name: Run unauthenticated schedule quick-member browser fixture
         run: npm run test:e2e:schedule-quick-member --prefix client
 
+      - name: Run unified volunteer workspace browser fixture
+        run: npm run test:e2e:volunteer-workspace --prefix client
+
       - name: Build client for server browser integration
         run: npm run build:heroku --prefix client
 

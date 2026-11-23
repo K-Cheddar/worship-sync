@@ -1,16 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
 import { openVolunteerSession, personalScheduleAccess, volunteerRequest, volunteerRequestKey, VolunteerApiError, type VolunteerSession } from "../api/volunteer";
 import Button from "../components/Button/Button";
 import Input from "../components/Input/Input";
 import { readVolunteerIngress, clearVolunteerIngress } from "../public/volunteerIngress";
 import MySchedule from "./MySchedule";
-import MyAvailability from "./MyAvailability";
 import { VolunteerNavigationGuardProvider } from "./VolunteerNavigationGuard";
 
 const VolunteerPortal = () => {
-  const [searchParams] = useSearchParams();
-  const activePage = searchParams.get("view") === "availability" ? "availability" : "schedule";
   const [session, setSession] = useState<VolunteerSession | null>(null);
   const [status, setStatus] = useState("loading");
   const [contact, setContact] = useState("");
@@ -73,9 +69,7 @@ const VolunteerPortal = () => {
   };
   if (access) return (
     <VolunteerNavigationGuardProvider>
-      {activePage === "availability"
-        ? <MyAvailability access={access} navigationGuardProvided />
-        : <MySchedule access={access} navigationGuardProvided />}
+      <MySchedule access={access} navigationGuardProvided />
     </VolunteerNavigationGuardProvider>
   );
   return <main className="flex h-dvh items-center justify-center overflow-y-auto bg-neutral-950 px-4 text-white">

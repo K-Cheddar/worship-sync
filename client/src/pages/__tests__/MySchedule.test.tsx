@@ -8,7 +8,7 @@ import type { ContextType } from "react";
 import { PAGE_APPEARANCES } from "../pageAppearances";
 import { getLucideIconInnerMarkup } from "../../test/lucideIconTestUtils";
 import MySchedule from "../MySchedule";
-import type { MyScheduleOperations, PersonalScheduleAccess } from "../myScheduleOperations";
+import type { MyScheduleOperations, PersonalScheduleAccess, VolunteerAvailabilityRequestSummary } from "../myScheduleOperations";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
   acceptPendingMyAssignments,
@@ -26,7 +26,12 @@ jest.mock("../../api/auth", () => ({
   updateMyBlockoutDates: jest.fn(),
   respondToMyAssignment: jest.fn(),
   acceptMyUnansweredAssignments: jest.fn(),
-  getMyVolunteerAvailability: jest.fn().mockResolvedValue({ success: true, requests: [] }),
+  getMyVolunteerAvailability: jest.fn().mockResolvedValue({
+    success: true,
+    requests: [],
+    requestSummaries: [],
+    schedulingPreferences: null,
+  }),
   submitMyVolunteerAvailability: jest.fn(),
   // showApiErrorToast narrows with `instanceof`, so the error path needs a real
   // class here rather than an undefined export.
@@ -165,7 +170,7 @@ const selectCalendarDay = async (user: ReturnType<typeof userEvent.setup>, date:
 // so the page needs the store and a router the way the real app provides them.
 const pageElement = (role = "member", churchId = "church-1") => (
   <Provider store={store}>
-    <MemoryRouter>
+    <MemoryRouter initialEntries={["/my-schedule"]}>
       <GlobalInfoContext.Provider
         value={
           {
@@ -227,9 +232,66 @@ it("retires pending bulk work when church changes with the same member and sched
   expect(screen.getByRole("button", { name: "Accept remaining assignments" })).toBeEnabled();
 });
 
+it("clears availability summaries when the personal volunteer changes", async () => {
+  const makePersonalAccess = (memberId: string, requestSummaries: VolunteerAvailabilityRequestSummary[]): PersonalScheduleAccess => ({
+    churchId: "church-1",
+    memberId,
+    sessionKey: `${memberId}-session`,
+    operations: {
+      load: jest.fn().mockResolvedValue({
+        success: true,
+        member: { memberId, churchId: "church-1", updatedAt: STAMP, blockoutDates: [] },
+        occurrences: [],
+      }),
+      respond: jest.fn(),
+      saveBlockouts: jest.fn(),
+      acceptUnanswered: jest.fn(),
+      loadAvailability: jest.fn().mockResolvedValue({
+        success: true,
+        requests: [],
+        requestSummaries,
+        schedulingPreferences: null,
+      }),
+      saveAvailability: jest.fn(),
+    },
+  });
+  const oldRequest = {
+    recipientId: "old-recipient",
+    formId: "old-form",
+    name: "Old volunteer request",
+    responseDeadline: "2099-11-01",
+    respondedAt: "",
+    submissionId: "",
+    editable: true,
+  };
+  const oldAccess = makePersonalAccess("member-old", [oldRequest]);
+  const newAccess = makePersonalAccess("member-new", []);
+  const view = (access: PersonalScheduleAccess) => (
+    <Provider store={store}><MemoryRouter><MySchedule access={access} /></MemoryRouter></Provider>
+  );
+  const { rerender } = render(view(oldAccess));
+
+  expect(await screen.findByRole("button", { name: "Respond Old volunteer request" })).toBeInTheDocument();
+  rerender(view(newAccess));
+
+  await waitFor(() => expect(newAccess.operations.loadAvailability).toHaveBeenCalledWith({ summary: true }));
+  expect(screen.queryByRole("button", { name: /Old volunteer request/ })).not.toBeInTheDocument();
+});
+
 describe("MySchedule", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockGetMyTeamAssignments.mockReset();
+    mockAcceptPendingMyAssignments.mockReset();
+    mockUpdateMyBlockoutDates.mockReset();
+    mockRespondToMyAssignment.mockReset();
+    mockGetMyVolunteerAvailability.mockReset();
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      requests: [],
+      requestSummaries: [],
+      schedulingPreferences: null,
+    } as never);
+    mockUsePublicServiceFlow.mockReset();
     mockUsePublicServiceFlow.mockReturnValue({
       snapshot: null,
       error: "",
@@ -267,18 +329,34 @@ describe("MySchedule", () => {
     );
   });
 
-  it("shows a schedule-shaped skeleton while the initial assignments load", async () => {
+  it("shows assignment loading independently while the availability summary is ready", async () => {
     const request = deferred<Awaited<ReturnType<typeof getMyTeamAssignments>>>();
     mockGetMyTeamAssignments.mockReturnValue(request.promise);
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      requests: [],
+      requestSummaries: [{
+        recipientId: "recipient-1",
+        formId: "form-1",
+        name: "November availability",
+        responseDeadline: "2099-11-01",
+        respondedAt: "",
+        submissionId: "",
+        editable: true,
+      }],
+      schedulingPreferences: null,
+    } as never);
     renderPage();
 
     expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("status", { name: "Loading your schedule" })).toHaveAttribute(
+    expect(mockGetMyVolunteerAvailability).toHaveBeenCalledTimes(1);
+    expect(mockGetMyVolunteerAvailability).toHaveBeenCalledWith("church-1", { summary: true });
+    expect(screen.getByRole("status", { name: "Loading assignments" })).toHaveAttribute(
       "aria-busy",
       "true",
     );
-    expect(screen.getByText("Upcoming")).toBeInTheDocument();
-    expect(screen.getAllByTestId("my-schedule-loading-card")).toHaveLength(3);
+    expect(await screen.findByRole("button", { name: "Respond November availability" })).toBeInTheDocument();
+    expect(screen.getAllByTestId("my-schedule-loading-card")).toHaveLength(2);
 
     await act(async () => {
       request.resolve({
@@ -290,8 +368,39 @@ describe("MySchedule", () => {
     });
 
     expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
-    expect(screen.queryByRole("status", { name: "Loading your schedule" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading assignments" })).not.toBeInTheDocument();
     expect(screen.queryAllByTestId("my-schedule-loading-card")).toHaveLength(0);
+  });
+
+  it("keeps assignments usable when the availability summary fails", async () => {
+    respond([occurrence()]);
+    mockGetMyVolunteerAvailability.mockRejectedValue(new Error("Availability unavailable"));
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Availability unavailable");
+  });
+
+  it("keeps availability requests visible when the assignment load fails", async () => {
+    mockGetMyTeamAssignments.mockRejectedValue(new Error("Schedule unavailable"));
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      requests: [],
+      requestSummaries: [{
+        recipientId: "recipient-1",
+        formId: "form-1",
+        name: "November availability",
+        responseDeadline: "2099-11-01",
+        respondedAt: "",
+        submissionId: "",
+        editable: true,
+      }],
+      schedulingPreferences: null,
+    } as never);
+    renderPage();
+
+    expect(await screen.findByText(/Could not load your schedule/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Respond November availability" })).toBeInTheDocument();
   });
 
   it.each(["human account", "personal link"])(
@@ -357,16 +466,38 @@ describe("MySchedule", () => {
 
   it("uses the compact Organize toggle and switches the actual My Schedule grouping", async () => {
     const user = userEvent.setup();
-    respond([occurrence()]);
+    respond([
+      occurrence(),
+      ...[13, 20, 27].map((day) => occurrence({
+        occurrenceId: `extra@2099-09-${day}`,
+        date: `2099-09-${day}`,
+        startsAt: `2099-09-${day}T15:00:00.000Z`,
+        name: `Extra service ${day}`,
+      })),
+    ]);
     renderPage();
 
-    const organize = await screen.findByRole("group", { name: "Organize services" });
+    await user.click(await screen.findByRole("button", { name: "Filters and organize" }));
+    const organize = screen.getByRole("group", { name: "Organize services" });
     expect(within(organize).getByRole("button", { name: "By month" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("heading", { name: "September 2099" })).toBeInTheDocument();
 
     await user.click(within(organize).getByRole("button", { name: "By service" }));
     expect(within(organize).getByRole("button", { name: "By service" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("heading", { name: "Sunday Gathering" })).toBeInTheDocument();
+  });
+
+  it("keeps the normal application Menu and removes volunteer page navigation", async () => {
+    const user = userEvent.setup();
+    respond([]);
+    renderPage();
+
+    expect(screen.getByRole("heading", { name: "My schedule" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Volunteer pages" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("volunteer-desktop-sidebar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("volunteer-mobile-bottom-navigation")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    expect(await screen.findByRole("dialog", { name: "Menu" })).toBeInTheDocument();
   });
 
   describe("accept pending", () => {
@@ -661,7 +792,15 @@ describe("MySchedule", () => {
 
     it("keeps the global action independent of search filters and summarizes partial completion", async () => {
       const user = userEvent.setup();
-      respond([occurrence()]);
+      respond([
+        occurrence(),
+        ...[13, 20, 27].map((day) => occurrence({
+          occurrenceId: `extra@2099-09-${day}`,
+          date: `2099-09-${day}`,
+          startsAt: `2099-09-${day}T15:00:00.000Z`,
+          serving: [me({ response: "accepted" }), other()],
+        })),
+      ]);
       mockAcceptPendingMyAssignments.mockResolvedValue(result({
         newlyAccepted: 1,
         alreadyAccepted: 1,
@@ -672,6 +811,7 @@ describe("MySchedule", () => {
       renderPage();
 
       expect(await screen.findByText("You have 1 assignment waiting for a response.")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Filters and organize" }));
       await user.type(screen.getByLabelText(/Search/i), "not a service");
       expect(screen.queryByRole("button", { name: /Open Sunday Gathering/i })).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: /Accept remaining assignments/i }));
@@ -967,10 +1107,17 @@ describe("MySchedule", () => {
         name: "Evening Service",
         serving: [me({ positionName: "Camera - Roving" })],
       }),
+      ...[13, 20].map((day) => occurrence({
+        occurrenceId: `extra@2099-09-${day}`,
+        date: `2099-09-${day}`,
+        startsAt: `2099-09-${day}T15:00:00.000Z`,
+        name: `Extra Service ${day}`,
+      })),
     ]);
     renderPage();
 
     await screen.findByRole("button", { name: /Open Sunday Gathering/i });
+    await user.click(screen.getByRole("button", { name: "Filters and organize" }));
     await user.type(screen.getByLabelText(/Search/i), "amazing");
 
     expect(
@@ -1049,10 +1196,19 @@ describe("MySchedule", () => {
 
   it("distinguishes an empty search from an empty schedule", async () => {
     const user = userEvent.setup();
-    respond([occurrence()]);
+    respond([
+      occurrence(),
+      ...[13, 20, 27].map((day) => occurrence({
+        occurrenceId: `extra@2099-09-${day}`,
+        date: `2099-09-${day}`,
+        startsAt: `2099-09-${day}T15:00:00.000Z`,
+        name: `Extra service ${day}`,
+      })),
+    ]);
     renderPage();
 
     await screen.findByRole("button", { name: /Open Sunday Gathering/i });
+    await user.click(screen.getByRole("button", { name: "Filters and organize" }));
     await user.type(screen.getByLabelText(/Search/i), "zzzz");
 
     expect(screen.getByText("Nothing matches that search.")).toBeInTheDocument();
@@ -1118,7 +1274,7 @@ describe("MySchedule", () => {
       expect(mockUpdateMyBlockoutDates).not.toHaveBeenCalled();
     });
 
-    it("keeps a dirty Time Off draft when volunteer navigation is canceled", async () => {
+    it("keeps a dirty Time Off draft when application navigation is canceled", async () => {
       const user = userEvent.setup();
       respond([occurrence()], { memberId: "m1", updatedAt: STAMP, blockoutDates: [away] });
       renderPage();
@@ -1126,14 +1282,17 @@ describe("MySchedule", () => {
       await expandTimeOff(user);
       await user.click(screen.getByRole("button", { name: /Remove blockout/i }));
       expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
-      await user.click(screen.getAllByRole("link", { name: "My Availability" })[0]);
+      await user.click(screen.getByRole("button", { name: "Open menu" }));
+      const menu = await screen.findByRole("dialog", { name: "Menu" });
+      await user.click(within(menu).getByRole("link", { name: "Home" }));
 
       const navigationWarning = await screen.findByRole("dialog", { name: "Unsaved changes" });
-      expect(screen.getByTestId("current-location")).toHaveTextContent("/");
+      expect(screen.getByTestId("current-location")).toHaveTextContent("/my-schedule");
       await user.click(within(navigationWarning).getByRole("button", { name: "Stay" }));
+      await user.keyboard("{Escape}");
 
       expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
-      expect(screen.getByTestId("current-location")).toHaveTextContent("/");
+      expect(screen.getByTestId("current-location")).toHaveTextContent("/my-schedule");
       expect(mockUpdateMyBlockoutDates).not.toHaveBeenCalled();
     });
 
@@ -1888,7 +2047,9 @@ describe("MySchedule", () => {
         columnKey: "pos-audio::0",
       });
       const unrelatedAssignment = other({ teamId: "team-worship", teamName: "Worship", positionName: "Singer" });
-      respond([occurrence({ serving: [me(), secondAssignment, unrelatedAssignment] })]);
+      respond([
+        occurrence({ serving: [me(), secondAssignment, unrelatedAssignment] }),
+      ]);
       renderPage();
 
       expect(await screen.findByText("Media")).toHaveClass("text-[10px]");
@@ -1927,12 +2088,14 @@ describe("MySchedule", () => {
       expect(await screen.findByText("Accepted")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Accept Director . Media/i })).toBeInTheDocument();
 
+      await user.click(screen.getByRole("button", { name: "Filters and organize" }));
       const teamFilter = screen.getByRole("combobox", { name: /Team/i });
       await user.click(teamFilter);
       expect(screen.getByRole("option", { name: "Media" })).toBeInTheDocument();
       expect(screen.getByRole("option", { name: "Audio" })).toBeInTheDocument();
       expect(screen.queryByRole("option", { name: "Worship" })).not.toBeInTheDocument();
-      expect(mockGetMyVolunteerAvailability).not.toHaveBeenCalled();
+      expect(mockGetMyVolunteerAvailability).toHaveBeenCalledTimes(1);
+      expect(mockGetMyVolunteerAvailability).toHaveBeenCalledWith("church-1", { summary: true });
     });
 
     it("keeps plan availability secondary to volunteer response status", async () => {
@@ -2043,10 +2206,25 @@ describe("MySchedule", () => {
 
   it("surfaces a load failure with a next step", async () => {
     mockGetMyTeamAssignments.mockRejectedValue(new Error("nope"));
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      requests: [],
+      requestSummaries: [{
+        recipientId: "recipient-1",
+        formId: "form-1",
+        name: "November availability",
+        responseDeadline: "2099-11-01",
+        respondedAt: "",
+        submissionId: "",
+        editable: true,
+      }],
+      schedulingPreferences: null,
+    } as never);
     renderPage();
 
     expect(
       await screen.findByText(/Could not load your schedule/),
     ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Respond November availability" })).toBeInTheDocument();
   });
 });

@@ -6,7 +6,8 @@ import type { ContextType } from "react";
 import { getMyVolunteerAvailability, submitMyVolunteerAvailability, updateMySchedulingPreferences } from "../api/auth";
 import { GlobalInfoContext } from "../context/globalInfo";
 import store from "../store/store";
-import MyAvailability from "./MyAvailability";
+import { useVolunteerNavigationGuard, VolunteerNavigationGuardProvider } from "./VolunteerNavigationGuard";
+import { VolunteerAvailabilitySections as MyAvailability } from "./VolunteerAvailabilitySections";
 import type {
   PersonalScheduleAccess,
   VolunteerAvailabilityRead,
@@ -63,8 +64,21 @@ const makeRead = (
   requests: VolunteerAvailabilityRequest[],
   serviceTimeZone: string | null = "America/New_York",
   schedulingPreferences: VolunteerSchedulingPreferences | null = null,
-): VolunteerAvailabilityRead => ({ success: true, serviceTimeZone, requests, schedulingPreferences });
+): VolunteerAvailabilityRead => ({
+  success: true,
+  serviceTimeZone,
+  requests,
+  requestSummaries: requests.map(({ recipientId, formId, name, responseDeadline, respondedAt, submissionId, editable }) => ({
+    recipientId, formId, name, responseDeadline, respondedAt, submissionId, editable,
+  })),
+  schedulingPreferences,
+});
 
+const requestCardName = (name: string) => new RegExp(
+  `^(?:Respond|Change response) ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
+);
+const findRequestCard = (name = "November availability") =>
+  screen.findByRole("button", { name: requestCardName(name) });
 const makeAccess = (
   loadAvailability: () => Promise<VolunteerAvailabilityRead>,
   saveAvailability: (request: VolunteerAvailabilitySave) => Promise<VolunteerAvailabilitySaveResult>,
@@ -93,10 +107,24 @@ const LocationLabel = () => {
   return <output data-testid="current-location">{location.pathname}</output>;
 };
 
-const renderPage = (access: PersonalScheduleAccess) => render(
+const GuardedHomeLink = () => {
+  const { requestNavigation } = useVolunteerNavigationGuard();
+  return <a href="/home" onClick={(event) => {
+    event.preventDefault();
+    requestNavigation("/home");
+  }}>Home</a>;
+};
+
+const renderPage = (
+  access: PersonalScheduleAccess,
+  fallbackPreferences: VolunteerSchedulingPreferences | null = null,
+) => render(
   <Provider store={store}>
     <MemoryRouter initialEntries={["/my-availability"]}>
-      <MyAvailability access={access} />
+      <VolunteerNavigationGuardProvider>
+        <GuardedHomeLink />
+        <MyAvailability access={access} fallbackPreferences={fallbackPreferences} navigationGuardProvided />
+      </VolunteerNavigationGuardProvider>
       <LocationLabel />
     </MemoryRouter>
   </Provider>,
@@ -108,7 +136,11 @@ const deferred = <T,>() => {
   return { promise, resolve };
 };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  mockGetMyVolunteerAvailability.mockReset();
+  mockSubmitMyVolunteerAvailability.mockReset();
+  mockUpdateMySchedulingPreferences.mockReset();
+});
 
 it("loads and saves through the signed-in church-scoped availability operations", async () => {
   const user = userEvent.setup();
@@ -119,6 +151,8 @@ it("loads and saves through the signed-in church-scoped availability operations"
     availabilityRevision: { [ids[0]]: 1, [ids[1]]: 0, [ids[2]]: 0 },
   });
   mockGetMyVolunteerAvailability
+    .mockResolvedValueOnce(makeRead([request]))
+    .mockResolvedValueOnce(makeRead([request]))
     .mockResolvedValueOnce(makeRead([request]))
     .mockResolvedValueOnce(makeRead([saved]));
   mockSubmitMyVolunteerAvailability.mockResolvedValue({ success: true, submissionId: "signed-in-submission" });
@@ -138,7 +172,7 @@ it("loads and saves through the signed-in church-scoped availability operations"
     </Provider>,
   );
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   await user.click(within(screen.getByRole("radiogroup", { name: /Sunday 1/ }))
     .getByRole("radio", { name: "Unavailable" }));
   await user.click(screen.getByRole("button", { name: "Save response" }));
@@ -149,9 +183,11 @@ it("loads and saves through the signed-in church-scoped availability operations"
     { [ids[0]]: "unavailable", [ids[2]]: "unavailable" },
     { [ids[0]]: 0, [ids[1]]: 0, [ids[2]]: 0 },
   ));
-  expect(mockGetMyVolunteerAvailability).toHaveBeenCalledTimes(2);
-  expect(mockGetMyVolunteerAvailability).toHaveBeenNthCalledWith(1, "human-church");
-  expect(await screen.findByRole("button", { name: "Open November availability" })).toBeInTheDocument();
+  expect(mockGetMyVolunteerAvailability).toHaveBeenCalledTimes(3);
+  expect(mockGetMyVolunteerAvailability).toHaveBeenNthCalledWith(1, "human-church", { summary: true });
+  expect(mockGetMyVolunteerAvailability).toHaveBeenNthCalledWith(2, "human-church", { recipientId: "recipient-1" });
+  expect(mockGetMyVolunteerAvailability).toHaveBeenNthCalledWith(3, "human-church", { recipientId: "recipient-1" });
+  expect(await screen.findByRole("button", { name: requestCardName("November availability") })).toBeInTheDocument();
 });
 
 it("shows stored scheduling preferences and saves explicit accountless edits", async () => {
@@ -189,6 +225,43 @@ it("shows stored scheduling preferences and saves explicit accountless edits", a
   }));
   expect(await screen.findByText("Once a month")).toBeInTheDocument();
   expect(screen.getByText("1st week, 2nd week, 3rd week")).toBeInTheDocument();
+});
+
+it("keeps a confirmed preference save when the initial summary resolves afterward", async () => {
+  const user = userEvent.setup();
+  const existing: VolunteerSchedulingPreferences = {
+    servingFrequency: "twice_monthly",
+    recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
+    updatedAt: "preferences-1",
+  };
+  const saved: VolunteerSchedulingPreferences = {
+    servingFrequency: "monthly",
+    recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
+    updatedAt: "preferences-2",
+  };
+  const pendingSummary = deferred<VolunteerAvailabilityRead>();
+  const loadAvailability = jest.fn().mockReturnValue(pendingSummary.promise);
+  const savePreferences = jest.fn().mockResolvedValue({ success: true, schedulingPreferences: saved });
+  renderPage(makeAccess(loadAvailability, jest.fn(), "member-1", savePreferences), existing);
+
+  await user.click(screen.getByRole("button", { name: "Edit preferences" }));
+  await user.click(screen.getByRole("combobox", { name: /Serving frequency/ }));
+  await user.click(screen.getByRole("option", { name: "Once a month" }));
+  await user.click(screen.getByRole("button", { name: "Save preferences" }));
+  await waitFor(() => expect(savePreferences).toHaveBeenCalledWith({
+    servingFrequency: "monthly",
+    recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
+    expectedUpdatedAt: "preferences-1",
+  }));
+  expect(await screen.findByText("Once a month")).toBeInTheDocument();
+
+  await act(async () => {
+    pendingSummary.resolve(makeRead([], "America/New_York", existing));
+    await pendingSummary.promise;
+  });
+
+  expect(screen.getByText("Once a month")).toBeInTheDocument();
+  expect(screen.getByText("1st week, 3rd week")).toBeInTheDocument();
 });
 
 it("saves signed-in preferences through the church-scoped self-service API", async () => {
@@ -296,7 +369,7 @@ it("keeps preference edits across a stale-revision conflict until explicitly rec
   expect(await screen.findByText("Once a month")).toBeInTheDocument();
 });
 
-it("protects unsaved preference edits when navigating to My Schedule", async () => {
+it("protects unsaved preference edits when leaving the unified workspace", async () => {
   const user = userEvent.setup();
   const preferences: VolunteerSchedulingPreferences = {
     servingFrequency: "twice_monthly",
@@ -313,7 +386,7 @@ it("protects unsaved preference edits when navigating to My Schedule", async () 
   await user.click(await screen.findByRole("button", { name: "Edit preferences" }));
   await user.click(screen.getByRole("combobox", { name: /Serving frequency/ }));
   await user.click(screen.getByRole("option", { name: "Once a month" }));
-  await user.click(screen.getAllByRole("link", { name: "My Schedule" })[0]);
+  await user.click(screen.getByRole("link", { name: "Home" }));
   expect(await screen.findByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
   expect(screen.getByTestId("current-location")).toHaveTextContent("/my-availability");
   await user.click(screen.getByRole("button", { name: "Stay" }));
@@ -330,9 +403,47 @@ it("shows a new unanswered request without counting it as unavailable", async ()
   });
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([noAnswers])), jest.fn()));
 
-  const card = await screen.findByRole("button", { name: "Open New availability request" });
-  expect(card).toHaveTextContent("0 available · 0 unavailable · 3 unanswered");
-  expect(screen.getByRole("region", { name: "Needs response" })).toContainElement(card);
+  const card = await screen.findByRole("button", { name: requestCardName("New availability request") });
+  expect(card).toHaveTextContent("Response needed");
+  expect(card).not.toHaveTextContent("unanswered");
+  expect(screen.getByRole("region", { name: "Availability requests" })).toContainElement(card);
+});
+
+it("loads a lightweight summary first and fetches one request only when opened", async () => {
+  const user = userEvent.setup();
+  const request = makeRequest();
+  const loadAvailability = jest.fn().mockResolvedValue(makeRead([request]));
+  renderPage(makeAccess(loadAvailability, jest.fn()));
+
+  const card = await findRequestCard();
+  expect(card).toBeInTheDocument();
+  expect(loadAvailability).toHaveBeenCalledTimes(1);
+  expect(loadAvailability).toHaveBeenNthCalledWith(1, { summary: true });
+
+  await user.click(card);
+  expect(await screen.findByRole("heading", { name: "November availability" })).toBeInTheDocument();
+  expect(loadAvailability).toHaveBeenNthCalledWith(2, { recipientId: "recipient-1" });
+  expect(loadAvailability).not.toHaveBeenCalledWith({ summary: true, history: true });
+});
+
+it("offers a scoped detail retry without losing the selected request", async () => {
+  const user = userEvent.setup();
+  const request = makeRequest();
+  const loadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([request]))
+    .mockRejectedValueOnce(new Error("Detail network unavailable"))
+    .mockResolvedValueOnce(makeRead([request]));
+  renderPage(makeAccess(loadAvailability, jest.fn()));
+
+  await user.click(await findRequestCard());
+  expect(await screen.findByRole("alert")).toHaveTextContent("Could not load this availability request.");
+  await user.click(screen.getByRole("button", { name: "Try again" }));
+  expect(await screen.findByRole("heading", { name: "November availability" })).toBeInTheDocument();
+  expect(loadAvailability.mock.calls.map(([options]) => options)).toEqual([
+    { summary: true },
+    { recipientId: "recipient-1" },
+    { recipientId: "recipient-1" },
+  ]);
 });
 
 it("uses positive checkboxes for an initial response and confirms the complete scoped result", async () => {
@@ -350,11 +461,12 @@ it("uses positive checkboxes for an initial response and confirms the complete s
   });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([initial]))
+    .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([submitted]));
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "submission-initial" });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   expect(screen.getByRole("heading", { name: "Select services you can serve" })).toBeInTheDocument();
   expect(screen.queryByText("Checked means available. When you submit, unchecked services will be unavailable.")).not.toBeInTheDocument();
   const firstService = screen.getByRole("checkbox", { name: /Sunday 1.*9:00 AM EST/ });
@@ -376,11 +488,13 @@ it("uses positive checkboxes for an initial response and confirms the complete s
     availability: { [ids[0]]: "available", [ids[1]]: "available", [ids[2]]: "unavailable" },
     availabilityRevision: { [ids[0]]: 0, [ids[1]]: 0, [ids[2]]: 0 },
   }));
-  const submittedGroup = await screen.findByRole("region", { name: "Submitted responses" });
-  expect(within(submittedGroup).getByRole("button", { name: "Open November availability" }))
+  const submittedGroup = await screen.findByRole("region", { name: "Availability requests" });
+  expect(within(submittedGroup).getByRole("button", { name: requestCardName("November availability") }))
     .toHaveTextContent("Response submitted");
-  expect(screen.queryByRole("region", { name: "Needs response" }))
-    .not.toHaveTextContent("November availability");
+  expect(screen.getByRole("region", { name: "Availability requests" }))
+    .toContainElement(screen.getByRole("button", { name: requestCardName("November availability") }));
+  expect(screen.getByRole("button", { name: requestCardName("November availability") }))
+    .toHaveTextContent("Response submitted");
 });
 
 it("organizes compact availability cards by date or service without changing their response ids", async () => {
@@ -393,7 +507,7 @@ it("organizes compact availability cards by date or service without changing the
   });
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([request])), jest.fn()));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   expect(screen.getByRole("button", { name: "By date" })).toHaveAttribute("aria-pressed", "true");
   expect(screen.getAllByRole("checkbox")).toHaveLength(3);
   expect(screen.getByRole("heading", { name: "November 08, 2099" })).toBeInTheDocument();
@@ -435,11 +549,12 @@ it("writes one projected grouped answer through to every issued occurrence ID", 
   });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([request]))
+    .mockResolvedValueOnce(makeRead([request]))
     .mockResolvedValueOnce(makeRead([saved]));
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "submitted-2" });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const service = screen.getByRole("checkbox", { name: /Sabbath Service & 2nd service/ });
   await user.click(service);
   await user.click(screen.getByRole("button", { name: "Save response" }));
@@ -474,7 +589,7 @@ it("requires an explicit three-state choice to reconcile conflicting grouped ans
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "submitted-2" });
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([request])), saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const notAnswered = within(screen.getByRole("radiogroup", { name: /Sabbath Service/ }))
     .getByRole("radio", { name: "Not answered" });
   expect(notAnswered).not.toBeChecked();
@@ -524,9 +639,9 @@ it("preserves historical grouped and individual occurrences with conflicting ans
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "historical-response" });
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([historical])), saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const groupedOccurrence = screen.getByRole("checkbox", { name: /Sabbath Service & 2nd service/ });
-  const individualOccurrence = screen.getByRole("checkbox", { name: /^Sabbath Service \u00b7/ });
+  const individualOccurrence = screen.getByRole("checkbox", { name: /^Sabbath Service ·/ });
   expect(groupedOccurrence).toBeChecked();
   expect(individualOccurrence).not.toBeChecked();
 
@@ -534,7 +649,7 @@ it("preserves historical grouped and individual occurrences with conflicting ans
   expect(screen.getAllByRole("checkbox")).toHaveLength(3);
   expect(groupedOccurrence).toBeChecked();
   expect(individualOccurrence).not.toBeChecked();
-  await user.click(screen.getByRole("checkbox", { name: /Other service/ }));
+  await user.click(screen.getByRole("checkbox", { name: /^Other service ·/ }));
 
   await user.click(screen.getByRole("button", { name: "Save response" }));
   await waitFor(() => expect(saveAvailability).toHaveBeenCalledWith({
@@ -549,12 +664,10 @@ it("keeps the date in the By date heading while retaining a full accessible date
   const request = makeRequest({ respondedAt: "", submissionId: "", availability: {}, unansweredOccurrenceIds: [...ids] });
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([request])), jest.fn()));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   expect(screen.getByRole("heading", { name: "November 08, 2099" })).toBeInTheDocument();
-  const firstService = screen.getByRole("checkbox", {
-    name: /Sunday 1 · November 08, 2099 · 9:00 AM EST/,
-  });
-  expect(firstService).toBeInTheDocument();
+  const firstService = screen.getByRole("checkbox", { name: /Sunday 1.*9:00 AM EST/ });
+  expect(firstService).toHaveAccessibleName(/November 08, 2099/);
   expect(within(screen.getByRole("region", { name: "November 08, 2099" })).getByText("9:00 AM EST")).toBeInTheDocument();
   expect(screen.queryByText("November 08, 2099 · 9:00 AM EST")).not.toBeInTheDocument();
 });
@@ -573,7 +686,7 @@ it("marks past services without disabling them before the request deadline", asy
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "past-service-response" });
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([request])), saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   expect(screen.getByText("1 past")).toBeInTheDocument();
   expect(screen.queryByText("Past service")).not.toBeInTheDocument();
   const pastService = screen.getByRole("checkbox", { name: /Past Sabbath Service/ });
@@ -588,15 +701,15 @@ it("marks past services without disabling them before the request deadline", asy
   })));
 });
 
-it("keeps an availability draft when volunteer navigation is canceled", async () => {
+it("keeps an availability draft when application navigation is canceled", async () => {
   const user = userEvent.setup();
   const request = makeRequest({ respondedAt: "", submissionId: "", availability: {}, unansweredOccurrenceIds: [...ids] });
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([request])), jest.fn()));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const firstService = screen.getByRole("checkbox", { name: /Sunday 1/ });
   await user.click(firstService);
-  await user.click(screen.getAllByRole("link", { name: "My Schedule" })[0]);
+  await user.click(screen.getByRole("link", { name: "Home" }));
 
   const navigationWarning = await screen.findByRole("dialog", { name: "Unsaved changes" });
   expect(screen.getByTestId("current-location")).toHaveTextContent("/my-availability");
@@ -606,7 +719,7 @@ it("keeps an availability draft when volunteer navigation is canceled", async ()
   expect(screen.getByTestId("current-location")).toHaveTextContent("/my-availability");
 });
 
-it("blocks route navigation while an availability response is saving", async () => {
+it("blocks application navigation while an availability response is saving", async () => {
   const user = userEvent.setup();
   const pendingSave = deferred<VolunteerAvailabilitySaveResult>();
   const request = makeRequest({ respondedAt: "", submissionId: "", availability: {}, unansweredOccurrenceIds: [...ids] });
@@ -616,16 +729,17 @@ it("blocks route navigation while an availability response is saving", async () 
   });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([request]))
+    .mockResolvedValueOnce(makeRead([request]))
     .mockResolvedValue(makeRead([submitted]));
   const saveAvailability = jest.fn().mockReturnValue(pendingSave.promise);
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
   await user.click(screen.getByRole("button", { name: "Review response" }));
   await user.click(screen.getByRole("button", { name: "Submit response" }));
   await waitFor(() => expect(saveAvailability).toHaveBeenCalled());
-  await user.click(screen.getAllByRole("link", { name: "My Schedule" })[0]);
+  await user.click(screen.getByRole("link", { name: "Home" }));
 
   const savingWarning = await screen.findByRole("dialog", { name: "Saving changes" });
   expect(screen.getByTestId("current-location")).toHaveTextContent("/my-availability");
@@ -635,18 +749,15 @@ it("blocks route navigation while an availability response is saving", async () 
   await act(async () => {
     pendingSave.resolve({ success: true, submissionId: "saved-while-protected" });
   });
-  expect(await screen.findByRole("button", { name: "Open November availability" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: requestCardName("November availability") })).toBeInTheDocument();
 });
 
-it("shows active volunteer destinations in the persistent and mobile navigation", async () => {
+it("keeps availability requests in the unified view without volunteer page navigation", async () => {
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([])), jest.fn()));
 
-  const navigation = await screen.findAllByRole("navigation", { name: "Volunteer pages" });
-  expect(navigation).toHaveLength(2);
-  expect(screen.getAllByRole("link", { name: "My Availability" }).every((link) => link.getAttribute("aria-current") === "page")).toBe(true);
-  expect(screen.getAllByRole("link", { name: "My Schedule" }).every((link) => link.getAttribute("href") === "/s?view=schedule")).toBe(true);
-  expect(navigation[1]).toHaveClass("pb-[env(safe-area-inset-bottom)]");
-  expect(navigation[1]).toHaveClass("lg:hidden");
+  expect(screen.queryByRole("navigation", { name: "Volunteer pages" })).not.toBeInTheDocument();
+  expect(screen.queryByTestId("volunteer-desktop-sidebar")).not.toBeInTheDocument();
+  expect(screen.queryByTestId("volunteer-mobile-bottom-navigation")).not.toBeInTheDocument();
 });
 
 it("selects every service with one action", async () => {
@@ -658,16 +769,19 @@ it("selects every service with one action", async () => {
   });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([initial]))
+    .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([submitted]));
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "all-available" });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   await user.click(screen.getByRole("button", { name: "Select all" }));
   expect(screen.getByText("3 of 3 selected")).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Review response" }));
-  expect(screen.getByRole("dialog", { name: "Confirm your availability" }))
-    .toHaveTextContent("3 available · 0 unavailable · 0 unanswered");
+  const confirmation = screen.getByRole("dialog", { name: "Confirm your availability" });
+  expect(confirmation).toHaveTextContent("3 available");
+  expect(confirmation).toHaveTextContent("0 unavailable");
+  expect(confirmation).toHaveTextContent("0 unanswered");
   await user.click(screen.getByRole("button", { name: "Submit response" }));
 
   await waitFor(() => expect(saveAvailability).toHaveBeenCalledWith(expect.objectContaining({
@@ -683,7 +797,7 @@ it("keeps service checkboxes keyboard operable at a narrow viewport", async () =
   const initial = makeRequest({ respondedAt: "", submissionId: "", availability: {}, unansweredOccurrenceIds: [...ids] });
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([initial])), jest.fn()));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const firstService = screen.getByRole("checkbox", { name: /Sunday 1.*EST/ });
 
   firstService.focus();
@@ -704,15 +818,18 @@ it("confirms an all-unavailable first response and lets the volunteer cancel wit
   });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([initial]))
+    .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([submitted]));
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "all-unavailable" });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   await user.click(screen.getByRole("button", { name: "Review response" }));
   const confirmation = screen.getByRole("dialog", { name: "Confirm your availability" });
   expect(confirmation).toHaveTextContent("You haven't selected any services. Are you unavailable for all of them?");
-  expect(confirmation).toHaveTextContent("0 available · 3 unavailable · 0 unanswered");
+  expect(confirmation).toHaveTextContent("0 available");
+  expect(confirmation).toHaveTextContent("3 unavailable");
+  expect(confirmation).toHaveTextContent("0 unanswered");
   await user.click(within(confirmation).getByRole("button", { name: "Cancel" }));
   expect(saveAvailability).not.toHaveBeenCalled();
   expect(screen.getByRole("button", { name: "Review response" })).toBeInTheDocument();
@@ -722,7 +839,7 @@ it("confirms an all-unavailable first response and lets the volunteer cancel wit
   await waitFor(() => expect(saveAvailability).toHaveBeenCalledWith(expect.objectContaining({
     availability: Object.fromEntries(ids.map((id) => [id, "unavailable"])),
   })));
-  expect(await screen.findByRole("region", { name: "Submitted responses" }))
+  expect(await screen.findByRole("region", { name: "Availability requests" }))
     .toHaveTextContent("Response submitted");
 });
 
@@ -731,11 +848,12 @@ it("keeps an initial request unsubmitted when its save fails", async () => {
   const initial = makeRequest({ respondedAt: "", submissionId: "", availability: {}, unansweredOccurrenceIds: [...ids] });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([initial]))
+    .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([initial]));
   const saveAvailability = jest.fn().mockRejectedValue(Object.assign(new Error("Save rejected"), { status: 500 }));
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
   await user.click(screen.getByRole("button", { name: "Review response" }));
   await user.click(screen.getByRole("button", { name: "Submit response" }));
@@ -744,9 +862,8 @@ it("keeps an initial request unsubmitted when its save fails", async () => {
   await user.click(screen.getByRole("button", { name: "Back to requests" }));
   await user.click(screen.getByRole("button", { name: "Discard changes" }));
 
-  expect(screen.getByRole("region", { name: "Needs response" }))
-    .toHaveTextContent("Not yet submitted");
-  expect(screen.queryByRole("region", { name: "Submitted responses" })).not.toBeInTheDocument();
+  expect(screen.getByRole("region", { name: "Availability requests" }))
+    .toHaveTextContent("Response needed");
 });
 
 it("keeps partially answered legacy requests in the three-state editor", async () => {
@@ -760,7 +877,7 @@ it("keeps partially answered legacy requests in the three-state editor", async (
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "legacy-finalized" });
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([partial])), saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const answerGroup = screen.getByRole("radiogroup", { name: /Sunday 1/ });
   expect(within(answerGroup).getByRole("radio", { name: "Available" })).toBeChecked();
   expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
@@ -792,11 +909,12 @@ it("lets a legacy saved answer be cleared back to unanswered and finalized", asy
   });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([legacy]))
+    .mockResolvedValueOnce(makeRead([legacy]))
     .mockResolvedValueOnce(makeRead([submitted]));
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "legacy-finalized" });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const firstGroup = screen.getByRole("radiogroup", { name: /Sunday 1/ });
   await user.click(within(firstGroup).getByRole("radio", { name: "Not answered" }));
   await user.click(screen.getByRole("button", { name: "Review response" }));
@@ -809,8 +927,8 @@ it("lets a legacy saved answer be cleared back to unanswered and finalized", asy
     availability: {},
     availabilityRevision: { [ids[0]]: 0, [ids[1]]: 0, [ids[2]]: 0 },
   }));
-  expect(await screen.findByRole("region", { name: "Submitted responses" }))
-    .toHaveTextContent("Response submitted · 3 unanswered");
+  expect(await screen.findByRole("region", { name: "Availability requests" }))
+    .toHaveTextContent("Response submitted");
 });
 
 it("shows active requests and omits closed requests from the routine list", async () => {
@@ -842,12 +960,12 @@ it("shows active requests and omits closed requests from the routine list", asyn
     noSubmission, submittedPartial, closedWithoutSubmission, closedWithSubmission,
   ])), jest.fn()));
 
-  const needsResponse = await screen.findByRole("region", { name: "Needs response" });
-  const submitted = screen.getByRole("region", { name: "Submitted responses" });
-  expect(within(needsResponse).getByRole("button", { name: "Open Open request" }))
-    .toHaveTextContent("Not yet submitted");
-  expect(within(submitted).getByRole("button", { name: "Open Submitted request" }))
-    .toHaveTextContent("Response submitted · 1 unanswered");
+  const requests = await screen.findByRole("region", { name: "Availability requests" });
+  expect(within(requests).getAllByRole("button")).toHaveLength(2);
+  expect(within(requests).getByRole("button", { name: requestCardName("Open request") }))
+    .toHaveTextContent("Response needed");
+  expect(within(requests).getByRole("button", { name: requestCardName("Submitted request") }))
+    .toHaveTextContent("Response submitted");
   expect(screen.queryByText("Closed without response")).not.toBeInTheDocument();
   expect(screen.queryByText("Closed with response")).not.toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Closed" })).not.toBeInTheDocument();
@@ -866,11 +984,12 @@ it("reopens saved answers and lets the volunteer clear one back to unanswered", 
   });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([saved]))
+    .mockResolvedValueOnce(makeRead([saved]))
     .mockResolvedValueOnce(makeRead([cleared]));
   const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "submission-1" });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   expect(screen.getByRole("checkbox", { name: /Sunday 1/ })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: /Sunday 2/ })).not.toBeChecked();
   await user.click(screen.getByRole("button", { name: "Edit individual answer states" }));
@@ -909,18 +1028,18 @@ it("shows submitted requests and saves the complete scoped map with its revision
   });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  const submittedResponses = await screen.findByRole("region", { name: "Submitted responses" });
-  expect(within(submittedResponses).getByRole("button", { name: "Open November availability" }))
-    .toHaveTextContent("1 available · 1 unavailable · 1 unanswered");
+  const submittedResponses = await screen.findByRole("region", { name: "Availability requests" });
+  expect(within(submittedResponses).getByRole("button", { name: requestCardName("November availability") }))
+    .toHaveTextContent("Response submitted");
   expect(screen.queryByText("October availability")).not.toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Closed" })).not.toBeInTheDocument();
   expect(screen.queryByText("An unanswered date means you haven't responded. It doesn't mean you're unavailable."))
     .not.toBeInTheDocument();
 
-  await user.click(within(submittedResponses).getByRole("button", { name: "Open November availability" }));
+  await user.click(within(submittedResponses).getByRole("button", { name: requestCardName("November availability") }));
   const firstGroup = screen.getByRole("radiogroup", { name: /Sunday 1/ });
   expect(firstGroup).toHaveClass("grid", "sm:grid-cols-3");
-  expect(within(firstGroup).getByText("Available", { selector: "label" })).toHaveClass("min-h-11");
+  expect(within(firstGroup).getByText("Available", { selector: "label" })).toHaveClass("min-h-[44px]");
   await user.click(within(firstGroup).getByRole("radio", { name: "Not answered" }));
   const secondGroup = screen.getByRole("radiogroup", { name: /Sunday 2/ });
   await user.click(within(secondGroup).getByRole("radio", { name: "Available" }));
@@ -933,9 +1052,9 @@ it("shows submitted requests and saves the complete scoped map with its revision
     availability: { [ids[1]]: "available", [ids[2]]: "unavailable" },
     availabilityRevision: { [ids[0]]: 0, [ids[1]]: 0, [ids[2]]: 0 },
   });
-  expect(await screen.findByRole("button", { name: "Open November availability" }))
-    .toHaveTextContent("1 available · 1 unavailable · 1 unanswered");
-  expect(loadAvailability).toHaveBeenCalledTimes(2);
+  expect(await screen.findByRole("button", { name: requestCardName("November availability") }))
+    .toHaveTextContent("Response submitted");
+  expect(loadAvailability).toHaveBeenCalledTimes(3);
 });
 
 it("keeps a conflicting draft until the volunteer reviews and rebases it", async () => {
@@ -955,7 +1074,7 @@ it("keeps a conflicting draft until the volunteer reviews and rebases it", async
   let readCount = 0;
   const loadAvailability = jest.fn(async () => {
     readCount += 1;
-    return makeRead([readCount === 1 ? original : readCount === 2 ? latest : saved]);
+    return makeRead([readCount <= 2 ? original : readCount === 3 ? latest : saved]);
   });
   const conflict = Object.assign(new Error("Availability changed elsewhere"), { status: 409 });
   const saveAvailability = jest.fn()
@@ -963,7 +1082,7 @@ it("keeps a conflicting draft until the volunteer reviews and rebases it", async
     .mockResolvedValueOnce({ success: true, submissionId: "submission-after-conflict" });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const firstGroup = screen.getByRole("radiogroup", { name: /Sunday 1/ });
   await user.click(within(firstGroup).getByRole("radio", { name: "Unavailable" }));
   await user.click(screen.getByRole("button", { name: "Save response" }));
@@ -971,7 +1090,9 @@ it("keeps a conflicting draft until the volunteer reviews and rebases it", async
   expect(await screen.findByRole("button", { name: "Review latest saved answers" })).toBeInTheDocument();
   expect(within(firstGroup).getByRole("radio", { name: "Unavailable" })).toBeChecked();
   await user.click(screen.getByRole("button", { name: "Review latest saved answers" }));
-  const firstComparison = within(screen.getAllByRole("listitem")[0]);
+  const firstComparison = within(
+    within(screen.getByRole("alert")).getAllByRole("listitem")[0],
+  );
   expect(firstComparison.getByText("Available", { selector: "dd" })).toBeInTheDocument();
   expect(firstComparison.getByText("Not answered", { selector: "dd" })).toBeInTheDocument();
   expect(firstComparison.getByText("Unavailable", { selector: "dd" })).toBeInTheDocument();
@@ -985,10 +1106,10 @@ it("keeps a conflicting draft until the volunteer reviews and rebases it", async
     [ids[1]]: 0,
     [ids[2]]: 0,
   });
-  expect(await screen.findByRole("button", { name: "Open November availability" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: requestCardName("November availability") })).toBeInTheDocument();
 });
 
-it("preserves a dirty draft when a refreshed request snapshot arrives during editing", async () => {
+it("preserves the dirty draft when the operations reference changes for the same volunteer", async () => {
   const user = userEvent.setup();
   const original = makeRequest();
   const refreshed = makeRequest({
@@ -1008,12 +1129,12 @@ it("preserves a dirty draft when a refreshed request snapshot arrives during edi
   );
   const { rerender } = render(view(firstAccess));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const firstGroup = screen.getByRole("radiogroup", { name: /Sunday 1/ });
   await user.click(within(firstGroup).getByRole("radio", { name: "Unavailable" }));
   rerender(view(secondAccess));
 
-  await waitFor(() => expect(refreshedLoad).toHaveBeenCalledTimes(1));
+  expect(refreshedLoad).not.toHaveBeenCalled();
   expect(within(firstGroup).getByRole("radio", { name: "Unavailable" })).toBeChecked();
   expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
 });
@@ -1029,19 +1150,20 @@ it("reconciles an uncertain save from the authoritative read without reporting a
   });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([initial]))
+    .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([submitted]));
   const networkError = Object.assign(new Error("Connection closed"), { status: 503 });
   const saveAvailability = jest.fn().mockRejectedValue(networkError);
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   await user.click(within(screen.getByRole("radiogroup", { name: /Sunday 1/ }))
     .getByRole("radio", { name: "Unavailable" }));
   await user.click(screen.getByRole("button", { name: "Save response" }));
 
-  expect(await screen.findByRole("button", { name: "Open November availability" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: requestCardName("November availability") })).toBeInTheDocument();
   expect(saveAvailability).toHaveBeenCalledTimes(1);
-  expect(loadAvailability).toHaveBeenCalledTimes(2);
+  expect(loadAvailability).toHaveBeenCalledTimes(3);
   expect(screen.queryByText("We couldn't confirm that save. Your draft is still here.")).not.toBeInTheDocument();
 });
 
@@ -1056,6 +1178,7 @@ it("keeps an uncertain draft and requires a refresh before retry when the read i
   });
   const loadAvailability = jest.fn()
     .mockResolvedValueOnce(makeRead([initial]))
+    .mockResolvedValueOnce(makeRead([initial]))
     .mockRejectedValueOnce(new Error("Network unavailable"))
     .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([saved]));
@@ -1065,7 +1188,7 @@ it("keeps an uncertain draft and requires a refresh before retry when the read i
     .mockResolvedValueOnce({ success: true, submissionId: "confirmed-after-refresh" });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   const firstGroup = screen.getByRole("radiogroup", { name: /Sunday 1/ });
   await user.click(within(firstGroup).getByRole("radio", { name: "Unavailable" }));
   await user.click(screen.getByRole("button", { name: "Save response" }));
@@ -1084,7 +1207,7 @@ it("keeps an uncertain draft and requires a refresh before retry when the read i
   await user.click(screen.getByRole("button", { name: "Keep my draft and continue" }));
   await user.click(screen.getByRole("button", { name: "Save response" }));
 
-  expect(await screen.findByRole("button", { name: "Open November availability" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: requestCardName("November availability") })).toBeInTheDocument();
   expect(saveAvailability).toHaveBeenCalledTimes(2);
 });
 
@@ -1096,11 +1219,11 @@ it("does not display closed requests even if a stale read contains one", async (
     updatedAt: "preference-revision",
   })), jest.fn()));
 
-  expect(await screen.findByText("No availability requests right now.")).toBeInTheDocument();
-  expect(screen.queryByRole("button", { name: "Open November availability" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: "Show past availability requests" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: requestCardName("November availability") })).not.toBeInTheDocument();
   expect(screen.queryByRole("region", { name: "Closed" })).not.toBeInTheDocument();
   const preferences = screen.getByRole("region", { name: "Scheduling preferences" });
-  expect(within(preferences).getByText("Serving frequency:")).toBeInTheDocument();
+  expect(within(preferences).getByText("Twice a month")).toBeInTheDocument();
   expect(within(preferences).queryByText("Preferences are unavailable for this account.")).not.toBeInTheDocument();
 });
 
@@ -1125,10 +1248,10 @@ it("loads past request summaries only on demand and opens one past response read
 
   renderPage(makeAccess(loadAvailability, jest.fn()));
 
-  expect(await screen.findByText("No availability requests right now.")).toBeInTheDocument();
-  expect(loadAvailability.mock.calls[0]).toEqual([]);
-  await user.click(screen.getByRole("button", { name: "Show past requests" }));
-  const pastRequestButton = await screen.findByRole("button", { name: /November availability.*Response submitted/ });
+  expect(await screen.findByRole("button", { name: "Show past availability requests" })).toBeInTheDocument();
+  expect(loadAvailability.mock.calls[0]).toEqual([{ summary: true }]);
+  await user.click(screen.getByRole("button", { name: "Show past availability requests" }));
+  const pastRequestButton = await screen.findByRole("button", { name: /November availability/ });
   await waitFor(() => expect(pastRequestButton).toBeEnabled());
   expect(loadAvailability.mock.calls[1][0]).toEqual({ summary: true, history: true });
 
@@ -1138,7 +1261,37 @@ it("loads past request summaries only on demand and opens one past response read
   expect(screen.queryByRole("button", { name: "Save response" })).not.toBeInTheDocument();
 });
 
-it("reloads past summaries after a selected request is revoked or archived", async () => {
+it("keeps past-summary loading active while another request opens", async () => {
+  const user = userEvent.setup();
+  const activeRequest = makeRequest();
+  const pastRequest = makeRequest({
+    recipientId: "recipient-past",
+    formId: "form-past",
+    name: "Past November availability",
+    editable: false,
+  });
+  const pendingHistory = deferred<VolunteerAvailabilityRead>();
+  const loadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([activeRequest]))
+    .mockReturnValueOnce(pendingHistory.promise)
+    .mockResolvedValueOnce(makeRead([activeRequest]));
+  renderPage(makeAccess(loadAvailability, jest.fn()));
+
+  await screen.findByRole("button", { name: requestCardName("November availability") });
+  await user.click(screen.getByRole("button", { name: "Show past requests" }));
+  await user.click(screen.getByRole("button", { name: requestCardName("November availability") }));
+  expect(await screen.findByRole("button", { name: "Back to requests" })).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Back to requests" }));
+
+  await act(async () => {
+    pendingHistory.resolve(makeRead([pastRequest]));
+  });
+
+  expect(await screen.findByRole("button", { name: /Past November availability/ })).toBeInTheDocument();
+  expect(loadAvailability.mock.calls[1][0]).toEqual({ summary: true, history: true });
+});
+
+it("removes a past request when its detail has been revoked or archived", async () => {
   const user = userEvent.setup();
   const closedRequest = makeRequest({ editable: false });
   const summary = {
@@ -1157,18 +1310,15 @@ it("reloads past summaries after a selected request is revoked or archived", asy
     .mockResolvedValueOnce({ ...makeRead([]), requestSummaries: [] });
 
   renderPage(makeAccess(loadAvailability, jest.fn()));
-  await user.click(await screen.findByRole("button", { name: "Show past requests" }));
-  const pastRequestButton = await screen.findByRole("button", { name: /November availability.*Response submitted/ });
+  await user.click(await screen.findByRole("button", { name: "Show past availability requests" }));
+  const pastRequestButton = await screen.findByRole("button", { name: /November availability/ });
   await waitFor(() => expect(pastRequestButton).toBeEnabled());
   await user.click(pastRequestButton);
-  expect(await screen.findByText("This past request is no longer available. Reload past requests to update the list.")).toBeInTheDocument();
-
-  const retryButton = screen.getByRole("button", { name: "Try again" });
-  await waitFor(() => expect(retryButton).toBeEnabled());
-  await user.click(retryButton);
+  expect(await screen.findByText("This availability request is no longer available. It was removed from the list.")).toBeInTheDocument();
   expect(await screen.findByText("No past requests.")).toBeInTheDocument();
-  expect(loadAvailability).toHaveBeenCalledTimes(4);
-  expect(loadAvailability.mock.calls[3][0]).toEqual({ summary: true, history: true });
+  expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  expect(loadAvailability).toHaveBeenCalledTimes(3);
+  expect(loadAvailability.mock.calls[2][0]).toEqual({ recipientId: closedRequest.recipientId });
 });
 
 it("ignores a past-request read after the volunteer identity changes", async () => {
@@ -1189,12 +1339,12 @@ it("ignores a past-request read after the volunteer identity changes", async () 
   );
   const view = render(renderWithAccess(oldAccess));
 
-  await screen.findByText("No availability requests right now.");
-  await user.click(screen.getByRole("button", { name: "Show past requests" }));
+  await screen.findByRole("button", { name: "Show past availability requests" });
+  await user.click(screen.getByRole("button", { name: "Show past availability requests" }));
   expect(oldLoadAvailability.mock.calls[1][0]).toEqual({ summary: true, history: true });
 
   view.rerender(renderWithAccess(nextAccess));
-  await screen.findByText("No availability requests right now.");
+  await screen.findByRole("button", { name: "Show past availability requests" });
   await act(async () => {
     pendingHistory.resolve({
       ...makeRead([]),
@@ -1211,23 +1361,22 @@ it("ignores a past-request read after the volunteer identity changes", async () 
   });
 
   expect(screen.queryByText("Old volunteer history")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Show past requests" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Show past availability requests" })).toBeInTheDocument();
 });
 
-it("guards volunteer navigation when a response draft is dirty", async () => {
+it("guards application navigation when a response draft is dirty", async () => {
   const user = userEvent.setup();
   renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([makeRequest()])), jest.fn()));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   await user.click(within(screen.getByRole("radiogroup", { name: /Sunday 1/ }))
     .getByRole("radio", { name: "Unavailable" }));
-  await user.click(screen.getByRole("button", { name: "Open menu" }));
-  const menu = await screen.findByRole("dialog", { name: "Menu" });
-  await user.click(within(menu).getByRole("link", { name: "My Schedule" }));
+  await user.click(screen.getByRole("link", { name: "Home" }));
   expect(screen.getByRole("dialog", { name: "Unsaved changes" })).toBeInTheDocument();
   expect(screen.getByTestId("current-location")).toHaveTextContent("/my-availability");
   await user.click(screen.getByRole("button", { name: "Stay" }));
-  await user.click(screen.getByRole("button", { name: "Close" }));
+  await user.click(screen.getByRole("button", { name: "Back to requests" }));
+  await user.click(screen.getByRole("button", { name: "Stay" }));
   expect(screen.getByRole("heading", { name: "November availability" })).toBeInTheDocument();
 });
 
@@ -1256,7 +1405,7 @@ it("prevents duplicate saves and retires an in-flight save when the personal ses
   );
   const { rerender } = render(view(oldAccess));
 
-  await user.click(await screen.findByRole("button", { name: "Open November availability" }));
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
   await user.click(within(screen.getByRole("radiogroup", { name: /Sunday 1/ }))
     .getByRole("radio", { name: "Unavailable" }));
   await user.click(screen.getByRole("button", { name: "Save response" }));
@@ -1265,11 +1414,11 @@ it("prevents duplicate saves and retires an in-flight save when the personal ses
   expect(saveAvailability).toHaveBeenCalledTimes(1);
 
   rerender(view(newAccess));
-  expect(await screen.findByRole("button", { name: "Open Current session request" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: requestCardName("Current session request") })).toBeInTheDocument();
   await act(async () => {
     pendingSave.resolve({ success: true, submissionId: "late-old-session-save" });
   });
-  expect(screen.getByRole("button", { name: "Open Current session request" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: requestCardName("Current session request") })).toBeInTheDocument();
   expect(screen.queryByRole("heading", { name: "November availability" })).not.toBeInTheDocument();
 });
 
@@ -1295,11 +1444,11 @@ it("ignores an old availability read after the volunteer changes churches", asyn
   const { rerender } = render(view(oldAccess));
 
   rerender(view(newAccess));
-  expect(await screen.findByRole("button", { name: "Open Current church request" })).toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: requestCardName("Current church request") })).toBeInTheDocument();
   await act(async () => oldRead.resolve(makeRead([makeRequest({ name: "Old church request" })])));
 
-  expect(screen.queryByRole("button", { name: "Open Old church request" })).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Open Current church request" })).toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: requestCardName("Old church request") })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: requestCardName("Current church request") })).toBeInTheDocument();
 });
 
 it("offers retry after a temporary availability-load failure", async () => {
@@ -1310,7 +1459,7 @@ it("offers retry after a temporary availability-load failure", async () => {
   renderPage(makeAccess(loadAvailability, jest.fn()));
 
   expect(await screen.findByRole("alert")).toHaveTextContent("Network unavailable");
-  await user.click(screen.getByRole("button", { name: "Retry loading availability" }));
-  expect(await screen.findByText("No availability requests right now.")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  expect(await screen.findByRole("button", { name: "Show past availability requests" })).toBeInTheDocument();
   expect(loadAvailability).toHaveBeenCalledTimes(2);
 });

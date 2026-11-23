@@ -104,7 +104,9 @@ responses, reminder automation or new dispatch behavior is introduced.
 
 Approved by the current product-owner request, 2026-11-16. This phase adds the
 backend contract for reviewing and safely updating service-date availability;
-the separate My Availability interface remains Phase 2B-2.
+the initial separate My Availability interface was Phase 2B-2. The November 22,
+2026 unified-workspace decision supersedes that page separation; the API and
+recipient-scoped write contract remain unchanged.
 
 ### Before behavior
 
@@ -158,10 +160,13 @@ change Auto-fill ranking. My Schedule remains assignment-focused; no new UI,
 form system, collection, identity model or migration is introduced in this
 phase.
 
-## My Availability (Phase 2B-2, 2026-11-18)
+## My Availability (Phase 2B-2, 2026-11-18; historical page layout superseded)
 
-The shared volunteer UI is available at `/my-availability` to signed-in humans
-and at `/s?view=availability` through an existing accountless personal session.
+At that milestone, the separate volunteer UI was available at `/my-availability`
+to signed-in humans and at `/s?view=availability` through an existing
+accountless personal session. The November 22 unified-workspace decision keeps
+these routes as compatibility entry points that focus the availability section
+inside My Schedule.
 It lists the volunteer's own open requests that still have unanswered dates,
 followed by answered or closed requests. Each occurrence supports Available,
 Unavailable, and Not answered; the last choice stays absent from the complete
@@ -172,14 +177,14 @@ per-occurrence revision snapshot. A 409 retains the draft and requires explicit
 review of the original, current, and draft answers before rebasing. Uncertain
 write outcomes are reconciled by reading the authoritative endpoint, without
 automatic resubmission. The read includes the validated church service timezone
-for display. Time Off remains in assignment-focused My Schedule. Volunteer
-recurring-availability preferences remain deferred because no safe self-service
-operation exists for them yet.
+for display. At the time, Time Off stayed on assignment-focused My Schedule and
+recurring preferences were deferred; later preference self-service and the
+unified layout are documented in the My Schedule contract.
 
-## My Availability response simplification (Phase 2B-3)
+## My Availability response simplification (Phase 2B-3; editor behavior retained)
 
 Confirmed by the current product-owner request, “Simplify My Availability and
-Correct Request Statuses,” 2026-11-19. The shared volunteer page now uses
+Correct Request Statuses,” 2026-11-19. The availability section now uses
 positive checkboxes for a new, fully unanswered response and confirms the
 available/unavailable totals before the existing submit API is called. An
 explicitly confirmed all-unavailable response is a submission. Existing
@@ -188,13 +193,14 @@ Available / Unavailable / Not answered editor, and fully answered responses
 can open that editor to clear a saved answer.
 
 The existing recipient `respondedAt` / `submissionId` metadata determines
-whether a request has been submitted. The page groups requests as **Needs
-response**, **Submitted responses**, or **Closed**; submitted partial responses
-still show unanswered service dates. The existing complete form-scoped map,
-per-occurrence revisions, recipient authorization, and 409 recovery remain the
-write contract. Public `/a/:token` forms keep their original positive-selection
-checkbox meaning and established submission behavior. No new availability
-storage, route, reminder, or dispatch behavior is added.
+whether a request has been submitted. At that milestone, the page grouped
+requests as **Needs response**, **Submitted responses**, or **Closed**. The
+unified workspace now shows compact active request cards in one section and
+keeps the same editor behavior after a card is opened. The existing complete
+form-scoped map, per-occurrence revisions, recipient authorization, and 409
+recovery remain the write contract. Public `/a/:token` forms keep their
+original positive-selection checkbox meaning and established submission
+behavior. No new availability storage, reminder, or dispatch behavior is added.
 
 ## Volunteer workspace responsibilities (Phase 2B-4, 2026-11-20)
 

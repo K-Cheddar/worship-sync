@@ -408,6 +408,7 @@ describe("route ownership with independent Controller access", () => {
 
   it("allows personal routes and a server-authorized Teams attempt", () => {
     expect(isRouteAllowedForSession("/my-schedule", noController)).toBe(true);
+    expect(isRouteAllowedForSession("/my-availability", noController)).toBe(true);
     expect(isRouteAllowedForSession("/home", noController)).toBe(true);
     expect(isRouteAllowedForSession("/teams-and-services", noController)).toBe(true);
     expect(
