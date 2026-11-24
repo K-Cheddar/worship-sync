@@ -2674,6 +2674,16 @@ export const getSchedulingAutomation = async (
   );
 };
 
+export const getSchedulingCycle = async (
+  churchId: string,
+  teamId: string,
+  periodId: string,
+) => apiFetch<{
+  success: boolean;
+  savedCycle: SchedulingCycleRecord | null;
+  savedActions: SchedulingCycleAction[];
+}>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/teams/${encodeURIComponent(teamId)}/cycles/${encodeURIComponent(periodId)}`);
+
 export const previewSchedulingCycle = async (
   churchId: string,
   body: {
@@ -2699,6 +2709,32 @@ export const saveChurchSchedulingDefaults = async (
   `api/churches/${encodeURIComponent(churchId)}/scheduling-automation/defaults`,
   { method: "POST", body: JSON.stringify(body) },
 );
+
+export const setAvailabilityAutomation = async (
+  churchId: string,
+  body: {
+    enabled: boolean;
+    formCreationEnabled: boolean;
+    revision: number;
+    teamId: string;
+    periodId: string;
+    confirmAlreadyStarted: boolean;
+  },
+) => apiFetch<{
+  success: boolean;
+  defaults: import("./authTypes").SchedulingSettingsRecord;
+  activationImpact: {
+    churchWide: boolean;
+    selectedTeamId: string | null;
+    selectedPeriodId: string | null;
+    selectedPeriodStarted: boolean;
+    upcomingActions: import("./authTypes").SchedulingCycleAction[];
+    notificationDeliveryEnabled: false;
+  };
+}>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/activation`, {
+  method: "POST",
+  body: JSON.stringify(body),
+});
 
 export const saveTeamSchedulingOverride = async (
   churchId: string,

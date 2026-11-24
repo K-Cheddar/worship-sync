@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Button from "../../../components/Button/Button";
 import Modal from "../../../components/Modal/Modal";
 import Select from "../../../components/Select/Select";
 import {
-  ensureSchedulingCycle,
+  getSchedulingCycle,
   getSchedulingAutomation,
   previewSchedulingCycle,
   saveChurchSchedulingDefaults,
   saveTeamSchedulingOverride,
+  setAvailabilityAutomation,
   type SchedulingAutomationResponse,
 } from "../../../api/auth";
 import type {
@@ -169,14 +170,16 @@ const Timeline = ({ plan, serviceTimeZone }: { plan: PlannedCycle; serviceTimeZo
             : actionTitles[action.actionType] || action.actionType}</p>
           {action.localDate ? (
             <p className="text-sm text-gray-300">
-              {formatPlainDate(action.localDate, true)} at {action.localTime || "09:00"} {serviceTimeZone || "church time"}
+              {action.actionType === "availability_response_deadline"
+                ? `Respond through ${formatPlainDate(action.localDate, true)} (${serviceTimeZone || "church time"})`
+                : `${formatPlainDate(action.localDate, true)} at ${action.localTime || "09:00"} ${serviceTimeZone || "church time"}`}
             </p>
           ) : (
             <p className="text-sm text-gray-300">Leader decision; publication is never automatic.</p>
           )}
         </div>
         <span className="shrink-0 rounded-full bg-gray-800 px-2 py-1 text-xs text-gray-300">
-          {action.state === "manual" ? "Manual" : "Planned · not enabled"}
+          {action.state === "manual" ? "Manual" : action.state === "completed" ? "Completed" : action.state === "skipped" ? "Skipped" : action.state === "review_required" ? "Needs attention" : action.state === "retryable_failure" ? "Retry pending" : "Upcoming"}
         </span>
       </li>
     ))}
@@ -203,67 +206,124 @@ export const SchedulingAutomationPanel = ({
   canManageDefaults: boolean;
 }) => {
   const [data, setData] = useState<SchedulingAutomationResponse | null>(null);
+  const [dataOwnerKey, setDataOwnerKey] = useState("");
   const [defaultsDraft, setDefaultsDraft] = useState<SchedulingAutomationSettings | null>(null);
   const [overrideMode, setOverrideMode] = useState<OverrideMode>("inherit");
   const [overrideDraft, setOverrideDraft] = useState<SchedulingAutomationSettings | null>(null);
   const [preview, setPreview] = useState<PlannedCycle | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
+  const [cycleLoading, setCycleLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [activationSaving, setActivationSaving] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [isOpen, setIsOpen] = useState(false);
   const [scope, setScope] = useState<SettingsScope>(canManageDefaults ? "church" : "team");
   const [snapshot, setSnapshot] = useState<SchedulingCycleRecord | null>(null);
+  const [savedActions, setSavedActions] = useState<SchedulingCycleAction[]>([]);
+  const ownerKey = JSON.stringify([churchId, teamId]);
+  const ownerKeyRef = useRef(ownerKey);
+  ownerKeyRef.current = ownerKey;
+  const settingsRequestRef = useRef(0);
+  const cycleRequestRef = useRef(0);
+  const previewRequestRef = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = ++settingsRequestRef.current;
+    const requestedOwner = JSON.stringify([churchId, teamId]);
     setLoading(true);
     setSaveError("");
-    setData(null);
-    setPreview(null);
     try {
-      const result = await getSchedulingAutomation(churchId, { teamId, periodId });
+      const result = await getSchedulingAutomation(churchId, { teamId });
+      if (requestId !== settingsRequestRef.current || ownerKeyRef.current !== requestedOwner) return;
       setData(result);
+      setDataOwnerKey(requestedOwner);
       if (result.defaults.settings) setDefaultsDraft(cloneSettings(result.defaults.settings));
       const mode = result.override?.mode || "inherit";
       setOverrideMode(mode);
       setOverrideDraft(cloneSettings(result.override?.settings || result.defaults.settings!));
-      setSnapshot(result.savedCycle);
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not load scheduling settings.");
+      if (requestId === settingsRequestRef.current && ownerKeyRef.current === requestedOwner) {
+        setSaveError(error instanceof Error ? error.message : "Could not load scheduling settings.");
+      }
     } finally {
-      setLoading(false);
+      if (requestId === settingsRequestRef.current && ownerKeyRef.current === requestedOwner) setLoading(false);
     }
-  }, [churchId, periodId, teamId]);
+  }, [churchId, teamId]);
 
   useEffect(() => {
+    setData(null);
+    setDataOwnerKey("");
+    setDefaultsDraft(null);
+    setOverrideDraft(null);
+    setOverrideMode("inherit");
+    setSnapshot(null);
+    setSavedActions([]);
+    setPreview(null);
+    setSaveError("");
+    setPreviewError("");
+    settingsRequestRef.current += 1;
+    cycleRequestRef.current += 1;
+    previewRequestRef.current += 1;
+    setLoading(false);
+  }, [ownerKey]);
+
+  useEffect(() => {
+    if (!isOpen || !teamId || dataOwnerKey === ownerKey) return undefined;
     void load();
-  }, [load]);
+    return () => { settingsRequestRef.current += 1; };
+  }, [dataOwnerKey, isOpen, load, ownerKey, teamId]);
+
+  useEffect(() => {
+    if (!isOpen || !teamId) return undefined;
+    const requestId = ++cycleRequestRef.current;
+    const requestedOwner = ownerKey;
+    setCycleLoading(true);
+    setSnapshot(null);
+    setSavedActions([]);
+    void getSchedulingCycle(churchId, teamId, periodId).then((result) => {
+      if (requestId !== cycleRequestRef.current || ownerKeyRef.current !== requestedOwner) return;
+      setSnapshot(result.savedCycle || null);
+      setSavedActions(result.savedActions || []);
+    }).catch((error: unknown) => {
+      if (requestId === cycleRequestRef.current && ownerKeyRef.current === requestedOwner) {
+        setSaveError(error instanceof Error ? error.message : "Could not load this scheduling cycle.");
+      }
+    }).finally(() => {
+      if (requestId === cycleRequestRef.current && ownerKeyRef.current === requestedOwner) setCycleLoading(false);
+    });
+    return () => { cycleRequestRef.current += 1; };
+  }, [churchId, isOpen, ownerKey, periodId, teamId]);
+
+  const currentData = dataOwnerKey === ownerKey ? data : null;
 
   const effectiveForDraft = useMemo(() => {
-    if (scope === "church" && canManageDefaults && defaultsDraft) return defaultsDraft;
+    if (scope === "church" && defaultsDraft) return defaultsDraft;
     if (overrideMode === "customize" && overrideDraft) return overrideDraft;
-    return data?.effective.settings || defaultsDraft;
-  }, [canManageDefaults, data?.effective.settings, defaultsDraft, overrideDraft, overrideMode, scope]);
+    return defaultsDraft || currentData?.effective.settings || null;
+  }, [currentData?.effective.settings, defaultsDraft, overrideDraft, overrideMode, scope]);
 
   const isDirty = useMemo(() => {
-    if (!data) return false;
+    if (!currentData) return false;
     const defaultsDirty = canManageDefaults && defaultsDraft &&
-      JSON.stringify(defaultsDraft) !== JSON.stringify(data.defaults.settings);
-    const originalMode = data.override?.mode || "inherit";
+      JSON.stringify(defaultsDraft) !== JSON.stringify(currentData.defaults.settings);
+    const originalMode = currentData.override?.mode || "inherit";
     const overrideDirty = overrideMode !== originalMode || (overrideMode === "customize" &&
-      JSON.stringify(overrideDraft) !== JSON.stringify(data.override?.settings));
+      JSON.stringify(overrideDraft) !== JSON.stringify(currentData.override?.settings));
     return Boolean((scope === "church" && defaultsDirty) || (scope === "team" && overrideDirty));
-  }, [canManageDefaults, data, defaultsDraft, overrideDraft, overrideMode, scope]);
+  }, [canManageDefaults, currentData, defaultsDraft, overrideDraft, overrideMode, scope]);
 
   useEffect(() => {
-    if (!data || !effectiveForDraft) return undefined;
+    if (!isOpen || !currentData || !effectiveForDraft) return undefined;
+    const requestId = ++previewRequestRef.current;
+    setPreview(null);
     let active = true;
     const timeout = window.setTimeout(() => {
       setPreviewError("");
       const body = {
         teamId,
         periodId,
-        ...(scope === "church" && canManageDefaults && defaultsDraft
+        ...(canManageDefaults && defaultsDraft
           ? { draftDefaults: defaultsDraft }
           : {}),
         ...(scope === "team" ? { draftOverride: {
@@ -272,24 +332,24 @@ export const SchedulingAutomationPanel = ({
         } } : {}),
       };
       void previewSchedulingCycle(churchId, body).then((result) => {
-        if (active) setPreview({ cycle: result.preview.cycle, actions: result.preview.actions });
+        if (active && requestId === previewRequestRef.current) setPreview({ cycle: result.preview.cycle, actions: result.preview.actions });
       }).catch((error: unknown) => {
-        if (active) setPreviewError(error instanceof Error ? error.message : "Could not calculate this timeline.");
+        if (active && requestId === previewRequestRef.current) setPreviewError(error instanceof Error ? error.message : "Could not calculate this timeline.");
       });
     }, 200);
     return () => {
       active = false;
       window.clearTimeout(timeout);
     };
-  }, [canManageDefaults, churchId, data, defaultsDraft, effectiveForDraft, overrideDraft, overrideMode, periodId, scope, teamId]);
+  }, [canManageDefaults, churchId, currentData, defaultsDraft, effectiveForDraft, isOpen, overrideDraft, overrideMode, periodId, scope, teamId]);
 
-  const savedView = useMemo(() => snapshot && data?.savedActions
-    ? cycleFromSaved(snapshot, data.savedActions)
-    : null, [data?.savedActions, snapshot]);
-  const visiblePlan = savedView && !isDirty ? savedView : preview;
+  const savedView = useMemo(() => snapshot
+    ? cycleFromSaved(snapshot, savedActions)
+    : null, [savedActions, snapshot]);
 
   const save = async () => {
-    if (!data) return;
+    if (!currentData) return;
+    const requestedOwner = ownerKey;
     setSaving(true);
     setSaveError("");
     try {
@@ -297,16 +357,16 @@ export const SchedulingAutomationPanel = ({
         if (!canManageDefaults || !defaultsDraft) return;
         await saveChurchSchedulingDefaults(churchId, {
           settings: defaultsDraft,
-          revision: data.defaults.revision,
+          revision: currentData.defaults.revision,
         });
       } else {
         await saveTeamSchedulingOverride(churchId, teamId, {
           mode: overrideMode,
           settings: overrideMode === "customize" ? overrideDraft : null,
-          revision: data.override?.revision || 0,
+          revision: currentData.override?.revision || 0,
         });
       }
-      await load();
+      if (ownerKeyRef.current === requestedOwner) await load();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Could not save scheduling settings. Your changes are still here.");
     } finally {
@@ -314,17 +374,38 @@ export const SchedulingAutomationPanel = ({
     }
   };
 
-  const createCycleSnapshot = async () => {
-    setSaving(true);
+  const changeAutomationActivation = async () => {
+    if (!currentData || !canManageDefaults) return;
+    const enabled = currentData.defaults.availabilityAutomationEnabled !== true;
+    if (enabled) {
+      const confirmed = window.confirm(
+        `Enable church-wide automatic availability forms? The selected cycle timeline above shows the ${teamName || "team"} actions for ${periodName(periodId)}. This activates future eligible cycles across the church. Forms and personalized recipients may be created. Email and SMS delivery remain disabled. Continue?`,
+      );
+      if (!confirmed) return;
+    }
+    const requestedOwner = ownerKey;
+    setActivationSaving(true);
     setSaveError("");
     try {
-      const result = await ensureSchedulingCycle(churchId, teamId, periodId);
-      setSnapshot(result.cycle);
-      await load();
+      const result = await setAvailabilityAutomation(churchId, {
+        enabled,
+        formCreationEnabled: enabled,
+        revision: currentData.defaults.revision,
+        teamId,
+        periodId,
+        confirmAlreadyStarted: enabled,
+      });
+      if (ownerKeyRef.current === requestedOwner) {
+        setData((previous) => previous && dataOwnerKey === requestedOwner
+          ? { ...previous, defaults: result.defaults }
+          : previous);
+      }
     } catch (error) {
-      setSaveError(error instanceof Error ? error.message : "Could not save this cycle snapshot.");
+      if (ownerKeyRef.current === requestedOwner) {
+        setSaveError(error instanceof Error ? error.message : "Could not update availability automation.");
+      }
     } finally {
-      setSaving(false);
+      setActivationSaving(false);
     }
   };
 
@@ -332,9 +413,8 @@ export const SchedulingAutomationPanel = ({
   const isTeamSettingsEditable = scope === "team" && overrideMode === "customize" && canManageTeam;
   const canEditCurrentSettings = scope === "church" ? canManageDefaults : isTeamSettingsEditable;
   const canSaveCurrentSettings = scope === "church" ? canManageDefaults : canManageTeam;
-  const selectedTeamOverride = data?.override;
-  const selectionValue = scope === "church" ? "church" : overrideMode;
-
+  const selectedTeamOverride = currentData?.override;
+  const selectionValue = scope;
   if (!teamId) return null;
 
   return (
@@ -342,15 +422,10 @@ export const SchedulingAutomationPanel = ({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h2 id="scheduling-automation-title" className="text-sm font-semibold text-gray-100">Scheduling timeline</h2>
-          <p className="mt-1 text-sm text-gray-300">
-            {periodName(periodId)} schedule for {teamName || "this team"}
-            {visiblePlan?.cycle.deadlines.preparation.localDate
-              ? ` · prepare by ${formatPlainDate(visiblePlan.cycle.deadlines.preparation.localDate)}`
-              : " · preparing timeline"}
-          </p>
+          <p className="mt-1 text-sm text-gray-300">{periodName(periodId)} schedule for {teamName || "this team"}</p>
           <p className="mt-1 text-xs text-gray-400">{existingScheduleStatus}</p>
         </div>
-        <Button variant="secondary" onClick={() => setIsOpen(true)} disabled={loading}>
+        <Button variant="secondary" onClick={() => setIsOpen(true)}>
           Configure and preview
         </Button>
       </div>
@@ -363,11 +438,15 @@ export const SchedulingAutomationPanel = ({
         isOpen={isOpen}
         onClose={() => setIsOpen(false)}
         title={`Scheduling timeline · ${periodName(periodId)}`}
-        description={`Monthly schedule for ${teamName || "this team"}. Preview is planning only.`}
+        description={`Review schedule preparation and availability collection for ${teamName || "this team"}.`}
         size="lg"
         busy={saving}
       >
-        {loading ? <p role="status" className="text-sm text-gray-300">Loading scheduling settings…</p> : (
+        {loading || !currentData ? <div>
+          {loading ? <p role="status" className="text-sm text-gray-300">Loading scheduling settings…</p> : null}
+          {saveError ? <p role="alert" className="mt-2 text-sm text-red-300">{saveError}</p> : null}
+          {!loading && saveError ? <Button variant="tertiary" className="mt-2" onClick={() => void load()}>Retry settings</Button> : null}
+        </div> : (
           <div className="space-y-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
               {canManageDefaults ? (
@@ -399,6 +478,30 @@ export const SchedulingAutomationPanel = ({
               ) : null}
             </div>
 
+            {scope === "church" && canManageDefaults ? (
+              <div className="rounded-lg border border-gray-700 bg-gray-950/30 px-3 py-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="font-semibold text-gray-100">Automatic availability forms</h3>
+                    <p className="mt-1 text-sm text-gray-300">
+                      {currentData.defaults.availabilityAutomationEnabled
+                        ? "Enabled church-wide. Upcoming eligible cycles can create forms and personalized recipients."
+                        : "Disabled church-wide. Timing settings and previews do not activate processing."}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">Notification delivery is disabled. Existing SMS registration and provider readiness must be reviewed separately.</p>
+                  </div>
+                  <Button
+                    variant={currentData.defaults.availabilityAutomationEnabled ? "tertiary" : "primary"}
+                    onClick={() => void changeAutomationActivation()}
+                    isLoading={activationSaving}
+                    disabled={saving || activationSaving}
+                  >
+                    {currentData.defaults.availabilityAutomationEnabled ? "Disable automation" : "Enable automation"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
             {scope === "church" && !canManageDefaults ? <p role="alert">Only a church administrator can change church defaults.</p> : null}
             {scope === "team" && isInherit ? (
               <p className="rounded-lg bg-gray-800/70 px-3 py-2 text-sm text-gray-300">This team inherits the church defaults.</p>
@@ -414,7 +517,7 @@ export const SchedulingAutomationPanel = ({
               <SettingsFields
                 settings={scope === "church" ? defaultsDraft || effectiveForDraft : overrideMode === "customize"
                   ? overrideDraft || effectiveForDraft
-                  : data?.effective.settings || effectiveForDraft}
+                  : defaultsDraft || effectiveForDraft}
                 disabled={!canEditCurrentSettings}
                 onChange={(settings) => scope === "church"
                   ? setDefaultsDraft(settings)
@@ -423,7 +526,7 @@ export const SchedulingAutomationPanel = ({
             ) : null}
 
             <div className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-3 py-2 text-sm text-amber-100">
-              Planning only. Actions are not enabled in this phase; no messages are sent and schedules are not changed. Volunteers’ response deadline is {effectiveForDraft?.availabilityResponseLeadDays ?? 3} calendar days before preparation. Review and publication remain manual.
+              Volunteer responses remain open through the response-deadline date in the church timezone. Review and publication remain manual.
             </div>
 
             {previewError ? <p role="alert" className="text-sm text-red-300">{previewError}</p> : null}
@@ -432,15 +535,21 @@ export const SchedulingAutomationPanel = ({
 
             <div className="space-y-2">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h3 className="font-semibold text-gray-100">Upcoming actions</h3>
+                <h3 className="font-semibold text-gray-100">{savedView ? "Saved cycle timeline" : "Future settings preview"}</h3>
                 <p className="text-xs text-gray-400">{serviceTimeZone || "Church timezone unavailable"} · {effectiveForDraft?.localExecutionTime || "09:00"}</p>
               </div>
-              {visiblePlan ? <Timeline plan={visiblePlan} serviceTimeZone={serviceTimeZone} /> : (
-                <p role="status" className="text-sm text-gray-400">Calculating timeline…</p>
+              {savedView ? <Timeline plan={savedView} serviceTimeZone={serviceTimeZone} /> : preview ? <Timeline plan={preview} serviceTimeZone={serviceTimeZone} /> : (
+                <p role="status" className="text-sm text-gray-400">{cycleLoading ? "Loading saved cycle…" : "Calculating timeline…"}</p>
               )}
-              {savedView && !isDirty ? (
-                <p className="text-xs text-gray-400">This saved cycle keeps its original settings. Changes apply to future cycles.</p>
+              {savedView ? (
+                <p className="text-xs text-gray-400">This timeline is saved with its original settings. Changes apply to future cycles.</p>
               ) : null}
+              {savedView ? <div className="mt-4 space-y-2 border-t border-gray-700 pt-3">
+                <h4 className="font-semibold text-gray-100">Future settings preview</h4>
+                {preview ? <Timeline plan={preview} serviceTimeZone={serviceTimeZone} /> : (
+                  <p role="status" className="text-sm text-gray-400">Calculating preview with current settings…</p>
+                )}
+              </div> : null}
             </div>
 
             <div className="flex flex-wrap justify-end gap-2 border-t border-gray-700 pt-3">
@@ -450,12 +559,6 @@ export const SchedulingAutomationPanel = ({
                   Save {scope === "church" ? "church defaults" : "team settings"}
                 </Button>
               ) : null}
-              {!snapshot && !isDirty && overrideMode !== "disabled" ? (
-                <Button variant="secondary" onClick={() => void createCycleSnapshot()} isLoading={saving}>
-                  Save cycle snapshot
-                </Button>
-              ) : null}
-              {snapshot ? <span className="self-center text-xs text-gray-400">Cycle snapshot saved</span> : null}
             </div>
           </div>
         )}

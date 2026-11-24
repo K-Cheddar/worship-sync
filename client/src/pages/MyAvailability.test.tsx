@@ -1098,6 +1098,51 @@ it("preserves unanswered historical services while editing saved choices with ch
   })));
 });
 
+it("clears the historical unanswered indicator when an answer is selected", async () => {
+  const user = userEvent.setup();
+  const partial = makeRequest({
+    respondedAt: "2099-10-20T12:00:00.000Z",
+    submissionId: "partial-submission",
+    availability: { [ids[0]]: "available" },
+    unansweredOccurrenceIds: [ids[1], ids[2]],
+  });
+  const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "updated-submission" });
+  renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([partial])), saveAvailability));
+
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
+  const serviceGroup = within(screen.getByRole("group", { name: /I can serve at Sunday 2/ }));
+  expect(serviceGroup.getByText("Not answered")).toBeInTheDocument();
+  await user.click(screen.getByRole("checkbox", { name: /Sunday 2/ }));
+  expect(serviceGroup.queryByText("Not answered")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+  await waitFor(() => expect(saveAvailability).toHaveBeenCalledWith(expect.objectContaining({
+    availability: expect.objectContaining({ [ids[1]]: "available" }),
+  })));
+});
+
+it("clears the historical unanswered indicator when a volunteer marks unavailable", async () => {
+  const user = userEvent.setup();
+  const partial = makeRequest({
+    respondedAt: "2099-10-20T12:00:00.000Z",
+    submissionId: "partial-submission",
+    availability: { [ids[0]]: "available" },
+    unansweredOccurrenceIds: [ids[1], ids[2]],
+  });
+  const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "updated-submission" });
+  renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([partial])), saveAvailability));
+
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
+  const serviceGroup = within(screen.getByRole("group", { name: /I can serve at Sunday 2/ }));
+  await user.click(serviceGroup.getByRole("button", { name: "Mark unavailable" }));
+  expect(serviceGroup.queryByText("Not answered")).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+  await waitFor(() => expect(saveAvailability).toHaveBeenCalledWith(expect.objectContaining({
+    availability: expect.objectContaining({ [ids[1]]: "unavailable" }),
+  })));
+});
+
 it("lets a legacy saved answer be cleared back to unanswered and finalized", async () => {
   const user = userEvent.setup();
   const legacy = makeRequest({

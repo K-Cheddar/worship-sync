@@ -250,6 +250,23 @@
         { "fieldPath": "state", "order": "ASCENDING" },
         { "fieldPath": "dueAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "teamSchedulingAutomationSettings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "scopeType", "order": "ASCENDING" },
+        { "fieldPath": "availabilityAutomationEnabled", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "teamSchedules",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "teamId", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": [

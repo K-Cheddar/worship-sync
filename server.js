@@ -1719,6 +1719,10 @@ app.get(
   "/api/churches/:churchId/scheduling-automation",
   authHandlers.getSchedulingAutomation,
 );
+app.get(
+  "/api/churches/:churchId/scheduling-automation/teams/:teamId/cycles/:periodId",
+  authHandlers.getSchedulingCycle,
+);
 app.post(
   "/api/churches/:churchId/scheduling-automation/preview",
   authHandlers.previewSchedulingCycle,
@@ -1726,6 +1730,10 @@ app.post(
 app.post(
   "/api/churches/:churchId/scheduling-automation/defaults",
   authHandlers.saveChurchSchedulingDefaults,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/activation",
+  authHandlers.setAvailabilityAutomation,
 );
 app.post(
   "/api/churches/:churchId/scheduling-automation/teams/:teamId",

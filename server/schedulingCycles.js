@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { serviceDateTimeInTimeZone } from "../shared/teamScheduleOccurrences.ts";
+import { calendarDateInTimeZone, serviceDateTimeInTimeZone } from "../shared/teamScheduleOccurrences.ts";
 import { isValidPortableTimeZone } from "./dataTransfer/time.js";
 
 export const SCHEDULING_CYCLE_SCHEMA_VERSION = 1;
@@ -128,6 +128,39 @@ const localTimestamp = (date, time, timeZone) => {
   return instant.toISOString();
 };
 
+/** Return the first instant whose church-local calendar date is `date`.
+ * Unlike adding 24 hours, this preserves local-day boundaries across DST.
+ * Binary search also handles zones that move clocks forward at midnight.
+ */
+export const firstInstantOfLocalDate = (date, timeZone) => {
+  const midnight = Date.parse(`${date}T00:00:00.000Z`);
+  if (!Number.isFinite(midnight) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const exactMidnight = serviceDateTimeInTimeZone(date, "00:00", timeZone);
+  if (exactMidnight) return exactMidnight;
+
+  let lower = midnight - 36 * 60 * 60 * 1000;
+  let upper = midnight + 36 * 60 * 60 * 1000;
+  try {
+    if (calendarDateInTimeZone(lower, timeZone) >= date || calendarDateInTimeZone(upper, timeZone) < date) return null;
+    while (lower + 1 < upper) {
+      const middle = Math.floor((lower + upper) / 2);
+      if (calendarDateInTimeZone(middle, timeZone) < date) lower = middle;
+      else upper = middle;
+    }
+    return calendarDateInTimeZone(upper, timeZone) === date ? new Date(upper) : null;
+  } catch {
+    return null;
+  }
+};
+
+const localDateStartTimestamp = (date, timeZone) => {
+  const instant = firstInstantOfLocalDate(date, timeZone);
+  if (!instant) {
+    throw new SchedulingCycleValidationError(`Could not resolve the start of ${date} in ${timeZone}.`);
+  }
+  return instant.toISOString();
+};
+
 export const schedulingCycleIdFor = ({ churchId, teamId, periodId }) => {
   const church = String(churchId || "").trim();
   const team = String(teamId || "").trim();
@@ -216,6 +249,7 @@ export const planSchedulingCycle = ({
   const responseDeadline = addCalendarDays(preparationDeadline, -settings.availabilityResponseLeadDays);
 
   const cycleId = schedulingCycleIdFor({ churchId, teamId, periodId });
+  const responseDeadlineExpiration = addCalendarDays(responseDeadline, 1);
   const draftActions = [
     { actionType: "availability_request", localDate: requestDate, enabled: false, state: "planned" },
     { actionType: "availability_follow_up", localDate: followUpDate, enabled: false, state: "planned" },
@@ -226,8 +260,10 @@ export const planSchedulingCycle = ({
   ];
   const actions = draftActions.map((draft) => {
     const actionId = schedulingActionIdFor(cycleId, draft.actionType);
-    const dueAt = draft.localDate
-      ? localTimestamp(draft.localDate, settings.localExecutionTime, serviceTimeZone)
+    const dueAt = draft.actionType === "availability_response_deadline"
+      ? localDateStartTimestamp(responseDeadlineExpiration, serviceTimeZone)
+      : draft.localDate
+        ? localTimestamp(draft.localDate, settings.localExecutionTime, serviceTimeZone)
       : null;
     return {
       actionId,
@@ -238,7 +274,9 @@ export const planSchedulingCycle = ({
       periodId,
       actionType: draft.actionType,
       localDate: draft.localDate,
-      localTime: draft.localDate ? settings.localExecutionTime : null,
+      localTime: draft.actionType === "availability_response_deadline"
+        ? null
+        : draft.localDate ? settings.localExecutionTime : null,
       serviceTimeZone,
       dueAt,
       state: draft.state,
@@ -290,8 +328,8 @@ export const planSchedulingCycle = ({
           dueAt: localTimestamp(followUpDate, settings.localExecutionTime, serviceTimeZone) },
         leaderSummary: { localDate: leaderSummaryDate, localTime: settings.localExecutionTime,
           dueAt: localTimestamp(leaderSummaryDate, settings.localExecutionTime, serviceTimeZone) },
-        availabilityResponse: { localDate: responseDeadline, localTime: settings.localExecutionTime,
-          dueAt: localTimestamp(responseDeadline, settings.localExecutionTime, serviceTimeZone) },
+        availabilityResponse: { localDate: responseDeadline, localTime: null,
+          dueAt: localDateStartTimestamp(responseDeadlineExpiration, serviceTimeZone) },
       },
       schemaVersion: SCHEDULING_CYCLE_SCHEMA_VERSION,
       createdAt,

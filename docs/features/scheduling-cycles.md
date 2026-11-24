@@ -1,6 +1,6 @@
 # Scheduling Cycles Contract
 
-**Contract status:** Confirmed product intent and response-deadline policy
+**Contract status:** Confirmed product intent, response-deadline policy, and Phase 3 execution boundaries
 
 **Approval source:** Product-owner request, “WorshipSync — Phase 2: Scheduling Cycles and Automation Settings,” supplied 2026-11-23.
 
@@ -23,7 +23,7 @@ Saving settings or viewing a preview does not send messages, create forms or rec
 - Team settings resolve to inherited church defaults, a team-specific customization, or disabled cycle planning. Existing teams default to inheritance; church automation defaults are opt-in and do not enable message delivery.
 - A cycle snapshots its effective settings, church timezone, configuration revision, period, and planned actions. Later settings changes affect future cycles only. An existing cycle’s timeline is not silently recalculated.
 - A cycle has a stable identity derived from church, scheduling scope, and period. Repeated or concurrent ensure operations reuse one durable Firestore record.
-- Cycle state and individual planned-action state are separate. Planned actions are traceable and can later be executed by a short-lived scheduled processor, but this phase does not claim actions have been queued for delivery or completed.
+- Cycle state and individual action state are separate. A short-lived processor can claim due actions and record durable results. Availability form creation is the first supported operation; notification delivery, automatic schedule preparation, and publication have separate gates or remain unsupported.
 - Publication remains manual. No automatic notification or schedule mutation is part of this phase.
 - The server is authoritative for validation, timezone conversion, authorization, persistence, and configuration revisions. Browser Firestore access remains denied by the existing rules.
 - If cycle settings or preview data cannot load, the ordinary Teams scheduling workflow remains available.
@@ -62,7 +62,53 @@ The local execution-time default is 9:00 AM in the church timezone. Relative off
 
 ## Technical design notes
 
-- Reuse `teamSchedules`, `teamIntakeForms` with purpose `team_availability`, personalized `teamIntakeRecipients`, notification intent/batch infrastructure, church service timezone, and existing schedule-period utilities. This phase only previews and references those capabilities.
+- Reuse `teamSchedules`, `teamIntakeForms` with purpose `team_availability`, personalized `teamIntakeRecipients`, notification intent/batch infrastructure, church service timezone, and existing schedule-period utilities. Phase 3 creates or reuses availability forms and their personalized recipient records through the shared intake validation and recipient preparation operations; it still does not dispatch notifications.
 - Store church defaults and team overrides as revisioned server-owned settings. Store cycles and planned actions with deterministic IDs in dedicated Firestore collections and create them transactionally.
 - Keep cycle reads church-scoped and period-targeted. The future processor's due-action query uses the `teamSchedulingActions` composite index in `firestore.indexes.json`; deploy index changes with `npm run firebase:update-indexes` before adding that processor. Keep browser rules closed.
-- The future Heroku Scheduler command should invoke a short-lived processor against durable cycles/actions and tolerate missed or duplicate invocations. This phase adds no worker, scheduler configuration, or delivery side effect.
+- The processor's due-action query uses the `teamSchedulingActions` composite index in `firestore.indexes.json`; deploy index changes with `npm run firebase:update-indexes` before scheduled use. Keep browser rules closed.
+- A future Heroku Scheduler command should invoke the short-lived processor against durable cycles/actions and tolerate missed or duplicate invocations. This milestone adds no worker or scheduler configuration.
+
+## Phase 3 activation and execution boundary
+
+The Phase 3 request supplied on 2026-11-24 authorizes a first short-lived processor for automatic availability form creation. Timing configuration remains separate from the church master switch. Existing churches and newly saved timing settings remain disabled. Only a church administrator can enable church-wide processing, and the activation screen names the selected team and period, shows that period's saved or preview timeline, and requires confirmation for an already-started period. Every activation records a timestamp; actions dated before that timestamp are held for leader review. Team overrides can disable their own scope but cannot bypass the church master switch.
+
+The processor can ensure the next four monthly cycles, using the existing deterministic cycle and action identifiers and transactional cycle creation. It snapshots settings and church timezone once. It does not rewrite an existing timeline. Discovery is bounded to 100 churches, 500 teams per church, 250 cycles per run, 100 actions per run, and an eight-minute budget. A request that is already late is held for review if fewer than seven days remain before the response window expires. A published schedule suppresses request creation; a draft schedule is preserved and does not by itself suppress collection.
+
+The first executable operation creates or reuses a dedicated `team_availability` form with only availability fields. It selects occurrences with the existing schedule-period and grouped-service helpers, checks active forms for the same period and team, and refuses ambiguous overlap for leader review. A stable cycle-based form identity and form metadata recover an interrupted create. Personalized recipients are materialized through the existing recipient/token helper; retries reuse valid credentials. Recipient eligibility is independent of SMS consent, so a volunteer without SMS eligibility is not excluded from the response form.
+
+The response deadline is a church-local calendar date, not an execution timestamp. A November 21 deadline remains open through November 21 and expires when November 22 begins in the church timezone. The processor does not expire forms; the existing form response validator remains authoritative. DST transitions use the first instant of the next local date, which may be 23 or 25 hours after the preceding local date began.
+
+Execution has three command modes. Dry run is read-only. `--execute` ensures cycles, claims due actions transactionally, and creates/reuses forms and recipients; it does not call a messaging provider. The action lease has a unique token, owner, timestamp, expiry, and attempt count. Finalization checks that token and lease, which fences a worker that lost its claim. Expired claims are reclaimable, and deterministic form/recipient identities make form creation recoverable after interruption. Failures that cannot be safely classified are left for review instead of being blindly repeated.
+
+Live notification delivery remains disabled by the server safety switch. `--live` is intentionally rejected. The processor does not yet dispatch availability request messages, nonresponder reminders, or leader summaries. Due reminder and summary records are marked for review while delivery is disabled. Response eligibility and form deadlines remain authoritative; the processor never closes a form early. Email/SMS provider readiness, channel preferences, STOP/START state, and notification-rate controls must be integrated through the existing notification-intent workflow before delivery can be enabled. This milestone does not configure Heroku Scheduler and does not deploy Firestore indexes.
+
+## Operations and deployment preparation
+
+Run from the repository root:
+
+```powershell
+npm run process:scheduling-automation -- --dry-run
+npm run process:scheduling-automation -- --execute --church=DEMO_CHURCH_ID
+npm run process:scheduling-automation -- --execute --church=DEMO_CHURCH_ID --team=DEMO_TEAM_ID --period=2027-01
+npm run process:scheduling-automation -- --execute --cycle=SAVED_CYCLE_ID
+```
+
+`--execute` is a write mode: it can create cycle records, availability forms, and personalized recipients. Use it only against a demo church during this milestone. `--limit` is capped at 100. The processor stops between operations on SIGINT/SIGTERM and on its eight-minute time budget. Structured JSON output contains run/cycle/action identifiers and counts; it excludes recipient tokens and contact details.
+
+Before a future scheduled deployment, deploy the indexes in `firestore.indexes.json` with `npm run firebase:update-indexes`. New composite indexes cover activated church settings and targeted team schedule reads; the existing due-action index supports the processor query. Verify Firebase Admin environment settings, compare dry-run output with the demo church's saved timeline, enable the master switch only after reviewing the selected cycle, then run one church-scoped `--execute`. Review cycle/action states and form/recipient counts in the returned JSON and Firestore records. Do not add the hourly Heroku Scheduler job until notification delivery and the remaining recovery cases have a reviewed implementation. The intended later cadence remains hourly.
+
+Emergency disable: use the church-level **Disable automation** control. This stops new cycle discovery and action claims on the next invocation; an already-claimed create may finish, but it remains idempotent and does not send a message. To recover after an interrupted run, inspect the action state and claim expiry, then invoke a church-scoped dry run followed by `--execute`; never edit action claims by hand. For a demo validation, use a separate church with one active team, one grouped service and one standalone service, a known church timezone, an accountless volunteer, and a signed-in volunteer. Confirm exact occurrence scope, deadline date, one request form, stable recipient identities after a retry, master/team disable behavior, and that no notification is dispatched.
+
+## Product decisions
+
+- **Question/problem:** Should timing settings, cycle creation, or timeline viewing activate recurring actions?
+- **Approved behavior:** No. Church-wide availability automation is a separate opt-in setting, existing churches default to disabled, and activation records a boundary timestamp. Team disable and church master disable are enforced independently from timing inheritance.
+- **Why:** Routine configuration and preview must not authorize automatic operations or replay historical actions.
+- **Approval source/date:** Product-owner Phase 3 request supplied 2026-11-24.
+- **Affected workflow/contract:** Church scheduling settings, cycle discovery, and the short-lived automation processor.
+
+- **Question/problem:** What may the first processor execute while live notification delivery is unavailable?
+- **Current implementation:** `--execute` creates/reuses availability forms and personalized recipients, but it does not dispatch messages. Follow-up and leader-summary actions become review-required. Automatic delivery, schedule drafts, autofill, and publication are not implemented by this milestone.
+- **Reason:** The existing notification service hard-disables automatic sends, and this implementation does not bypass its SMS registration and notification safeguards. The requested automated request delivery, nonresponder reminders, and leader summaries remain outstanding work.
+- **Source/date:** Phase 3 implementation review, 2026-11-24.
+- **Affected workflow/contract:** Automatic availability collection and processor operations.

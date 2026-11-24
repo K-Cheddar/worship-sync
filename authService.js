@@ -100,6 +100,7 @@ import {
   normalizeCurrentServiceWorkspacePatch,
 } from "./server/currentServiceWorkspace.js";
 import { createTeamsAuthHandlers } from "./server/teamsAuthHandlers.js";
+import { createSchedulingAutomationProcessor } from "./server/schedulingAutomationProcessor.js";
 import { createSmsStatusWebhookHandler } from "./server/smsStatusWebhook.js";
 import { createNotificationIntentHandlers } from "./server/notificationIntents.js";
 import {
@@ -7339,6 +7340,17 @@ export const recoverPendingTeamSchedulePublicationEvents = () =>
   teamsAuthHandlers.recoverPendingTeamSchedulePublicationEvents();
 export const startTeamSchedulePublicationEventRecovery = () =>
   teamsAuthHandlers.startTeamSchedulePublicationEventRecovery();
+
+export const runSchedulingAutomationProcessor = (options = {}) => {
+  const firestore = requireFirestore();
+  if (!firestore) throw new Error("Firebase Admin Firestore is not configured.");
+  return createSchedulingAutomationProcessor({
+    firestore,
+    collections: COLLECTIONS,
+    createAvailabilityRequest: teamsAuthHandlers.createAutomatedAvailabilityRequest,
+    ...options,
+  }).run(options);
+};
 
 const smsStatusWebhookHandler = createSmsStatusWebhookHandler({
   COLLECTIONS, getDoc, requireFirestore,

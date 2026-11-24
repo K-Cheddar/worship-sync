@@ -4,6 +4,7 @@ import {
   DEFAULT_AVAILABILITY_RESPONSE_LEAD_DAYS,
   DEFAULT_SCHEDULING_AUTOMATION_SETTINGS,
   SchedulingCycleValidationError,
+  firstInstantOfLocalDate,
   normalizeSchedulingAutomationSettings,
   planSchedulingCycle,
   resolveEffectiveSchedulingSettings,
@@ -46,13 +47,36 @@ test("monthly planner calculates the documented default timeline and manual publ
 });
 
 test("response deadline is configurable and calculated as a calendar-day offset", () => {
-  const { cycle } = plan("2026-12", {
+  const { cycle, actions } = plan("2026-12", {
     ...DEFAULT_SCHEDULING_AUTOMATION_SETTINGS,
     availabilityResponseLeadDays: 5,
   });
   assert.equal(cycle.effectiveConfiguration.availabilityResponseLeadDays, 5);
   assert.equal(cycle.deadlines.availabilityResponse.localDate, "2026-11-19");
-  assert.equal(cycle.deadlines.availabilityResponse.dueAt, "2026-11-19T14:00:00.000Z");
+  assert.equal(cycle.deadlines.availabilityResponse.localTime, null);
+  assert.equal(cycle.deadlines.availabilityResponse.dueAt, "2026-11-20T05:00:00.000Z");
+  const deadlineAction = actions.find((action) => action.actionType === "availability_response_deadline");
+  assert.equal(deadlineAction?.dueAt, "2026-11-20T05:00:00.000Z");
+  assert.equal(deadlineAction?.localTime, null);
+});
+
+test("response windows include the complete church-local deadline date across DST transitions", () => {
+  const springStart = firstInstantOfLocalDate("2026-03-08", "America/New_York");
+  const springExpiration = firstInstantOfLocalDate("2026-03-09", "America/New_York");
+  const fallStart = firstInstantOfLocalDate("2026-11-01", "America/New_York");
+  const fallExpiration = firstInstantOfLocalDate("2026-11-02", "America/New_York");
+  assert.equal(springExpiration.getTime() - springStart.getTime(), 23 * 60 * 60 * 1000);
+  assert.equal(fallExpiration.getTime() - fallStart.getTime(), 25 * 60 * 60 * 1000);
+
+  const spring = plan("2026-04", {
+    ...DEFAULT_SCHEDULING_AUTOMATION_SETTINGS,
+    preparationDay: 22,
+    availabilityRequestLeadDays: 22,
+    availabilityResponseLeadDays: 14,
+    localExecutionTime: "09:00",
+  });
+  assert.equal(spring.cycle.deadlines.availabilityResponse.localDate, "2026-03-08");
+  assert.equal(spring.cycle.deadlines.availabilityResponse.dueAt, springExpiration.toISOString());
 });
 
 test("planner clamps the configured day for short months and handles year boundaries", () => {

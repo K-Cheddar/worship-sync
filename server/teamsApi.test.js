@@ -156,6 +156,8 @@ test("scheduling automation settings are scoped, revisioned, preview-only, and c
   });
   assert.equal(savedDefaults.statusCode, 200, JSON.stringify(savedDefaults.payload));
   assert.equal(savedDefaults.payload.defaults.revision, 1);
+  assert.equal(savedDefaults.payload.defaults.availabilityAutomationEnabled, false);
+  assert.equal(savedDefaults.payload.defaults.availabilityFormCreationEnabled, false);
   assert.equal(savedDefaults.payload.defaults.settings.availabilityResponseLeadDays, 3);
   const staleDefaults = await callHandler(authHandlers.saveChurchSchedulingDefaults, {
     context: admin,
@@ -182,6 +184,27 @@ test("scheduling automation settings are scoped, revisioned, preview-only, and c
     appAccess: "view",
     permissions: { teams: "none", teamScopes: { [teamId]: "edit" } },
   });
+  const deniedActivation = await callHandler(authHandlers.setAvailabilityAutomation, {
+    context: manager,
+    body: { enabled: true, formCreationEnabled: true, revision: 1, teamId, periodId: "2026-12", confirmAlreadyStarted: true },
+  });
+  assert.equal(deniedActivation.statusCode, 403);
+  const refusedStartedCycleActivation = await callHandler(authHandlers.setAvailabilityAutomation, {
+    context: admin,
+    body: { enabled: true, formCreationEnabled: true, revision: 1, teamId, periodId: "2020-01", confirmAlreadyStarted: false },
+  });
+  assert.equal(refusedStartedCycleActivation.statusCode, 409);
+  const activated = await callHandler(authHandlers.setAvailabilityAutomation, {
+    context: admin,
+    body: { enabled: true, formCreationEnabled: true, revision: 1, teamId, periodId: "2026-12", confirmAlreadyStarted: false },
+  });
+  assert.equal(activated.statusCode, 200, JSON.stringify(activated.payload));
+  assert.equal(activated.payload.defaults.availabilityAutomationEnabled, true);
+  assert.equal(activated.payload.defaults.availabilityFormCreationEnabled, true);
+  assert.equal(activated.payload.defaults.notificationDeliveryEnabled, false);
+  assert.equal(activated.payload.activationImpact.churchWide, true);
+  assert.equal(activated.payload.activationImpact.selectedPeriodStarted, false);
+  assert.ok(activated.payload.activationImpact.upcomingActions.length > 0);
   const custom = await callHandler(authHandlers.saveTeamSchedulingOverride, {
     context: manager,
     params: { teamId },
@@ -238,9 +261,10 @@ test("scheduling automation settings are scoped, revisioned, preview-only, and c
   assert.equal(currentCycle.effectiveConfiguration.preparationDay, 24);
   const changedDefaults = await callHandler(authHandlers.saveChurchSchedulingDefaults, {
     context: admin,
-    body: { settings: { ...settings, preparationDay: 22 }, revision: 1 },
+    body: { settings: { ...settings, preparationDay: 22 }, revision: 2 },
   });
   assert.equal(changedDefaults.statusCode, 200);
+  assert.equal(changedDefaults.payload.defaults.availabilityAutomationEnabled, true);
   const oldCycle = await getDoc(COLLECTIONS.teamSchedulingCycles, firstEnsure.payload.cycle.cycleId);
   assert.equal(oldCycle.effectiveConfiguration.preparationDay, 24);
   const nextCycle = await callHandler(authHandlers.ensureSchedulingCycle, {

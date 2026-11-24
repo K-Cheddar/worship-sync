@@ -670,7 +670,7 @@ const AvailabilityRequestEditor = ({
                     const dateTime = formatAvailabilityOccurrence(occurrence, serviceTimeZone);
                     const visibleTime = formatAvailabilityOccurrenceTime(occurrence, serviceTimeZone);
                     const isSelected = draft[occurrenceId] === "available";
-                    const isUnanswered = unansweredIdsForSubmission.has(occurrenceId);
+                    const isUnanswered = !Object.hasOwn(pendingAnswers, occurrenceId);
                     const hasConflict = unresolvedConflicts.includes(occurrenceId);
                     const canClearAnswer = canEdit && draft[occurrenceId] !== undefined &&
                       (Object.hasOwn(requestSnapshot.availability, occurrenceId) || historicalUnansweredIds.has(occurrenceId));

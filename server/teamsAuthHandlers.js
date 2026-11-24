@@ -58,6 +58,8 @@ import {
 } from "./scheduleResponses.js";
 import { createVolunteerOperations } from "./volunteerOperations.js";
 import { createSchedulingCycleHandlers } from "./schedulingCycleHandlers.js";
+import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
+import { omitRedundantGroupedMemberOccurrences } from "../client/src/pages/Teams/intakeAvailabilitySuggestion.ts";
 import { resolveSignedInVolunteerMember } from "./volunteerIdentity.js";
 import {
   ASSIGNMENT_TOKEN_TTL_MS,
@@ -14418,7 +14420,209 @@ export const createTeamsAuthHandlers = ({
     return result.schedule;
   };
 
+  const createAutomatedAvailabilityRequest = async ({ churchId, teamId, cycle, operationId }) => {
+    const [church, team] = await Promise.all([
+      getDoc(COLLECTIONS.churches, churchId),
+      getDoc(COLLECTIONS.teams, teamId),
+    ]);
+    if (!church || !team || team.churchId !== churchId || team.archivedAt) {
+      const error = new Error("The church or team is no longer available.");
+      error.safeMessage = error.message;
+      throw error;
+    }
+    if (cycle?.churchId !== churchId || cycle?.teamId !== teamId || !cycle?.cycleId || !operationId) {
+      const error = new Error("The saved cycle scope is invalid.");
+      error.safeMessage = error.message;
+      throw error;
+    }
+    const [services, positions, scheduleRows, allForms] = await Promise.all([
+      readChurchServiceTimes(churchId),
+      queryDocs(COLLECTIONS.teamPositions, [{ field: "churchId", value: churchId }], { limit: 1000 }),
+      queryDocs(COLLECTIONS.teamSchedules, [
+        { field: "churchId", value: churchId },
+        { field: "teamId", value: teamId },
+      ], { limit: 500 }),
+      queryDocs(COLLECTIONS.teamIntakeForms, [
+        { field: "churchId", value: churchId },
+        { field: "purpose", value: "team_availability" },
+        { field: "active", value: true },
+        { field: "endDate", op: ">=", value: cycle.periodStart },
+      ], { limit: 500 }),
+    ]);
+    if (positions.length >= 1000 || scheduleRows.length >= 500 || allForms.length >= 500) {
+      const error = new Error("The matching scope exceeded its safe review limit. Narrow or archive existing records before retrying.");
+      error.safeMessage = error.message;
+      error.reviewRequired = true;
+      throw error;
+    }
+    const period = buildTeamSchedulePeriod({
+      services: services.filter((service) => !service.archivedAt),
+      positions: positions.filter((position) => position.teamId === teamId && !position.archivedAt),
+      teamId,
+      schedules: scheduleRows.filter((schedule) => !schedule.archivedAt),
+      startDate: cycle.periodStart,
+      endDate: cycle.periodEnd,
+      timeZone: church.serviceTimeZone || "UTC",
+    });
+    const includedOccurrences = omitRedundantGroupedMemberOccurrences(
+      period.occurrences,
+      services.filter((service) => !service.archivedAt),
+      church.serviceTimeZone || "UTC",
+    ).map((occurrence) => ({
+      occurrenceId: occurrence.occurrenceId,
+      serviceId: occurrence.serviceId,
+      name: occurrence.name,
+      startsAt: occurrence.startsAt,
+      ...(occurrence.serviceDate ? { serviceDate: occurrence.serviceDate } : {}),
+    }));
+    if (!includedOccurrences.length) {
+      return { skipped: true, reason: "No eligible service occurrences were found for this team and period." };
+    }
+    const deadline = cycle.deadlines?.availabilityResponse?.localDate;
+    if (!deadline) {
+      const error = new Error("The saved cycle has no availability response deadline.");
+      error.safeMessage = error.message;
+      throw error;
+    }
+    const occurrenceIds = includedOccurrences.map((occurrence) => occurrence.occurrenceId).sort();
+    const sameIds = (left, right) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+    const isSameTeamPeriod = (form) =>
+      form.churchId === churchId && form.purpose === "team_availability" && !form.archivedAt &&
+      form.startDate === cycle.periodStart && form.endDate === cycle.periodEnd &&
+      form.responseDeadline === deadline && sameIds(form.teamIds || [], [teamId]) &&
+      sameIds((form.enabledFields || []).filter(Boolean), ["availability"]);
+    const isExactOccurrenceScope = (form) => sameIds(
+      (form.availabilityOccurrences || []).map((occurrence) => occurrence.occurrenceId).filter(Boolean),
+      occurrenceIds,
+    );
+    const exactMatches = allForms.filter((form) => isSameTeamPeriod(form) && isExactOccurrenceScope(form));
+    const operationMatches = exactMatches.filter((form) => form.automationOperationId === operationId);
+    if (operationMatches.length > 1 || exactMatches.length > 1) {
+      const error = new Error("Multiple availability forms match this cycle. Review the existing forms before continuing.");
+      error.safeMessage = error.message;
+      error.reviewRequired = true;
+      throw error;
+    }
+    const overlap = allForms.filter((form) => {
+      if (form.churchId !== churchId || form.purpose !== "team_availability" || form.archivedAt) return false;
+      if (!(form.teamIds || []).includes(teamId)) return false;
+      if (String(form.endDate || "") < cycle.periodStart || String(form.startDate || "") > cycle.periodEnd) return false;
+      const existingIds = new Set((form.availabilityOccurrences || []).map((occurrence) => occurrence.occurrenceId));
+      return occurrenceIds.some((id) => existingIds.has(id));
+    });
+    if (!operationMatches.length && exactMatches.length === 0 && overlap.length > 0) {
+      const error = new Error("An existing availability form overlaps this cycle. Review it before creating another request.");
+      error.safeMessage = error.message;
+      error.reviewRequired = true;
+      throw error;
+    }
+
+    let form = operationMatches[0] || exactMatches[0] || null;
+    let reused = Boolean(form);
+    if (form && (!form.active || String(form.responseDeadline || "") < getVolunteerAvailabilityCurrentDate(church.serviceTimeZone || "UTC"))) {
+      const error = new Error("The matching availability form is closed or expired and needs leader review.");
+      error.safeMessage = error.message;
+      error.reviewRequired = true;
+      throw error;
+    }
+    if (!form) {
+      const formId = `teamIntakeAutomation_${hashValue(cycle.cycleId).slice(0, 40)}`;
+      const existingById = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+      if (existingById) {
+        if (existingById.churchId !== churchId || existingById.automationOperationId !== operationId || !isSameTeamPeriod(existingById) || !isExactOccurrenceScope(existingById)) {
+          const error = new Error("The durable availability form identity is occupied by a different form.");
+          error.safeMessage = error.message;
+          error.reviewRequired = true;
+          throw error;
+        }
+        form = existingById;
+        reused = true;
+      } else {
+        const churchIntakeDefaults = church.intakeFormDefaults?.team_availability || {};
+        const serviceById = new Map(services.map((service) => [service.serviceId, service]));
+        const availabilityServices = [...new Set(period.serviceIds)].map((serviceId) => ({
+          serviceId,
+          name: serviceById.get(serviceId)?.name || serviceId,
+        }));
+        const payload = validateTeamIntakeFormPayload({
+          name: `${team.name || "Team"} availability - ${cycle.periodId}`,
+          startDate: cycle.periodStart,
+          endDate: cycle.periodEnd,
+          responseDeadline: deadline,
+          availabilityServices,
+          availabilityOccurrences: includedOccurrences,
+          teamIds: [teamId],
+          purpose: "team_availability",
+          enabledFields: ["availability"],
+          active: true,
+          welcomeMessage: churchIntakeDefaults.welcomeMessage || "",
+          availabilityMessage: churchIntakeDefaults.availabilityMessage ||
+            `Please share your availability for ${team.name || "this team"} for ${cycle.periodId}. Respond by ${deadline}.`,
+        });
+        const publicLinkToken = createTeamIntakeShortPublicToken();
+        const timestamp = nowIso();
+        const nextForm = {
+          ...payload,
+          formId,
+          churchId,
+          publicLinkToken,
+          publicTokenHash: hashValue(publicLinkToken),
+          archivedAt: null,
+          createdAt: timestamp,
+          createdByUid: "scheduling-automation",
+          updatedAt: timestamp,
+          updatedByUid: "scheduling-automation",
+          schedulingCycleId: cycle.cycleId,
+          automationOperationId: operationId,
+          createdByAutomation: true,
+        };
+        const db = requireFirestore();
+        if (db) {
+          const formRef = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+          const created = await db.runTransaction(async (transaction) => {
+            const snapshot = await transaction.get(formRef);
+            if (snapshot.exists) return { form: { formId: snapshot.id, ...snapshot.data() }, created: false };
+            transaction.create(formRef, nextForm);
+            return { form: nextForm, created: true };
+          });
+          form = created.form;
+          reused = !created.created;
+          if (created.created) await addSecurityEvent({
+            type: "team_availability_form_automatically_created",
+            churchId,
+            formId,
+            details: { teamId, cycleId: cycle.cycleId, operationId },
+          });
+        } else {
+          await setDoc(COLLECTIONS.teamIntakeForms, formId, nextForm, { merge: false });
+          form = nextForm;
+          reused = false;
+        }
+      }
+    }
+
+    const memberIds = normalizeIdArray(team.memberIds);
+    const prepared = memberIds.length
+      ? await prepareAvailabilityNotificationRecipients({
+          churchId,
+          formId: form.formId,
+          memberIds,
+          purpose: "availability_request",
+          audienceType: "not_contacted",
+          actorUid: "scheduling-automation",
+        })
+      : { results: [] };
+    const materialized = (prepared.results || []).filter((result) => result.recipient && !result.recipient.revokedAt);
+    return {
+      formId: form.formId,
+      recipientCount: materialized.length,
+      skippedRecipientCount: Math.max(0, (prepared.results || []).length - materialized.length),
+      reused,
+    };
+  };
+
   return {
+    createAutomatedAvailabilityRequest,
     ...createSchedulingCycleHandlers({
       COLLECTIONS,
       assertCsrf,

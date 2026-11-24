@@ -1,4 +1,5 @@
 import { serializeAuthError } from "./authErrorResponse.js";
+import { calendarDateInTimeZone } from "../shared/teamScheduleOccurrences.ts";
 import {
   DEFAULT_SCHEDULING_AUTOMATION_SETTINGS,
   SchedulingCycleValidationError,
@@ -88,6 +89,10 @@ export const createSchedulingCycleHandlers = ({
       churchId,
       scopeType: "church_defaults",
       settings: DEFAULT_SCHEDULING_AUTOMATION_SETTINGS,
+      availabilityAutomationEnabled: false,
+      availabilityFormCreationEnabled: false,
+      availabilityAutomationActivatedAt: null,
+      notificationDeliveryEnabled: false,
       revision: 0,
       createdAt: null,
       updatedAt: null,
@@ -111,10 +116,10 @@ export const createSchedulingCycleHandlers = ({
     .status(error?.statusCode || 500)
     .json(serializeAuthError(error, { errorMessage: error?.message || fallback }));
 
-  const recordSettingsAudit = async ({ actor, churchId, teamId, revision }) => {
+  const recordSettingsAudit = async ({ actor, churchId, teamId, revision, type = "" }) => {
     try {
       await addSecurityEvent({
-        type: teamId ? "team_scheduling_override_updated" : "church_scheduling_defaults_updated",
+        type: type || (teamId ? "team_scheduling_override_updated" : "church_scheduling_defaults_updated"),
         churchId,
         userId: actorUid(actor),
         details: { teamId: teamId || null, revision },
@@ -182,6 +187,25 @@ export const createSchedulingCycleHandlers = ({
     }
   };
 
+  const getSchedulingCycle = async (req, res) => {
+    try {
+      const churchId = String(req.params.churchId || "").trim();
+      const teamId = String(req.params.teamId || "").trim();
+      const periodId = String(req.params.periodId || "").trim();
+      await authorizeScope(req, churchId, teamId);
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(periodId)) {
+        throw httpError(400, "Choose a valid monthly schedule period.");
+      }
+      const savedCycle = await getDoc(COLLECTIONS.teamSchedulingCycles, cycleId(churchId, teamId, periodId));
+      const savedActions = savedCycle?.plannedActionIds?.length
+        ? (await Promise.all(savedCycle.plannedActionIds.map((id) => getDoc(COLLECTIONS.teamSchedulingActions, id)))).filter(Boolean)
+        : [];
+      return res.json({ success: true, savedCycle, savedActions });
+    } catch (error) {
+      return sendError(res, error, "Could not load this scheduling cycle.");
+    }
+  };
+
   const previewSchedulingCycle = async (req, res) => {
     try {
       await assertCsrf(req);
@@ -245,6 +269,11 @@ export const createSchedulingCycleHandlers = ({
           teamId: null,
           scopeType: "church_defaults",
           settings,
+          availabilityAutomationEnabled: current?.availabilityAutomationEnabled === true,
+          availabilityFormCreationEnabled: current?.availabilityFormCreationEnabled === true,
+          availabilityAutomationActivatedAt: current?.availabilityAutomationActivatedAt || null,
+          availabilityAutomationDisabledAt: current?.availabilityAutomationDisabledAt || null,
+          notificationDeliveryEnabled: false,
           revision,
           updatedAt: timestamp,
           audit: { updatedBy: actorUid(actor) },
@@ -295,6 +324,92 @@ export const createSchedulingCycleHandlers = ({
       return res.json({ success: true, override: saved });
     } catch (error) {
       return sendError(res, error, "Could not save team scheduling settings.");
+    }
+  };
+
+  const setAvailabilityAutomation = async (req, res) => {
+    try {
+      await assertCsrf(req);
+      const churchId = String(req.params.churchId || "").trim();
+      const actor = await requireAdminSession(req, churchId);
+      const church = await readChurch(churchId);
+      const enabled = req.body?.enabled;
+      const formCreationEnabled = req.body?.formCreationEnabled;
+      if (typeof enabled !== "boolean" || typeof formCreationEnabled !== "boolean" || (formCreationEnabled && !enabled)) {
+        throw httpError(400, "Choose whether availability automation and automatic form creation are enabled.");
+      }
+      const teamId = String(req.body?.teamId || "").trim();
+      const periodId = String(req.body?.periodId || "").trim();
+      let selectedPeriodStarted = false;
+      let selectedCycleActions = [];
+      if (enabled && (!teamId || !periodId)) {
+        throw httpError(400, "Review a team and monthly cycle before enabling church-wide automation.");
+      }
+      if (teamId || periodId) {
+        if (!teamId || !/^\d{4}-(0[1-9]|1[0-2])$/.test(periodId)) {
+          throw httpError(400, "Choose a valid team and monthly period for the activation review.");
+        }
+        await readTeam(churchId, teamId);
+        const localToday = calendarDateInTimeZone(new Date(), church.serviceTimeZone || "UTC");
+        selectedPeriodStarted = `${periodId}-01` <= localToday;
+        if (enabled && selectedPeriodStarted && req.body?.confirmAlreadyStarted !== true) {
+          throw httpError(409, "This scheduling period has started. Review its timeline and confirm before enabling automation.");
+        }
+        const selectedCycle = await getDoc(COLLECTIONS.teamSchedulingCycles, cycleId(churchId, teamId, periodId));
+        if (selectedCycle?.plannedActionIds?.length) {
+          selectedCycleActions = (await Promise.all(selectedCycle.plannedActionIds.map((actionId) =>
+            getDoc(COLLECTIONS.teamSchedulingActions, actionId),
+          ))).filter(Boolean).map(({ actionId, actionType, localDate, localTime, state }) => ({
+            actionId, actionType, localDate, localTime, state,
+          }));
+        } else if (enabled) {
+          const { effective } = await readSettings(churchId, teamId);
+          const preview = planSchedulingCycle({
+            churchId, teamId, periodId, serviceTimeZone: church.serviceTimeZone,
+            effective, createdAt: nowIso(), createdBy: actorUid(actor),
+          });
+          selectedCycleActions = preview.actions.map(({ actionId, actionType, localDate, localTime, state }) => ({
+            actionId, actionType, localDate, localTime, state,
+          }));
+        }
+      }
+      const expectedRevision = revisionNumber(req.body?.revision);
+      const id = defaultsId(churchId);
+      const timestamp = nowIso();
+      const saved = await saveRevisionedSettings({
+        collection: COLLECTIONS.teamSchedulingAutomationSettings,
+        id,
+        churchId,
+        expectedRevision,
+        buildNext: (current, revision, updatedAt) => ({
+          ...(current?.createdAt ? { createdAt: current.createdAt } : { createdAt: updatedAt }),
+          settingsId: id,
+          churchId,
+          teamId: null,
+          scopeType: "church_defaults",
+          settings: current?.settings || DEFAULT_SCHEDULING_AUTOMATION_SETTINGS,
+          availabilityAutomationEnabled: enabled,
+          availabilityFormCreationEnabled: formCreationEnabled,
+          availabilityAutomationActivatedAt: enabled ? (current?.availabilityAutomationEnabled ? current.availabilityAutomationActivatedAt || updatedAt : updatedAt) : null,
+          availabilityAutomationDisabledAt: enabled ? null : updatedAt,
+          // Notification delivery remains under its separate server-side safety gate.
+          notificationDeliveryEnabled: false,
+          revision,
+          updatedAt,
+          audit: { updatedBy: actorUid(actor) },
+        }),
+      });
+      await recordSettingsAudit({ actor, churchId, revision: saved.revision, type: "church_availability_automation_activation_updated" });
+      return res.json({ success: true, defaults: saved, activationImpact: {
+        churchWide: true,
+        selectedTeamId: teamId || null,
+        selectedPeriodId: periodId || null,
+        selectedPeriodStarted,
+        upcomingActions: selectedCycleActions,
+        notificationDeliveryEnabled: false,
+      } });
+    } catch (error) {
+      return sendError(res, error, "Could not update availability automation.");
     }
   };
 
@@ -377,9 +492,11 @@ export const createSchedulingCycleHandlers = ({
 
   return {
     getSchedulingAutomation,
+    getSchedulingCycle,
     previewSchedulingCycle,
     saveChurchSchedulingDefaults,
     saveTeamSchedulingOverride,
+    setAvailabilityAutomation,
     ensureSchedulingCycle,
   };
 };
