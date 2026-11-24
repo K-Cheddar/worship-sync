@@ -122,6 +122,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
         ? {
             sourceLabel: `Local image · ${localImage?.fileName || title}`,
             heading: local.isOwner ? "Local image unavailable" : undefined,
+            state: "unavailable" as const,
             ownerLabel: local.isOwner ? undefined : localImage?.ownerLabel,
             detail: local.isOwner
               ? "Choose Relink to restore this file."
@@ -143,6 +144,7 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
           ? {
               sourceLabel: `Local video · ${localVideoFile?.fileName || title}`,
               heading: "Local video thumbnail unavailable",
+              state: "unavailable" as const,
               ownerLabel: localVideoFile?.ownerLabel,
               indicatorLabel: "No thumbnail",
             }
@@ -201,7 +203,12 @@ const LeftPanelButton = forwardRef<HTMLLIElement, LeftPanelButtonProps>(
               data-testid="local-thumbnail-placeholder"
               className="relative aspect-video w-12 max-w-[20%] shrink-0 overflow-hidden rounded bg-black"
             >
-              <LocalSourceStatus {...localThumbnailStatus} variant="thumbnail" />
+              <LocalSourceStatus
+                {...localThumbnailStatus}
+                variant={
+                  localThumbnailStatus.state === "loading" ? "thumbnail" : "icon"
+                }
+              />
             </div>
           ) : null}
           {isActive && (

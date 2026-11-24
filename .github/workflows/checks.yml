@@ -1,18 +1,19 @@
 name: Checks
 
 on:
-  push:
-    branches:
-      - in-progress
   pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # Separate event/repository groups keep automated runs and manual reruns isolated.
-  # New runs supersede older runs for the same push branch, PR, or manual ref.
+  # PR numbers isolate pull requests; event and ref keep manual runs independent.
+  # New commits to a PR supersede older validation for that same PR.
   group: checks-${{ github.workflow }}-${{ github.repository }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 

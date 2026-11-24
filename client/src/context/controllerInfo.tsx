@@ -560,14 +560,29 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, [databaseSessionKey, initialStartupMetadata]);
 
   useEffect(() => {
+    const contentReplicationOptions = resolveStartupReplicationOptions(
+      startupDiagnosticMode,
+      "content",
+    );
+    const bibleReplicationOptions = resolveStartupReplicationOptions(
+      startupDiagnosticMode,
+      "bible",
+    );
     recordStartupDiagnostic("startup", "database-plan", {
       mode: startupDiagnosticMode,
       content: startupDatabasePlan.content,
       bible: startupDatabasePlan.bible,
-      reducedBatches: startupDatabasePlan.reducedBatches,
       sequential: startupDatabasePlan.sequential,
+      contentInitialPullBatchSize: contentReplicationOptions.batch_size,
+      contentInitialPullBatchesLimit: contentReplicationOptions.batches_limit,
+      contentInitialPullMaximumDocumentsInFlight:
+        contentReplicationOptions.batch_size * contentReplicationOptions.batches_limit,
+      bibleInitialPullBatchSize: bibleReplicationOptions.batch_size,
+      bibleInitialPullBatchesLimit: bibleReplicationOptions.batches_limit,
+      bibleInitialPullMaximumDocumentsInFlight:
+        bibleReplicationOptions.batch_size * bibleReplicationOptions.batches_limit,
     });
-  }, [startupDatabasePlan.bible, startupDatabasePlan.content, startupDatabasePlan.reducedBatches, startupDatabasePlan.sequential, startupDiagnosticMode]);
+  }, [startupDatabasePlan.bible, startupDatabasePlan.content, startupDatabasePlan.sequential, startupDiagnosticMode]);
 
   // Update broadcast channel when database changes
   useEffect(() => {
@@ -943,7 +958,10 @@ const ControllerInfoProvider = ({ children }: any) => {
         .on("change", () => {
           if (syncTimeout) clearTimeout(syncTimeout);
           syncTimeout = setTimeout(() => {
-            const replicationOptions = resolveStartupReplicationOptions(startupDiagnosticMode);
+            const replicationOptions = resolveStartupReplicationOptions(
+              startupDiagnosticMode,
+              "bible",
+            );
             const diagnosticRun = beginStartupReplication("bible", {
               kind: "live-sync",
               batchSize: replicationOptions.batch_size,
@@ -1298,6 +1316,22 @@ const ControllerInfoProvider = ({ children }: any) => {
       activeStartupMetadata.failure,
     ],
   );
+  const readyDiagnosticSessionRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      !startupDatabasePlan.content ||
+      !startupDatabasePlan.bible ||
+      startupStage !== "completed" ||
+      readyDiagnosticSessionRef.current === databaseSessionKey
+    ) {
+      return;
+    }
+    readyDiagnosticSessionRef.current = databaseSessionKey;
+    recordStartupDiagnostic("startup", "application.ready", {
+      startupDurationMs: Math.max(0, Date.now() - activeStartupMetadata.startedAt),
+      sessionKind: isAuthenticatedSession ? "authenticated" : isGuestSession ? "guest" : "unknown",
+    });
+  }, [activeStartupMetadata.startedAt, databaseSessionKey, isAuthenticatedSession, isGuestSession, startupDatabasePlan.bible, startupDatabasePlan.content, startupStage]);
   const dbProgressForCurrentSession =
     dbProgressSessionRef.current === databaseSessionKey ? dbProgress : null;
   const currentDbProgress =
@@ -1488,7 +1522,10 @@ const ControllerInfoProvider = ({ children }: any) => {
         setReplicationPhase(sessionAtStart, "preparing");
         noteStartupActivity(sessionAtStart, true);
         const progressForThisReplication = createReplicationProgressTracker();
-        const replicationOptions = resolveStartupReplicationOptions(startupDiagnosticMode);
+        const replicationOptions = resolveStartupReplicationOptions(
+          startupDiagnosticMode,
+          "content",
+        );
         initialPullDiagnosticRun = beginStartupReplication("content", {
           batchSize: replicationOptions.batch_size,
           batchesLimit: replicationOptions.batches_limit,
@@ -1769,7 +1806,10 @@ const ControllerInfoProvider = ({ children }: any) => {
           return authRecovery;
         };
 
-        const replicationOptions = resolveStartupReplicationOptions(startupDiagnosticMode);
+        const replicationOptions = resolveStartupReplicationOptions(
+          startupDiagnosticMode,
+          "bible",
+        );
         biblePullDiagnosticRun = beginStartupReplication("bible", {
           batchSize: replicationOptions.batch_size,
           batchesLimit: replicationOptions.batches_limit,

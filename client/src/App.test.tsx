@@ -3,6 +3,7 @@ import { Provider } from "react-redux";
 import { StrictMode } from "react";
 import { configureStore } from "@reduxjs/toolkit";
 import App, { AppRoutes } from "./App";
+import * as startupDiagnostics from "./utils/startupDiagnostics";
 import { GlobalInfoContext } from "./context/globalInfo";
 import { createMockGlobalContext } from "./test/mocks";
 import {
@@ -26,6 +27,15 @@ import { creditsSlice } from "./store/creditsSlice";
 let mockBoardPending: Promise<void> | null = null;
 const mockControllerWrapperLifecycle = { mount: jest.fn(), unmount: jest.fn() };
 let mockBoardControllerPending: Promise<void> | null = null;
+
+jest.mock("./utils/startupDiagnostics", () => {
+  const actual = jest.requireActual("./utils/startupDiagnostics");
+  return {
+    ...actual,
+    getStartupDiagnosticMode: jest.fn(() => "normal"),
+    recordStartupDiagnostic: jest.fn(),
+  };
+});
 
 // controllerInfo/env use import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
 
@@ -71,6 +81,10 @@ const createMockStore = () => {
     },
   });
 };
+
+afterEach(() => {
+  jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("normal");
+});
 
 // Mock GSAP and its plugins
 jest.mock("gsap", () => ({
@@ -259,6 +273,35 @@ describe("App Component", () => {
     expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
     expect(screen.getByText("Preparing your workspace…")).toBeInTheDocument();
     expect(document.body.style.backgroundColor).toBe("rgb(43, 53, 68)");
+  });
+
+  it("shows regular application routes in normal diagnostic mode", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("normal");
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "ready" })}>
+        <MemoryRouter initialEntries={["/home"]}><AppRoutes /></MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+    expect(await screen.findByTestId("home-page")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Startup diagnostics" })).not.toBeInTheDocument();
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "route",
+      "changed",
+      { route: "home" },
+    );
+  });
+
+  it("locks isolated display routes without painting an opaque stream background", () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("content-only");
+    const { container } = render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "ready" })}>
+        <MemoryRouter initialEntries={["/stream"]}><AppRoutes /></MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+    expect(screen.getByTestId("startup-diagnostics-display-lock")).toHaveClass("bg-transparent");
+    expect(screen.queryByTestId("stream-page")).not.toBeInTheDocument();
+    expect(container).not.toHaveTextContent("Startup diagnostics");
+    expect(document.body.style.backgroundColor).toBe("transparent");
   });
 
   it("keeps the shared startup screen visible while the initial lazy route loads", async () => {

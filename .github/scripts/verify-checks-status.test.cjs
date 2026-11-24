@@ -42,12 +42,20 @@ const runChecker = (results, extraEnv = {}) => spawnSync(process.execPath, [chec
   env: { ...process.env, CHECK_RESULTS: JSON.stringify(results), ...extraEnv },
 });
 
-test("PRs, in-progress pushes, and manual runs use four ordinary Jest shards and the stable aggregate job", () => {
-  assert.match(workflow, /^on:\n  push:\n    branches:\n      - in-progress$/m);
-  assert.match(workflow, /pull_request:/);
-  assert.match(workflow, /workflow_dispatch:/);
+test("Checks runs on PR updates and manual dispatch with four Jest shards and the stable aggregate job", () => {
+  const triggerBlock = workflow.match(/^on:\n([\s\S]*?)^permissions:/m)?.[1] || "";
+  const triggers = [...triggerBlock.matchAll(/^  ([\w-]+):/gm)].map((match) => match[1]);
+  assert.deepEqual(triggers, ["pull_request", "workflow_dispatch"], "PRs and manual runs are the only workflow triggers");
+  assert.doesNotMatch(triggerBlock, /^  push:/m, "push events must not launch a duplicate full Checks run");
+  const pullRequestTrigger = triggerBlock.match(/^  pull_request:\n((?: {4}.+\n)*)/m)?.[1] || "";
+  assert.match(pullRequestTrigger, /^    types:\n/m);
+  for (const eventType of ["opened", "synchronize", "reopened"]) {
+    assert.match(pullRequestTrigger, new RegExp(`^      - ${eventType}$`, "m"));
+  }
+  assert.doesNotMatch(pullRequestTrigger, /branches(?:-ignore)?:/, "all PR target branches remain eligible");
+  assert.doesNotMatch(workflow, /^\s+ref:/m, "default PR checkout must validate GitHub's prospective merge result");
   assert.ok(concurrency, "the Checks workflow must define concurrency");
-  assert.equal(concurrency[2], "true", "a newer run supersedes an older run in the same group, including manual reruns");
+  assert.equal(concurrency[2], "true", "a newer run supersedes an older run in the same group");
   assert.doesNotMatch(workflow, /inputs:\s*\n\s+coverage:|coverage:\s*\n|test:coverage|coverage-artifact|coverageDirectory|COVERAGE_REQUIRED/);
   assert.match(workflow, /shard:\s*\[1, 2, 3, 4\]/);
   assert.match(workflow, /npm test --prefix client/);
@@ -60,22 +68,12 @@ test("PRs, in-progress pushes, and manual runs use four ordinary Jest shards and
   for (const job of jobs) assert.match(required, new RegExp(`^\\s*${job},?$`, "m"));
 });
 
-test("concurrency groups isolate pushes, PRs, manual runs, branches, and repositories", () => {
-  const push = (sha, ref = "refs/heads/in-progress", repository = "K-Cheddar/worship-sync") => evaluateConcurrencyGroup(
-    githubRun({ eventName: "push", repository, ref, sha }),
-  );
+test("concurrency groups isolate PRs, manual runs, workflows, and repositories", () => {
   const pullRequest = (number, sha, headRef) => evaluateConcurrencyGroup({
     ...githubRun({ eventName: "pull_request", ref: `refs/pull/${number}/merge`, sha, pullRequestNumber: number }),
     event: { pull_request: { number, head: { ref: headRef } } },
   });
 
-  assert.equal(push("older-commit"), push("newer-commit"), "push commits to one branch supersede one another");
-  assert.notEqual(push("commit"), push("commit", "refs/heads/staging"), "different branches remain independent");
-  assert.notEqual(
-    push("commit"),
-    pullRequest(42, "commit", "in-progress"),
-    "a push and PR from the same branch remain independent",
-  );
   assert.equal(
     pullRequest(42, "older-commit", "in-progress"),
     pullRequest(42, "newer-commit", "in-progress"),
@@ -111,13 +109,22 @@ test("concurrency groups isolate pushes, PRs, manual runs, branches, and reposit
     evaluateConcurrencyGroup(githubRun({ eventName: "workflow_dispatch", ref: "refs/heads/staging", sha: "manual-commit" })),
     "manual runs on different refs remain independent",
   );
-  assert.notEqual(manual, push("manual-commit"), "manual runs do not cancel automated push validation");
+  assert.notEqual(
+    manual,
+    pullRequest(42, "manual-commit", "in-progress"),
+    "manual validation does not cancel automated PR validation",
+  );
   const otherWorkflowRun = githubRun({ eventName: "workflow_dispatch", ref: "refs/heads/in-progress", sha: "manual-commit" });
   otherWorkflowRun.workflow = "Focused Client Browser Checks";
   assert.notEqual(manual, evaluateConcurrencyGroup(otherWorkflowRun), "other workflows remain independent");
   assert.notEqual(
-    push("commit", "refs/heads/in-progress", "contributor/worship-sync"),
-    push("commit"),
+    evaluateConcurrencyGroup(githubRun({
+      eventName: "workflow_dispatch",
+      repository: "contributor/worship-sync",
+      ref: "refs/heads/in-progress",
+      sha: "manual-commit",
+    })),
+    manual,
     "similarly named branches in separate repositories remain independent",
   );
 });
