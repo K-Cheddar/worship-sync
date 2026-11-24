@@ -72,10 +72,6 @@ const StaticSlideThumbnail = ({
   const streamVideoReference = isStreamFormat
     ? slide.boxes[0]?.mediaInfo?.localVideoFile
     : undefined;
-  const streamVideoThumbnail = useLocalVideoFileUrl(
-    streamVideoReference,
-    "thumbnail",
-  );
   const streamVideoSource = useLocalVideoFileUrl(
     streamVideoReference,
     "display",
@@ -128,28 +124,6 @@ const StaticSlideThumbnail = ({
           isolation: "isolate",
         }}
       >
-        {isStreamFormat &&
-        (streamVideoThumbnail.url ||
-          slide.boxes[0]?.mediaInfo?.placeholderImage) ? (
-          <img
-            src={
-              streamVideoThumbnail.url ||
-              slide.boxes[0]?.mediaInfo?.placeholderImage ||
-              ""
-            }
-            alt=""
-            aria-hidden
-            data-testid="static-local-video-thumbnail"
-            className={`absolute inset-0 h-full w-full ${
-              slide.boxes[0]?.shouldKeepAspectRatio
-                ? "object-contain"
-                : "object-cover"
-            }`}
-            style={{
-              filter: `brightness(${profile.backgroundBrightness ?? slide.boxes[0]?.brightness ?? 100}%)`,
-            }}
-          />
-        ) : null}
         {localVideoInputThumbnailUrl ? (
           <img
             src={localVideoInputThumbnailUrl}

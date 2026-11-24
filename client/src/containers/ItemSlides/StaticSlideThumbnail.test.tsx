@@ -82,7 +82,7 @@ const makeSlide = (overrides: Partial<ItemSlideType> = {}) =>
 
 describe("StaticSlideThumbnail", () => {
   it.each(["projector", "monitor", "stream"] as const)(
-    "renders a local video still in %s static previews without video playback",
+    "uses the correct background preview behavior for %s without video playback",
     (previewMode) => {
       const slide = makeSlide();
       slide.boxes[0].shouldKeepAspectRatio = true;
@@ -111,13 +111,23 @@ describe("StaticSlideThumbnail", () => {
         />,
       );
 
-      const thumbnail = screen.getByTestId(
-        previewMode === "stream"
-          ? "static-local-video-thumbnail"
-          : "display-box-local-video-thumbnail",
+      const backgroundThumbnails = [
+        screen.queryByTestId("display-box-local-video-thumbnail"),
+        screen.queryByTestId("static-local-video-thumbnail"),
+      ].filter((thumbnail): thumbnail is HTMLElement => thumbnail !== null);
+      expect(backgroundThumbnails).toHaveLength(
+        previewMode === "stream" ? 0 : 1,
       );
-      expect(thumbnail).toHaveAttribute("src", "blob:local-video-thumbnail");
-      expect(thumbnail).toHaveClass("object-contain");
+      expect(
+        backgroundThumbnails.map((thumbnail) => thumbnail.getAttribute("src")),
+      ).toEqual(
+        previewMode === "stream" ? [] : ["blob:local-video-thumbnail"],
+      );
+      expect(
+        backgroundThumbnails.map((thumbnail) =>
+          thumbnail.classList.contains("object-contain"),
+        ),
+      ).toEqual(previewMode === "stream" ? [] : [true]);
       expect(queryRenderedVideo()).toBeNull();
     },
   );
@@ -355,51 +365,50 @@ describe("StaticSlideThumbnail", () => {
     },
   );
 
-  it("uses a video poster or still and keeps stream free text lightweight", () => {
+  it("matches display mode for video posters and keeps stream free text lightweight", () => {
+    const videoSlide = makeSlide({
+      boxes: [
+        {
+          id: "video",
+          width: 100,
+          height: 100,
+          mediaInfo: {
+            type: "video",
+            path: "video.mp4",
+            createdAt: "",
+            updatedAt: "",
+            format: "mp4",
+            height: 1080,
+            width: 1920,
+            name: "video",
+            publicId: "video",
+            id: "video",
+            thumbnail: "poster.jpg",
+            background: "video.mp4",
+            placeholderImage: "poster.jpg",
+          } satisfies MediaType,
+          words: "",
+        },
+      ],
+    });
     const { rerender } = render(
       <StaticSlideThumbnail
-        slide={makeSlide({
-          boxes: [
-            {
-              id: "video",
-              width: 100,
-              height: 100,
-              mediaInfo: {
-                type: "video",
-                path: "video.mp4",
-                createdAt: "",
-                updatedAt: "",
-                format: "mp4",
-                height: 1080,
-                width: 1920,
-                name: "video",
-                publicId: "video",
-                id: "video",
-                thumbnail: "poster.jpg",
-                background: "video.mp4",
-                placeholderImage: "poster.jpg",
-              } satisfies MediaType,
-              words: "",
-            },
-          ],
-          formattedTextDisplayInfo: {
-            text: "Welcome",
-            backgroundColor: "#123456",
-            textColor: "#ffffff",
-            fontSize: 1.5,
-            paddingX: 2,
-            paddingY: 1,
-            isBold: false,
-            isItalic: false,
-            align: "left",
-          },
-        })}
+        slide={videoSlide}
         itemType="song"
         previewMode="projector"
       />,
     );
 
     expect(screen.getByAltText("")).toHaveAttribute("src", "poster.jpg");
+    rerender(
+      <StaticSlideThumbnail
+        slide={videoSlide}
+        itemType="song"
+        previewMode="stream"
+      />,
+    );
+    expect(screen.queryByAltText("")).not.toBeInTheDocument();
+
     rerender(
       <StaticSlideThumbnail
         slide={makeSlide({
