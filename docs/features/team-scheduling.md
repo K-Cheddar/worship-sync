@@ -111,6 +111,15 @@ only after confirmation. Partially answered legacy data retains three-state
 editing. These presentation and confirmation rules do not change Auto-fill:
 only an explicit unavailable answer excludes a volunteer.
 
+The 2026-11-23 availability correctness review confirmed that a historical
+grouped service and its standalone aliases are projected once regardless of
+row order only when exact church/team scope, group membership, service identity,
+timezone date and saved-schedule evidence all agree. Every proven alias keeps
+its original occurrence ID, answer and revision for save. Missing or conflicting
+evidence remains separate for explicit review; it is never merged by name or
+date alone. This identity projection does not change the unknown/unanswered
+Auto-fill rule.
+
 ### Church-wide member service availability editing
 
 - Administrators and users with church-wide Teams edit permission can review a member's upcoming service occurrences in the full Members editor. The view uses the configured church timezone and the shared service occurrence generator, including combined services and occurrences without saved schedules.

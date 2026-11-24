@@ -10125,12 +10125,25 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const projectCommittedAvailabilityRequestSummary = ({ recipient, form, submissionId, submittedAt }) => ({
+    recipientId: recipient.recipientId,
+    formId: form.formId,
+    name: String(form.name || ""),
+    responseDeadline: String(form.responseDeadline || ""),
+    respondedAt: submittedAt,
+    submissionId,
+    // The form, deadline, recipient scope, and member scope were verified in
+    // the same transaction that committed this accepted response.
+    editable: true,
+  });
+
   const submitTeamIntakeRecipientWithFirestoreTransaction = async ({
     token,
     body,
     identity,
     recipientId,
     expectedRecipient,
+    includeAvailabilitySummary = false,
   }) => {
     const db = requireFirestore?.();
     if (!db) return null;
@@ -10273,7 +10286,17 @@ export const createTeamsAuthHandlers = ({
       // member edit. Authorization and current form scope still run above.
       if (previousSubmission?.status === "applied" && previousSubmission.responseDigest === responseDigest &&
           previousSubmission.appliedMemberId === member.memberId) {
-        return { success: true, submissionId, formId: form.formId, submittedAt: previousSubmission.submittedAt };
+        return {
+          success: true,
+          submissionId,
+          formId: form.formId,
+          submittedAt: previousSubmission.submittedAt,
+          ...(includeAvailabilitySummary && availabilityOnly ? {
+            requestSummary: projectCommittedAvailabilityRequestSummary({
+              recipient, form, submissionId, submittedAt: previousSubmission.submittedAt,
+            }),
+          } : {}),
+        };
       }
 
       const availabilityMutation = Object.hasOwn(currentPayload, "occurrenceAvailability")
@@ -10418,6 +10441,11 @@ export const createTeamsAuthHandlers = ({
         submissionId,
         formId: form.formId,
         submittedAt,
+        ...(includeAvailabilitySummary && availabilityOnly ? {
+          requestSummary: projectCommittedAvailabilityRequestSummary({
+            recipient, form, submissionId, submittedAt,
+          }),
+        } : {}),
       };
     });
   };
@@ -10440,7 +10468,13 @@ export const createTeamsAuthHandlers = ({
     return run;
   };
 
-  const submitTeamIntakeRecipient = async (req, token, identity, recipientId) => {
+  const submitTeamIntakeRecipient = async (
+    req,
+    token,
+    identity,
+    recipientId,
+    { includeAvailabilitySummary = false } = {},
+  ) => {
     const readContext = () => identity
       ? getVolunteerAvailabilityContext(identity, recipientId)
       : getTeamIntakeRecipientContextByToken(token);
@@ -10467,6 +10501,7 @@ export const createTeamsAuthHandlers = ({
             identity,
             recipientId,
             expectedRecipient,
+            includeAvailabilitySummary,
           });
         if (transactionalResult) return transactionalResult;
         const commitFallback = async (memberMutationAlreadyQueued = false) => {
@@ -10514,7 +10549,17 @@ export const createTeamsAuthHandlers = ({
               updatedByUid: `recipient:${recipient.recipientId}`,
             }, { merge: true });
           }
-          return { success: true, submissionId, formId: form.formId, submittedAt: previousSubmission.submittedAt };
+          return {
+            success: true,
+            submissionId,
+            formId: form.formId,
+            submittedAt: previousSubmission.submittedAt,
+            ...(includeAvailabilitySummary && form.purpose === "team_availability" ? {
+              requestSummary: projectCommittedAvailabilityRequestSummary({
+                recipient, form, submissionId, submittedAt: previousSubmission.submittedAt,
+              }),
+            } : {}),
+          };
         }
         if (expectedAvailabilityRevision) {
           assertServiceAvailabilityRevisionCurrent(member, expectedAvailabilityRevision);
@@ -10584,6 +10629,11 @@ export const createTeamsAuthHandlers = ({
           submissionId,
           formId: form.formId,
           submittedAt,
+          ...(includeAvailabilitySummary && form.purpose === "team_availability" ? {
+            requestSummary: projectCommittedAvailabilityRequestSummary({
+              recipient, form, submissionId, submittedAt,
+            }),
+          } : {}),
         };
         };
         const serializesAvailability = Boolean(
@@ -10620,8 +10670,14 @@ export const createTeamsAuthHandlers = ({
       ...(Object.hasOwn(body || {}, "availabilityRevision")
         ? { availabilityRevision: body.availabilityRevision }
         : {}),
-    } }, "", identity, recipientId);
-    return { success: result.success, submissionId: result.submissionId };
+    } }, "", identity, recipientId, { includeAvailabilitySummary: true });
+    return {
+      success: result.success,
+      recipientId,
+      submissionId: result.submissionId,
+      submittedAt: result.submittedAt,
+      ...(result.requestSummary ? { requestSummary: result.requestSummary } : {}),
+    };
   };
 
   const getScheduleAssignmentCellMemberIds = (cell) => {

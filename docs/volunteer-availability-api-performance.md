@@ -51,6 +51,12 @@ network latency or frontend rendering and must not be read as production timing.
 
 The indexes must be deployed before the new Firestore query paths are used in production. This change updates repository configuration only; it does not deploy indexes.
 
+The live read-only Firebase CLI index listing for project `worshipsync-d8e28`
+and its `(default)` database was checked on 2026-11-23. The `teamIntakeForms`
+indexes for `churchId + purpose + active + responseDeadline` and `... + endDate`,
+and the `teamIntakeRecipients` index for `churchId + memberId + formId`, were
+all reported `READY`. No index was deployed or changed as part of this review.
+
 ## Unified-page integration
 
 The unified My Schedule page starts the assignment/Time Off/member read and `loadAvailability({ summary: true })` independently. It renders each section when its data is ready, with separate loading and retry boundaries so either read can fail without blocking the other. The routine summary carries active request cards and scheduling preferences, including when no active requests exist, so no separate preference read is needed. An explicit preference conflict or uncertain-save refresh can request a safe member snapshot from that same existing roster read; routine startup and request-detail payloads do not include it. The page loads full occurrence details and revisions only after the volunteer opens a request, using that authorized `recipientId`.
@@ -58,3 +64,37 @@ The unified My Schedule page starts the assignment/Time Off/member read and `loa
 The existing schedule response carries member identity/revision, blockout dates, and service timezone. Its signed-in member projection includes preference fields; the accountless member projection intentionally omits them. The page uses signed-in schedule preferences when available, otherwise it uses the availability summary, and it keeps the summary read independent from assignment processing.
 
 Past availability summaries remain an explicit `summary=1&history=1` read and are not requested while opening past assignments. This UI integration does not deploy the declared Firestore indexes or provide real Firestore/network timing; production verification remains required before making latency claims.
+
+## Availability correctness and projection CPU (2026-11-23)
+
+The final correctness review now resolves each scoped saved schedule row once
+and indexes it by group/date and service/date. Issued-form standalone rows are
+also indexed by service group/date before alias proposals are evaluated; the
+projection no longer rescans all saved schedules or all form rows for each
+alias. The server preserves every proven raw occurrence ID and revision and
+retains ambiguity when evidence is missing or contradictory.
+
+A local Node 22.23.1 microbenchmark compared the reviewed pre-change projection
+at `ec7220aa5` with the indexed projection. Its synthetic fixture contained 240
+grouped/standalone pairs (480 issued-form occurrences), 480 saved schedule rows,
+one Team and 240 alias proofs. After two warm-up runs, the median of five
+projection runs was 2,768.16 ms before and 23.10 ms after (119.84x faster in
+this fixture). The saved-schedule identity resolver ran 115,200 times before
+and 480 times after (99.6% fewer calls). This is a local CPU comparison over
+generated data, not a Firestore, browser or production latency measurement.
+
+A valid availability save now returns the minimum request summary created from
+the same committed form/recipient state and timestamp. The focused editor can
+update its request card without issuing a second detail GET. A missing or
+incomplete summary still falls back to a detail read; uncertain writes always
+require an authoritative read and are never retried automatically.
+
+The signed-in `resolveHumanVolunteer` identity path still scans the bounded
+church roster to preserve current canonical-document, archive and ambiguity
+behavior. A narrower `churchId + userId` query is a possible follow-up only
+after auditing duplicate/archived-link semantics and confirming its deployed
+composite index. The current change does not alter authentication resolution.
+The required composite indexes were verified `READY` in the live
+`worshipsync-d8e28` `(default)` database on 2026-11-23. Production request
+latencies and actual reported member/form records were not measured or inspected
+in this review; the synthetic benchmark is not evidence about those records.

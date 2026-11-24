@@ -1,7 +1,7 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
-import { MemoryRouter, useLocation } from "react-router-dom";
+import { MemoryRouter, useLocation, useNavigate } from "react-router-dom";
 import type { ComponentProps, ContextType } from "react";
 import { getMyVolunteerAvailability, submitMyVolunteerAvailability, updateMySchedulingPreferences } from "../api/auth";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -85,6 +85,26 @@ const makeRead = (
   schedulingPreferences,
 });
 
+const confirmedAvailabilitySave = (
+  request: VolunteerAvailabilityRequest,
+  submissionId: string,
+  submittedAt: string,
+): VolunteerAvailabilitySaveResult => ({
+  success: true,
+  recipientId: request.recipientId,
+  submissionId,
+  submittedAt,
+  requestSummary: {
+    recipientId: request.recipientId,
+    formId: request.formId,
+    name: request.name,
+    responseDeadline: request.responseDeadline,
+    respondedAt: submittedAt,
+    submissionId,
+    editable: true,
+  },
+});
+
 const requestCardName = (name: string) => new RegExp(
   `^(?:Respond|Change response) ${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`,
 );
@@ -119,6 +139,14 @@ const LocationLabel = () => {
   return <output data-testid="current-location">{location.pathname + location.search}</output>;
 };
 
+const AvailabilityRouteSwitcher = () => {
+  const navigate = useNavigate();
+  return <div>
+    <button type="button" onClick={() => navigate("/my-availability?availabilityRequest=recipient-1")}>Open first request</button>
+    <button type="button" onClick={() => navigate("/my-availability?availabilityRequest=recipient-2")}>Open second request</button>
+  </div>;
+};
+
 const RoutedAvailability = ({ navigationGuardProvided = false, ...props }: ComponentProps<typeof MyAvailability>) => {
   const location = useLocation();
   const recipientId = new URLSearchParams(location.search).get("availabilityRequest")?.trim() || undefined;
@@ -143,6 +171,18 @@ const renderPage = (
       <VolunteerNavigationGuardProvider>
         <GuardedHomeLink />
         <RoutedAvailability access={access} fallbackPreferences={fallbackPreferences} navigationGuardProvided />
+      </VolunteerNavigationGuardProvider>
+      <LocationLabel />
+    </MemoryRouter>
+  </Provider>,
+);
+
+const renderSwitchablePage = (access: PersonalScheduleAccess) => render(
+  <Provider store={store}>
+    <MemoryRouter initialEntries={["/my-availability"]}>
+      <AvailabilityRouteSwitcher />
+      <VolunteerNavigationGuardProvider>
+        <RoutedAvailability access={access} navigationGuardProvided />
       </VolunteerNavigationGuardProvider>
       <LocationLabel />
     </MemoryRouter>
@@ -174,7 +214,9 @@ it("loads and saves through the signed-in church-scoped availability operations"
     .mockResolvedValueOnce(makeRead([request]))
     .mockResolvedValueOnce(makeRead([request]))
     .mockResolvedValueOnce(makeRead([saved]));
-  mockSubmitMyVolunteerAvailability.mockResolvedValue({ success: true, submissionId: "signed-in-submission" });
+  mockSubmitMyVolunteerAvailability.mockResolvedValue(
+    confirmedAvailabilitySave(request, "signed-in-submission", "2099-10-21T12:00:00.000Z"),
+  );
   const context = {
     churchId: "human-church",
     churchName: "Northside",
@@ -201,10 +243,9 @@ it("loads and saves through the signed-in church-scoped availability operations"
     { [ids[0]]: "unavailable", [ids[2]]: "unavailable" },
     { [ids[0]]: 0, [ids[1]]: 0, [ids[2]]: 0 },
   ));
-  expect(mockGetMyVolunteerAvailability).toHaveBeenCalledTimes(3);
+  expect(mockGetMyVolunteerAvailability).toHaveBeenCalledTimes(2);
   expect(mockGetMyVolunteerAvailability).toHaveBeenNthCalledWith(1, "human-church", { summary: true });
   expect(mockGetMyVolunteerAvailability).toHaveBeenNthCalledWith(2, "human-church", { recipientId: "recipient-1" });
-  expect(mockGetMyVolunteerAvailability).toHaveBeenNthCalledWith(3, "human-church", { recipientId: "recipient-1" });
   expect(await screen.findByRole("button", { name: requestCardName("November availability") })).toBeInTheDocument();
 });
 
@@ -560,7 +601,9 @@ it("uses positive checkboxes for an initial response and confirms the complete s
     .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([submitted]));
-  const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "submission-initial" });
+  const saveAvailability = jest.fn().mockResolvedValue(
+    confirmedAvailabilitySave(initial, "submission-initial", "2099-10-21T12:00:00.000Z"),
+  );
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
   await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
@@ -837,7 +880,7 @@ it("blocks application navigation while an availability response is saving", asy
   expect(screen.getByTestId("current-location")).toHaveTextContent("/my-availability");
 
   await act(async () => {
-    pendingSave.resolve({ success: true, submissionId: "saved-while-protected" });
+    pendingSave.resolve(confirmedAvailabilitySave(request, "saved-while-protected", "2099-10-21T12:00:00.000Z"));
   });
   expect(await screen.findByRole("button", { name: requestCardName("November availability") })).toBeInTheDocument();
 });
@@ -848,6 +891,32 @@ it("keeps availability requests in the unified view without volunteer page navig
   expect(screen.queryByRole("navigation", { name: "Volunteer pages" })).not.toBeInTheDocument();
   expect(screen.queryByTestId("volunteer-desktop-sidebar")).not.toBeInTheDocument();
   expect(screen.queryByTestId("volunteer-mobile-bottom-navigation")).not.toBeInTheDocument();
+});
+
+it("keeps the latest direct-link request visible when an earlier detail read finishes late", async () => {
+  const user = userEvent.setup();
+  const first = makeRequest({ recipientId: "recipient-1", name: "First request" });
+  const second = makeRequest({ recipientId: "recipient-2", formId: "form-2", name: "Second request" });
+  const firstDetail = deferred<VolunteerAvailabilityRead>();
+  const secondDetail = deferred<VolunteerAvailabilityRead>();
+  const loadAvailability = jest.fn((options?: { recipientId?: string }) => {
+    if (options?.recipientId === first.recipientId) return firstDetail.promise;
+    if (options?.recipientId === second.recipientId) return secondDetail.promise;
+    return Promise.resolve(makeRead([first, second]));
+  });
+  renderSwitchablePage(makeAccess(loadAvailability, jest.fn()));
+
+  await user.click(screen.getByRole("button", { name: "Open first request" }));
+  await waitFor(() => expect(loadAvailability).toHaveBeenCalledWith({ recipientId: first.recipientId }));
+  await user.click(screen.getByRole("button", { name: "Open second request" }));
+  await waitFor(() => expect(loadAvailability).toHaveBeenCalledWith({ recipientId: second.recipientId }));
+
+  await act(async () => secondDetail.resolve(makeRead([second])));
+  expect(await screen.findByRole("heading", { name: "Second request" })).toBeInTheDocument();
+  await act(async () => firstDetail.resolve(makeRead([first])));
+
+  expect(screen.getByRole("heading", { name: "Second request" })).toBeInTheDocument();
+  expect(screen.queryByRole("heading", { name: "First request" })).not.toBeInTheDocument();
 });
 
 it("selects every service with one action", async () => {
@@ -880,6 +949,50 @@ it("selects every service with one action", async () => {
   })));
 });
 
+it("selects eligible services while leaving an unresolved conflict for an explicit choice", async () => {
+  const user = userEvent.setup();
+  const conflict = makeRequest({
+    conflictingOccurrenceIds: [ids[1]],
+    availability: { [ids[0]]: "unavailable" },
+    unansweredOccurrenceIds: [ids[1], ids[2]],
+  });
+  renderPage(makeAccess(jest.fn().mockResolvedValue(makeRead([conflict])), jest.fn()));
+
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
+  await user.click(screen.getByRole("button", { name: "Select all" }));
+  expect(screen.getByRole("checkbox", { name: /Sunday 1/ })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /Sunday 2/ })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /Sunday 3/ })).toBeChecked();
+  expect(screen.getByText("2 of 3 selected")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+
+  await user.click(screen.getByRole("checkbox", { name: /Sunday 2/ }));
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+});
+
+it("uses the committed response summary without a post-save detail read", async () => {
+  const user = userEvent.setup();
+  const initial = makeRequest({ respondedAt: "", submissionId: "", availability: {}, unansweredOccurrenceIds: [...ids] });
+  const submittedAt = "2099-10-21T12:00:00.000Z";
+  const loadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([initial]))
+    .mockResolvedValueOnce(makeRead([initial]));
+  const saveAvailability = jest.fn().mockResolvedValue(
+    confirmedAvailabilitySave(initial, "committed-summary", submittedAt),
+  );
+  renderPage(makeAccess(loadAvailability, saveAvailability));
+
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
+  await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
+  await user.click(screen.getByRole("button", { name: "Review response" }));
+  await user.click(screen.getByRole("button", { name: "Submit response" }));
+
+  expect(await screen.findByRole("button", { name: requestCardName("November availability") })).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: "November availability" })).toHaveTextContent("Response submitted");
+  expect(loadAvailability).toHaveBeenCalledTimes(2);
+  expect(saveAvailability).toHaveBeenCalledTimes(1);
+});
+
 it("keeps service checkboxes keyboard operable at a narrow viewport", async () => {
   const user = userEvent.setup();
   const originalWidth = window.innerWidth;
@@ -910,7 +1023,9 @@ it("confirms an all-unavailable first response and lets the volunteer cancel wit
     .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([initial]))
     .mockResolvedValueOnce(makeRead([submitted]));
-  const saveAvailability = jest.fn().mockResolvedValue({ success: true, submissionId: "all-unavailable" });
+  const saveAvailability = jest.fn().mockResolvedValue(
+    confirmedAvailabilitySave(initial, "all-unavailable", "2099-10-21T12:00:00.000Z"),
+  );
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
   await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
@@ -1006,8 +1121,12 @@ it("lets a legacy saved answer be cleared back to unanswered and finalized", asy
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
   await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
-  await user.click(within(screen.getByRole("group", { name: /I can serve at Sunday 1/ }))
-    .getByRole("button", { name: "Clear response" }));
+  const moreActions = within(screen.getByRole("group", { name: /I can serve at Sunday 1/ }))
+    .getByRole("button", { name: "More actions for Sunday 1" });
+  moreActions.focus();
+  await user.keyboard("{Enter}");
+  await user.keyboard("{Enter}");
+  expect(screen.queryByRole("menuitem", { name: "Clear response" })).not.toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: "Review response" }));
   expect(screen.getByRole("dialog", { name: "Review your response" }))
     .toHaveTextContent("0 available, 0 unavailable, and 3 unanswered");
@@ -1084,7 +1203,8 @@ it("reopens saved answers and lets the volunteer clear one back to unanswered", 
   expect(screen.getByRole("checkbox", { name: /Sunday 1/ })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: /Sunday 2/ })).not.toBeChecked();
   await user.click(within(screen.getByRole("group", { name: /I can serve at Sunday 1/ }))
-    .getByRole("button", { name: "Clear response" }));
+    .getByRole("button", { name: "More actions for Sunday 1" }));
+  await user.click(screen.getByRole("menuitem", { name: "Clear response" }));
   await user.click(screen.getByRole("button", { name: "Save changes" }));
 
   await waitFor(() => expect(saveAvailability).toHaveBeenCalledWith({
@@ -1114,7 +1234,7 @@ it("shows submitted requests and saves the complete scoped map with its revision
       submissionId: "submission-1",
       respondedAt: "2099-10-20T12:00:00.000Z",
     });
-    return { success: true, submissionId: "submission-1", submittedAt: savedRequest.respondedAt };
+    return confirmedAvailabilitySave(savedRequest, "submission-1", savedRequest.respondedAt);
   });
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
@@ -1129,7 +1249,8 @@ it("shows submitted requests and saves the complete scoped map with its revision
   await user.click(within(submittedResponses).getByRole("button", { name: requestCardName("November availability") }));
   const firstService = screen.getByRole("checkbox", { name: /Sunday 1/ });
   await user.click(within(screen.getByRole("group", { name: /I can serve at Sunday 1/ }))
-    .getByRole("button", { name: "Clear response" }));
+    .getByRole("button", { name: "More actions for Sunday 1" }));
+  await user.click(screen.getByRole("menuitem", { name: "Clear response" }));
   const secondService = screen.getByRole("checkbox", { name: /Sunday 2/ });
   await user.click(secondService);
   expect(firstService).not.toBeChecked();
@@ -1144,21 +1265,24 @@ it("shows submitted requests and saves the complete scoped map with its revision
   });
   expect(await screen.findByRole("group", { name: "November availability" }))
     .toHaveTextContent("Response submitted");
-  expect(loadAvailability).toHaveBeenCalledTimes(3);
+  expect(loadAvailability).toHaveBeenCalledTimes(2);
 });
 
 it("keeps a conflicting draft until the volunteer reviews and rebases it", async () => {
   const user = userEvent.setup();
-  const original = makeRequest();
+  const original = makeRequest({
+    availability: { [ids[0]]: "available", [ids[1]]: "unavailable" },
+    unansweredOccurrenceIds: [ids[2]],
+  });
   const latest = makeRequest({
-    availability: { [ids[2]]: "unavailable" },
+    availability: { [ids[2]]: "available" },
     unansweredOccurrenceIds: [ids[0], ids[1]],
-    availabilityRevision: { [ids[0]]: 1, [ids[1]]: 0, [ids[2]]: 0 },
+    availabilityRevision: { [ids[0]]: 1, [ids[1]]: 2, [ids[2]]: 1 },
   });
   const saved = makeRequest({
-    availability: { [ids[0]]: "unavailable", [ids[2]]: "unavailable" },
+    availability: { [ids[0]]: "unavailable", [ids[2]]: "available" },
     unansweredOccurrenceIds: [ids[1]],
-    availabilityRevision: { [ids[0]]: 2, [ids[1]]: 0, [ids[2]]: 0 },
+    availabilityRevision: { [ids[0]]: 2, [ids[1]]: 2, [ids[2]]: 2 },
     submissionId: "submission-after-conflict",
   });
   let readCount = 0;
@@ -1169,7 +1293,7 @@ it("keeps a conflicting draft until the volunteer reviews and rebases it", async
   const conflict = Object.assign(new Error("Availability changed elsewhere"), { status: 409 });
   const saveAvailability = jest.fn()
     .mockRejectedValueOnce(conflict)
-    .mockResolvedValueOnce({ success: true, submissionId: "submission-after-conflict" });
+    .mockResolvedValueOnce(confirmedAvailabilitySave(saved, "submission-after-conflict", "2099-10-22T12:00:00.000Z"));
   renderPage(makeAccess(loadAvailability, saveAvailability));
 
   await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
@@ -1193,10 +1317,160 @@ it("keeps a conflicting draft until the volunteer reviews and rebases it", async
   await waitFor(() => expect(saveAvailability).toHaveBeenCalledTimes(2));
   expect(saveAvailability.mock.calls[1][0].availabilityRevision).toEqual({
     [ids[0]]: 1,
-    [ids[1]]: 0,
-    [ids[2]]: 0,
+    [ids[1]]: 2,
+    [ids[2]]: 1,
+  });
+  expect(saveAvailability.mock.calls[1][0].availability).toEqual({
+    [ids[0]]: "unavailable",
+    [ids[2]]: "available",
   });
   expect(await screen.findByRole("button", { name: requestCardName("November availability") })).toBeInTheDocument();
+});
+
+it("keeps a newly introduced historical conflict unresolved after rebasing", async () => {
+  const user = userEvent.setup();
+  const original = makeRequest();
+  const latest = makeRequest({
+    availability: { [ids[2]]: "unavailable" },
+    unansweredOccurrenceIds: [ids[0], ids[1]],
+    conflictingOccurrenceIds: [ids[1]],
+    availabilityRevision: { [ids[0]]: 1, [ids[1]]: 2, [ids[2]]: 0 },
+  });
+  const loadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([original]))
+    .mockResolvedValueOnce(makeRead([original]))
+    .mockResolvedValueOnce(makeRead([latest]));
+  const saveAvailability = jest.fn().mockRejectedValue(
+    Object.assign(new Error("Availability changed elsewhere"), { status: 409 }),
+  );
+  renderPage(makeAccess(loadAvailability, saveAvailability));
+
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
+  await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await user.click(await screen.findByRole("button", { name: "Review latest saved answers" }));
+  await user.click(screen.getByRole("button", { name: "Keep my draft and continue" }));
+
+  const conflictingService = within(screen.getByRole("group", { name: /I can serve at Sunday 2/ }));
+  expect(conflictingService.getByText("Saved answers conflict. Choose how to resolve this service."))
+    .toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  await user.click(conflictingService.getByRole("checkbox"));
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeEnabled();
+});
+
+it("adopts a closed request after a conflict and leaves it read-only", async () => {
+  const user = userEvent.setup();
+  const original = makeRequest();
+  const closed = makeRequest({
+    editable: false,
+    availability: { [ids[0]]: "unavailable" },
+    unansweredOccurrenceIds: [ids[1], ids[2]],
+    availabilityRevision: { [ids[0]]: 1, [ids[1]]: 0, [ids[2]]: 0 },
+  });
+  const loadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([original]))
+    .mockResolvedValueOnce(makeRead([original]))
+    .mockResolvedValueOnce(makeRead([closed]));
+  const saveAvailability = jest.fn().mockRejectedValue(
+    Object.assign(new Error("Availability changed elsewhere"), { status: 409 }),
+  );
+  renderPage(makeAccess(loadAvailability, saveAvailability));
+
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
+  await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await user.click(await screen.findByRole("button", { name: "Review latest saved answers" }));
+  expect(screen.queryByRole("button", { name: "Keep my draft and continue" })).not.toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Use latest answers" }));
+
+  expect(screen.getByRole("heading", { name: "November availability" })).toBeInTheDocument();
+  expect(screen.getByText(/Closed/)).toBeInTheDocument();
+  expect(screen.getByRole("checkbox", { name: /Sunday 1/ })).not.toBeChecked();
+  expect(screen.queryByRole("button", { name: "Save changes" })).not.toBeInTheDocument();
+  expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+});
+
+it("clears obsolete local clear state when the volunteer chooses the latest answers", async () => {
+  const user = userEvent.setup();
+  const original = makeRequest();
+  const latest = makeRequest({
+    availability: { [ids[0]]: "unavailable", [ids[1]]: "available" },
+    unansweredOccurrenceIds: [ids[2]],
+    availabilityRevision: { [ids[0]]: 1, [ids[1]]: 2, [ids[2]]: 0 },
+  });
+  const loadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([original]))
+    .mockResolvedValueOnce(makeRead([original]))
+    .mockResolvedValueOnce(makeRead([latest]));
+  const saveAvailability = jest.fn().mockRejectedValue(
+    Object.assign(new Error("Availability changed elsewhere"), { status: 409 }),
+  );
+  renderPage(makeAccess(loadAvailability, saveAvailability));
+
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
+  await user.click(within(screen.getByRole("group", { name: /I can serve at Sunday 1/ }))
+    .getByRole("button", { name: "More actions for Sunday 1" }));
+  await user.click(screen.getByRole("menuitem", { name: "Clear response" }));
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await user.click(await screen.findByRole("button", { name: "Review latest saved answers" }));
+  await user.click(screen.getByRole("button", { name: "Use latest answers" }));
+
+  expect(screen.getByRole("checkbox", { name: /Sunday 1/ })).not.toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /Sunday 2/ })).toBeChecked();
+  expect(screen.getByRole("checkbox", { name: /Sunday 3/ })).not.toBeChecked();
+  expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+  expect(screen.queryByText("Unsaved changes")).not.toBeInTheDocument();
+});
+
+it("reloads a changed raw occurrence mapping before saving its new scope", async () => {
+  const user = userEvent.setup();
+  const originalBase = makeRequest({
+    availability: {},
+    unansweredOccurrenceIds: [...ids],
+    availabilityRevision: { "raw-old": 0, [ids[1]]: 0, [ids[2]]: 0 },
+  });
+  const original: VolunteerAvailabilityRequest = {
+    ...originalBase,
+    occurrences: originalBase.occurrences.map((occurrence, index) => index === 0
+      ? { ...occurrence, responseOccurrenceIds: ["raw-old"] }
+      : occurrence),
+  };
+  const latestBase = makeRequest({
+    availability: { [ids[1]]: "unavailable" },
+    unansweredOccurrenceIds: [ids[0], ids[2]],
+    availabilityRevision: { "raw-new-a": 3, "raw-new-b": 4, [ids[1]]: 1, [ids[2]]: 0 },
+  });
+  const latest: VolunteerAvailabilityRequest = {
+    ...latestBase,
+    occurrences: latestBase.occurrences.map((occurrence, index) => index === 0
+      ? { ...occurrence, responseOccurrenceIds: ["raw-new-a", "raw-new-b"] }
+      : occurrence),
+  };
+  const loadAvailability = jest.fn()
+    .mockResolvedValueOnce(makeRead([original]))
+    .mockResolvedValueOnce(makeRead([original]))
+    .mockResolvedValueOnce(makeRead([latest]));
+  const saveAvailability = jest.fn()
+    .mockRejectedValueOnce(Object.assign(new Error("Availability changed elsewhere"), { status: 409 }))
+    .mockResolvedValueOnce(confirmedAvailabilitySave(latest, "scope-reloaded", "2099-10-22T12:00:00.000Z"));
+  renderPage(makeAccess(loadAvailability, saveAvailability));
+
+  await user.click(await screen.findByRole("button", { name: requestCardName("November availability") }));
+  await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await user.click(await screen.findByRole("button", { name: "Review latest saved answers" }));
+  expect(screen.getByRole("button", { name: "Keep my draft and continue" })).toBeDisabled();
+  await user.click(screen.getByRole("button", { name: "Use latest answers" }));
+
+  await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(saveAvailability).toHaveBeenCalledTimes(2));
+  expect(saveAvailability.mock.calls[1][0]).toEqual({
+    recipientId: "recipient-1",
+    availability: { "raw-new-a": "available", "raw-new-b": "available", [ids[1]]: "unavailable" },
+    availabilityRevision: { "raw-new-a": 3, "raw-new-b": 4, [ids[1]]: 1, [ids[2]]: 0 },
+  });
 });
 
 it("preserves the dirty draft when the operations reference changes for the same volunteer", async () => {

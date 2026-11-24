@@ -242,11 +242,11 @@ const UserSection = ({ variant = "default" }: { variant?: "default" | "compact" 
           className={variant === "compact"
             ? "h-auto min-h-0! rounded-md p-0! font-normal"
             : variant === "responsiveCompact"
-              ? "h-auto min-h-[44px]! max-lg:min-h-[44px]! max-lg:px-2! max-lg:py-0! rounded-md font-normal lg:min-h-0!"
+              ? "h-auto min-h-[44px]! max-lg:min-h-[44px]! max-lg:px-2! max-lg:py-0! rounded-md font-normal lg:min-h-0! lg:p-0!"
               : "h-auto min-h-0! max-md:min-h-0! rounded-md font-normal"}
           aria-label={accountAriaLabel}
         >
-          {variant === "compact" ? (
+          {variant === "compact" || variant === "responsiveCompact" ? (
             <div className="flex min-w-0 items-center gap-2 whitespace-nowrap">
               {anyAutosavePending ? (
                 <Spinner size="xs" aria-label="Syncing" className="shrink-0 text-gray-400" />

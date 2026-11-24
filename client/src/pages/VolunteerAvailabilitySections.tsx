@@ -1,10 +1,11 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Clock3 } from "lucide-react";
+import { Clock3, MoreHorizontal } from "lucide-react";
 import Button from "../components/Button/Button";
 import Checkbox from "../components/Checkbox/Checkbox";
 import Modal from "../components/Modal/Modal";
 import Select from "../components/Select/Select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../components/ui/DropdownMenu";
 import { SERVICE_OCCURRENCE_GRID_CLASS_NAME } from "../components/ServiceOccurrenceCard/ServiceOccurrenceCard";
 import { cn } from "../utils/cnHelper";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -47,6 +48,22 @@ import {
 import { getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
 
 type AnswerMap = VolunteerAvailabilityRequest["availability"];
+
+const availabilityScopeSignature = (request: VolunteerAvailabilityRequest) => JSON.stringify(
+  request.occurrences
+    .map((occurrence) => [
+      occurrence.occurrenceId,
+      [...new Set(occurrence.responseOccurrenceIds?.length
+        ? occurrence.responseOccurrenceIds
+        : [occurrence.occurrenceId])].sort(),
+    ] as const)
+    .sort(([firstId], [secondId]) => firstId.localeCompare(secondId)),
+);
+
+const sameAvailabilityScope = (
+  first: VolunteerAvailabilityRequest,
+  second: VolunteerAvailabilityRequest,
+) => availabilityScopeSignature(first) === availabilityScopeSignature(second);
 
 const copyAnswers = (answers: AnswerMap): AnswerMap => ({ ...answers });
 
@@ -170,18 +187,24 @@ const AvailabilityRequestEditor = ({
   refreshAvailability: () => Promise<VolunteerAvailabilityRead | null>;
   onSavingChange: (saving: boolean) => void;
   onDirtyChange: (dirty: boolean) => void;
-  onSaved: (answers: AnswerMap, result: VolunteerAvailabilitySaveResult, read: VolunteerAvailabilityRead | null) => void;
+  onSaved: (
+    answers: AnswerMap,
+    result: VolunteerAvailabilitySaveResult,
+    read: VolunteerAvailabilityRead | null,
+    authoritativeRequest: VolunteerAvailabilityRequest,
+  ) => void;
   onBack: () => void;
 }) => {
   const { showToast } = useToast();
-  const hasSubmission = hasAvailabilityResponseSubmission(request);
-  const savedCounts = getAvailabilityCounts(request);
+  const [requestSnapshot, setRequestSnapshot] = useState(request);
+  const hasSubmission = hasAvailabilityResponseSubmission(requestSnapshot);
+  const savedCounts = getAvailabilityCounts(requestSnapshot);
   const hasSavedAnswers = savedCounts.available + savedCounts.unavailable > 0;
-  const [draft, setDraft] = useState<AnswerMap>(() => copyAnswers(request.availability));
+  const [draft, setDraft] = useState<AnswerMap>(() => copyAnswers(requestSnapshot.availability));
   const [explicitlyClearedIds, setExplicitlyClearedIds] = useState<string[]>([]);
   const [baseline, setBaseline] = useState(() => ({
-    answers: copyAnswers(request.availability),
-    revisions: { ...request.availabilityRevision },
+    answers: copyAnswers(requestSnapshot.availability),
+    revisions: { ...requestSnapshot.availabilityRevision },
   }));
   const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [resolvedConflictIds, setResolvedConflictIds] = useState<string[]>([]);
@@ -191,33 +214,32 @@ const AvailabilityRequestEditor = ({
   const [recoveryError, setRecoveryError] = useState("");
   const [recoveryRequired, setRecoveryRequired] = useState(false);
   const [requestUnavailable, setRequestUnavailable] = useState(false);
-  const [serverAllowsEdits, setServerAllowsEdits] = useState(request.editable);
   const [isSaving, setIsSaving] = useState(false);
   const saveInFlightRef = useRef(false);
   const mountedRef = useRef(false);
   const uncertainPayloadRef = useRef<AnswerMap | null>(null);
   const occurrenceIds = useMemo(
-    () => request.occurrences.map(({ occurrenceId }) => occurrenceId),
-    [request.occurrences],
+    () => requestSnapshot.occurrences.map(({ occurrenceId }) => occurrenceId),
+    [requestSnapshot.occurrences],
   );
-  const rawOccurrenceIds = useMemo(() => [...new Set(request.occurrences.flatMap((occurrence) =>
+  const rawOccurrenceIds = useMemo(() => [...new Set(requestSnapshot.occurrences.flatMap((occurrence) =>
     occurrence.responseOccurrenceIds?.length ? occurrence.responseOccurrenceIds : [occurrence.occurrenceId],
-  ))], [request.occurrences]);
+  ))], [requestSnapshot.occurrences]);
   const conflictingOccurrenceIds = useMemo(() => [...new Set([
-    ...(request.conflictingOccurrenceIds || []),
-    ...request.occurrences.filter((occurrence) => occurrence.hasConflictingAnswers)
+    ...(requestSnapshot.conflictingOccurrenceIds || []),
+    ...requestSnapshot.occurrences.filter((occurrence) => occurrence.hasConflictingAnswers)
       .map((occurrence) => occurrence.occurrenceId),
-  ])], [request.conflictingOccurrenceIds, request.occurrences]);
+  ])], [requestSnapshot.conflictingOccurrenceIds, requestSnapshot.occurrences]);
   const occurrenceGroups = useMemo(() => organizeAvailabilityOccurrences({
-    occurrences: request.occurrences,
+    occurrences: requestSnapshot.occurrences,
     mode: "byDate",
     serviceTimeZone,
-  }), [request.occurrences, serviceTimeZone]);
+  }), [requestSnapshot.occurrences, serviceTimeZone]);
   const historicalUnansweredIds = useMemo(() => new Set(
     hasSubmission || hasSavedAnswers || conflictingOccurrenceIds.length
-      ? request.unansweredOccurrenceIds
+      ? requestSnapshot.unansweredOccurrenceIds
       : [],
-  ), [conflictingOccurrenceIds.length, hasSavedAnswers, hasSubmission, request.unansweredOccurrenceIds]);
+  ), [conflictingOccurrenceIds.length, hasSavedAnswers, hasSubmission, requestSnapshot.unansweredOccurrenceIds]);
   const unansweredIdsForSubmission = useMemo(() => new Set([
     ...historicalUnansweredIds,
     ...explicitlyClearedIds,
@@ -239,10 +261,11 @@ const AvailabilityRequestEditor = ({
   const hasRevisionSnapshot = rawOccurrenceIds.every((id) =>
     Number.isInteger(baseline.revisions[id]) && baseline.revisions[id] >= 0,
   );
-  const currentRequest = conflictRequest || request;
-  const canEdit = serverAllowsEdits && request.editable && currentRequest.editable &&
+  const currentRequest = conflictRequest || requestSnapshot;
+  const canEdit = requestSnapshot.editable && currentRequest.editable &&
     !availabilityNeedsRefresh && !recoveryRequired && !requestUnavailable;
   const unresolvedConflicts = conflictingOccurrenceIds.filter((id) => !resolvedConflictIds.includes(id));
+  const selectableOccurrenceIds = occurrenceIds.filter((id) => !unresolvedConflicts.includes(id));
   const canSave = canEdit && (isDirty || !hasSubmission) &&
     unresolvedConflicts.length === 0 && hasRevisionSnapshot && occurrenceIds.length > 0 &&
     !saving && !isSaving && !conflictRequest;
@@ -266,7 +289,6 @@ const AvailabilityRequestEditor = ({
 
   const applyLatest = useCallback((latest: VolunteerAvailabilityRequest) => {
     setConflictRequest(latest);
-    setServerAllowsEdits(latest.editable);
     setConflictReviewOpen(false);
     setRecoveryRequired(false);
     setRecoveryError("");
@@ -284,16 +306,15 @@ const AvailabilityRequestEditor = ({
       setRecoveryError("Could not load the latest saved answers. Your draft is still here. Refresh before trying again.");
       return "failed" as const;
     }
-    const latest = read.requests.find((item) => requestKey(item) === requestKey(request));
+    const latest = read.requests.find((item) => requestKey(item) === requestKey(requestSnapshot));
     if (!latest) {
       setRequestUnavailable(true);
-      setServerAllowsEdits(false);
       setConflictRequest(null);
       setRecoveryRequired(true);
       setRecoveryMessage("This availability request is no longer available. Your unsaved responses are still here, but can't be saved.");
       return "unavailable" as const;
     }
-    if (uncertain && uncertainPayloadRef.current &&
+    if (uncertain && uncertainPayloadRef.current && sameAvailabilityScope(requestSnapshot, latest) &&
         hasAvailabilityResponseSubmission(latest) && availabilityMapsMatch(
       latest.availability,
       uncertainPayloadRef.current,
@@ -302,19 +323,35 @@ const AvailabilityRequestEditor = ({
       const latestAnswers = answersForScope(latest.availability, occurrenceIds);
       setBaseline({ answers: latestAnswers, revisions: { ...latest.availabilityRevision } });
       setDraft(latestAnswers);
+      setRequestSnapshot(latest);
+      setExplicitlyClearedIds([]);
+      setResolvedConflictIds([]);
+      setConflictRequest(null);
+      setRecoveryRequired(false);
+      setRecoveryMessage("");
+      setRequestUnavailable(false);
       uncertainPayloadRef.current = null;
-      setServerAllowsEdits(latest.editable);
       onSaved(latestAnswers, {
         success: true,
         submissionId: latest.submissionId,
         submittedAt: latest.respondedAt,
-      }, read);
+        recipientId: latest.recipientId,
+        requestSummary: {
+          recipientId: latest.recipientId,
+          formId: latest.formId,
+          name: latest.name,
+          responseDeadline: latest.responseDeadline,
+          respondedAt: latest.respondedAt,
+          submissionId: latest.submissionId,
+          editable: latest.editable,
+        },
+      }, read, latest);
       showToast("Your saved availability is up to date.", "success");
       return "saved" as const;
     }
     applyLatest(latest);
     return "review" as const;
-  }, [applyLatest, onSaved, refreshAvailability, request, occurrenceIds, showToast]);
+  }, [applyLatest, onSaved, refreshAvailability, requestSnapshot, occurrenceIds, showToast]);
 
   const submit = async () => {
     if (saveInFlightRef.current || !canSave) return;
@@ -328,8 +365,8 @@ const AvailabilityRequestEditor = ({
     setRecoveryError("");
     const submittedAnswers = copyAnswers(pendingAnswers);
     const payload: VolunteerAvailabilitySave = {
-      recipientId: request.recipientId,
-      availability: expandProjectedAnswers(request, submittedAnswers),
+      recipientId: requestSnapshot.recipientId,
+      availability: expandProjectedAnswers(requestSnapshot, submittedAnswers),
       availabilityRevision: { ...baseline.revisions },
     };
     try {
@@ -338,10 +375,48 @@ const AvailabilityRequestEditor = ({
       if (!result?.success || !result.submissionId) {
         throw new Error("Could not confirm that save. Refresh the latest answers before trying again.");
       }
+      const summary = result.requestSummary;
+      const summaryIsAuthoritative = Boolean(
+        summary &&
+        result.recipientId === requestSnapshot.recipientId &&
+        summary.recipientId === requestSnapshot.recipientId &&
+        summary.formId === requestSnapshot.formId &&
+        typeof summary.name === "string" &&
+        typeof summary.responseDeadline === "string" &&
+        summary.submissionId === result.submissionId &&
+        Boolean(result.submittedAt) &&
+        summary.respondedAt === result.submittedAt &&
+        summary.editable === true,
+      );
+      if (summaryIsAuthoritative) {
+        onSaved(submittedAnswers, result, null, requestSnapshot);
+        showToast("Availability response saved.", "success");
+        return;
+      }
+
       const read = await refreshAvailability();
       if (!mountedRef.current) return;
-      onSaved(submittedAnswers, result, read);
-      showToast("Availability response saved.", "success");
+      const latest = read?.requests.find((item) => requestKey(item) === requestKey(requestSnapshot));
+      if (!read) throw new Error("Could not confirm that save. Refresh the latest answers before trying again.");
+      if (latest && sameAvailabilityScope(requestSnapshot, latest) &&
+          hasAvailabilityResponseSubmission(latest) && latest.submissionId === result.submissionId &&
+          availabilityMapsMatch(latest.availability, submittedAnswers, occurrenceIds)) {
+        onSaved(submittedAnswers, result, read, latest);
+        showToast("Availability response saved.", "success");
+        return;
+      }
+      if (latest) {
+        uncertainPayloadRef.current = submittedAnswers;
+        setRecoveryRequired(true);
+        setRecoveryMessage("Your request changed while you were editing. Review the latest saved answers before continuing.");
+        applyLatest(latest);
+        return;
+      }
+      setRequestUnavailable(true);
+      setConflictRequest(null);
+      setRecoveryRequired(true);
+      setRecoveryMessage("This availability request is no longer available. Your unsaved responses are still here, but can't be saved.");
+      return;
     } catch (error) {
       if (!mountedRef.current) return;
       const status = getApiErrorStatus(error);
@@ -378,15 +453,31 @@ const AvailabilityRequestEditor = ({
     void submit();
   };
 
-  const chooseAvailability = (occurrenceId: string, choice: AvailabilityChoice) => {
-    setDraft((current) => setAvailabilityChoice(current, occurrenceId, choice));
-    setExplicitlyClearedIds((current) => choice === "not-answered"
-      ? current.includes(occurrenceId) ? current : [...current, occurrenceId]
-      : current.filter((id) => id !== occurrenceId));
-    if (conflictingOccurrenceIds.includes(occurrenceId)) {
-      setResolvedConflictIds((current) => current.includes(occurrenceId) ? current : [...current, occurrenceId]);
+  const transitionAvailability = (
+    changes: Array<{ occurrenceId: string; choice: AvailabilityChoice }>,
+    resolveConflicts = true,
+  ) => {
+    const changesById = new Map(changes.map(({ occurrenceId, choice }) => [occurrenceId, choice]));
+    setDraft((current) => changes.reduce((next, { occurrenceId, choice }) =>
+      setAvailabilityChoice(next, occurrenceId, choice), current));
+    setExplicitlyClearedIds((current) => {
+      const next = new Set(current);
+      changesById.forEach((choice, occurrenceId) => {
+        if (choice === "not-answered") next.add(occurrenceId);
+        else next.delete(occurrenceId);
+      });
+      return [...next];
+    });
+    if (resolveConflicts) {
+      const resolvedChanges = [...changesById.keys()].filter((id) => conflictingOccurrenceIds.includes(id));
+      if (resolvedChanges.length) {
+        setResolvedConflictIds((current) => [...new Set([...current, ...resolvedChanges])]);
+      }
     }
   };
+
+  const chooseAvailability = (occurrenceId: string, choice: AvailabilityChoice) =>
+    transitionAvailability([{ occurrenceId, choice }]);
 
   const clearAvailability = (occurrenceId: string) => chooseAvailability(occurrenceId, "not-answered");
 
@@ -397,26 +488,62 @@ const AvailabilityRequestEditor = ({
 
   const keepDraftAgainstLatest = () => {
     if (!conflictRequest?.editable) return;
+    if (!sameAvailabilityScope(requestSnapshot, conflictRequest)) {
+      setConflictReviewOpen(true);
+      setRecoveryMessage("The services in this request changed. Use the latest answers to reload the updated service list before continuing.");
+      return;
+    }
     const latestAnswers = answersForScope(conflictRequest.availability, occurrenceIds);
+    const originalAnswers = answersForScope(baseline.answers, occurrenceIds);
+    const currentAnswers = answersForScope(draft, occurrenceIds);
+    const explicitlyCleared = new Set(explicitlyClearedIds);
+    const resolved = new Set(resolvedConflictIds);
+    const mergedDraft = Object.fromEntries(occurrenceIds.flatMap((id) => {
+      const locallyChanged = explicitlyCleared.has(id) || resolved.has(id) ||
+        (currentAnswers[id] || "") !== (originalAnswers[id] || "");
+      const answer = locallyChanged ? currentAnswers[id] : latestAnswers[id];
+      return answer === "available" || answer === "unavailable" ? [[id, answer]] : [];
+    }));
+    const latestConflictIds = new Set([
+      ...(conflictRequest.conflictingOccurrenceIds || []),
+      ...conflictRequest.occurrences.filter((occurrence) => occurrence.hasConflictingAnswers)
+        .map((occurrence) => occurrence.occurrenceId),
+    ]);
+    const retainedResolvedIds = resolvedConflictIds.filter((id) => latestConflictIds.has(id));
+    const retainedClearedIds = explicitlyClearedIds.filter((id) => !Object.hasOwn(mergedDraft, id));
+    const draftHasLocalChanges = !availabilityMapsMatch(mergedDraft, latestAnswers, occurrenceIds) ||
+      retainedResolvedIds.length > 0;
+
+    setRequestSnapshot(conflictRequest);
     setBaseline({ answers: latestAnswers, revisions: { ...conflictRequest.availabilityRevision } });
-    setServerAllowsEdits(true);
+    setDraft(mergedDraft);
+    setExplicitlyClearedIds(retainedClearedIds);
+    setResolvedConflictIds(retainedResolvedIds);
     setConflictRequest(null);
     setConflictReviewOpen(false);
     setRecoveryRequired(false);
-    setRecoveryMessage("Latest answers reviewed. Save your draft to submit it against the current revision.");
+    setRecoveryError("");
+    setRecoveryMessage(draftHasLocalChanges
+      ? "Your draft was compared with the latest answers. Save to submit your changes."
+      : "Latest saved answers are up to date.");
     uncertainPayloadRef.current = null;
   };
 
   const useLatestAnswers = () => {
     if (!conflictRequest) return;
-    const latestAnswers = answersForScope(conflictRequest.availability, occurrenceIds);
+    const latestOccurrenceIds = conflictRequest.occurrences.map(({ occurrenceId }) => occurrenceId);
+    const latestAnswers = answersForScope(conflictRequest.availability, latestOccurrenceIds);
+    setRequestSnapshot(conflictRequest);
     setBaseline({ answers: latestAnswers, revisions: { ...conflictRequest.availabilityRevision } });
     setDraft(latestAnswers);
-    setServerAllowsEdits(conflictRequest.editable);
+    setExplicitlyClearedIds([]);
+    setResolvedConflictIds([]);
     setConflictRequest(null);
     setConflictReviewOpen(false);
     setRecoveryRequired(false);
+    setRecoveryError("");
     setRecoveryMessage("");
+    setRequestUnavailable(false);
     uncertainPayloadRef.current = null;
     showToast("Latest saved answers loaded.", "success");
   };
@@ -426,19 +553,19 @@ const AvailabilityRequestEditor = ({
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 id="availability-editor-title" tabIndex={-1} className="text-base font-semibold text-gray-100">
-            {request.name || "Availability request"}
+            {requestSnapshot.name || "Availability request"}
           </h2>
           <p className="mt-1 text-xs text-gray-400">
-            {request.responseDeadline ? "Due " + formatAvailabilityDeadline(request.responseDeadline) : ""}
-            {request.responseDeadline && !requestUnavailable && currentRequest.editable && hasAvailabilityResponseSubmission(currentRequest) ? " · " : ""}
+            {requestSnapshot.responseDeadline ? "Due " + formatAvailabilityDeadline(requestSnapshot.responseDeadline) : ""}
+            {requestSnapshot.responseDeadline && !requestUnavailable && currentRequest.editable && hasAvailabilityResponseSubmission(currentRequest) ? " · " : ""}
             {requestUnavailable
               ? "This availability request is no longer available."
               : currentRequest.editable
                 ? hasAvailabilityResponseSubmission(currentRequest) ? "Response submitted" : ""
                 : "Closed"}
           </p>
-          {request.availabilityMessage ? (
-            <p className="mt-2 whitespace-pre-line text-sm text-gray-300">{request.availabilityMessage}</p>
+          {requestSnapshot.availabilityMessage ? (
+            <p className="mt-2 whitespace-pre-line text-sm text-gray-300">{requestSnapshot.availabilityMessage}</p>
           ) : null}
         </div>
         <Button type="button" variant="secondary" className="min-h-[44px] shrink-0" onClick={onBack}>Back to My Schedule</Button>
@@ -468,7 +595,7 @@ const AvailabilityRequestEditor = ({
                 <div className="space-y-3 rounded-md border border-gray-700 bg-gray-950/50 p-3">
                   <p className="text-sm text-gray-200">Compare the answers from when you opened this request, the latest saved answers, and your draft.</p>
                   <ul className="space-y-3">
-                    {request.occurrences.map((occurrence) => {
+                    {sameAvailabilityScope(requestSnapshot, conflictRequest) ? requestSnapshot.occurrences.map((occurrence) => {
                       const id = occurrence.occurrenceId;
                       return (
                         <li key={id} className="space-y-1 border-b border-gray-800 pb-3 last:border-0 last:pb-0">
@@ -480,11 +607,14 @@ const AvailabilityRequestEditor = ({
                           </dl>
                         </li>
                       );
-                    })}
+                    }) : null}
                   </ul>
+                  {!sameAvailabilityScope(requestSnapshot, conflictRequest) ? (
+                    <p className="text-sm text-amber-200">The service list changed while you were editing. Reload the latest answers before continuing.</p>
+                  ) : null}
                   <div className="flex flex-wrap gap-2">
                     {conflictRequest.editable ? (
-                      <Button type="button" variant="secondary" onClick={keepDraftAgainstLatest}>Keep my draft and continue</Button>
+                      <Button type="button" variant="secondary" disabled={!sameAvailabilityScope(requestSnapshot, conflictRequest)} onClick={keepDraftAgainstLatest}>Keep my draft and continue</Button>
                     ) : null}
                     <Button type="button" variant="tertiary" onClick={useLatestAnswers}>Use latest answers</Button>
                   </div>
@@ -495,11 +625,11 @@ const AvailabilityRequestEditor = ({
         </div>
       ) : null}
 
-      {!hasRevisionSnapshot && request.editable && !availabilityNeedsRefresh ? (
+      {!hasRevisionSnapshot && requestSnapshot.editable && !availabilityNeedsRefresh ? (
         <p role="alert" className="text-sm text-amber-200">Refresh this request before editing so the latest save details are available.</p>
       ) : null}
 
-      {request.occurrences.length === 0 ? (
+      {requestSnapshot.occurrences.length === 0 ? (
         <p className="text-sm text-gray-300">This request has no service dates.</p>
       ) : (
         <div className="space-y-3">
@@ -508,10 +638,12 @@ const AvailabilityRequestEditor = ({
           </div>
           <AvailabilitySelectionToolbar
             selectionLabel={draftAvailableCount + " of " + occurrenceIds.length + " selected"}
-            selectAllDisabled={!canEdit || isSaving || saving || confirmationOpen || draftAvailableCount === occurrenceIds.length}
-            onSelectAll={() => setDraft(Object.fromEntries(
-              occurrenceIds.map((id) => [id, "available" as const]),
-            ))}
+            selectAllDisabled={!canEdit || isSaving || saving || confirmationOpen ||
+              selectableOccurrenceIds.every((id) => draft[id] === "available")}
+            onSelectAll={() => transitionAvailability(
+              selectableOccurrenceIds.map((occurrenceId) => ({ occurrenceId, choice: "available" })),
+              false,
+            )}
           />
           <fieldset disabled={!canEdit || isSaving || saving || confirmationOpen} className="min-w-0 space-y-4">
             <legend className="sr-only">Services you can serve</legend>
@@ -534,13 +666,14 @@ const AvailabilityRequestEditor = ({
                     const isSelected = draft[occurrenceId] === "available";
                     const isUnanswered = draft[occurrenceId] === undefined && historicalUnansweredIds.has(occurrenceId);
                     const hasConflict = unresolvedConflicts.includes(occurrenceId);
-                    const hasResponseData = hasSubmission || hasSavedAnswers || conflictingOccurrenceIds.length > 0;
+                    const canClearAnswer = canEdit && draft[occurrenceId] !== undefined &&
+                      (Object.hasOwn(requestSnapshot.availability, occurrenceId) || historicalUnansweredIds.has(occurrenceId));
                     return (
                       <li key={occurrenceId} className="min-w-0">
                         <div
-                          className="min-w-0 rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 sm:p-4"
                           role="group"
                           aria-label={"I can serve at " + name + ", " + dateTime}
+                          className="relative min-w-0"
                         >
                           <Checkbox
                             checked={isSelected}
@@ -554,13 +687,34 @@ const AvailabilityRequestEditor = ({
                             </span>}
                             aria-label={"I can serve at " + name + ", " + dateTime}
                             className={cn(
-                              "min-h-[60px] max-md:min-h-[60px]! w-full items-start rounded-md border p-3 text-left transition-colors focus-within:ring-2 focus-within:ring-teal-300",
+                              "min-h-[64px] max-md:min-h-[64px]! w-full items-start rounded-lg border p-3 pr-14 text-left transition-colors focus-within:ring-2 focus-within:ring-teal-300 sm:p-4 sm:pr-14",
                               isSelected
-                                ? "border-teal-400/70 bg-teal-950/45 shadow-sm"
-                                : "border-gray-700 bg-gray-900/50 hover:border-gray-500 hover:bg-gray-900/80",
+                                ? "border-teal-400/70 bg-teal-950/40"
+                                : "border-gray-700/80 bg-gray-900/35 hover:border-gray-500",
                             )}
-                            labelClassName="py-1"
+                            labelClassName="py-0"
                           />
+                          {canClearAnswer ? (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button
+                                  type="button"
+                                  variant="tertiary"
+                                  svg={MoreHorizontal}
+                                  iconSize="sm"
+                                  aria-label={`More actions for ${name}`}
+                                  title="More service actions"
+                                  className="absolute right-1.5 top-1.5 z-10 size-10 justify-center rounded-md"
+                                  disabled={isSaving || saving || confirmationOpen}
+                                />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem onSelect={() => clearAvailability(occurrenceId)}>
+                                  Clear response
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          ) : null}
                           {hasConflict && currentRequest.editable ? (
                             <div className="mt-3 space-y-2">
                               <p className="text-xs text-amber-200">Saved answers conflict. Choose how to resolve this service.</p>
@@ -595,12 +749,6 @@ const AvailabilityRequestEditor = ({
                                 </Button>
                               ) : null}
                             </div>
-                          ) : null}
-                          {hasResponseData && draft[occurrenceId] ? (
-                            <Button type="button" variant="textLink" className="mt-1 min-h-[44px]" disabled={!canEdit || isSaving || saving || confirmationOpen}
-                              onClick={() => clearAvailability(occurrenceId)}>
-                              Clear response
-                            </Button>
                           ) : null}
                         </div>
                       </li>
@@ -1213,7 +1361,7 @@ const AvailabilityWorkspaceSectionsView = ({
   }, [operations, ownerKey, pastRequests]);
 
   const openRequest = useCallback(async (summary: VolunteerAvailabilityRequestSummary) => {
-    if (openingRecipientId) return;
+    if (openingRecipientId === summary.recipientId) return;
     const sequence = ++openRequestSequenceRef.current;
     const requestedOwner = ownerKey;
     setOpeningRecipientId(summary.recipientId);
@@ -1276,29 +1424,35 @@ const AvailabilityWorkspaceSectionsView = ({
     _answers: AnswerMap,
     result: VolunteerAvailabilitySaveResult,
     read: VolunteerAvailabilityRead | null,
+    authoritativeRequest: VolunteerAvailabilityRequest,
   ) => {
-    const savedRequest = editorRequest;
     if (read) {
-      const detail = savedRequest && read.requests.find((request) => requestKey(request) === requestKey(savedRequest));
+      const detail = read.requests.find((request) => requestKey(request) === requestKey(authoritativeRequest));
       if (detail) markSummaryMutation({
         ...summaryFromRequest(detail),
         submissionId: detail.submissionId || result.submissionId,
-        respondedAt: detail.respondedAt || result.submittedAt || savedRequest.respondedAt,
+        respondedAt: detail.respondedAt || result.submittedAt || authoritativeRequest.respondedAt,
       });
+      else if (result.requestSummary) {
+        markSummaryMutation({ ...result.requestSummary, editable: false });
+      }
       if (read.serviceTimeZone) setServiceTimeZone(read.serviceTimeZone);
       setSaveRecoveryMessage("");
-    } else if (savedRequest) {
+    } else if (result.requestSummary) {
+      markSummaryMutation(result.requestSummary);
+      setSaveRecoveryMessage("");
+    } else {
       markSummaryMutation({
-        ...summaryFromRequest(savedRequest),
+        ...summaryFromRequest(authoritativeRequest),
         submissionId: result.submissionId,
-        respondedAt: result.submittedAt || savedRequest.respondedAt,
+        respondedAt: result.submittedAt || authoritativeRequest.respondedAt,
       });
       setSaveRecoveryMessage("Your response was saved. Open the request again to load the latest answers before editing.");
     }
     updateDirty(false);
     updateSaving(false);
     navigateToOverview();
-  }, [editorRequest, markSummaryMutation, navigateToOverview, updateDirty, updateSaving]);
+  }, [markSummaryMutation, navigateToOverview, updateDirty, updateSaving]);
 
   const openRequestAfterGuard = (request: VolunteerAvailabilityRequestSummary) => {
     editorReturnFocusKeyRef.current = requestKey(request);
@@ -1321,12 +1475,16 @@ const AvailabilityWorkspaceSectionsView = ({
     if (!initialRecipientId) {
       initialDetailRecipientRef.current = "";
       openRequestSequenceRef.current += 1;
+      detailSequenceRef.current += 1;
       setOpeningRecipientId("");
       setEditorRequest(null);
       return;
     }
-    if (initialDetailRecipientRef.current === initialRecipientId) return;
-    initialDetailRecipientRef.current = initialRecipientId;
+    const detailKey = ownerKey + "\u0000" + initialRecipientId;
+    if (initialDetailRecipientRef.current === detailKey) return;
+    initialDetailRecipientRef.current = detailKey;
+    setEditorRequest(null);
+    setOpenRequestError("");
     const routeState = location.state as { availabilityEditorFromOverview?: unknown } | null;
     if (routeState?.availabilityEditorFromOverview !== true) editorReturnFocusKeyRef.current = null;
     const summary = requestSummaries.find((request) => request.recipientId === initialRecipientId) || {
@@ -1339,7 +1497,7 @@ const AvailabilityWorkspaceSectionsView = ({
       editable: true,
     };
     void openRequest(summary);
-  }, [initialRecipientId, location.state, openRequest, requestSummaries]);
+  }, [initialRecipientId, location.state, openRequest, ownerKey, requestSummaries]);
 
   useEffect(() => {
     if (!initialRecipientId || activeRequest) return;

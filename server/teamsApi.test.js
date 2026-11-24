@@ -24982,6 +24982,14 @@ test("my availability uses current recipient scope without disclosing tokens or 
       positionIds: ["forged"], notes: "must not persist", memberId: "someone-else" },
   });
   assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
+  assert.equal(saved.payload.requestSummary.recipientId, recipientId);
+  assert.equal(saved.payload.requestSummary.formId, formId);
+  assert.equal(saved.payload.requestSummary.name, "November availability");
+  assert.equal(saved.payload.requestSummary.editable, true);
+  assert.equal(saved.payload.requestSummary.submissionId, saved.payload.submissionId);
+  assert.equal(saved.payload.requestSummary.respondedAt, saved.payload.submittedAt);
+  assert.equal(Object.hasOwn(saved.payload.requestSummary, "occurrences"), false,
+    "the commit acknowledgment includes a summary, not another detail projection");
   const member = await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId);
   assert.deepEqual(member.serviceAvailability, { [assigned.occurrenceId]: "unavailable" });
   assert.deepEqual(member.positionIds, [assigned.media.positionIds.Camera]);
@@ -24991,6 +24999,8 @@ test("my availability uses current recipient scope without disclosing tokens or 
   });
   assert.equal(retry.statusCode, 200, JSON.stringify(retry.payload));
   assert.equal(retry.payload.submissionId, saved.payload.submissionId);
+  assert.deepEqual(retry.payload.requestSummary, saved.payload.requestSummary,
+    "an idempotent retry returns the summary for its already committed response");
   assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, assigned.memberId))
     .serviceAvailabilityRevisions[assigned.occurrenceId], 1);
   const deliberateEdit = await callHandler(authHandlers.submitMyVolunteerAvailability, {

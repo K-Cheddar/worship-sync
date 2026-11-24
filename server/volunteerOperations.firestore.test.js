@@ -171,6 +171,12 @@ test("Firestore human availability operation shares the recipient transaction an
     }), saved);
     assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
     submissionId = saved.payload.submissionId;
+    assert.equal(saved.payload.requestSummary.recipientId, recipientId);
+    assert.equal(saved.payload.requestSummary.formId, formId);
+    assert.equal(saved.payload.requestSummary.submissionId, submissionId);
+    assert.equal(saved.payload.requestSummary.respondedAt, saved.payload.submittedAt);
+    assert.equal(saved.payload.requestSummary.editable, true);
+    assert.equal(Object.hasOwn(saved.payload.requestSummary, "occurrences"), false);
     const member = (await refs[1].get()).data();
     assert.deepEqual(member.serviceAvailability, { elsewhere: "unavailable", own: "unavailable" });
     assert.deepEqual(member.positionIds, ["position"]);

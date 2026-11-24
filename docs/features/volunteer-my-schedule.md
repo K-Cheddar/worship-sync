@@ -368,6 +368,19 @@ Request cards were whole-card buttons. Opening one expanded its editor inline be
 Signed-in and accountless volunteers share this editor and its existing recipient-scoped authorization. The /my-schedule, /my-availability, /s?view=schedule, /s?view=availability, recipient-specific deep links and /a/:token routes remain supported. Availability writes retain the complete scoped map, original occurrence IDs, revision snapshots, HTTP 409 review, uncertain-save reconciliation and no-automatic-retry behavior. Auto-fill continues to treat unanswered availability as neutral. Assignment responses, Time Off, scheduling preferences, request deadlines and historical records remain unchanged; no data migration or deletion is introduced.
 
 
+## Final availability correctness and save acknowledgment (2026-11-23)
+
+**Approval source:** current product-owner request, “WorshipSync — Final
+Availability Correctness, UX Polish, and Performance,” 2026-11-23.
+
+- Historical grouped and standalone occurrences are reconciled order-independently only with exact church/team, group, service, date and saved-schedule evidence. A proven logical service appears once while retaining every raw response occurrence ID, answer and revision. Unknown or contradictory identity remains separate and visible for review; names alone never prove identity.
+- A successful availability mutation returns a minimal request summary from the same commit, including recipient, form, display name, deadline, response timestamp and submission ID. It includes no occurrence projection. The focused editor updates the overview from this committed summary without a second detail read; uncertain or incomplete acknowledgments still require an authoritative read before the client reports success.
+- On HTTP 409, the volunteer can compare the original answers, current saved answers and local draft. Keeping a draft is available only if the canonical and raw occurrence scope is unchanged: locally changed or explicitly cleared choices remain, while untouched choices adopt the latest saved state and revisions. If scope or alias mappings changed, **Use latest answers** reloads the current map and revisions before further editing. Choosing the latest state removes stale clear and conflict-resolution metadata.
+- **Select all** selects every eligible service while leaving unresolved conflicts for an explicit service choice. The selected count includes all services. **Clear response** and **Mark unavailable** are contextual service actions; checkbox cards use one visible border and retain full service/date/time labels for assistive technology.
+- Switching recipient-specific routes invalidates the earlier in-flight detail read. Late results cannot replace the newly requested service list or leave its loading state attached to the prior request.
+
+Behavior remains recipient-scoped for signed-in and accountless volunteers. Writes retain per-occurrence revision checks, full form scope, explicit conflict review, uncertain-save reconciliation and no automatic retry. Unanswered stays distinct from unavailable and neutral to Auto-fill. No response history is migrated or deleted.
+
 ## Personal credential foundation: Phase 2 contract (2026-10-21)
 
 **Approval source:** current product-owner Phase 2 request, after the explicit request to merge local `in-progress` into `in-progress-2` (merge `0ca4eb74`). This section defines the credential foundation. The broader renderer, recovery and messaging code arrived in that merge; this phase does not expand or activate those later workflows.

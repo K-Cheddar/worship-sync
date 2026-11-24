@@ -65,6 +65,9 @@ export type VolunteerAvailabilitySaveResult = {
   success: boolean;
   submissionId: string;
   submittedAt?: string;
+  recipientId?: string;
+  /** Minimal summary committed with the response; omits occurrence projections. */
+  requestSummary?: VolunteerAvailabilityRequestSummary;
 };
 export type VolunteerAvailabilityOperations = {
   loadAvailability: (options?: VolunteerAvailabilityReadOptions) => Promise<VolunteerAvailabilityRead>;
