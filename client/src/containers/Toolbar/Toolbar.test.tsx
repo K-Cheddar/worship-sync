@@ -1,4 +1,5 @@
 import { act, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { AriaAttributes, ComponentType, ReactNode, SVGProps } from "react";
 import Toolbar from "./Toolbar";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -361,8 +362,9 @@ describe("Toolbar", () => {
     );
   });
 
-  it("shares the saved editing scope between quick controls and All Tools without item writes", () => {
+  it("shares the saved editing scope between quick controls and All Tools without item writes", async () => {
     renderToolbar({ access: "full", itemType: "song" });
+    const user = userEvent.setup();
 
     const scopeButton = screen.getByRole("button", {
       name: "Formatting scope: All slides",
@@ -382,7 +384,8 @@ describe("Toolbar", () => {
     );
 
     mockDispatch.mockClear();
-    act(() => screen.getByRole("radio", { name: "This slide" }).click());
+    await user.click(screen.getByRole("button", { name: "All Tools" }));
+    await user.click(screen.getByRole("radio", { name: "This slide" }));
 
     expect(localStorage.getItem("worshipsync_slide_editing_scope")).toBe("selected");
     expect(screen.getByRole("button", { name: "Formatting scope: This slide" })).toHaveTextContent(
@@ -402,8 +405,10 @@ describe("Toolbar", () => {
     );
     expect(mockDispatch).not.toHaveBeenCalled();
 
-    act(() => screen.getByRole("button", { name: "Formatting scope: This slide" }).click());
-    act(() => screen.getByRole("menuitemradio", { name: "All slides" }).click());
+    await user.click(screen.getByRole("radio", { name: "All slides" }));
+    expect(screen.getByRole("button", { name: "Formatting scope: All slides" })).toHaveTextContent(
+      "All slides",
+    );
     expect(screen.getByRole("radio", { name: "All slides" })).toHaveAttribute(
       "aria-checked",
       "true",
@@ -415,10 +420,11 @@ describe("Toolbar", () => {
     expect(mockDispatch).not.toHaveBeenCalled();
   });
 
-  it("remembers the selected editing scope after the toolbar remounts", () => {
+  it("remembers the selected editing scope after the toolbar remounts", async () => {
     const view = renderToolbar({ access: "full", itemType: "song" });
-    act(() => screen.getByRole("button", { name: "Formatting scope: All slides" }).click());
-    act(() => screen.getByRole("menuitemradio", { name: "This slide" }).click());
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "All Tools" }));
+    await user.click(screen.getByRole("radio", { name: "This slide" }));
     expect(localStorage.getItem("worshipsync_slide_editing_scope")).toBe("selected");
 
     view.unmount();

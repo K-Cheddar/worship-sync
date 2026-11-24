@@ -372,7 +372,8 @@ describe("useLocalMediaCloudShare church scope", () => {
     activeChurchId = "church-b";
     rerender();
     unmount();
-    expect(mockTransfers.get(transferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    expect(mockTransfers.get(transferId).actions).toEqual([{ key: "cancel", label: "Cancel upload" }]);
+    expect(mockTransferActions.has(`${transferId}:cancel`)).toBe(true);
     await act(async () => {
       resolveUpload({
         playbackId: "playback-a",
@@ -394,7 +395,10 @@ describe("useLocalMediaCloudShare church scope", () => {
     expect(retryCleanup).toBeDefined();
     await act(async () => { await retryCleanup?.(); });
     expect(mockDeleteMuxAsset).toHaveBeenNthCalledWith(2, "church-a", "mux-asset-a");
-    expect(mockTransfers.get(transferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    expect(mockTransfers.get(transferId).actions).toEqual([
+      { key: "retry-failed", label: "Retry failed files" },
+      { key: "dismiss", label: "Dismiss" },
+    ]);
     expect(mockTransfers.get(transferId).files[0].error).toContain("Cleanup succeeded");
     await act(async () => { await mockTransferActions.get(`${transferId}:dismiss`)?.(); });
     expect(mockActions.removeTransfer).toHaveBeenCalledWith(transferId);
@@ -434,7 +438,7 @@ describe("useLocalMediaCloudShare church scope", () => {
     rerender();
     let resolveJob!: (job: { status: string; cancelRequested: boolean }) => void;
     mockGetLocalImageUploadJob.mockReturnValueOnce(new Promise((resolve) => { resolveJob = resolve; }));
-    let preparing!: Promise<void>;
+    let preparing!: void | Promise<void>;
     act(() => { preparing = retry!(); });
     await waitFor(() => expect(mockGetLocalImageUploadJob).toHaveBeenCalledTimes(1));
 
