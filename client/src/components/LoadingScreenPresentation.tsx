@@ -14,12 +14,6 @@ export const BOOTSTRAP_LOADING_MESSAGES = [
   "Making sure everything is ready…",
 ] as const;
 
-export const STUCK_LOADING_MESSAGES = [
-  "WorshipSync is waiting for database startup…",
-  "Database startup has not reported new progress…",
-  "You can retry or review the startup details below…",
-] as const;
-
 const LOGO_REVEAL_DURATION_MS = 1500;
 const LOGO_SWEEP_INTERVAL_MS = 3000;
 

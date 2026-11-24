@@ -72,6 +72,7 @@ const FullscreenPresentation = ({
     displayType: displayInfo.displayType,
     outputId,
     currentItemId: displayInfo.itemId,
+    slideIndex: displayInfo.slideIndex,
     // A live output surface, so it may open the capture device.
     canCaptureLocalVideo: true,
     timerInfo,

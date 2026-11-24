@@ -87,6 +87,7 @@ import { GlobalInfoContext } from "../../context/globalInfo";
 import { cn } from "../../utils/cnHelper";
 import { updateTimer } from "../../store/timersSlice";
 import { DEFAULT_FONT_PX } from "../../constants";
+import { recordPresentationDiagnostic } from "../../utils/presentationDiagnostics";
 import {
   ensureSlidesHaveMonitorBandFormatting,
   getFormattedSections,
@@ -1016,6 +1017,61 @@ const ItemSlidesContent = () => {
             controllerProfile,
           )
         : sendsToStream;
+      const diagnosticOutputIds = (
+        outputType: "projector" | "monitor" | "stream",
+        targetIds: string[],
+      ) => (targetIds.length > 0 ? targetIds : [outputType]);
+      recordPresentationDiagnostic({
+        event: "slide.selection_received",
+        itemId: presentationItemId,
+        slideIndex: index,
+        source: "local",
+      });
+      const intendedOutputTargets = [
+        {
+          outputType: "projector" as const,
+          shouldSend: presentationSendsToProjector,
+          targetIds: presentationSendTargets.projector,
+        },
+        {
+          outputType: "monitor" as const,
+          shouldSend: presentationSendsToMonitor,
+          targetIds: presentationSendTargets.monitor,
+        },
+        {
+          outputType: "stream" as const,
+          shouldSend: presentationSendsToStream,
+          targetIds: presentationSendTargets.stream,
+        },
+      ];
+      intendedOutputTargets.forEach(
+        ({ outputType, shouldSend, targetIds }) => {
+          if (!shouldSend) return;
+          diagnosticOutputIds(outputType, targetIds).forEach((outputId) =>
+            recordPresentationDiagnostic({
+              event: "slide.selection_targeted",
+              outputId,
+              itemId: presentationItemId,
+              slideIndex: index,
+              source: "local",
+            }),
+          );
+        },
+      );
+      const recordOutputDispatch = (
+        outputType: "projector" | "monitor" | "stream",
+        targetIds: string[],
+      ) => {
+        diagnosticOutputIds(outputType, targetIds).forEach((outputId) =>
+          recordPresentationDiagnostic({
+            event: "output.update_dispatched",
+            outputId,
+            itemId: presentationItemId,
+            slideIndex: index,
+            source: "local",
+          }),
+        );
+      };
       const getPresentationBibleInfo = (slideIndex: number) => {
         const selected = presentationSlides[slideIndex];
         const titleSlideText = presentationSlides[0]?.boxes[1]?.words?.trim();
@@ -1064,6 +1120,7 @@ const ItemSlidesContent = () => {
         };
         const sendPresentation = () => {
           if (presentationSendsToProjector) {
+            recordOutputDispatch("projector", presentationSendTargets.projector);
             dispatch(
               updateProjector(
                 withVideoPlayback(
@@ -1077,6 +1134,7 @@ const ItemSlidesContent = () => {
             );
           }
           if (presentationSendsToMonitor) {
+            recordOutputDispatch("monitor", presentationSendTargets.monitor);
             dispatch(
               updateMonitor(
                 withVideoPlayback(
@@ -1092,6 +1150,7 @@ const ItemSlidesContent = () => {
             );
           }
           if (presentationSendsToStream) {
+            recordOutputDispatch("stream", presentationSendTargets.stream);
             dispatch(
               updateStream(
                 withVideoPlayback(
@@ -1161,6 +1220,7 @@ const ItemSlidesContent = () => {
       }
 
       if (presentationSendsToStream) {
+        recordOutputDispatch("stream", presentationSendTargets.stream);
         if (presentationType === "bible") {
           const { title, text } = getPresentationBibleInfo(index);
           dispatch(
@@ -1226,6 +1286,7 @@ const ItemSlidesContent = () => {
       }
 
       if (presentationSendsToProjector) {
+        recordOutputDispatch("projector", presentationSendTargets.projector);
         dispatch(
           updateProjector(
             withVideoPlayback(
@@ -1255,6 +1316,7 @@ const ItemSlidesContent = () => {
       }
 
       if (presentationSendsToMonitor) {
+        recordOutputDispatch("monitor", presentationSendTargets.monitor);
         let transitionDirection: "next" | "prev" | "jump";
         if (options?.presentation) transitionDirection = "jump";
         else if (index === prevSelected + 1) transitionDirection = "next";

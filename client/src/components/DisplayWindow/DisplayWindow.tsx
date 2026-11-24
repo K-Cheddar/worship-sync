@@ -274,6 +274,8 @@ type DisplayWindowProps = {
   outputId?: string;
   /** Current outline item used only as a local media-preparation priority hint. */
   currentItemId?: string;
+  /** Current presentation slide index, used for bounded diagnostics. */
+  slideIndex?: number;
   /** Only the selected SlideEditor may own local editor video transport. */
   editorTransportOwner?: boolean;
   /** Explicit controller-owned preparation context, used by editor surfaces. */
@@ -368,6 +370,7 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
 
       outputId,
       currentItemId,
+      slideIndex,
       editorTransportOwner = false,
       preparedMediaContext: preparedMediaContextOverride,
 
@@ -1422,6 +1425,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
           key: `${currentDisplayLayerKey}::${mediaKey}::${time ?? ""}`,
           boxes,
           time,
+          itemId: currentItemId,
+          slideIndex,
           timerInfo,
           backgroundMedia: stageBackgroundMedia,
         };
@@ -1429,6 +1434,8 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
         boxes,
         currentDisplayLayerKey,
         stageBackgroundMedia,
+        currentItemId,
+        slideIndex,
         time,
         timerInfo,
       ]);
@@ -1686,6 +1693,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
               transitionDurationMs={resolvedDisplaySettings.transitionDurationMs}
               effectiveWidth={effectiveWidth}
               time={time}
+              outputId={outputId}
+              itemId={currentItemId}
+              slideIndex={slideIndex}
               timerInfo={timerInfo}
               prevTimerInfo={prevTimerInfo}
               scaleFactor={scaleFactor}
@@ -1743,6 +1753,9 @@ const DisplayWindow = forwardRef<HTMLDivElement, DisplayWindowProps>(
                     referenceWidth={REFERENCE_WIDTH}
                     referenceHeight={REFERENCE_HEIGHT}
                     scaleFactor={scaleFactor}
+                    outputId={outputId}
+                    itemId={laneSnapshot.itemId}
+                    slideIndex={laneSnapshot.slideIndex}
                     brightness={
                       index === 0
                         ? laneRenderProfile.backgroundBrightness

@@ -36,6 +36,8 @@ const liveSyncOptions: Array<Record<string, unknown>> = [];
 const replicationCalls: Array<{ name: string; options?: Record<string, unknown> }> = [];
 const initialPullHandles: Array<{ emit: (event: string, value?: any) => void }> = [];
 let completeInitialPullAutomatically = true;
+let localPouchConstructorFailureName: string | null = null;
+const verifiedCheckpointDatabaseNames = new Set<string>();
 
 const createSyncHandle = (completeAfterSetup = false) => {
   const listeners = new Map<string, (value?: any) => void>();
@@ -54,10 +56,24 @@ const createSyncHandle = (completeAfterSetup = false) => {
 
 jest.mock("pouchdb-browser", () => {
   const PouchDBMock = jest.fn().mockImplementation((name: string) => {
+    if (name === localPouchConstructorFailureName) {
+      throw new Error("Local PouchDB initialization failed");
+    }
     const localDocs = new Map<string, Record<string, unknown>>();
     const instance = {
       name,
       get: jest.fn(async (id: string) => {
+        if (
+          id === "_local/worship-sync-initial-content-replication-v1" &&
+          verifiedCheckpointDatabaseNames.has(name)
+        ) {
+          return {
+            _id: id,
+            localDatabaseName: name,
+            sourceDatabaseName: name,
+            complete: true,
+          };
+        }
         const doc = localDocs.get(id);
         if (!doc) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
         return { ...doc };
@@ -109,6 +125,8 @@ const Probe = () => {
       <div data-testid="message">{context?.connectionStatus.message}</div>
       <div data-testid="has-db">{context?.db ? "yes" : "no"}</div>
       <div data-testid="bootstrap-ready">{context?.bootstrapReady ? "yes" : "no"}</div>
+      <div data-testid="startup-stage">{context?.startupInfo?.stage}</div>
+      <div data-testid="startup-failure">{context?.startupInfo?.failure?.kind}</div>
       <button type="button" onClick={() => context?.pullFromRemote()}>Pull</button>
     </div>
   );
@@ -125,6 +143,8 @@ describe("ControllerInfoProvider", () => {
     replicationCalls.length = 0;
     initialPullHandles.length = 0;
     completeInitialPullAutomatically = true;
+    localPouchConstructorFailureName = null;
+    verifiedCheckpointDatabaseNames.clear();
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -226,6 +246,8 @@ describe("controller replication 413 batch policy", () => {
     replicationCalls.length = 0;
     initialPullHandles.length = 0;
     completeInitialPullAutomatically = true;
+    localPouchConstructorFailureName = null;
+    verifiedCheckpointDatabaseNames.clear();
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -352,8 +374,10 @@ describe("controller replication 413 batch policy", () => {
     await waitFor(() => expect(initialPullHandles.length).toBeGreaterThan(0));
     expect(hasSuccessfulInitialContentReplication(databaseName)).toBe(false);
     expect(screen.getByTestId("has-db")).toHaveTextContent("yes");
-    act(() => initialPullHandles.at(-1)!.emit("change", { pending: 0 }));
-    expect(screen.getByTestId("progress")).toHaveTextContent("100");
+    act(() => initialPullHandles.at(-1)!.emit("change", { pending: 12, docs: [{ _id: "song" }] }));
+    expect(screen.getByTestId("progress")).toHaveTextContent("0");
+    act(() => initialPullHandles.at(-1)!.emit("change", { pending: 0, docs: [{ _id: "song" }] }));
+    expect(screen.getByTestId("progress")).toHaveTextContent("99");
     expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
     act(() => initialPullHandles.at(-1)!.emit("paused", { status: 0, message: "offline" }));
     expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
@@ -369,6 +393,148 @@ describe("controller replication 413 batch policy", () => {
         sourceDatabaseName: databaseName,
         complete: true,
       }),
+    );
+  });
+
+  it("keeps a previously verified local database ready while the server is unavailable", async () => {
+    jest.useFakeTimers();
+    completeInitialPullAutomatically = false;
+    verifiedCheckpointDatabaseNames.add("worship-sync-offline-ready");
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: false }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ database: "offline-ready" }) as any}
+        >
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("yes");
+    });
+    expect(screen.getByTestId("progress")).toHaveTextContent("100");
+    expect(screen.getByTestId("has-db")).toHaveTextContent("yes");
+    expect(initialPullHandles).toHaveLength(0);
+    jest.clearAllTimers();
+  });
+
+  it("exposes failed initial replication results without granting readiness", async () => {
+    completeInitialPullAutomatically = false;
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => expect(initialPullHandles.length).toBeGreaterThan(0));
+    act(() =>
+      initialPullHandles.at(-1)!.emit("complete", {
+        ok: false,
+        errors: [{ status: 500, name: "server_error" }],
+      }),
+    );
+
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
+    expect(screen.getByTestId("startup-failure")).toHaveTextContent("replication");
+    expect(screen.getByTestId("startup-stage")).toHaveTextContent("failed");
+    expect(liveSyncHandles).toHaveLength(0);
+  });
+
+  it("exposes a terminal local database initialization failure", async () => {
+    localPouchConstructorFailureName = "worship-sync-local-failure";
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ database: "local-failure" }) as any}
+        >
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("startup-failure")).toHaveTextContent(
+        "local-storage",
+      );
+    });
+    expect(screen.getByTestId("startup-stage")).toHaveTextContent("failed");
+    expect(screen.getByTestId("progress")).toBeEmptyDOMElement();
+  });
+
+  it("keeps automatic server retries going before exposing a recovery action", async () => {
+    jest.useFakeTimers();
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: false }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await act(async () => {
+      await jest.runAllTimersAsync();
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+    expect(screen.getByTestId("startup-failure")).toHaveTextContent(
+      "server-connection",
+    );
+    expect(screen.getByTestId("message")).toHaveTextContent(
+      "couldn't connect to the server after 5 retries",
+    );
+  });
+
+  it("identifies exhausted session authentication failures separately from network failures", async () => {
+    jest.useFakeTimers();
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: false, failureKind: "authentication" }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await act(async () => {
+      await jest.runAllTimersAsync();
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+    expect(screen.getByTestId("startup-failure")).toHaveTextContent(
+      "authentication",
+    );
+    expect(screen.getByTestId("message")).toHaveTextContent(
+      "couldn't verify its database session",
     );
   });
 

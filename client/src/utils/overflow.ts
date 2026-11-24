@@ -45,14 +45,14 @@ const formatVerseRange = (verses: verseType[]): string => {
   return ranges.join(", ");
 };
 
-const matchesLyricPage = (slideName: string | undefined, name: string) =>
+export const matchesSongLyricPage = (slideName: string | undefined, name: string) =>
   slideName === name || (slideName?.startsWith(name) &&
     /^[a-z]+$/i.test(slideName.slice(name.length).replace(/\u200B/g, "")));
 
 const findSongSectionPages = (slides: ItemSlideType[], name: string, occurrence: number) => {
   const groups: ItemSlideType[][] = [];
   for (const old of slides) {
-    if (!matchesLyricPage(old.name, name)) continue;
+    if (!matchesSongLyricPage(old.name, name)) continue;
     if (!groups.length || old.boxes[1]?.slideIndex === 0) groups.push([]);
     groups[groups.length - 1].push(old);
   }
@@ -70,6 +70,7 @@ type FormatSectionType = {
   selectedSlide: ItemSlideType;
   preserveIdentity?: boolean;
   existingPages?: ItemSlideType[];
+  newPageFontSizePx?: number;
 };
 
 export const formatSection = ({
@@ -83,6 +84,7 @@ export const formatSection = ({
   selectedSlide,
   preserveIdentity = false,
   existingPages,
+  newPageFontSizePx,
 }: FormatSectionType): ItemSlideType[] => {
   const lines = text.split("\n");
   const formattedSlides: ItemSlideType[] = [];
@@ -105,7 +107,11 @@ export const formatSection = ({
     else currentBoxes = slides[slides.length - 1].boxes || [];
 
     const currentBox = currentBoxes[1];
-    const pageFontSizePx = preserveIdentity ? currentBox.fontSize ?? fontSizePx : fontSizePx;
+    const pageFontSizePx = preserveIdentity
+      ? (slides[slidePosition]
+          ? currentBox.fontSize ?? fontSizePx
+          : newPageFontSizePx ?? currentBox.fontSize ?? fontSizePx)
+      : fontSizePx;
 
     ({ maxLines, lineHeight } = getMaxLines({
       fontSizePx: pageFontSizePx,
@@ -149,7 +155,7 @@ export const formatSection = ({
 
     i += counter - 1;
     const candidate: ItemSlideType | undefined = preserveIdentity ? (existingPages ?? slides)[formattedSlides.length] : undefined;
-    const previous: ItemSlideType | undefined = candidate && matchesLyricPage(candidate.name, name) ? candidate : undefined;
+    const previous: ItemSlideType | undefined = candidate && matchesSongLyricPage(candidate.name, name) ? candidate : undefined;
     const generated: ItemSlideType = createNewSlide({
         type,
         name,
@@ -494,7 +500,17 @@ export const formatFree = (item: ItemState) => {
   };
 };
 
-export const formatLyrics = (item: ItemState) => {
+export type SongFormattingOptions = {
+  /** Font size requested by an explicit font-size edit for pages created by reflow. */
+  newPageFontSizePx?: number;
+  /** Limits a selected-slide font-size edit to its section occurrence. */
+  newPageFontSizeFor?: { sectionName: string; occurrence: number };
+};
+
+export const formatLyrics = (
+  item: ItemState,
+  { newPageFontSizePx, newPageFontSizeFor }: SongFormattingOptions = {},
+) => {
   const selectedArrangement = item.selectedArrangement || 0;
   const selectedSlide = item.selectedSlide || 1;
   const arrangements = item.arrangements || [];
@@ -544,6 +560,12 @@ export const formatLyrics = (item: ItemState) => {
         selectedBox: 1,
         preserveIdentity: true,
         existingPages: sectionSlides,
+        newPageFontSizePx:
+          !newPageFontSizeFor ||
+          (newPageFontSizeFor.sectionName === name &&
+            newPageFontSizeFor.occurrence === occurrence)
+            ? newPageFontSizePx
+            : undefined,
       }),
     );
   }
@@ -552,14 +574,17 @@ export const formatLyrics = (item: ItemState) => {
   return stripMonitorBoxClones(newSlides);
 };
 
-export const formatSong = (_item: ItemState) => {
+export const formatSong = (
+  _item: ItemState,
+  options: SongFormattingOptions = {},
+) => {
   const item = {
     ..._item,
     arrangements: _item.arrangements
       ? _item.arrangements.map((el, i): Arrangment => {
           const slides =
             i === _item.selectedArrangement
-              ? formatLyrics(_item)
+              ? formatLyrics(_item, options)
               : stripMonitorBoxClones(el.slides ?? []);
           const monitorLayout =
             i === _item.selectedArrangement || !el.monitorLayout

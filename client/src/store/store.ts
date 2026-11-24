@@ -167,6 +167,7 @@ import {
   supportsBoardTakeover,
 } from "../utils/displayOutputs";
 import { nestSlashPathOutputs } from "../utils/nestSlashPathOutputs";
+import { recordPresentationDiagnostic } from "../utils/presentationDiagnostics";
 import {
   ensureCreditsIndexDoc,
   getCreditsByIds,
@@ -641,10 +642,26 @@ const onlyChangedSincePublish = (
   for (const [key, value] of Object.entries(payload)) {
     const serialized = JSON.stringify(value ?? null);
     if (seen.get(key) === serialized) continue;
-    seen.set(key, serialized);
     changed[key] = value;
   }
   return changed;
+};
+
+const markPresentationPublished = (
+  scope: string,
+  payload: Record<string, unknown>,
+  churchId: string,
+) => {
+  if (globalFireDbInfo.churchId !== churchId) return;
+  if (lastPublishedChurchId !== churchId) {
+    lastPublished.clear();
+    lastPublishedChurchId = churchId;
+  }
+  const seen = lastPublished.get(scope) ?? new Map<string, string>();
+  lastPublished.set(scope, seen);
+  for (const [key, value] of Object.entries(payload)) {
+    seen.set(key, JSON.stringify(value ?? null));
+  }
 };
 
 /** Forget what we published, so the next write republishes in full. */
@@ -694,72 +711,198 @@ const createPresentationUpdate = (state: RootState) => {
 };
 
 type PresentationUpdate = ReturnType<typeof createPresentationUpdate>;
+type PresentationUpdatePatch = Partial<Omit<PresentationUpdate, "outputs">> & {
+  outputs?: Record<string, unknown>;
+};
+
+/**
+ * Presentation reducers use Immer, so unchanged nested slides and media keep
+ * stable references. Compare only two object levels to avoid serializing large
+ * slide payloads on the operator's synchronous dispatch path.
+ */
+const presentationValuesMatch = (
+  left: unknown,
+  right: unknown,
+  depth = 2,
+): boolean => {
+  if (Object.is(left, right)) return true;
+  if (
+    depth === 0 ||
+    !left ||
+    !right ||
+    typeof left !== "object" ||
+    typeof right !== "object" ||
+    Array.isArray(left) ||
+    Array.isArray(right)
+  ) {
+    return false;
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = Object.keys(leftRecord);
+  return (
+    keys.length === Object.keys(rightRecord).length &&
+    keys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+        (Object.is(leftRecord[key], rightRecord[key]) ||
+          presentationValuesMatch(
+            leftRecord[key],
+            rightRecord[key],
+            depth - 1,
+          )),
+    )
+  );
+};
+
+const createPresentationUpdateDelta = (
+  previousState: RootState,
+  currentState: RootState,
+): PresentationUpdatePatch => {
+  const previous = createPresentationUpdate(previousState);
+  const current = createPresentationUpdate(currentState);
+  const delta: PresentationUpdatePatch = {};
+  const previousValues = previous as Record<string, unknown>;
+  const currentValues = current as Record<string, unknown>;
+
+  for (const [key, value] of Object.entries(currentValues)) {
+    if (key === "outputs") continue;
+    if (!presentationValuesMatch(previousValues[key], value)) {
+      (delta as Record<string, unknown>)[key] = value;
+    }
+  }
+
+  const previousOutputs = previous.outputs;
+  const currentOutputs = current.outputs;
+  const changedOutputs: Record<string, unknown> = {};
+  for (const key of new Set([
+    ...Object.keys(previousOutputs),
+    ...Object.keys(currentOutputs),
+  ])) {
+    if (!presentationValuesMatch(previousOutputs[key], currentOutputs[key])) {
+      changedOutputs[key] = currentOutputs[key] ?? null;
+    }
+  }
+  if (Object.keys(changedOutputs).length > 0) delta.outputs = changedOutputs;
+  return delta;
+};
+
+const hasPresentationUpdateDelta = (delta: PresentationUpdatePatch) =>
+  Object.keys(delta).some((key) =>
+    key === "outputs"
+      ? Object.keys(delta.outputs ?? {}).length > 0
+      : true,
+  );
+
+let pendingPresentationPublication:
+  | {
+      churchId: string | undefined;
+      delta: PresentationUpdatePatch;
+      triggerAction: string;
+    }
+  | undefined;
+
+const queuePresentationPublication = (
+  delta: PresentationUpdatePatch,
+  triggerAction: string,
+) => {
+  if (!hasPresentationUpdateDelta(delta)) return false;
+  const churchId = globalFireDbInfo.churchId;
+  const previous = pendingPresentationPublication;
+  const merged: PresentationUpdatePatch = {
+    ...(previous?.churchId === churchId ? previous.delta : {}),
+    ...delta,
+  };
+  if (previous?.churchId === churchId) {
+    merged.outputs = {
+      ...(previous.delta.outputs ?? {}),
+      ...(delta.outputs ?? {}),
+    };
+    if (Object.keys(merged.outputs).length === 0) delete merged.outputs;
+  }
+  pendingPresentationPublication = {
+    churchId,
+    delta: merged,
+    triggerAction,
+  };
+  return true;
+};
+
 const persistPresentationUpdateLocally = (
   state: RootState,
   presentationUpdate: PresentationUpdate,
+  delta?: PresentationUpdatePatch,
 ) => {
   const { streamInfo } = toLegacyPresentationShape(state.presentation);
+  const writeLocal = (
+    key: keyof PresentationUpdate,
+    storageKey: string,
+    value: unknown,
+  ) => {
+    if (!delta || key in delta) {
+      localStorage.setItem(storageKey, JSON.stringify(value));
+    }
+  };
 
-  localStorage.setItem(
-    "projectorInfo",
-    JSON.stringify(presentationUpdate.projectorInfo),
-  );
-  localStorage.setItem(
-    "monitorInfo",
-    JSON.stringify(presentationUpdate.monitorInfo),
-  );
-  localStorage.setItem(
+  writeLocal("projectorInfo", "projectorInfo", presentationUpdate.projectorInfo);
+  writeLocal("monitorInfo", "monitorInfo", presentationUpdate.monitorInfo);
+  writeLocal(
     "monitorBoardAliasId",
-    JSON.stringify(presentationUpdate.monitorBoardAliasId),
+    "monitorBoardAliasId",
+    presentationUpdate.monitorBoardAliasId,
   );
-  localStorage.setItem(
+  writeLocal(
     "projectorBoardAliasId",
-    JSON.stringify(presentationUpdate.projectorBoardAliasId),
+    "projectorBoardAliasId",
+    presentationUpdate.projectorBoardAliasId,
   );
-  localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
-  localStorage.setItem(
-    "stream_bibleInfo",
-    JSON.stringify(streamInfo.bibleDisplayInfo),
-  );
-  localStorage.setItem(
+  writeLocal("streamInfo", "streamInfo", streamInfo);
+  writeLocal("stream_bibleInfo", "stream_bibleInfo", streamInfo.bibleDisplayInfo);
+  writeLocal(
     "stream_participantOverlayInfo",
-    JSON.stringify(streamInfo.participantOverlayInfo),
+    "stream_participantOverlayInfo",
+    streamInfo.participantOverlayInfo,
   );
-  localStorage.setItem(
-    "stream_stbOverlayInfo",
-    JSON.stringify(streamInfo.stbOverlayInfo),
-  );
-  localStorage.setItem(
-    "stream_qrCodeOverlayInfo",
-    JSON.stringify(streamInfo.qrCodeOverlayInfo),
-  );
-  localStorage.setItem(
-    "stream_imageOverlayInfo",
-    JSON.stringify(streamInfo.imageOverlayInfo),
-  );
-  localStorage.setItem(
+  writeLocal("stream_stbOverlayInfo", "stream_stbOverlayInfo", streamInfo.stbOverlayInfo);
+  writeLocal("stream_qrCodeOverlayInfo", "stream_qrCodeOverlayInfo", streamInfo.qrCodeOverlayInfo);
+  writeLocal("stream_imageOverlayInfo", "stream_imageOverlayInfo", streamInfo.imageOverlayInfo);
+  writeLocal(
     "stream_formattedTextDisplayInfo",
-    JSON.stringify(streamInfo.formattedTextDisplayInfo),
+    "stream_formattedTextDisplayInfo",
+    streamInfo.formattedTextDisplayInfo,
   );
-  localStorage.setItem(
-    "stream_boardPostStreamInfo",
-    JSON.stringify(streamInfo.boardPostStreamInfo),
-  );
-  localStorage.setItem(
+  writeLocal("stream_boardPostStreamInfo", "stream_boardPostStreamInfo", streamInfo.boardPostStreamInfo);
+  writeLocal(
     "stream_itemContentBlocked",
-    JSON.stringify(presentationUpdate.stream_itemContentBlocked),
+    "stream_itemContentBlocked",
+    presentationUpdate.stream_itemContentBlocked,
   );
-  // Nest slash-path keys so same-machine display windows can apply named
-  // outputs from the storage event without waiting on Firebase.
-  localStorage.setItem(
-    "outputs",
-    JSON.stringify(nestSlashPathOutputs(presentationUpdate.outputs)),
-  );
+
+  if (!delta || delta.outputs) {
+    const incomingOutputs = nestSlashPathOutputs(
+      delta?.outputs ?? presentationUpdate.outputs,
+    );
+    let currentOutputs: Record<string, Record<string, unknown>> = {};
+    try {
+      currentOutputs = JSON.parse(localStorage.getItem("outputs") || "{}");
+    } catch {
+      currentOutputs = {};
+    }
+    const mergedOutputs = { ...currentOutputs };
+    for (const [outputId, output] of Object.entries(incomingOutputs)) {
+      mergedOutputs[outputId] = {
+        ...(currentOutputs[outputId] ?? {}),
+        ...(output as Record<string, unknown>),
+      };
+    }
+    localStorage.setItem("outputs", JSON.stringify(mergedOutputs));
+  }
 };
 
 type PresentationWrite = {
   churchId: string;
   presentationUpdate: PresentationUpdate;
+  delta?: PresentationUpdatePatch;
   triggerAction?: string;
   streamTransmitting: boolean;
   activeOverlayLanes: string[];
@@ -784,7 +927,17 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
   if (globalFireDbInfo.churchId !== write.churchId) return false;
 
   const presentationPath = getChurchDataPath(write.churchId, "presentation");
-  const { outputs: remoteOutputs, ...legacyUpdate } = write.presentationUpdate;
+  const { outputs: fullRemoteOutputs, ...fullLegacyUpdate } =
+    write.presentationUpdate;
+  const delta = write.delta;
+  const legacyUpdate = delta
+    ? Object.fromEntries(
+        Object.entries(delta).filter(([key]) => key !== "outputs"),
+      )
+    : fullLegacyUpdate;
+  const remoteOutputs = delta
+    ? (delta.outputs ?? {})
+    : fullRemoteOutputs;
   try {
     const changedLegacy = onlyChangedSincePublish(
       "legacy",
@@ -794,6 +947,7 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
       await Promise.resolve(
         update(ref(firebaseDb, presentationPath), changedLegacy),
       );
+      markPresentationPublished("legacy", changedLegacy, write.churchId);
     }
 
     const changedOutputs = onlyChangedSincePublish(
@@ -810,6 +964,7 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
           changedOutputs,
         ),
       );
+      markPresentationPublished("outputs", changedOutputs, write.churchId);
     }
   } catch (error) {
     const permissionDenied = isFirebasePermissionDenied(error);
@@ -848,9 +1003,10 @@ export const clearRemoteOutputState = async (outputId: string) => {
 export const writePresentationSnapshotToFirebase = async (
   state: RootState,
   triggerAction?: string,
+  delta?: PresentationUpdatePatch,
 ) => {
   const presentationUpdate = createPresentationUpdate(state);
-  persistPresentationUpdateLocally(state, presentationUpdate);
+  persistPresentationUpdateLocally(state, presentationUpdate, delta);
   const activeOverlayLanes = getActiveOverlayLanes(state);
   const { isStreamTransmitting } = toLegacyPresentationShape(
     state.presentation,
@@ -883,6 +1039,7 @@ export const writePresentationSnapshotToFirebase = async (
   return commitPresentationUpdate({
     churchId,
     presentationUpdate,
+    delta,
     triggerAction,
     streamTransmitting: isStreamTransmitting,
     activeOverlayLanes,
@@ -924,11 +1081,13 @@ const reportPresentationDeliveryFailure = (triggerAction: string) => {
 const syncPresentationSnapshot = async (
   state: RootState,
   triggerAction: string,
+  delta?: PresentationUpdatePatch,
 ) => {
   try {
     const delivered = await writePresentationSnapshotToFirebase(
       state,
       triggerAction,
+      delta,
     );
     if (!delivered) reportPresentationDeliveryFailure(triggerAction);
   } catch {
@@ -4898,12 +5057,17 @@ listenerMiddleware.startListening({
       // Transport-only remote apply — the originating controller already wrote.
       presentationSlice.actions.applyRemoteVideoPlayback,
     );
-    return (
+    const changed =
       (currentState as RootState).presentation !==
         (previousState as RootState).presentation &&
       !excluded(action) &&
-      !isStoreResetAction(action)
+      !isStoreResetAction(action);
+    if (!changed) return false;
+    const delta = createPresentationUpdateDelta(
+      previousState as RootState,
+      currentState as RootState,
     );
+    return queuePresentationPublication(delta, action.type);
   },
 
   effect: async (action, listenerApi) => {
@@ -4912,7 +5076,14 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-    await syncPresentationSnapshot(listenerApi.getState() as RootState, action.type);
+    const publication = pendingPresentationPublication;
+    if (!publication || publication.churchId !== churchIdAtStart) return;
+    pendingPresentationPublication = undefined;
+    await syncPresentationSnapshot(
+      listenerApi.getState() as RootState,
+      publication.triggerAction || action.type,
+      publication.delta,
+    );
   },
 });
 
@@ -4934,10 +5105,10 @@ listenerMiddleware.startListening({
     const churchIdAtStart = globalFireDbInfo.churchId;
     await listenerApi.delay(15);
     if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-    await syncPresentationSnapshot(
-      listenerApi.getState() as RootState,
-      action.type,
-    );
+    const state = listenerApi.getState() as RootState;
+    await syncPresentationSnapshot(state, action.type, {
+      streamInfo: createPresentationUpdate(state).streamInfo,
+    });
   },
 });
 
@@ -4956,10 +5127,10 @@ listenerMiddleware.startListening({
     const churchIdAtStart = globalFireDbInfo.churchId;
     await listenerApi.delay(15);
     if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-    await syncPresentationSnapshot(
-      listenerApi.getState() as RootState,
-      action.type,
-    );
+    const state = listenerApi.getState() as RootState;
+    await syncPresentationSnapshot(state, action.type, {
+      streamInfo: createPresentationUpdate(state).streamInfo,
+    });
   },
 });
 
@@ -4981,120 +5152,249 @@ const isNewerVideoPlaybackCue = (
   (incoming?.videoPlayback?.generation ?? 0) >
   (current?.videoPlayback?.generation ?? 0);
 
+type BuiltInPresentationOutput = "projector" | "monitor" | "stream";
+type PendingBuiltInPresentation = {
+  churchId: string | undefined;
+  slide?: Presentation;
+  videoPlayback?: Presentation["videoPlayback"];
+  videoPlaybackInfo?: Presentation;
+};
+
+/**
+ * Debounced remote events can arrive before Redux commits the first event. Keep
+ * the newest slide and transport cue independently so an older slide cannot
+ * cancel a newer pending slide (and a newer cue cannot discard that slide).
+ */
+const pendingBuiltInPresentations = new Map<
+  BuiltInPresentationOutput,
+  PendingBuiltInPresentation
+>();
+
+const getBuiltInPresentation = (
+  state: RootState,
+  outputType: BuiltInPresentationOutput,
+) => toLegacyPresentationShape(state.presentation)[`${outputType}Info`];
+
+const queueIncomingBuiltInPresentation = (
+  outputType: BuiltInPresentationOutput,
+  incoming: Presentation,
+  state: RootState,
+) => {
+  const current = getBuiltInPresentation(state, outputType);
+  const existing = pendingBuiltInPresentations.get(outputType);
+  if (existing && existing.churchId !== globalFireDbInfo.churchId) {
+    recordPresentationDiagnostic({
+      event: "incoming.cancelled",
+      outputId: outputType,
+      itemId: existing.slide?.itemId,
+      slideIndex: existing.slide?.slideIndex,
+      reason: "church_scope_changed",
+    });
+    pendingBuiltInPresentations.delete(outputType);
+  }
+  const pending: PendingBuiltInPresentation =
+    existing?.churchId === globalFireDbInfo.churchId
+      ? existing
+      : { churchId: globalFireDbInfo.churchId };
+
+  const newestSlideTime = Math.max(
+    current.time ?? 0,
+    pending.slide?.time ?? 0,
+  );
+  const newestCue =
+    pending.videoPlayback === undefined
+      ? current
+      : { ...current, videoPlayback: pending.videoPlayback };
+  let accepted = false;
+
+  if (isNewerPresentationTime(incoming.time, newestSlideTime)) {
+    if (pending.slide) {
+      recordPresentationDiagnostic({
+        event: "incoming.superseded",
+        outputId: outputType,
+        itemId: pending.slide.itemId,
+        slideIndex: pending.slide.slideIndex,
+        reason: "newer_pending_slide",
+      });
+    }
+    pending.slide = incoming;
+    accepted = true;
+  }
+  if (isNewerVideoPlaybackCue(incoming, newestCue)) {
+    if (pending.videoPlaybackInfo) {
+      recordPresentationDiagnostic({
+        event: "incoming.superseded",
+        outputId: outputType,
+        itemId: pending.videoPlaybackInfo.itemId,
+        slideIndex: pending.videoPlaybackInfo.slideIndex,
+        reason: "newer_pending_video_cue",
+      });
+    }
+    pending.videoPlayback = incoming.videoPlayback;
+    pending.videoPlaybackInfo = incoming;
+    accepted = true;
+  }
+
+  if (accepted) {
+    pendingBuiltInPresentations.set(outputType, pending);
+    recordPresentationDiagnostic({
+      event: "incoming.queued",
+      outputId: outputType,
+      itemId: incoming.itemId,
+      slideIndex: incoming.slideIndex,
+      reason:
+        isNewerPresentationTime(incoming.time, newestSlideTime)
+          ? "newer_slide"
+          : "newer_video_cue",
+    });
+  } else {
+    recordPresentationDiagnostic({
+      event: "incoming.rejected",
+      outputId: outputType,
+      itemId: incoming.itemId,
+      slideIndex: incoming.slideIndex,
+      reason: "not_newer_than_committed_or_pending",
+    });
+  }
+  return accepted;
+};
+
+const applyPendingBuiltInPresentation = async (
+  outputType: BuiltInPresentationOutput,
+  listenerApi: Parameters<
+    Parameters<typeof listenerMiddleware.startListening>[0]["effect"]
+  >[1],
+) => {
+  const churchIdAtStart = globalFireDbInfo.churchId;
+  listenerApi.cancelActiveListeners();
+  await listenerApi.delay(10);
+  const pending = pendingBuiltInPresentations.get(outputType);
+  if (!pending) return;
+  if (
+    globalFireDbInfo.churchId !== churchIdAtStart ||
+    pending.churchId !== churchIdAtStart
+  ) {
+    recordPresentationDiagnostic({
+      event: "incoming.cancelled",
+      outputId: outputType,
+      itemId: pending.slide?.itemId,
+      slideIndex: pending.slide?.slideIndex,
+      reason: "church_scope_changed_before_apply",
+    });
+    if (pendingBuiltInPresentations.get(outputType) === pending) {
+      pendingBuiltInPresentations.delete(outputType);
+    }
+    return;
+  }
+
+  const current = getBuiltInPresentation(
+    listenerApi.getState() as RootState,
+    outputType,
+  );
+  if (pending.slide && isNewerPresentationTime(pending.slide.time, current.time)) {
+    if (outputType === "projector") {
+      listenerApi.dispatch(updateProjectorFromRemote(pending.slide));
+    } else if (outputType === "monitor") {
+      listenerApi.dispatch(updateMonitorFromRemote(pending.slide));
+    } else {
+      listenerApi.dispatch(updateStreamFromRemote(pending.slide));
+    }
+    recordPresentationDiagnostic({
+      event: "incoming.accepted",
+      outputId: outputType,
+      itemId: pending.slide.itemId,
+      slideIndex: pending.slide.slideIndex,
+      reason: "newer_slide_applied",
+    });
+  } else if (pending.slide) {
+    recordPresentationDiagnostic({
+      event: "incoming.rejected",
+      outputId: outputType,
+      itemId: pending.slide.itemId,
+      slideIndex: pending.slide.slideIndex,
+      reason: "local_state_advanced_before_apply",
+    });
+  }
+
+  const afterSlide = getBuiltInPresentation(
+    listenerApi.getState() as RootState,
+    outputType,
+  );
+  if (
+    pending.videoPlayback &&
+    (pending.videoPlayback.generation ?? 0) >
+      (afterSlide.videoPlayback?.generation ?? 0)
+  ) {
+    listenerApi.dispatch(
+      applyRemoteVideoPlayback({
+        outputType,
+        videoPlayback: pending.videoPlayback,
+      }),
+    );
+    recordPresentationDiagnostic({
+      event: "incoming.accepted",
+      outputId: outputType,
+      itemId: pending.videoPlaybackInfo?.itemId,
+      slideIndex: pending.videoPlaybackInfo?.slideIndex,
+      reason: "newer_video_cue_applied",
+    });
+  } else if (pending.videoPlayback) {
+    recordPresentationDiagnostic({
+      event: "incoming.rejected",
+      outputId: outputType,
+      itemId: pending.videoPlaybackInfo?.itemId,
+      slideIndex: pending.videoPlaybackInfo?.slideIndex,
+      reason: "video_cue_no_longer_newer",
+    });
+  }
+
+  if (pendingBuiltInPresentations.get(outputType) === pending) {
+    pendingBuiltInPresentations.delete(outputType);
+  }
+};
+
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateProjector") return false;
-    const state = toLegacyPresentationShape(
-      (previousState as RootState).presentation,
-    );
-    const info = action.payload as Presentation;
-    return (
-      isNewerPresentationTime(info.time, state.projectorInfo.time) ||
-      isNewerVideoPlaybackCue(info, state.projectorInfo)
+    return queueIncomingBuiltInPresentation(
+      "projector",
+      action.payload as Presentation,
+      previousState as RootState,
     );
   },
 
-  effect: async (action, listenerApi) => {
-    const churchIdAtStart = globalFireDbInfo.churchId;
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
-    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-
-    const info = action.payload as Presentation;
-    const current = toLegacyPresentationShape(
-      (listenerApi.getState() as RootState).presentation,
-    ).projectorInfo;
-    if (isNewerPresentationTime(info.time, current.time)) {
-      listenerApi.dispatch(updateProjectorFromRemote(info));
-      return;
-    }
-    if (isNewerVideoPlaybackCue(info, current)) {
-      listenerApi.dispatch(
-        applyRemoteVideoPlayback({
-          outputType: "projector",
-          videoPlayback: info.videoPlayback,
-        }),
-      );
-    }
-  },
+  effect: async (_action, listenerApi) =>
+    applyPendingBuiltInPresentation("projector", listenerApi),
 });
 
 // handle updating from remote monitor
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateMonitor") return false;
-    const state = toLegacyPresentationShape(
-      (previousState as RootState).presentation,
-    );
-    const info = action.payload as Presentation;
-    return (
-      isNewerPresentationTime(info.time, state.monitorInfo.time) ||
-      isNewerVideoPlaybackCue(info, state.monitorInfo)
+    return queueIncomingBuiltInPresentation(
+      "monitor",
+      action.payload as Presentation,
+      previousState as RootState,
     );
   },
 
-  effect: async (action, listenerApi) => {
-    const churchIdAtStart = globalFireDbInfo.churchId;
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
-    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-
-    const info = action.payload as Presentation;
-    const current = toLegacyPresentationShape(
-      (listenerApi.getState() as RootState).presentation,
-    ).monitorInfo;
-    if (isNewerPresentationTime(info.time, current.time)) {
-      listenerApi.dispatch(updateMonitorFromRemote(info));
-      return;
-    }
-    if (isNewerVideoPlaybackCue(info, current)) {
-      listenerApi.dispatch(
-        applyRemoteVideoPlayback({
-          outputType: "monitor",
-          videoPlayback: info.videoPlayback,
-        }),
-      );
-    }
-  },
+  effect: async (_action, listenerApi) =>
+    applyPendingBuiltInPresentation("monitor", listenerApi),
 });
 
 // handle updating from remote stream (strict > so we skip our own Firebase echo and avoid prev/current both having current slide)
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateStream") return false;
-    const state = toLegacyPresentationShape(
-      (previousState as RootState).presentation,
-    );
-    const info = action.payload as Presentation;
-    return (
-      isNewerPresentationTime(info.time, state.streamInfo.time) ||
-      isNewerVideoPlaybackCue(info, state.streamInfo)
+    return queueIncomingBuiltInPresentation(
+      "stream",
+      action.payload as Presentation,
+      previousState as RootState,
     );
   },
 
-  effect: async (action, listenerApi) => {
-    const churchIdAtStart = globalFireDbInfo.churchId;
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
-    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-
-    const info = action.payload as Presentation;
-    const current = toLegacyPresentationShape(
-      (listenerApi.getState() as RootState).presentation,
-    ).streamInfo;
-    if (isNewerPresentationTime(info.time, current.time)) {
-      listenerApi.dispatch(updateStreamFromRemote(info));
-      return;
-    }
-    if (isNewerVideoPlaybackCue(info, current)) {
-      listenerApi.dispatch(
-        applyRemoteVideoPlayback({
-          outputType: "stream",
-          videoPlayback: info.videoPlayback,
-        }),
-      );
-    }
-  },
+  effect: async (_action, listenerApi) =>
+    applyPendingBuiltInPresentation("stream", listenerApi),
 });
 
 // handle updating outputs created after the display registry. Freshness is

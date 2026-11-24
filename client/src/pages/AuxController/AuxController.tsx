@@ -77,7 +77,7 @@ const AuxControllerBody = () => {
   // that drives nothing, so the page works but cannot reach a screen yet.
   const isProfileKnown = isKnownControllerProfile(profiles, profile);
 
-  const { dbProgress, connectionStatus } =
+  const { dbProgress, connectionStatus, startupInfo, subscribeToStartupActivity } =
     useContext(ControllerInfoContext) || {};
   const { user, churchName, access } = useContext(GlobalInfoContext) || {};
   const scrollbarWidth = useSelector(
@@ -119,6 +119,8 @@ const AuxControllerBody = () => {
       churchName={churchName}
       dbProgress={dbProgress}
       connectionStatus={connectionStatus}
+      startupInfo={startupInfo}
+      subscribeToStartupActivity={subscribeToStartupActivity}
       scrollbarWidth={scrollbarWidth}
       toolbarVariant="aux"
       onRootClick={handleElementClick}

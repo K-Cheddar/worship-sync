@@ -5,9 +5,6 @@ import { Minus, Plus } from "lucide-react";
 import type { ItemState } from "../../../types";
 import { useDispatch, useSelector } from "../../../hooks";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import RadioButton, {
-  RadioGroup,
-} from "../../../components/RadioButton/RadioButton";
 import { updateBoxProperties } from "../../../utils/formatter";
 import { getActiveItemSlides } from "../../../utils/activeItemSlides";
 import {
@@ -138,6 +135,7 @@ type BoxEditorProps = {
   quickBoxLayoutTarget: HTMLElement | null;
   quickBoxHeightTarget: HTMLElement | null;
   drawerTarget: HTMLElement | null;
+  applyToAll?: boolean;
 };
 
 const BoxEditor = ({
@@ -145,6 +143,7 @@ const BoxEditor = ({
   quickBoxLayoutTarget,
   quickBoxHeightTarget,
   drawerTarget,
+  applyToAll = true,
 }: BoxEditorProps) => {
   const dispatch = useDispatch();
   const { showToast, removeToast } = useToast();
@@ -163,7 +162,6 @@ const BoxEditor = ({
   );
   const slide = slides[selectedSlide];
 
-  const [shouldApplyToAll, setShouldApplyToAll] = useState(item.type !== "free");
   const [dimensions, setDimensions] = useState<BoxDimensions>(() =>
     sanitizeBoxToBounds({
       x: currentBox.x ?? 0,
@@ -335,10 +333,6 @@ const BoxEditor = ({
   }, []);
 
   useEffect(() => {
-    setShouldApplyToAll(item.type !== "free");
-  }, [item.type]);
-
-  useEffect(() => {
     if (pendingGeometryRef.current?.targetKey !== targetKey) {
       flushPendingGeometry();
       isEditingRef.current = false;
@@ -374,7 +368,7 @@ const BoxEditor = ({
     (nextDimensions: BoxDimensions) => {
       flushPendingGeometry();
       const next = sanitizeBoxToBounds(nextDimensions);
-      const target = targetForItem(item, selectedBox, shouldApplyToAll);
+      const target = targetForItem(item, selectedBox, applyToAll);
       if (!target) return;
       isEditingRef.current = false;
       pendingCleanupCheckRef.current = false;
@@ -392,7 +386,7 @@ const BoxEditor = ({
       flushPendingGeometry,
       item,
       selectedBox,
-      shouldApplyToAll,
+      applyToAll,
       targetForItem,
     ],
   );
@@ -402,7 +396,7 @@ const BoxEditor = ({
       const numValue = parseFloat(value);
       if (Number.isNaN(numValue)) return;
 
-      const target = targetForItem(item, selectedBox, shouldApplyToAll);
+      const target = targetForItem(item, selectedBox, applyToAll);
       if (!target) return;
 
       const targetChanged = Boolean(
@@ -458,7 +452,7 @@ const BoxEditor = ({
       flushPendingGeometry,
       item,
       selectedBox,
-      shouldApplyToAll,
+      applyToAll,
       targetForItem,
       targetKey,
     ],
@@ -474,7 +468,7 @@ const BoxEditor = ({
       title={
         compact
           ? `Apply ${preset.label} box preset to ${
-              shouldApplyToAll ? "all slides" : "the selected slide"
+              applyToAll ? "all slides" : "the selected slide"
             }`
           : `Apply ${preset.label} box preset`
       }
@@ -501,32 +495,6 @@ const BoxEditor = ({
     ...BOX_PRESETS.filter((preset) => QUICK_PRESET_KEYS.includes(preset.key)),
     matchPreset,
   ];
-
-  const scopeControls = (
-    <div className="flex flex-col gap-1">
-      <p className="text-xs font-medium">Apply changes to</p>
-      <RadioGroup
-        value={shouldApplyToAll ? "all" : "selected"}
-        onValueChange={(value) => setShouldApplyToAll(value === "all")}
-        className="flex flex-wrap items-center gap-2"
-        aria-label="Apply changes to"
-        title="All slides applies this box's position and size across this item"
-      >
-        <RadioButton
-          className="w-fit text-xs"
-          optionValue="selected"
-          label="This slide"
-          hideLabelColon
-        />
-        <RadioButton
-          className="w-fit text-xs"
-          optionValue="all"
-          label="All slides"
-          hideLabelColon
-        />
-      </RadioGroup>
-    </div>
-  );
 
   const fullControls = (
     <div
@@ -583,14 +551,13 @@ const BoxEditor = ({
             padding="p-1"
             title="Match the selected box geometry across the chosen scope"
             aria-label="Apply Match box preset"
-            disabled={!shouldApplyToAll}
+            disabled={!applyToAll}
             onClick={() => applyPreset(matchPreset.dimensions)}
           >
             <PresetIcon {...matchPreset.dimensions} label="MATCH" large />
           </Button>
         </div>
       </div>
-      {scopeControls}
     </div>
   );
 
@@ -612,7 +579,7 @@ const BoxEditor = ({
             padding="p-0"
             title="Match the selected box geometry across all slides"
             aria-label="Apply Match box preset"
-            disabled={!shouldApplyToAll}
+            disabled={!applyToAll}
             onClick={() => applyPreset(preset.dimensions)}
           >
             <PresetIcon {...preset.dimensions} label="MATCH" />

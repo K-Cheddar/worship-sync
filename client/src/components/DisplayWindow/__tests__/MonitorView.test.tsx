@@ -114,6 +114,48 @@ const baseBox: Box = {
 };
 
 describe("MonitorView", () => {
+  it("switches to the single-slide stage after the final next-slide band", () => {
+    const nextBox = { ...baseBox, id: "next-box", words: "Next slide" };
+    const view = (nextBoxes: Box[]) => (
+      <MonitorView
+        boxes={[baseBox]}
+        prevBoxes={[]}
+        nextBoxes={nextBoxes}
+        prevNextBoxes={[]}
+        showNextSlide
+        showBackground={false}
+        shouldAnimate
+        effectiveWidth={50}
+        time={120}
+        outputId="monitor"
+        itemId="song-1"
+        slideIndex={3}
+        scaleFactor={1}
+        effectiveShowClock={false}
+        effectiveShowTimer={false}
+        clockFontSize={16}
+        timerFontSize={16}
+      />
+    );
+    const { rerender } = render(view([nextBox]));
+
+    expect(
+      screen.queryByTestId("mock-monitor-transition-stage"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Current words")).toBeInTheDocument();
+
+    rerender(view([]));
+
+    expect(
+      screen.getByTestId("mock-monitor-transition-stage"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("monitor-current-box")).toHaveAttribute(
+      "data-words",
+      "Current words",
+    );
+    expect(screen.queryByTestId("monitor-prev-box")).not.toBeInTheDocument();
+  });
+
   it("does not mount stale previous content when single-slide boxes reuse the same id", () => {
     const consoleErrorSpy = jest
       .spyOn(console, "error")

@@ -133,6 +133,7 @@ import {
 } from "../firebase/apps";
 import { getChurchDataPath } from "../utils/firebasePaths";
 import { nestSlashPathOutputs } from "../utils/nestSlashPathOutputs";
+import { recordPresentationDiagnostic } from "../utils/presentationDiagnostics";
 import { withBootstrapTimeout } from "../utils/bootstrapTimeout";
 import { MAX_INITIAL_SESSION_RETRIES } from "../constants";
 import { backoff } from "../utils/generalUtils";
@@ -1390,7 +1391,52 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
   }, []);
 
   const updateFromRemote = useCallback(
-    (data: any) => {
+    (data: any, source: "firebase" | "storage" = "firebase") => {
+      const recordReceived = (
+        outputId: string,
+        value: unknown,
+        reason: string,
+      ) => {
+        const presentation =
+          value && typeof value === "object"
+            ? (value as Partial<PresentationType>)
+            : undefined;
+        recordPresentationDiagnostic({
+          event: "sync.received",
+          source,
+          outputId,
+          itemId: presentation?.itemId,
+          slideIndex: presentation?.slideIndex,
+          reason,
+        });
+      };
+
+      for (const [key, value] of Object.entries(data ?? {})) {
+        if (key === "projectorInfo" || key === "projectorBoardAliasId") {
+          recordReceived(
+            "projector",
+            value,
+            `received_${key}`,
+          );
+        } else if (key === "monitorInfo" || key === "monitorBoardAliasId") {
+          recordReceived("monitor", value, `received_${key}`);
+        } else if (key.startsWith("stream_")) {
+          recordReceived("stream", value, `received_${key}`);
+        } else if (key === "streamInfo") {
+          recordReceived("stream", value, "received_streamInfo");
+        } else if (key === "outputs") {
+          for (const [outputId, output] of Object.entries(
+            nestSlashPathOutputs(value as Record<string, unknown>),
+          )) {
+            recordReceived(
+              outputId,
+              (output as { info?: unknown }).info,
+              "received_outputs",
+            );
+          }
+        }
+      }
+
       type updateInfoChildType = {
         info:
         | PresentationType
@@ -2401,7 +2447,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       if (!onValueKeys.some((e) => e === key)) return;
       try {
         const value = JSON.parse(newValue);
-        updateFromRemote({ [key as keyof typeof onValueRef.current]: value });
+        updateFromRemote(
+          { [key as keyof typeof onValueRef.current]: value },
+          "storage",
+        );
       } catch {
         // ignore invalid stored data
       }

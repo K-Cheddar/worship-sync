@@ -355,8 +355,11 @@ const slideHasDifferentLocalImageRevision = (
   return false;
 };
 
+const nextOutputActivityTime = (info: Presentation) =>
+  Math.max(serverNow(), getOutputActivityTime(info) + 1);
+
 const advancePresentationActivity = (info: Presentation) => {
-  info.time = Math.max(serverNow(), getOutputActivityTime(info) + 1);
+  info.time = nextOutputActivityTime(info);
 };
 
 /**
@@ -2285,7 +2288,7 @@ export const presentationSlice = createSlice({
           projector.info.timerId = action.payload.timerId;
           projector.info.slideIndex = action.payload.slideIndex;
           projector.info.slideCount = action.payload.slideCount;
-          projector.info.time = serverNow();
+          projector.info.time = nextOutputActivityTime(projector.info);
           projector.info.localVideoInput = normalizeLocalVideoInput(
             action.payload.localVideoInput,
           );
@@ -2352,7 +2355,7 @@ export const presentationSlice = createSlice({
           monitor.info.listId = action.payload.listId;
           monitor.info.slideIndex = action.payload.slideIndex;
           monitor.info.slideCount = action.payload.slideCount;
-          monitor.info.time = serverNow();
+          monitor.info.time = nextOutputActivityTime(monitor.info);
           monitor.info.nextSlide =
             action.payload.nextSlide !== undefined
               ? action.payload.nextSlide
@@ -2409,7 +2412,7 @@ export const presentationSlice = createSlice({
     ) => {
       for (const stream of targetSlots(state, "stream", outputIdsOf(action))) {
         if (stream.isTransmitting || action.payload.skipTransmissionCheck) {
-          const t = serverNow();
+          const t = nextOutputActivityTime(stream.info);
           const isStreamSlideType =
             Boolean(action.payload.localVideoInput) ||
             (action.payload.type !== "bible" && action.payload.type !== "free");

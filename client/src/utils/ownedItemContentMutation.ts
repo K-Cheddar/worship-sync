@@ -9,7 +9,11 @@ import {
   updateFormattedTextDisplayInfo,
 } from "./formatter";
 import { cleanItemNewlines } from "./itemNewlineCleanup";
-import { formatFree, formatSong } from "./overflow";
+import {
+  formatFree,
+  formatSong,
+  matchesSongLyricPage,
+} from "./overflow";
 
 export type FormattedTextField =
   | "paddingX"
@@ -34,6 +38,7 @@ export type OwnedItemContentMutation =
       formatItem?: boolean;
       updateBackgroundOnly?: boolean;
       skipTitleSlide?: boolean;
+      newPageFontSizePx?: number;
     }
   | {
       kind: "formattedText";
@@ -104,12 +109,19 @@ const songContentUpdate = (
   item: ItemState,
   updatedItem: ItemState,
   arrangementIndex: number,
-): OwnedItemContentUpdate => ({
-  arrangements: updatedItem.arrangements,
-  ...(item.selectedArrangement === arrangementIndex
-    ? { slides: updatedItem.arrangements[arrangementIndex]?.slides ?? updatedItem.slides }
-    : {}),
-});
+): OwnedItemContentUpdate => {
+  const arrangements = item.arrangements.map((arrangement, index) =>
+    index === arrangementIndex
+      ? updatedItem.arrangements[arrangementIndex] ?? arrangement
+      : arrangement,
+  );
+  return {
+    arrangements,
+    ...(item.selectedArrangement === arrangementIndex
+      ? { slides: arrangements[arrangementIndex]?.slides ?? item.slides }
+      : {}),
+  };
+};
 
 const defaultFormattedTextInfo: FormattedTextDisplayInfo = {
   text: "",
@@ -146,6 +158,26 @@ const findFreeSectionSlideIndex = (item: ItemState, sectionNum: number) =>
   item.slides.findIndex(
     (slide) => Number(slide.name.match(/^Section\s+(\d+)/)?.[1]) === sectionNum,
   );
+
+const isSongLyricSlide = (slide: ItemSlideType, sectionNames: string[]) =>
+  sectionNames.some((name) => matchesSongLyricPage(slide.name, name));
+
+const findSongSectionIdentity = (
+  slides: ItemSlideType[],
+  targetSlide: ItemSlideType,
+  sectionNames: string[],
+) => {
+  for (const sectionName of sectionNames) {
+    if (!matchesSongLyricPage(targetSlide.name, sectionName)) continue;
+    let occurrence = -1;
+    for (const slide of slides) {
+      if (!matchesSongLyricPage(slide.name, sectionName)) continue;
+      if (occurrence === -1 || slide.boxes[1]?.slideIndex === 0) occurrence++;
+      if (slide.id === targetSlide.id) return { sectionName, occurrence };
+    }
+  }
+  return null;
+};
 
 export const applyOwnedItemContentMutation = (
   item: ItemState,
@@ -335,11 +367,74 @@ export const applyOwnedItemContentMutation = (
     selectedSlide: targetSlideIndex,
     selectedBox: resolvedBoxIndex,
   };
+
+  const isSongFontSizeChange =
+    item.type === "song" &&
+    mutation.kind === "boxProperties" &&
+    Object.prototype.hasOwnProperty.call(mutation.properties, "fontSize");
+  const songSectionNames =
+    item.type === "song"
+      ? item.arrangements[target.arrangementIndex]?.songOrder.map(({ name }) => name) ?? []
+      : [];
+  const selectedSlideIsLyric = isSongLyricSlide(targetSlide, songSectionNames);
+
+  if (
+    isSongFontSizeChange &&
+    mutation.kind === "boxProperties" &&
+    selectedSlideIsLyric
+  ) {
+    const applyToAllLyrics = mutation.applyToAll === true;
+    const newPageFontSizeFor = applyToAllLyrics
+      ? null
+      : findSongSectionIdentity(target.slides, targetSlide, songSectionNames);
+    const slides = target.slides.map((slide) => {
+      const shouldUpdateSlide = applyToAllLyrics
+        ? isSongLyricSlide(slide, songSectionNames)
+        : slide.id === targetSlide.id;
+      if (!shouldUpdateSlide) return slide;
+      return {
+        ...slide,
+        boxes: slide.boxes.map((box, boxIndex) =>
+          boxIndex === resolvedBoxIndex
+            ? { ...box, ...mutation.properties }
+            : box,
+        ),
+      };
+    });
+    const arrangements = item.arrangements.map((arrangement, index) =>
+      index === target.arrangementIndex ? { ...arrangement, slides } : arrangement,
+    );
+    const requestedFontSize =
+      mutation.newPageFontSizePx ?? mutation.properties.fontSize;
+    const updated = formatSong(
+      {
+        ...workingItem,
+        slides: [],
+        arrangements,
+      },
+      applyToAllLyrics
+        ? { newPageFontSizePx: requestedFontSize }
+        : newPageFontSizeFor
+          ? {
+              newPageFontSizePx: requestedFontSize,
+              newPageFontSizeFor,
+            }
+          : {},
+    );
+    return songContentUpdate(item, updated, target.arrangementIndex);
+  }
+
   const updated = updateBoxProperties({
     updatedProperties: mutation.properties,
     item: workingItem,
-    shouldApplyToAll: mutation.applyToAll,
-    shouldFormatItem: mutation.formatItem,
+    shouldApplyToAll:
+      isSongFontSizeChange && !selectedSlideIsLyric
+        ? false
+        : mutation.applyToAll,
+    shouldFormatItem:
+      isSongFontSizeChange && !selectedSlideIsLyric
+        ? false
+        : mutation.formatItem,
     shouldUpdateBgOnly: mutation.updateBackgroundOnly,
     shouldSkipTitleSlide: mutation.skipTitleSlide,
   });
