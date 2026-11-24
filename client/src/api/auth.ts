@@ -91,6 +91,11 @@ import type {
   TeamScheduleGuest,
   TeamSchedulePublicSnapshot,
   TeamScheduleShadowKind,
+  SchedulingAutomationSettings,
+  SchedulingCycleAction,
+  SchedulingCycleRecord,
+  SchedulingEffectiveSettings,
+  SchedulingSettingsRecord,
   TeamsBootstrap,
   PortableDataType,
   PortableImportRow,
@@ -2643,6 +2648,83 @@ export const ensureTeamScheduleForPeriod = async (
     `api/churches/${churchId}/team-schedules/ensure`,
     { method: "POST", body: JSON.stringify(body) },
   );
+
+export type SchedulingAutomationResponse = {
+  success: boolean;
+  churchId: string;
+  team: { teamId: string; name: string } | null;
+  serviceTimeZone: string | null;
+  defaults: SchedulingSettingsRecord;
+  override: SchedulingSettingsRecord | null;
+  effective: SchedulingEffectiveSettings;
+  savedCycle: SchedulingCycleRecord | null;
+  savedActions: SchedulingCycleAction[];
+};
+
+export const getSchedulingAutomation = async (
+  churchId: string,
+  { teamId, periodId }: { teamId?: string; periodId?: string } = {},
+) => {
+  const query = new URLSearchParams();
+  if (teamId) query.set("teamId", teamId);
+  if (periodId) query.set("period", periodId);
+  const suffix = query.toString();
+  return apiFetch<SchedulingAutomationResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/scheduling-automation${suffix ? `?${suffix}` : ""}`,
+  );
+};
+
+export const previewSchedulingCycle = async (
+  churchId: string,
+  body: {
+    teamId: string;
+    periodId: string;
+    draftDefaults?: SchedulingAutomationSettings;
+    draftOverride?: { mode: "inherit" | "customize" | "disabled"; settings?: SchedulingAutomationSettings | null };
+  },
+) => apiFetch<{
+  success: boolean;
+  preview: { cycle: SchedulingCycleRecord; actions: SchedulingCycleAction[] };
+  savedCycle: SchedulingCycleRecord | null;
+  isUnsavedPreview: boolean;
+}>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/preview`, {
+  method: "POST",
+  body: JSON.stringify(body),
+});
+
+export const saveChurchSchedulingDefaults = async (
+  churchId: string,
+  body: { settings: SchedulingAutomationSettings; revision: number },
+) => apiFetch<{ success: boolean; defaults: SchedulingSettingsRecord }>(
+  `api/churches/${encodeURIComponent(churchId)}/scheduling-automation/defaults`,
+  { method: "POST", body: JSON.stringify(body) },
+);
+
+export const saveTeamSchedulingOverride = async (
+  churchId: string,
+  teamId: string,
+  body: {
+    mode: "inherit" | "customize" | "disabled";
+    settings?: SchedulingAutomationSettings | null;
+    revision: number;
+  },
+) => apiFetch<{ success: boolean; override: SchedulingSettingsRecord }>(
+  `api/churches/${encodeURIComponent(churchId)}/scheduling-automation/teams/${encodeURIComponent(teamId)}`,
+  { method: "POST", body: JSON.stringify(body) },
+);
+
+export const ensureSchedulingCycle = async (
+  churchId: string,
+  teamId: string,
+  periodId: string,
+) => apiFetch<{
+  success: boolean;
+  cycle: SchedulingCycleRecord;
+  actionsCreated: boolean;
+}>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/teams/${encodeURIComponent(teamId)}/cycles/ensure`, {
+  method: "POST",
+  body: JSON.stringify({ periodId }),
+});
 
 export const updateTeamSchedule = async (
   churchId: string,

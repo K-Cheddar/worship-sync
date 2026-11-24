@@ -1715,6 +1715,26 @@ app.post(
   "/api/churches/:churchId/team-schedules/ensure",
   authHandlers.ensureTeamScheduleForPeriod,
 );
+app.get(
+  "/api/churches/:churchId/scheduling-automation",
+  authHandlers.getSchedulingAutomation,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/preview",
+  authHandlers.previewSchedulingCycle,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/defaults",
+  authHandlers.saveChurchSchedulingDefaults,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/teams/:teamId",
+  authHandlers.saveTeamSchedulingOverride,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/teams/:teamId/cycles/ensure",
+  authHandlers.ensureSchedulingCycle,
+);
 app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId",
   authHandlers.updateTeamSchedule,

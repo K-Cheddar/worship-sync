@@ -79,6 +79,7 @@ import { volunteerIdentityClaimId } from "./volunteerIdentity.js";
 import { createVolunteerContactIndex, volunteerContactIndexFields } from "./volunteerContactIndex.js";
 import { createVolunteerPersonalAccess } from "./volunteerPersonalAccess.js";
 import { createVolunteerRecovery } from "./volunteerRecovery.js";
+import { schedulingCycleIdFor } from "./schedulingCycles.js";
 
 // Minimal stand-in for an SSE response: captures the `data:` frames the teams
 // broadcaster writes. Shares the same teamsSse.js singleton the handlers use.
@@ -124,6 +125,149 @@ test("post-commit schedule deliveries retry and never surface failure after comm
   assert.equal(exhausted, false);
   assert.equal(attempts, 3);
   assert.match(errors.at(-1).message, /attempt 3\/3/);
+});
+
+test("scheduling automation settings are scoped, revisioned, preview-only, and cycle creation is idempotent", async (t) => {
+  if (skipUnlessInMemoryAuth(t)) return;
+
+  const admin = await createAdminContext("scheduling_cycles");
+  const { teamId } = await seedTeam(admin, { teamName: "Music" });
+  const settings = {
+    frequency: "monthly",
+    preparationDay: 24,
+    availabilityRequestLeadDays: 14,
+    followUpAfterDays: 3,
+    leaderSummaryAfterDays: 3,
+    localExecutionTime: "09:00",
+    publicationPolicy: "manual",
+  };
+
+  const preview = await callHandler(authHandlers.previewSchedulingCycle, {
+    context: admin,
+    body: { teamId, periodId: "2026-12", draftDefaults: { ...settings, preparationDay: 20 } },
+  });
+  assert.equal(preview.statusCode, 200, JSON.stringify(preview.payload));
+  assert.equal(preview.payload.preview.cycle.deadlines.preparation.localDate, "2026-11-20");
+  assert.equal(await getDoc(COLLECTIONS.teamSchedulingCycles, preview.payload.preview.cycle.cycleId), null);
+
+  const savedDefaults = await callHandler(authHandlers.saveChurchSchedulingDefaults, {
+    context: admin,
+    body: { settings, revision: 0 },
+  });
+  assert.equal(savedDefaults.statusCode, 200, JSON.stringify(savedDefaults.payload));
+  assert.equal(savedDefaults.payload.defaults.revision, 1);
+  assert.equal(savedDefaults.payload.defaults.settings.availabilityResponseLeadDays, 3);
+  const staleDefaults = await callHandler(authHandlers.saveChurchSchedulingDefaults, {
+    context: admin,
+    body: { settings: { ...settings, preparationDay: 22 }, revision: 0 },
+  });
+  assert.equal(staleDefaults.statusCode, 409);
+
+  const [firstEnsure, duplicateEnsure] = await Promise.all([
+    callHandler(authHandlers.ensureSchedulingCycle, { context: admin, params: { teamId }, body: { periodId: "2026-12" } }),
+    callHandler(authHandlers.ensureSchedulingCycle, { context: admin, params: { teamId }, body: { periodId: "2026-12" } }),
+  ]);
+  assert.equal(firstEnsure.statusCode, 200, JSON.stringify(firstEnsure.payload));
+  assert.equal(duplicateEnsure.statusCode, 200, JSON.stringify(duplicateEnsure.payload));
+  assert.equal(firstEnsure.payload.cycle.cycleId, duplicateEnsure.payload.cycle.cycleId);
+  assert.deepEqual(
+    [firstEnsure.payload.actionsCreated, duplicateEnsure.payload.actionsCreated].sort(),
+    [false, true],
+  );
+  assert.equal(firstEnsure.payload.cycle.deadlines.preparation.localDate, "2026-11-24");
+
+  const manager = await createHumanContext("scheduling_cycles_manager", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [teamId]: "edit" } },
+  });
+  const custom = await callHandler(authHandlers.saveTeamSchedulingOverride, {
+    context: manager,
+    params: { teamId },
+    body: {
+      mode: "customize",
+      settings: { ...settings, preparationDay: 20, availabilityResponseLeadDays: 5 },
+      revision: 0,
+    },
+  });
+  assert.equal(custom.statusCode, 200, JSON.stringify(custom.payload));
+  const teamSettings = await callHandler(authHandlers.getSchedulingAutomation, {
+    context: manager,
+    query: { teamId, period: "2026-12" },
+  });
+  assert.equal(teamSettings.payload.effective.source, "team");
+  assert.equal(teamSettings.payload.effective.settings.preparationDay, 20);
+  assert.equal(teamSettings.payload.effective.settings.availabilityResponseLeadDays, 5);
+  const resetOverride = await callHandler(authHandlers.saveTeamSchedulingOverride, {
+    context: manager,
+    params: { teamId },
+    body: { mode: "inherit", revision: custom.payload.override.revision },
+  });
+  assert.equal(resetOverride.statusCode, 200, JSON.stringify(resetOverride.payload));
+
+  const deniedDefaults = await callHandler(authHandlers.saveChurchSchedulingDefaults, {
+    context: manager,
+    body: { settings, revision: 1 },
+  });
+  assert.equal(deniedDefaults.statusCode, 403);
+  const rosterOnly = await createHumanContext("scheduling_cycles_roster_only", {
+    churchId: admin.churchId,
+    role: "member",
+    appAccess: "view",
+    permissions: { teams: "none", teamScopes: { [teamId]: "view" } },
+  });
+  const deniedOverride = await callHandler(authHandlers.saveTeamSchedulingOverride, {
+    context: rosterOnly,
+    params: { teamId },
+    body: { mode: "disabled", revision: 0 },
+  });
+  assert.equal(deniedOverride.statusCode, 403);
+  const foreign = await createHumanContext("scheduling_cycles_foreign", {
+    role: "member",
+    permissions: { teams: "edit" },
+  });
+  const crossChurch = await callHandler(authHandlers.getSchedulingAutomation, {
+    context: foreign,
+    params: { churchId: admin.churchId },
+    query: { teamId },
+  });
+  assert.equal(crossChurch.statusCode, 403);
+
+  const currentCycle = await getDoc(COLLECTIONS.teamSchedulingCycles, firstEnsure.payload.cycle.cycleId);
+  assert.equal(currentCycle.effectiveConfiguration.preparationDay, 24);
+  const changedDefaults = await callHandler(authHandlers.saveChurchSchedulingDefaults, {
+    context: admin,
+    body: { settings: { ...settings, preparationDay: 22 }, revision: 1 },
+  });
+  assert.equal(changedDefaults.statusCode, 200);
+  const oldCycle = await getDoc(COLLECTIONS.teamSchedulingCycles, firstEnsure.payload.cycle.cycleId);
+  assert.equal(oldCycle.effectiveConfiguration.preparationDay, 24);
+  const nextCycle = await callHandler(authHandlers.ensureSchedulingCycle, {
+    context: admin,
+    params: { teamId },
+    body: { periodId: "2027-01" },
+  });
+  assert.equal(nextCycle.statusCode, 200, JSON.stringify(nextCycle.payload));
+  assert.equal(nextCycle.payload.cycle.effectiveConfiguration.preparationDay, 22);
+  const disabled = await callHandler(authHandlers.saveTeamSchedulingOverride, {
+    context: manager,
+    params: { teamId },
+    body: { mode: "disabled", revision: resetOverride.payload.override.revision },
+  });
+  assert.equal(disabled.statusCode, 200, JSON.stringify(disabled.payload));
+  const disabledCycle = await callHandler(authHandlers.ensureSchedulingCycle, {
+    context: admin,
+    params: { teamId },
+    body: { periodId: "2027-02" },
+  });
+  assert.equal(disabledCycle.statusCode, 409);
+  const noDisabledCycle = await getDoc(COLLECTIONS.teamSchedulingCycles, schedulingCycleIdFor({
+    churchId: admin.churchId,
+    teamId,
+    periodId: "2027-02",
+  }));
+  assert.equal(noDisabledCycle, null);
 });
 
 const callStreamHandler = async (

@@ -78,6 +78,7 @@ import {
 } from "./schedulePeriodUtils";
 import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
 import ScheduleStaffingSummary from "./ScheduleStaffingSummary";
+import SchedulingAutomationPanel from "../components/SchedulingAutomationPanel";
 import ScheduleWorkspaceToolbar, {
   getScheduleWorkspacePublicationClassName,
   resolveSchedulePublicationStatus,
@@ -615,6 +616,13 @@ const ScheduleTab = ({
     workspaceTeamId,
   ]);
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
+  const schedulingCycleScheduleStatus = periodScheduleMatch.ownershipConflict || periodScheduleMatch.ambiguous
+    ? "Saved schedule ownership needs review."
+    : periodScheduleMatch.schedule
+      ? periodScheduleMatch.schedule.published === false
+        ? "Existing schedule: Draft."
+        : "Existing schedule: Published."
+      : "No saved schedule for this period.";
   const overlappingPeriodSchedules = useMemo(() => viewingSavedSchedule
     ? []
     : findOverlappingPeriodSchedules({
@@ -6971,6 +6979,19 @@ const ScheduleTab = ({
             </div>
             {scheduleWorkflowActions}
           </header>
+
+          {workspaceTeamId && scheduleTeamFilter !== "" && (isChurchAdmin || editableTeamIds?.has(workspaceTeamId)) ? (
+            <SchedulingAutomationPanel
+              churchId={churchId}
+              teamId={workspaceTeamId}
+              teamName={activeTeams.find((team) => team.teamId === workspaceTeamId)?.name || ""}
+              periodId={periodRange.start.slice(0, 7)}
+              existingScheduleStatus={schedulingCycleScheduleStatus}
+              serviceTimeZone={serviceTimeZone}
+              canManageTeam={isChurchAdmin || Boolean(editableTeamIds?.has(workspaceTeamId))}
+              canManageDefaults={isChurchAdmin}
+            />
+          ) : null}
 
           <section className={cn(panelShellClassName, "w-full shrink-0 px-3 py-3")}>
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4">

@@ -57,6 +57,7 @@ import {
   readAssignmentResponse,
 } from "./scheduleResponses.js";
 import { createVolunteerOperations } from "./volunteerOperations.js";
+import { createSchedulingCycleHandlers } from "./schedulingCycleHandlers.js";
 import { resolveSignedInVolunteerMember } from "./volunteerIdentity.js";
 import {
   ASSIGNMENT_TOKEN_TTL_MS,
@@ -14418,6 +14419,18 @@ export const createTeamsAuthHandlers = ({
   };
 
   return {
+    ...createSchedulingCycleHandlers({
+      COLLECTIONS,
+      assertCsrf,
+      addSecurityEvent,
+      getDoc,
+      httpError,
+      nowIso,
+      requireAdminSession,
+      requireTeamsEditForTeamSession: requireTeamsEditForTeam,
+      requireFirestore,
+      setDoc,
+    }),
     ...createVolunteerPortalHandlers({
       getAccessStore: getVolunteerAccessStore, appBaseUrl: APP_BASE_URL,
       getRecoveryStore: getVolunteerRecoveryStore,

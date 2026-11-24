@@ -111,6 +111,13 @@ only after confirmation. Partially answered legacy data retains three-state
 editing. These presentation and confirmation rules do not change Auto-fill:
 only an explicit unavailable answer excludes a volunteer.
 
+The 2026-11-23 availability correctness follow-up confirms that clearing an
+existing answer displays **Not answered** and leaves the submitted value
+unanswered until the volunteer explicitly chooses Available or Unavailable.
+An authoritative read can confirm an uncertain save only when the attempted
+answers match and the read contains no unresolved grouped-occurrence conflicts;
+conflicting answers stay in the existing review flow.
+
 The 2026-11-23 availability correctness review confirmed that a historical
 grouped service and its standalone aliases are projected once regardless of
 row order only when exact church/team scope, group membership, service identity,

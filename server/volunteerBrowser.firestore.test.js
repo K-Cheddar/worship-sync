@@ -245,6 +245,7 @@ test("built public My Schedule works on mobile HTTPS with actual routes, Firesto
     assert.equal(new URL(page.url()).hash, "");
     assert.equal(await page.getByRole("button", { name: /Open December service/i }).count(), 0,
       "An availability form occurrence without an assignment is not shown as a My Schedule card");
+    await page.getByRole("button", { name: "Filters and organize" }).click();
     await page.getByRole("textbox", { name: /^Search/ }).fill("Evening");
     await page.getByRole("button", { name: /Open Evening Gathering/i }).waitFor();
     assert.equal(await page.getByRole("button", { name: /Open Sunday Gathering/i }).count(), 0);

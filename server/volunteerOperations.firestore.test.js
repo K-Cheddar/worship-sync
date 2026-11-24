@@ -398,7 +398,7 @@ test("Firestore portal uses isolated cookies, CSRF and safe shared projections; 
     const savedMember = (await roster.get()).data();
     assert.equal(savedMember.servingFrequency, "weekly");
     assert.deepEqual(savedMember.recurringAvailability, { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false });
-    assert.equal(savedMember.firstName, "Private");
+    assert.equal(savedMember.firstName, "Volunteer");
     assert.equal(savedMember.memberId, memberId);
     await roster.update({ updatedAt: "2099-10-31T12:00:00.000Z", firstName: "Administrator updated" });
     const stalePreferences = res(); await authHandlers.saveVolunteerPersonalSchedulingPreferences(req(headers, {

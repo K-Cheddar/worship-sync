@@ -30,6 +30,8 @@ The [Local video input thumbnails contract](local-video-input-thumbnails.md) rec
 
 The [Unavailable local-source previews contract](unavailable-local-source-previews.md) records operator-facing status for local media and capture sources that cannot preview on this device, while preserving cloud fallback and audience-output behavior confirmed November 18, 2026.
 
+The [Scheduling Cycles contract](scheduling-cycles.md) records the Phase 2 request for revisioned scheduling defaults, team overrides, durable cycle identity, and side-effect-free previews, including a configurable response deadline with a three-day default confirmed November 24, 2026.
+
 ## Feature inventory
 
 Only workflows specifically labeled as confirmed contracts are documented as owner-confirmed. All other registry workflows are **inventory only**: their broad labels are observed from current product surfaces and need product-owner validation before being treated as behavioral contracts. Implementation references help locate features; they are not requirements.

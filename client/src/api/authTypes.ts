@@ -379,6 +379,93 @@ export type TeamRecord = {
   archivedAt?: string | null;
 };
 
+export type SchedulingAutomationSettings = {
+  frequency: "monthly";
+  preparationDay: number;
+  availabilityRequestLeadDays: number;
+  followUpAfterDays: number;
+  leaderSummaryAfterDays: number;
+  /** Calendar days before preparation by which volunteers should respond; default is three. */
+  availabilityResponseLeadDays: number;
+  localExecutionTime: string;
+  publicationPolicy: "manual";
+};
+
+export type SchedulingSettingsRecord = {
+  settingsId: string;
+  churchId: string;
+  teamId: string | null;
+  scopeType: "church_defaults" | "team_override";
+  mode?: "inherit" | "customize" | "disabled";
+  settings: SchedulingAutomationSettings | null;
+  revision: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type SchedulingEffectiveSettings = {
+  mode: "inherit" | "customize" | "disabled";
+  enabled: boolean;
+  settings: SchedulingAutomationSettings;
+  configurationRevision: string;
+  source: "church" | "team" | "disabled";
+};
+
+export type SchedulingCycleAction = {
+  actionId: string;
+  id: string;
+  cycleId: string;
+  churchId: string;
+  teamId: string;
+  periodId: string;
+  actionType: string;
+  localDate: string | null;
+  localTime: string | null;
+  serviceTimeZone: string;
+  dueAt: string | null;
+  state: "planned" | "manual" | "completed" | "skipped" | "failed";
+  enabled: boolean;
+  relatedFormId: string | null;
+  relatedScheduleId: string | null;
+  configurationRevision: string;
+  idempotencyKey: string;
+  cancelReason: string | null;
+  supersededByActionId: string | null;
+  attemptCount: number;
+  claimedAt: string | null;
+  claimExpiresAt: string | null;
+  lastAttemptAt: string | null;
+  completedAt: string | null;
+  lastError: string | null;
+  result: Record<string, unknown> | null;
+  schemaVersion: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SchedulingCycleRecord = {
+  cycleId: string;
+  churchId: string;
+  scopeType: "team";
+  teamId: string;
+  periodId: string;
+  periodStart: string;
+  periodEnd: string;
+  serviceTimeZone: string;
+  configurationRevision: string;
+  effectiveConfiguration: SchedulingAutomationSettings;
+  lifecycleState: "planned" | "active" | "complete" | "cancelled";
+  automationEnabled: false;
+  publicationPolicy: "manual";
+  availabilityFormIds: string[];
+  scheduleIds: string[];
+  plannedActionIds: string[];
+  deadlines: Record<string, { localDate: string; localTime: string; dueAt: string }>;
+  schemaVersion: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type TeamRole = {
   roleId: string;
   churchId: string;

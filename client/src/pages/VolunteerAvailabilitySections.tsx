@@ -100,6 +100,10 @@ const answerLabel = (answer: AvailabilityChoice | undefined) => {
 const requestKey = (request: Pick<VolunteerAvailabilityRequest, "formId" | "recipientId">) =>
   request.formId + ":" + request.recipientId;
 
+const hasUnresolvedAvailabilityConflicts = (request: VolunteerAvailabilityRequest) =>
+  Boolean(request.conflictingOccurrenceIds?.length) ||
+  request.occurrences.some((occurrence) => occurrence.hasConflictingAnswers);
+
 const AvailabilitySelectionToolbar = ({
   selectionLabel,
   selectAllDisabled,
@@ -315,6 +319,7 @@ const AvailabilityRequestEditor = ({
       return "unavailable" as const;
     }
     if (uncertain && uncertainPayloadRef.current && sameAvailabilityScope(requestSnapshot, latest) &&
+        !hasUnresolvedAvailabilityConflicts(latest) &&
         hasAvailabilityResponseSubmission(latest) && availabilityMapsMatch(
       latest.availability,
       uncertainPayloadRef.current,
@@ -399,6 +404,7 @@ const AvailabilityRequestEditor = ({
       const latest = read?.requests.find((item) => requestKey(item) === requestKey(requestSnapshot));
       if (!read) throw new Error("Could not confirm that save. Refresh the latest answers before trying again.");
       if (latest && sameAvailabilityScope(requestSnapshot, latest) &&
+          !hasUnresolvedAvailabilityConflicts(latest) &&
           hasAvailabilityResponseSubmission(latest) && latest.submissionId === result.submissionId &&
           availabilityMapsMatch(latest.availability, submittedAnswers, occurrenceIds)) {
         onSaved(submittedAnswers, result, read, latest);
@@ -664,7 +670,7 @@ const AvailabilityRequestEditor = ({
                     const dateTime = formatAvailabilityOccurrence(occurrence, serviceTimeZone);
                     const visibleTime = formatAvailabilityOccurrenceTime(occurrence, serviceTimeZone);
                     const isSelected = draft[occurrenceId] === "available";
-                    const isUnanswered = draft[occurrenceId] === undefined && historicalUnansweredIds.has(occurrenceId);
+                    const isUnanswered = unansweredIdsForSubmission.has(occurrenceId);
                     const hasConflict = unresolvedConflicts.includes(occurrenceId);
                     const canClearAnswer = canEdit && draft[occurrenceId] !== undefined &&
                       (Object.hasOwn(requestSnapshot.availability, occurrenceId) || historicalUnansweredIds.has(occurrenceId));
