@@ -348,6 +348,78 @@ const callHandler = async (handler, { context, params = {}, body = {} }) => {
   return response;
 };
 
+for (const purpose of ["general_intake", "team_availability"]) {
+  test(`${purpose} administrative intake application retries against concurrent member changes`, async (t) => {
+    const db = createFirestoreMock();
+    const fixture = await createFixture(db, `apply-${purpose}`);
+    t.after(() => setServerFirestoreForTests(null));
+    const form = await getDoc(COLLECTIONS.teamIntakeForms, fixture.formId);
+    await db.collection(COLLECTIONS.teamIntakeForms).doc(fixture.formId).update({ purpose });
+    const occurrenceId = form.availabilityOccurrences[0].occurrenceId;
+    const submissionId = `apply-race-${purpose}`;
+    await db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId).set({
+      submissionId, formId: fixture.formId, churchId: fixture.context.churchId,
+      occurrenceAvailability: { [occurrenceId]: "unavailable" }, email: "old@example.test",
+    });
+    let interrupted = false;
+    const editMember = async () => {
+      interrupted = true;
+      await db.collection(COLLECTIONS.teamRosterMembers).doc(fixture.memberId).update({
+        serviceAvailability: { concurrent: "available" }, email: "new@example.test", notes: "New admin note",
+        desiredPositionIds: ["new-preference"],
+      });
+    };
+    // Both hooks reproduce the same read/commit boundary. The direct-set hook
+    // exposes the pre-fix failure; the transaction hook forces a retry now.
+    db.setBeforeDirectSet(async (ref) => {
+      if (ref.collectionName !== COLLECTIONS.teamRosterMembers) return;
+      db.setBeforeDirectSet(null);
+      await editMember();
+    });
+    db.setBeforeCommit(async (writes) => {
+      if (interrupted || !writes.some(({ ref }) => ref.collectionName === COLLECTIONS.teamRosterMembers)) return;
+      db.setBeforeCommit(null);
+      await editMember();
+    });
+    const applied = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+      context: fixture.context, params: { submissionId }, body: { action: "applied", memberId: fixture.memberId },
+    });
+    assert.equal(applied.statusCode, 200, JSON.stringify(applied.payload));
+    assert.equal(interrupted, true);
+    const member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+    assert.deepEqual(member.serviceAvailability, { concurrent: "available", [occurrenceId]: "unavailable" });
+    assert.equal(member.email, "new@example.test");
+    assert.equal(member.notes, "New admin note");
+    assert.deepEqual(member.desiredPositionIds, ["new-preference"]);
+  });
+}
+
+test("administrative intake application rejects form enablement changed before commit", async (t) => {
+  const db = createFirestoreMock();
+  const fixture = await createFixture(db, "apply-form-change");
+  t.after(() => setServerFirestoreForTests(null));
+  const form = await getDoc(COLLECTIONS.teamIntakeForms, fixture.formId);
+  const occurrenceId = form.availabilityOccurrences[0].occurrenceId;
+  await db.collection(COLLECTIONS.teamRosterMembers).doc(fixture.memberId).update({
+    serviceAvailability: { [occurrenceId]: "unavailable" },
+  });
+  const submissionId = "form-enablement-race";
+  await db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId).set({
+    submissionId, formId: fixture.formId, churchId: fixture.context.churchId, occurrenceAvailability: {},
+  });
+  db.setBeforeCommit(async (writes) => {
+    if (!writes.some(({ ref }) => ref.collectionName === COLLECTIONS.teamRosterMembers)) return;
+    db.setBeforeCommit(null);
+    await db.collection(COLLECTIONS.teamIntakeForms).doc(fixture.formId).update({ enabledFields: [] });
+  });
+  const applied = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context: fixture.context, params: { submissionId }, body: { action: "applied", memberId: fixture.memberId },
+  });
+  assert.equal(applied.statusCode, 409, JSON.stringify(applied.payload));
+  const member = await getDoc(COLLECTIONS.teamRosterMembers, fixture.memberId);
+  assert.deepEqual(member.serviceAvailability, { [occurrenceId]: "unavailable" });
+});
+
 test("scope change that commits before first recipient issuance cannot use the stale form snapshot", async (t) => {
   const db = createFirestoreMock();
   const fixture = await createFixture(db, "scope-first");
@@ -912,3 +984,31 @@ test("non-Firestore fallback preserves sequential single-process behavior only",
   assert.equal(changed.statusCode, 409, JSON.stringify(changed.payload));
   t.after(() => setServerFirestoreForTests(null));
 });
+
+for (const samePurpose of [false, true]) {
+  test(`Firestore intake defaults retry preserves competing ${samePurpose ? "same-purpose conflict" : "purpose and unrelated settings"}`, async (t) => {
+    const db = createFirestoreMock();
+    const fixture = await createFixture(db, `defaults_${samePurpose}`);
+    t.after(() => setServerFirestoreForTests(null));
+    const { context } = fixture;
+    const { churchId } = context;
+    const settings = { welcomeMessage: "First", availabilityMessage: "Dates" };
+    let competing;
+    db.setBeforeCommit(async (writes) => {
+      if (!writes.some(({ ref, data }) => ref.collectionName === COLLECTIONS.churches && data?.intakeFormDefaults)) return;
+      db.setBeforeCommit(null);
+      await db.collection(COLLECTIONS.churches).doc(churchId).update({ serviceTimeZone: "America/New_York" });
+      competing = await callHandler(authHandlers.saveIntakeFormDefaults, { context, body: {
+        purpose: samePurpose ? "team_availability" : "general_intake", revision: "legacy",
+        settings: samePurpose ? { ...settings, welcomeMessage: "Second" } : { ...settings, enabledFields: ["availability"], positionsMessage: "", notesMessage: "" },
+      } });
+    });
+    const first = await callHandler(authHandlers.saveIntakeFormDefaults, { context, body: { purpose: "team_availability", settings, revision: "legacy" } });
+    assert.equal(competing.statusCode, 200);
+    assert.equal(first.statusCode, samePurpose ? 409 : 200);
+    const church = (await db.collection(COLLECTIONS.churches).doc(churchId).get()).data();
+    assert.equal(church.serviceTimeZone, "America/New_York");
+    assert.equal(church.intakeFormDefaults.team_availability.welcomeMessage, samePurpose ? "Second" : "First");
+    if (!samePurpose) assert.equal(church.intakeFormDefaults.general_intake.welcomeMessage, "First");
+  });
+}

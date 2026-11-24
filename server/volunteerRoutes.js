@@ -27,6 +27,10 @@ export const registerVolunteerRoutes = (app, authHandlers) => {
     "/api/churches/:churchId/my-availability",
     authHandlers.submitMyVolunteerAvailability,
   );
+  app.post(
+    "/api/churches/:churchId/my-scheduling-preferences",
+    authHandlers.updateMySchedulingPreferences,
+  );
   // Personal access uses isolated sessions and the public bootstrap.
   app.use("/s", (_req, res, next) => {
     res.set({ "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" });
@@ -40,6 +44,7 @@ export const registerVolunteerRoutes = (app, authHandlers) => {
   app.post("/api/volunteer/respond", authHandlers.respondToVolunteerPersonalAssignment);
   app.post("/api/volunteer/accept-unanswered", authHandlers.acceptVolunteerPersonalUnanswered);
   app.post("/api/volunteer/blockouts", authHandlers.saveVolunteerPersonalBlockouts);
+  app.post("/api/volunteer/preferences", authHandlers.saveVolunteerPersonalSchedulingPreferences);
   app.get("/api/volunteer/availability", authHandlers.getVolunteerPersonalAvailability);
   app.post("/api/volunteer/availability", authHandlers.submitVolunteerPersonalAvailability);
   app.post("/api/churches/:churchId/team-roster-members/:memberId/personal-access/prepare", authHandlers.prepareVolunteerPersonalAccess);

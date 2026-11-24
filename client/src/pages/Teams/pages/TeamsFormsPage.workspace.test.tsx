@@ -1,5 +1,5 @@
 import { useState, type ContextType } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { GlobalInfoContext } from "../../../context/globalInfo";
@@ -21,6 +21,8 @@ import {
   updateTeamIntakeForm,
   getTeamAvailabilityManagementData,
   getNotificationIntents,
+  getIntakeFormDefaults,
+  saveIntakeFormDefaults,
 } from "../../../api/auth";
 import { useTeamsPage } from "../TeamsPageContext";
 import TeamsFormsPage from "./TeamsFormsPage";
@@ -34,6 +36,8 @@ afterEach(() => setServerTimeOffset(0));
 
 jest.mock("../TeamsPageContext", () => ({ useTeamsPage: jest.fn() }));
 jest.mock("../../../api/auth", () => ({
+  getIntakeFormDefaults: jest.fn().mockResolvedValue({ success: true, defaults: {}, revisions: { general_intake: "legacy", team_availability: "legacy" }, canEdit: true }),
+  saveIntakeFormDefaults: jest.fn(),
   getNotificationIntents: jest
     .fn()
     .mockResolvedValue({ success: true, intents: [] }),
@@ -115,12 +119,14 @@ const submission: TeamIntakeSubmission = {
 const mockUpsertData = jest.fn();
 
 function Harness({
+  churchId = "church",
   scoped = false,
   formRecord = form,
   initialSubmissions = [],
   services = [],
   emptyRoster = false,
 }: {
+  churchId?: string;
   scoped?: boolean;
   formRecord?: TeamIntakeForm;
   initialSubmissions?: TeamIntakeSubmission[];
@@ -129,7 +135,7 @@ function Harness({
 }) {
   const [submitted, setSubmitted] = useState(false);
   jest.mocked(useTeamsPage).mockReturnValue({
-    churchId: "church",
+    churchId,
     serviceTimeZone: "UTC",
     canEditTeams: !scoped,
     canManageTeamAvailability: scoped,
@@ -174,7 +180,7 @@ function Harness({
     <MemoryRouter initialEntries={["/teams-and-services/forms"]}>
       <GlobalInfoContext.Provider
         value={
-          { churchId: "church", role: "admin" } as ContextType<
+          { churchId, role: "admin" } as ContextType<
             typeof GlobalInfoContext
           >
         }
@@ -633,4 +639,41 @@ test("legacy service-selection-only forms derive readable service dates without 
   expect(record.availabilityOccurrences).toEqual([]);
   expect(record.purpose).toBeUndefined();
   expect(updateTeamIntakeForm).not.toHaveBeenCalled();
+});
+
+const churchDefaults = (welcomeMessage: string) => ({ success: true, canEdit: true, defaults: { general_intake: { enabledFields: ["availability" as const], welcomeMessage, availabilityMessage: "", positionsMessage: "", notesMessage: "" } }, revisions: { general_intake: "g1", team_availability: "a1" } });
+
+test("church switching rejects a late defaults load even after switching back to the same church", async () => {
+  let resolveA!: (value: ReturnType<typeof churchDefaults>) => void;
+  jest.mocked(getIntakeFormDefaults).mockImplementationOnce(() => new Promise((resolve) => { resolveA = resolve; }));
+  const user = userEvent.setup();
+  const view = render(<Harness churchId="A" />);
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce(churchDefaults("B welcome"));
+  view.rerender(<Harness churchId="B" />);
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  expect(screen.getByLabelText(/^Welcome message/)).toHaveValue("B welcome");
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce(churchDefaults("New A welcome"));
+  view.rerender(<Harness churchId="A" />);
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  await user.type(screen.getByLabelText(/^Welcome message/), " edited");
+  await act(async () => resolveA(churchDefaults("Old A welcome")));
+  expect(screen.getByLabelText(/^Welcome message/)).toHaveValue("New A welcome edited");
+  expect(saveIntakeFormDefaults).not.toHaveBeenCalled();
+});
+
+test("a defaults save that settles after a church switch cannot publish into the new draft", async () => {
+  let finish!: (value: ReturnType<typeof churchDefaults>) => void;
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce(churchDefaults("A welcome"));
+  jest.mocked(saveIntakeFormDefaults).mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+  const user = userEvent.setup();
+  const view = render(<Harness churchId="A" />);
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  await user.click(screen.getByRole("button", { name: "Save as default" }));
+  expect(saveIntakeFormDefaults).toHaveBeenCalledWith("A", expect.anything());
+  jest.mocked(getIntakeFormDefaults).mockResolvedValueOnce(churchDefaults("B welcome"));
+  view.rerender(<Harness churchId="B" />);
+  await user.click(screen.getByRole("button", { name: "Create intake form" }));
+  await act(async () => finish(churchDefaults("Saved A welcome")));
+  expect(screen.getByLabelText(/^Welcome message/)).toHaveValue("B welcome");
+  expect(screen.queryByText("Form defaults saved.")).not.toBeInTheDocument();
 });

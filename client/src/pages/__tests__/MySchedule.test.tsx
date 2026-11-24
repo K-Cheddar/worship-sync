@@ -1,14 +1,14 @@
 /* eslint-disable testing-library/no-node-access -- Compare the decorative icon SVG directly to verify its identity. */
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import { Provider } from "react-redux";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import store from "../../store/store";
 import userEvent from "@testing-library/user-event";
 import type { ContextType } from "react";
 import { PAGE_APPEARANCES } from "../pageAppearances";
 import { getLucideIconInnerMarkup } from "../../test/lucideIconTestUtils";
 import MySchedule from "../MySchedule";
-import type { MyScheduleOperations, PersonalScheduleAccess } from "../myScheduleOperations";
+import type { MyScheduleOperations, PersonalScheduleAccess, VolunteerAvailabilityRequest, VolunteerAvailabilityRequestSummary } from "../myScheduleOperations";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
   acceptPendingMyAssignments,
@@ -26,7 +26,12 @@ jest.mock("../../api/auth", () => ({
   updateMyBlockoutDates: jest.fn(),
   respondToMyAssignment: jest.fn(),
   acceptMyUnansweredAssignments: jest.fn(),
-  getMyVolunteerAvailability: jest.fn().mockResolvedValue({ success: true, requests: [] }),
+  getMyVolunteerAvailability: jest.fn().mockResolvedValue({
+    success: true,
+    requests: [],
+    requestSummaries: [],
+    schedulingPreferences: null,
+  }),
   submitMyVolunteerAvailability: jest.fn(),
   // showApiErrorToast narrows with `instanceof`, so the error path needs a real
   // class here rather than an undefined export.
@@ -131,6 +136,11 @@ const futureCalendarDate = (daysAhead: number) => {
   return date;
 };
 
+const CurrentPath = () => {
+  const location = useLocation();
+  return <span data-testid="current-location">{location.pathname + location.search}</span>;
+};
+
 const calendarDayName = (date: Date) => {
   const day = date.getDate();
   const suffix = day % 100 >= 11 && day % 100 <= 13
@@ -158,9 +168,9 @@ const selectCalendarDay = async (user: ReturnType<typeof userEvent.setup>, date:
 
 // AppPageShell reads the scrollbar-width preference and renders the app menu,
 // so the page needs the store and a router the way the real app provides them.
-const pageElement = (role = "member", churchId = "church-1") => (
+const pageElement = (role = "member", churchId = "church-1", initialEntry = "/my-schedule") => (
   <Provider store={store}>
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <GlobalInfoContext.Provider
         value={
           {
@@ -171,6 +181,7 @@ const pageElement = (role = "member", churchId = "church-1") => (
         }
       >
         <MySchedule />
+        <CurrentPath />
       </GlobalInfoContext.Provider>
     </MemoryRouter>
   </Provider>
@@ -221,9 +232,66 @@ it("retires pending bulk work when church changes with the same member and sched
   expect(screen.getByRole("button", { name: "Accept remaining assignments" })).toBeEnabled();
 });
 
+it("clears availability summaries when the personal volunteer changes", async () => {
+  const makePersonalAccess = (memberId: string, requestSummaries: VolunteerAvailabilityRequestSummary[]): PersonalScheduleAccess => ({
+    churchId: "church-1",
+    memberId,
+    sessionKey: `${memberId}-session`,
+    operations: {
+      load: jest.fn().mockResolvedValue({
+        success: true,
+        member: { memberId, churchId: "church-1", updatedAt: STAMP, blockoutDates: [] },
+        occurrences: [],
+      }),
+      respond: jest.fn(),
+      saveBlockouts: jest.fn(),
+      acceptUnanswered: jest.fn(),
+      loadAvailability: jest.fn().mockResolvedValue({
+        success: true,
+        requests: [],
+        requestSummaries,
+        schedulingPreferences: null,
+      }),
+      saveAvailability: jest.fn(),
+    },
+  });
+  const oldRequest = {
+    recipientId: "old-recipient",
+    formId: "old-form",
+    name: "Old volunteer request",
+    responseDeadline: "2099-11-01",
+    respondedAt: "",
+    submissionId: "",
+    editable: true,
+  };
+  const oldAccess = makePersonalAccess("member-old", [oldRequest]);
+  const newAccess = makePersonalAccess("member-new", []);
+  const view = (access: PersonalScheduleAccess) => (
+    <Provider store={store}><MemoryRouter><MySchedule access={access} /></MemoryRouter></Provider>
+  );
+  const { rerender } = render(view(oldAccess));
+
+  expect(await screen.findByRole("button", { name: "Respond Old volunteer request" })).toBeInTheDocument();
+  rerender(view(newAccess));
+
+  await waitFor(() => expect(newAccess.operations.loadAvailability).toHaveBeenCalledWith({ summary: true }));
+  expect(screen.queryByRole("button", { name: /Old volunteer request/ })).not.toBeInTheDocument();
+});
+
 describe("MySchedule", () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockGetMyTeamAssignments.mockReset();
+    mockAcceptPendingMyAssignments.mockReset();
+    mockUpdateMyBlockoutDates.mockReset();
+    mockRespondToMyAssignment.mockReset();
+    mockGetMyVolunteerAvailability.mockReset();
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      requests: [],
+      requestSummaries: [],
+      schedulingPreferences: null,
+    } as never);
+    mockUsePublicServiceFlow.mockReset();
     mockUsePublicServiceFlow.mockReturnValue({
       snapshot: null,
       error: "",
@@ -234,17 +302,22 @@ describe("MySchedule", () => {
     });
   });
 
-  it("keeps its toolbar full width above centered schedule content", () => {
+  it("keeps its toolbar full width above the shared full-width volunteer workspace", () => {
     respond([]);
     renderPage();
 
     const shell = screen.getByRole("main").firstElementChild;
-    expect(shell?.firstElementChild).toHaveClass("w-full");
-    expect(shell?.firstElementChild).not.toHaveClass("max-w-[90rem]");
-    expect(shell?.lastElementChild).toHaveClass(
+    const toolbar = shell?.querySelector("[data-app-toolbar]");
+    expect(toolbar).toHaveClass("w-full");
+    expect(toolbar).not.toHaveClass("max-w-[90rem]");
+    const workspace = shell?.querySelector("[data-volunteer-workspace]");
+    expect(workspace).toHaveClass("w-full", "min-w-0");
+    expect(workspace).not.toHaveClass("max-w-[90rem]");
+    expect(screen.getByTestId("volunteer-workspace-scrollport").firstElementChild).toHaveClass(
       "mx-auto",
       "w-full",
-      "max-w-[90rem]",
+      "max-w-[80rem]",
+      "min-w-0",
     );
     const title = screen.getByRole("heading", { name: "My schedule" });
     const titleIcon = title.querySelector("svg");
@@ -256,18 +329,34 @@ describe("MySchedule", () => {
     );
   });
 
-  it("shows a schedule-shaped skeleton while the initial assignments load", async () => {
+  it("shows assignment loading independently while the availability summary is ready", async () => {
     const request = deferred<Awaited<ReturnType<typeof getMyTeamAssignments>>>();
     mockGetMyTeamAssignments.mockReturnValue(request.promise);
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      requests: [],
+      requestSummaries: [{
+        recipientId: "recipient-1",
+        formId: "form-1",
+        name: "November availability",
+        responseDeadline: "2099-11-01",
+        respondedAt: "",
+        submissionId: "",
+        editable: true,
+      }],
+      schedulingPreferences: null,
+    } as never);
     renderPage();
 
     expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("status", { name: "Loading your schedule" })).toHaveAttribute(
+    expect(mockGetMyVolunteerAvailability).toHaveBeenCalledTimes(1);
+    expect(mockGetMyVolunteerAvailability).toHaveBeenCalledWith("church-1", { summary: true });
+    expect(screen.getByRole("status", { name: "Loading assignments" })).toHaveAttribute(
       "aria-busy",
       "true",
     );
-    expect(screen.getByText("Upcoming")).toBeInTheDocument();
-    expect(screen.getAllByTestId("my-schedule-loading-card")).toHaveLength(3);
+    expect(await screen.findByRole("button", { name: "Respond November availability" })).toBeInTheDocument();
+    expect(screen.getAllByTestId("my-schedule-loading-card")).toHaveLength(2);
 
     await act(async () => {
       request.resolve({
@@ -279,8 +368,147 @@ describe("MySchedule", () => {
     });
 
     expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
-    expect(screen.queryByRole("status", { name: "Loading your schedule" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("status", { name: "Loading assignments" })).not.toBeInTheDocument();
     expect(screen.queryAllByTestId("my-schedule-loading-card")).toHaveLength(0);
+  });
+
+  it("keeps assignments usable when the availability summary fails", async () => {
+    respond([occurrence()]);
+    mockGetMyVolunteerAvailability.mockRejectedValue(new Error("Availability unavailable"));
+    renderPage();
+
+    expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Availability unavailable");
+  });
+
+  it("keeps availability requests visible when the assignment load fails", async () => {
+    mockGetMyTeamAssignments.mockRejectedValue(new Error("Schedule unavailable"));
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      requests: [],
+      requestSummaries: [{
+        recipientId: "recipient-1",
+        formId: "form-1",
+        name: "November availability",
+        responseDeadline: "2099-11-01",
+        respondedAt: "",
+        submissionId: "",
+        editable: true,
+      }],
+      schedulingPreferences: null,
+    } as never);
+    renderPage();
+
+    expect(await screen.findByText(/Could not load your schedule/)).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Respond November availability" })).toBeInTheDocument();
+  });
+
+  it("opens availability as a focused URL editor and returns to the full schedule", async () => {
+    const user = userEvent.setup();
+    respond([occurrence()]);
+    const request: VolunteerAvailabilityRequest = {
+      recipientId: "recipient-1",
+      formId: "form-1",
+      name: "November availability",
+      responseDeadline: "2099-11-01",
+      availabilityMessage: "Choose the services you can serve.",
+      respondedAt: "",
+      submissionId: "",
+      editable: true,
+      occurrences: [{
+        occurrenceId: "service-a@2099-11-08",
+        name: "Sunday service 1",
+        startsAt: "2099-11-08T14:00:00.000Z",
+        serviceDate: "2099-11-08",
+      }],
+      availability: {},
+      unansweredOccurrenceIds: ["service-a@2099-11-08"],
+      availabilityRevision: { "service-a@2099-11-08": 0 },
+    };
+    mockGetMyVolunteerAvailability
+      .mockResolvedValueOnce({
+        success: true,
+        requests: [],
+        requestSummaries: [{
+          recipientId: request.recipientId,
+          formId: request.formId,
+          name: request.name,
+          responseDeadline: request.responseDeadline,
+          respondedAt: request.respondedAt,
+          submissionId: request.submissionId,
+          editable: request.editable,
+        }],
+        schedulingPreferences: null,
+      } as never)
+      .mockResolvedValueOnce({
+        success: true,
+        serviceTimeZone: "America/New_York",
+        requests: [request],
+        requestSummaries: [],
+        schedulingPreferences: null,
+      } as never);
+    renderPage();
+
+    const action = await screen.findByRole("button", { name: "Respond November availability" });
+    expect(screen.getByRole("heading", { name: "Scheduling preferences" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
+    const requestCard = screen.getByRole("group", { name: "November availability" });
+    expect(within(requestCard).getAllByRole("button")).toHaveLength(1);
+    await user.click(within(requestCard).getByText("November availability"));
+    expect(screen.getByTestId("current-location")).toHaveTextContent("/my-schedule");
+    expect(screen.queryByRole("heading", { name: "November availability" })).not.toBeInTheDocument();
+
+    await user.click(action);
+    expect(await screen.findByRole("heading", { name: "November availability" })).toBeInTheDocument();
+    expect(screen.getByTestId("current-location")).toHaveTextContent("availabilityRequest=recipient-1");
+    expect(screen.queryByRole("heading", { name: "Scheduling preferences" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Open Sunday Gathering/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Time off")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back to My Schedule" }));
+    expect(await screen.findByRole("heading", { name: "Scheduling preferences" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Respond November availability" })).toBeInTheDocument();
+    expect(screen.getByTestId("current-location")).toHaveTextContent("/my-schedule");
+    expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a signed-in deep link directly into the focused editor", async () => {
+    const request: VolunteerAvailabilityRequest = {
+      recipientId: "recipient-1",
+      formId: "form-1",
+      name: "November availability",
+      responseDeadline: "2099-11-01",
+      availabilityMessage: "Choose the services you can serve.",
+      respondedAt: "",
+      submissionId: "",
+      editable: true,
+      occurrences: [{
+        occurrenceId: "service-a@2099-11-08",
+        name: "Sunday service 1",
+        startsAt: "2099-11-08T14:00:00.000Z",
+        serviceDate: "2099-11-08",
+      }],
+      availability: {},
+      unansweredOccurrenceIds: ["service-a@2099-11-08"],
+      availabilityRevision: { "service-a@2099-11-08": 0 },
+    };
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      serviceTimeZone: "America/New_York",
+      requests: [request],
+      requestSummaries: [],
+      schedulingPreferences: null,
+    } as never);
+    render(pageElement("member", "church-1", "/my-availability?availabilityRequest=recipient-1"));
+
+    expect(await screen.findByRole("heading", { name: "November availability" })).toBeInTheDocument();
+    expect(mockGetMyVolunteerAvailability.mock.calls.map(([, options]) => options)).toEqual([
+      { recipientId: "recipient-1" },
+    ]);
+    expect(mockGetMyTeamAssignments).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Scheduling preferences" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Time off")).not.toBeInTheDocument();
   });
 
   it.each(["human account", "personal link"])(
@@ -346,16 +574,38 @@ describe("MySchedule", () => {
 
   it("uses the compact Organize toggle and switches the actual My Schedule grouping", async () => {
     const user = userEvent.setup();
-    respond([occurrence()]);
+    respond([
+      occurrence(),
+      ...[13, 20, 27].map((day) => occurrence({
+        occurrenceId: `extra@2099-09-${day}`,
+        date: `2099-09-${day}`,
+        startsAt: `2099-09-${day}T15:00:00.000Z`,
+        name: `Extra service ${day}`,
+      })),
+    ]);
     renderPage();
 
-    const organize = await screen.findByRole("group", { name: "Organize services" });
+    await user.click(await screen.findByRole("button", { name: "Filters and organize" }));
+    const organize = screen.getByRole("group", { name: "Organize services" });
     expect(within(organize).getByRole("button", { name: "By month" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("heading", { name: "September 2099" })).toBeInTheDocument();
 
     await user.click(within(organize).getByRole("button", { name: "By service" }));
     expect(within(organize).getByRole("button", { name: "By service" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("heading", { name: "Sunday Gathering" })).toBeInTheDocument();
+  });
+
+  it("keeps the normal application Menu and removes volunteer page navigation", async () => {
+    const user = userEvent.setup();
+    respond([]);
+    renderPage();
+
+    expect(screen.getByRole("heading", { name: "My schedule" })).toBeInTheDocument();
+    expect(screen.queryByRole("navigation", { name: "Volunteer pages" })).not.toBeInTheDocument();
+    expect(screen.queryByTestId("volunteer-desktop-sidebar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("volunteer-mobile-bottom-navigation")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Open menu" }));
+    expect(await screen.findByRole("dialog", { name: "Menu" })).toBeInTheDocument();
   });
 
   describe("accept pending", () => {
@@ -650,7 +900,15 @@ describe("MySchedule", () => {
 
     it("keeps the global action independent of search filters and summarizes partial completion", async () => {
       const user = userEvent.setup();
-      respond([occurrence()]);
+      respond([
+        occurrence(),
+        ...[13, 20, 27].map((day) => occurrence({
+          occurrenceId: `extra@2099-09-${day}`,
+          date: `2099-09-${day}`,
+          startsAt: `2099-09-${day}T15:00:00.000Z`,
+          serving: [me({ response: "accepted" }), other()],
+        })),
+      ]);
       mockAcceptPendingMyAssignments.mockResolvedValue(result({
         newlyAccepted: 1,
         alreadyAccepted: 1,
@@ -661,6 +919,7 @@ describe("MySchedule", () => {
       renderPage();
 
       expect(await screen.findByText("You have 1 assignment waiting for a response.")).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Filters and organize" }));
       await user.type(screen.getByLabelText(/Search/i), "not a service");
       expect(screen.queryByRole("button", { name: /Open Sunday Gathering/i })).not.toBeInTheDocument();
       await user.click(screen.getByRole("button", { name: /Accept remaining assignments/i }));
@@ -956,10 +1215,17 @@ describe("MySchedule", () => {
         name: "Evening Service",
         serving: [me({ positionName: "Camera - Roving" })],
       }),
+      ...[13, 20].map((day) => occurrence({
+        occurrenceId: `extra@2099-09-${day}`,
+        date: `2099-09-${day}`,
+        startsAt: `2099-09-${day}T15:00:00.000Z`,
+        name: `Extra Service ${day}`,
+      })),
     ]);
     renderPage();
 
     await screen.findByRole("button", { name: /Open Sunday Gathering/i });
+    await user.click(screen.getByRole("button", { name: "Filters and organize" }));
     await user.type(screen.getByLabelText(/Search/i), "amazing");
 
     expect(
@@ -1038,10 +1304,19 @@ describe("MySchedule", () => {
 
   it("distinguishes an empty search from an empty schedule", async () => {
     const user = userEvent.setup();
-    respond([occurrence()]);
+    respond([
+      occurrence(),
+      ...[13, 20, 27].map((day) => occurrence({
+        occurrenceId: `extra@2099-09-${day}`,
+        date: `2099-09-${day}`,
+        startsAt: `2099-09-${day}T15:00:00.000Z`,
+        name: `Extra service ${day}`,
+      })),
+    ]);
     renderPage();
 
     await screen.findByRole("button", { name: /Open Sunday Gathering/i });
+    await user.click(screen.getByRole("button", { name: "Filters and organize" }));
     await user.type(screen.getByLabelText(/Search/i), "zzzz");
 
     expect(screen.getByText("Nothing matches that search.")).toBeInTheDocument();
@@ -1107,6 +1382,28 @@ describe("MySchedule", () => {
       expect(mockUpdateMyBlockoutDates).not.toHaveBeenCalled();
     });
 
+    it("keeps a dirty Time Off draft when application navigation is canceled", async () => {
+      const user = userEvent.setup();
+      respond([occurrence()], { memberId: "m1", updatedAt: STAMP, blockoutDates: [away] });
+      renderPage();
+
+      await expandTimeOff(user);
+      await user.click(screen.getByRole("button", { name: /Remove blockout/i }));
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
+      await user.click(screen.getByRole("button", { name: "Open menu" }));
+      const menu = await screen.findByRole("dialog", { name: "Menu" });
+      await user.click(within(menu).getByRole("link", { name: "Home" }));
+
+      const navigationWarning = await screen.findByRole("dialog", { name: "Unsaved changes" });
+      expect(screen.getByTestId("current-location")).toHaveTextContent("/my-schedule");
+      await user.click(within(navigationWarning).getByRole("button", { name: "Stay" }));
+      await user.keyboard("{Escape}");
+
+      expect(screen.getByRole("button", { name: "Save time off" })).toBeEnabled();
+      expect(screen.getByTestId("current-location")).toHaveTextContent("/my-schedule");
+      expect(mockUpdateMyBlockoutDates).not.toHaveBeenCalled();
+    });
+
     // Blocking a date you are already on is allowed — refusing would leave the
     // owner believing the slot is covered. Both sides see the clash instead.
     it("flags a service the member is already scheduled for", async () => {
@@ -1152,6 +1449,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", blockoutDates: [second] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [second] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1199,6 +1497,7 @@ describe("MySchedule", () => {
         saveRequest.resolve({
           success: true,
           member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
+          memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
         } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       });
       expect(screen.queryByRole("button", { name: /^Save time off$/i })).not.toBeInTheDocument();
@@ -1221,6 +1520,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", blockoutDates: [over] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [over] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1292,6 +1592,7 @@ describe("MySchedule", () => {
         mockUpdateMyBlockoutDates.mockResolvedValue({
           success: true,
           member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: withHistory ? [history] : [] },
+          memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: withHistory ? [history] : [] },
         } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
         renderPage();
 
@@ -1344,6 +1645,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [existing, added] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [existing, added] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1378,6 +1680,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [updated] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [updated] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1407,6 +1710,7 @@ describe("MySchedule", () => {
       mockUpdateMyBlockoutDates.mockResolvedValue({
         success: true,
         member: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
+        memberSnapshot: { memberId: "m1", updatedAt: "2099-02-02T00:00:00.000Z", blockoutDates: [] },
       } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>);
       renderPage();
 
@@ -1521,10 +1825,20 @@ describe("MySchedule", () => {
             updatedAt: savedStamp,
             blockoutDates: [otherDraftDate],
           },
+          memberSnapshot: {
+            memberId: "m1",
+            updatedAt: savedStamp,
+            blockoutDates: [otherDraftDate],
+          },
         } as unknown as Awaited<ReturnType<typeof updateMyBlockoutDates>>)
         .mockResolvedValueOnce({
           success: true,
           member: {
+            memberId: "m1",
+            updatedAt: "2099-04-01T00:00:00.000Z",
+            blockoutDates: [],
+          },
+          memberSnapshot: {
             memberId: "m1",
             updatedAt: "2099-04-01T00:00:00.000Z",
             blockoutDates: [],
@@ -1858,7 +2172,9 @@ describe("MySchedule", () => {
         columnKey: "pos-audio::0",
       });
       const unrelatedAssignment = other({ teamId: "team-worship", teamName: "Worship", positionName: "Singer" });
-      respond([occurrence({ serving: [me(), secondAssignment, unrelatedAssignment] })]);
+      respond([
+        occurrence({ serving: [me(), secondAssignment, unrelatedAssignment] }),
+      ]);
       renderPage();
 
       expect(await screen.findByText("Media")).toHaveClass("text-[10px]");
@@ -1897,12 +2213,14 @@ describe("MySchedule", () => {
       expect(await screen.findByText("Accepted")).toBeInTheDocument();
       expect(screen.getByRole("button", { name: /Accept Director . Media/i })).toBeInTheDocument();
 
+      await user.click(screen.getByRole("button", { name: "Filters and organize" }));
       const teamFilter = screen.getByRole("combobox", { name: /Team/i });
       await user.click(teamFilter);
       expect(screen.getByRole("option", { name: "Media" })).toBeInTheDocument();
       expect(screen.getByRole("option", { name: "Audio" })).toBeInTheDocument();
       expect(screen.queryByRole("option", { name: "Worship" })).not.toBeInTheDocument();
-      expect(mockGetMyVolunteerAvailability).not.toHaveBeenCalled();
+      expect(mockGetMyVolunteerAvailability).toHaveBeenCalledTimes(1);
+      expect(mockGetMyVolunteerAvailability).toHaveBeenCalledWith("church-1", { summary: true });
     });
 
     it("keeps plan availability secondary to volunteer response status", async () => {
@@ -2013,10 +2331,25 @@ describe("MySchedule", () => {
 
   it("surfaces a load failure with a next step", async () => {
     mockGetMyTeamAssignments.mockRejectedValue(new Error("nope"));
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      requests: [],
+      requestSummaries: [{
+        recipientId: "recipient-1",
+        formId: "form-1",
+        name: "November availability",
+        responseDeadline: "2099-11-01",
+        respondedAt: "",
+        submissionId: "",
+        editable: true,
+      }],
+      schedulingPreferences: null,
+    } as never);
     renderPage();
 
     expect(
       await screen.findByText(/Could not load your schedule/),
     ).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Respond November availability" })).toBeInTheDocument();
   });
 });

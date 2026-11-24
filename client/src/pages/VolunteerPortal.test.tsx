@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
 import VolunteerPortal from "./VolunteerPortal";
 import { openVolunteerSession, VolunteerApiError } from "../api/volunteer";
 import { clearVolunteerIngress, readVolunteerIngress, scrubVolunteerIngress } from "../public/volunteerIngress";
@@ -7,12 +8,22 @@ jest.mock("../api/volunteer", () => ({
   ...jest.requireActual("../api/volunteer"),
   openVolunteerSession: jest.fn(),
 }));
-jest.mock("./MySchedule", () => () => <div>My Schedule content</div>);
+jest.mock("./MySchedule", () => () => {
+  const { useLocation } = require("react-router-dom");
+  const location = useLocation();
+  return <><div>My Schedule content</div><output data-testid="personal-workspace-url">{location.pathname + location.search}</output></>;
+});
 
 const setIngress = (token: string) => {
   window.history.replaceState({}, "", `/s#${token}`);
   scrubVolunteerIngress();
 };
+
+const renderPortal = (path = "/s") => render(
+  <MemoryRouter initialEntries={[path]}>
+    <VolunteerPortal />
+  </MemoryRouter>,
+);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -28,7 +39,7 @@ it("offers an explicit retry instead of identity recovery after a non-authoritat
     new VolunteerApiError("Open your personal link to continue.", 403, {}),
   );
 
-  render(<VolunteerPortal />);
+  renderPortal();
 
   expect(await screen.findByRole("alert")).toHaveTextContent("Could not open My Schedule");
   expect(screen.getByRole("button", { name: "Retry opening My Schedule" })).toBeInTheDocument();
@@ -44,9 +55,23 @@ it("keeps the expired-link verification path for an authoritative expiration sta
     new VolunteerApiError("This personal link expired.", 410, { accessStatus: "expired" }),
   );
 
-  render(<VolunteerPortal />);
+  renderPortal();
 
   expect(await screen.findByText("Verify your identity to open your schedule.")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Verify identity" })).toBeInTheDocument();
   expect(readVolunteerIngress()).toBe(token);
+});
+
+it("opens the unified schedule workspace for the accountless availability URL", async () => {
+  jest.mocked(openVolunteerSession).mockResolvedValue({
+    csrfToken: "session-csrf",
+    churchId: "church-1",
+    memberId: "member-1",
+    expiresAt: Date.now() + 60_000,
+  });
+
+  renderPortal("/s?view=availability");
+
+  expect(await screen.findByText("My Schedule content")).toBeInTheDocument();
+  expect(screen.getByTestId("personal-workspace-url")).toHaveTextContent("/s?view=availability");
 });

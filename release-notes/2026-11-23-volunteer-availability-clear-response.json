@@ -1,0 +1,7 @@
+{
+  "id": "volunteer-availability-clear-response",
+  "date": "2026-11-23",
+  "type": "fixed",
+  "title": "Clear availability responses",
+  "description": "Cleared volunteer answers now remain visibly unanswered until the volunteer chooses available or unavailable."
+}

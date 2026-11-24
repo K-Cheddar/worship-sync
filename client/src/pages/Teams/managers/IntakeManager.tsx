@@ -17,6 +17,8 @@ import DateRangePicker from "@/components/ui/DateRangePicker";
 import { GlobalInfoContext } from "../../../context/globalInfo";
 import { useToast } from "../../../context/toastContext";
 import {
+  getIntakeFormDefaults,
+  saveIntakeFormDefaults,
   applyTeamIntakeSubmission,
   createTeamIntakeRecipients,
   createTeamIntakeForm,
@@ -29,7 +31,9 @@ import {
   type TeamIntakeFormPayload,
 } from "../../../api/auth";
 import type {
+  IntakeFormDefaultsResponse,
   TeamIntakeForm,
+  TeamIntakeAvailabilityOccurrence,
   TeamIntakeRecipient,
   TeamIntakeSubmission,
   TeamPosition,
@@ -67,6 +71,7 @@ import {
   resolveIntakeFormFields,
   isAvailabilityFocusedForm,
 } from "../intakeFormFields";
+import { intakeCreationSettings } from "../intakeFormDefaults";
 import { emptyData } from "../teamsConstants";
 import {
   buildTeamIntakePublicUrl,
@@ -76,7 +81,10 @@ import {
   isActive,
   memberName,
 } from "../teamsUtils";
-import { getUpcomingAvailabilitySuggestions } from "../intakeAvailabilitySuggestion";
+import {
+  getUpcomingAvailabilitySuggestions,
+  omitRedundantGroupedMemberOccurrences,
+} from "../intakeAvailabilitySuggestion";
 import { buildTeamSchedulePeriod } from "../schedule/teamSchedulePeriod";
 import { loadAvailabilityNotificationHistory } from "../availabilityNotificationHistory";
 import AvailabilityFormWorkspace from "../components/AvailabilityFormWorkspace";
@@ -272,6 +280,29 @@ const IntakeManager = ({
   const { showToast } = useToast();
   const { requestDiscardAction } = useTeamsNavigationGuard();
   const churchId = context?.churchId || "";
+  const [defaultsState, setDefaultsState] = useState<{ churchId: string; value: IntakeFormDefaultsResponse } | null>(null);
+  const [defaultsError, setDefaultsError] = useState("");
+  const [defaultsReload, setDefaultsReload] = useState(0);
+  const [savingDefaults, setSavingDefaults] = useState(false);
+  const defaultsSaveLock = useRef(false);
+  const defaultsOwnerRef = useRef<object | null>(null);
+  const defaultsOwner = useMemo(() => ({ churchId }), [churchId]);
+  defaultsOwnerRef.current = defaultsOwner;
+  useEffect(() => {
+    let active = true;
+    defaultsOwnerRef.current = defaultsOwner;
+    setDefaultsState(null);
+    setDefaultsError("");
+    if (churchId && canEdit) {
+      getIntakeFormDefaults(churchId).then((value) => {
+        if (active) setDefaultsState({ churchId, value });
+      }).catch(() => {
+        if (active) setDefaultsError("Could not load form defaults. Try again before creating a form.");
+      });
+    }
+    return () => { active = false; defaultsOwnerRef.current = null; };
+  }, [canEdit, churchId, defaultsOwner, defaultsReload]);
+  const loadedDefaults = defaultsState?.churchId === churchId ? defaultsState.value : null;
   const makeEmptyDraft = () => availabilityOnly
     ? {
         ...emptyDraft(),
@@ -281,6 +312,7 @@ const IntakeManager = ({
       }
     : emptyDraft();
   const [draft, setDraft] = useState<TeamIntakeFormPayload>(makeEmptyDraft);
+  const creationBaselineRef = useRef(draft);
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const editorSessionRef = useRef(0);
@@ -375,9 +407,9 @@ const IntakeManager = ({
         availabilityMessage: editing.availabilityMessage || "",
         notesMessage: editing.notesMessage || "",
       }))
-    : JSON.stringify(normalizeDraft(draft)) !== JSON.stringify(normalizeDraft(makeEmptyDraft()));
+    : JSON.stringify(normalizeDraft(draft)) !== JSON.stringify(normalizeDraft(creationBaselineRef.current));
   const submittedDraftForSession = submitDraftSnapshotsRef.current.get(editorSessionRef.current);
-  const hasUnsubmittedChanges = hasPendingChanges && !(
+  const hasUnsubmittedChanges = showingEditForm && hasPendingChanges && !(
     submittedDraftForSession &&
     JSON.stringify(normalizeDraft(draft)) === JSON.stringify(normalizeDraft(submittedDraftForSession))
   );
@@ -396,6 +428,7 @@ const IntakeManager = ({
   };
 
   const openCreate = () => {
+    if (!loadedDefaults) { showToast(defaultsError || "Loading form defaults. Try again in a moment.", "neutral"); return; }
     editorSessionRef.current += 1;
     resetRecipientSelection();
     setSelectedForm(null);
@@ -404,7 +437,9 @@ const IntakeManager = ({
     setShowSendForm(false);
     setPreserveSuggestedOccurrences(false);
     setEditing(null);
-    setDraft(makeEmptyDraft());
+    const initialDraft = { ...makeEmptyDraft(), ...intakeCreationSettings(loadedDefaults.defaults, availabilityOnly ? "team_availability" : "general_intake") };
+    creationBaselineRef.current = initialDraft;
+    setDraft(initialDraft);
   };
 
   const openFormSubmissions = (form: TeamIntakeForm) => {
@@ -662,7 +697,11 @@ const IntakeManager = ({
       availabilityOccurrences = [];
     } else if (draft.startDate && draft.endDate && (canCalculateServiceDates || !serviceIds.length)) {
       const occurrences = availabilityForm
-        ? (relevantAvailabilityPeriod?.occurrences || []).filter((occurrence) => {
+        ? omitRedundantGroupedMemberOccurrences(
+          relevantAvailabilityPeriod?.occurrences || [],
+          services.filter((service) => !service.archivedAt),
+          serviceTimeZone,
+        ).filter((occurrence) => {
             const occurrenceServiceIds = occurrence.serviceIds?.length
               ? occurrence.serviceIds
               : [occurrence.serviceId];
@@ -819,7 +858,8 @@ const IntakeManager = ({
     };
   }, []);
   const upcomingAvailabilitySuggestions = useMemo(
-    () => canCalculateServiceDates ? getUpcomingAvailabilitySuggestions({
+    () => canCalculateServiceDates && loadedDefaults ? getUpcomingAvailabilitySuggestions({
+      defaults: loadedDefaults.defaults,
       services,
       forms,
       positions,
@@ -834,7 +874,7 @@ const IntakeManager = ({
       ])],
       timeZone: serviceTimeZone,
     }) : null,
-    [availabilityOnly, canCalculateServiceDates, forms, intakeRecipients, managedTeamIds, positions, schedules, serviceTimeZone, services, submissions, suggestionTeamIds, teams],
+    [availabilityOnly, canCalculateServiceDates, forms, intakeRecipients, loadedDefaults, managedTeamIds, positions, schedules, serviceTimeZone, services, submissions, suggestionTeamIds, teams],
   );
 
   const openUpcomingAvailabilityDraft = (suggestion: NonNullable<typeof upcomingAvailabilitySuggestions>[number]) => {
@@ -874,6 +914,33 @@ const IntakeManager = ({
         : [...managedTeamIds],
       enabledFields: ["availability"],
     } : suggestion.draft);
+  };
+
+  const handleSaveDefaults = async () => {
+    if (!showingEditForm || !canEdit || !loadedDefaults?.canEdit || defaultsSaveLock.current) return;
+    const owner = defaultsOwner;
+    const session = editorSessionRef.current;
+    const isCurrent = () => defaultsOwnerRef.current === owner;
+    const purpose = isAvailabilityFormEditor ? "team_availability" : "general_intake";
+    const wording = { welcomeMessage: draft.welcomeMessage || "", availabilityMessage: draft.availabilityMessage || "" };
+    defaultsSaveLock.current = true;
+    setSavingDefaults(true);
+    try {
+      const value = await saveIntakeFormDefaults(churchId, purpose === "team_availability"
+        ? { purpose, revision: loadedDefaults.revisions[purpose], settings: wording }
+        : { purpose, revision: loadedDefaults.revisions[purpose], settings: {
+            ...wording, enabledFields: resolveIntakeFormFields(draft),
+            positionsMessage: draft.positionsMessage || "", notesMessage: draft.notesMessage || "",
+          } });
+      if (isCurrent()) {
+        setDefaultsState({ churchId, value });
+        if (session === editorSessionRef.current) showToast("Form defaults saved.", "success");
+      }
+    } catch (error) {
+      if (isCurrent()) showApiErrorToast(showToast, error, "Could not save form defaults.");
+    } finally {
+      if (isCurrent()) { defaultsSaveLock.current = false; setSavingDefaults(false); }
+    }
   };
 
   const refreshFormMessageState = useCallback((formId: string) => {
@@ -1851,7 +1918,7 @@ const IntakeManager = ({
           }
         />
       )}
-      {!isAvailabilityFormEditor ? <fieldset className="space-y-3">
+      <fieldset className="space-y-3">
         <legend className="p-1 text-sm font-semibold">Form wording</legend>
         <p className="px-1 text-xs text-gray-400">
           Customize what people read on the public form. Leave a field blank to
@@ -1860,15 +1927,17 @@ const IntakeManager = ({
         <TextArea
           label="Welcome message"
           value={draft.welcomeMessage || ""}
+          maxLength={500}
           placeholder={DEFAULT_INTAKE_FORM_COPY.welcome}
           textareaClassName="min-h-16"
           onChange={(welcomeMessage) =>
             setDraft((d) => ({ ...d, welcomeMessage }))
           }
         />
-        <Input
+        {!isAvailabilityFormEditor ? <Input
           label="Positions message"
           value={draft.positionsMessage || ""}
+          maxLength={500}
           placeholder={DEFAULT_INTAKE_FORM_COPY.positions}
           onChange={(positionsMessage) =>
             setDraft((d) => ({
@@ -1877,9 +1946,11 @@ const IntakeManager = ({
             }))
           }
         />
+        : null}
         <Input
-          label="Availability message"
+          label={isAvailabilityFormEditor ? "Availability instructions" : "Availability message"}
           value={draft.availabilityMessage || ""}
+          maxLength={500}
           placeholder={DEFAULT_INTAKE_FORM_COPY.availability}
           onChange={(availabilityMessage) =>
             setDraft((d) => ({
@@ -1888,16 +1959,28 @@ const IntakeManager = ({
             }))
           }
         />
-        <Input
+        {!isAvailabilityFormEditor ? <Input
           label="Notes message"
           value={draft.notesMessage || ""}
+          maxLength={500}
           placeholder={DEFAULT_INTAKE_FORM_COPY.notes}
           onChange={(notesMessage) =>
             setDraft((d) => ({ ...d, notesMessage: String(notesMessage) }))
           }
         />
-      </fieldset>
         : null}
+      </fieldset>
+      {!loadedDefaults && showingEditForm ? <div role={defaultsError ? "alert" : "status"}>
+        {defaultsError || "Loading form defaults..."}
+        {defaultsError ? <Button variant="textLink" onClick={() => setDefaultsReload((value) => value + 1)}>Try again</Button> : null}
+      </div> : null}
+      {showingEditForm && canEdit && loadedDefaults?.canEdit ? <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" disabled={savingDefaults} onClick={() => void handleSaveDefaults()}>
+          {savingDefaults ? "Saving defaults..." : "Save as default"}
+        </Button>
+        <Button variant="textLink" disabled={savingDefaults} onClick={() => setDefaultsReload((value) => value + 1)}>Reload defaults</Button>
+        <p className="text-xs text-gray-400">Use these settings for future forms. This draft stays unchanged.</p>
+      </div> : null}
       {editing && canEdit && !isAvailabilityFormEditor ? (
         <Button
           variant="secondary"
@@ -2384,6 +2467,14 @@ const IntakeManager = ({
             timeZone: serviceTimeZone,
           }),
         };
+    const persistedOccurrences = activeSelectedForm.availabilityOccurrences || [];
+    const retainedOccurrenceIds = new Set(omitRedundantGroupedMemberOccurrences(
+      persistedOccurrences,
+      services,
+      serviceTimeZone,
+    ).map(({ occurrenceId }) => occurrenceId));
+    const groupedMemberOccurrencesForReview: TeamIntakeAvailabilityOccurrence[] = persistedOccurrences
+      .filter(({ occurrenceId }) => !retainedOccurrenceIds.has(occurrenceId));
     const rows = getAvailabilityFormProgress({
       members: applicableMembers, positions, teams, recipients: selectedFormRecipients,
       eligibilityByMemberId: smsEligibilityByMemberId, notificationIntents: formNotificationIntents,
@@ -2419,6 +2510,7 @@ const IntakeManager = ({
         canCopyGeneralLink={canEdit && !availabilityOnly}
         linkBusy={recipientBusy || Boolean(recipientActionKey)}
         serviceTimeZone={serviceTimeZone}
+        groupedMemberOccurrencesForReview={groupedMemberOccurrencesForReview}
         sendOpen={showSendForm}
         onSend={openSendForm}
         onEdit={() => openFormEditor(activeSelectedForm)}
@@ -2493,6 +2585,10 @@ const IntakeManager = ({
         list={
           <>
             {listHeader}
+            {canEdit && !loadedDefaults ? <div className="mb-3 text-sm" role={defaultsError ? "alert" : "status"}>
+              {defaultsError || "Loading form defaults..."}
+              {defaultsError ? <Button variant="textLink" onClick={() => setDefaultsReload((value) => value + 1)}>Try again</Button> : null}
+            </div> : null}
             {lastCreatedPublicUrl && canEdit && !availabilityOnly && !panelOpen ? (
               <div className="mb-3 rounded-md border border-emerald-400/40 bg-emerald-950/30 p-3 text-sm text-emerald-100">
                 <p className="font-semibold">New public link ready.</p>

@@ -1,4 +1,14 @@
-import type { MyScheduleOperations, PersonalScheduleAccess } from "../pages/myScheduleOperations";
+import type {
+  MyScheduleOperations,
+  PersonalScheduleAccess,
+  VolunteerAvailabilityOperations,
+  VolunteerAvailabilityRead,
+  VolunteerAvailabilityReadOptions,
+  VolunteerAvailabilitySave,
+  VolunteerAvailabilitySaveResult,
+  VolunteerSchedulingPreferences,
+  MyScheduleMember,
+} from "../pages/myScheduleOperations";
 import { clearVolunteerIngress, readVolunteerIngress } from "../public/volunteerIngress";
 
 export type VolunteerSession = { csrfToken: string; churchId: string; memberId: string; expiresAt: number };
@@ -105,13 +115,66 @@ export const openVolunteerSession = async (): Promise<VolunteerSession> => {
 
 export const personalScheduleAccess = (session: VolunteerSession): PersonalScheduleAccess => {
   const request = <T>(path: string, body?: unknown) => volunteerRequest<T>(path, body, session.csrfToken);
-  const operations: MyScheduleOperations = {
-    load: () => request("schedule"), respond: (body) => request<{ success: boolean; response: "accepted" | "declined" }>("respond", body),
-    saveBlockouts: (blockoutDates, expectedUpdatedAt) => request("blockouts", { blockoutDates, expectedUpdatedAt }),
-    acceptUnanswered: (afterScheduleId) => request("accept-unanswered", afterScheduleId ? { afterScheduleId } : {}),
+  const availabilityPath = (options: VolunteerAvailabilityReadOptions = {}) => {
+    const query = new URLSearchParams();
+    if (options.summary) query.set("summary", "1");
+    if (options.includeMemberSnapshot) query.set("includeMemberSnapshot", "1");
+    if (options.history) query.set("history", "1");
+    if (options.recipientId) query.set("recipientId", options.recipientId);
+    const search = query.toString();
+    const suffix = search ? `?${search}` : "";
+    return `availability${suffix}`;
   };
-  return { churchId: session.churchId, memberId: session.memberId, operations };
+  const operations: MyScheduleOperations & VolunteerAvailabilityOperations = {
+    load: () => request("schedule"), respond: (body) => request<{ success: boolean; response: "accepted" | "declined" }>("respond", body),
+    saveBlockouts: (blockoutDates, expectedUpdatedAt) => request<
+      Awaited<ReturnType<MyScheduleOperations["saveBlockouts"]>>
+    >("blockouts", { blockoutDates, expectedUpdatedAt }),
+    acceptUnanswered: (afterScheduleId) => request("accept-unanswered", afterScheduleId ? { afterScheduleId } : {}),
+    loadAvailability: (options) => request<VolunteerAvailabilityRead>(availabilityPath(options)),
+    saveAvailability: (payload) => request<VolunteerAvailabilitySaveResult>("availability", {
+      recipientId: payload.recipientId,
+      occurrenceAvailability: payload.availability,
+      availabilityRevision: payload.availabilityRevision,
+    }),
+    saveSchedulingPreferences: (payload) => request<{
+      success: boolean;
+      schedulingPreferences: VolunteerSchedulingPreferences;
+      memberSnapshot: MyScheduleMember;
+    }>("preferences", payload),
+  };
+  return { churchId: session.churchId, memberId: session.memberId, sessionKey: session.csrfToken, operations };
 };
+
+export const getVolunteerAvailability = (
+  session: VolunteerSession,
+  options: VolunteerAvailabilityReadOptions = {},
+) => {
+  const query = new URLSearchParams();
+  if (options.summary) query.set("summary", "1");
+  if (options.history) query.set("history", "1");
+  if (options.recipientId) query.set("recipientId", options.recipientId);
+  const search = query.toString();
+  const suffix = search ? `?${search}` : "";
+  return volunteerRequest<VolunteerAvailabilityRead>(
+    `availability${suffix}`,
+    undefined,
+    session.csrfToken,
+  );
+};
+
+export const submitVolunteerAvailability = (
+  session: VolunteerSession,
+  request: VolunteerAvailabilitySave,
+) => volunteerRequest<VolunteerAvailabilitySaveResult>(
+  "availability",
+  {
+    recipientId: request.recipientId,
+    occurrenceAvailability: request.availability,
+    availabilityRevision: request.availabilityRevision,
+  },
+  session.csrfToken,
+);
 
 export const volunteerRequestKey = () => Array.from(crypto.getRandomValues(new Uint8Array(24)))
   .map((value) => value.toString(16).padStart(2, "0")).join("");

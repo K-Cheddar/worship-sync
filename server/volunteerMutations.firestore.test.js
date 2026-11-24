@@ -64,6 +64,38 @@ test("Firestore time-off contention rejects one stale save and preserves adminis
   assert.equal(saved.blockoutDates.length, 1);
 }));
 
+test("Firestore scheduling preferences reject concurrent profile edits and patch only preference fields", { skip: !enabled }, async () => fixture(async ({ operations, identity, memberRef, beforeTransaction }) => {
+  beforeTransaction(() => memberRef.update({ updatedAt: "admin-revision", firstName: "Admin edit", qualifications: ["updated qualification"] }));
+  await assert.rejects(operations.saveSchedulingPreferences({
+    ...identity,
+    expectedUpdatedAt: "baseline",
+    servingFrequency: "monthly",
+    recurringAvailability: { weeksOfMonth: [2, 4], includeLastWeekOfMonth: false },
+  }), { status: 409 });
+  const afterConflict = (await memberRef.get()).data();
+  assert.equal(afterConflict.firstName, "Admin edit");
+  assert.deepEqual(afterConflict.qualifications, ["updated qualification"]);
+  assert.equal(afterConflict.servingFrequency, undefined);
+
+  beforeTransaction(async () => {});
+  const saved = await operations.saveSchedulingPreferences({
+    ...identity,
+    expectedUpdatedAt: "admin-revision",
+    servingFrequency: "monthly",
+    recurringAvailability: { weeksOfMonth: [2, 4], includeLastWeekOfMonth: false },
+  });
+  assert.equal(saved.member.firstName, "Admin edit");
+  assert.deepEqual(saved.member.qualifications, ["updated qualification"]);
+  assert.equal(saved.member.servingFrequency, "monthly");
+  assert.deepEqual(saved.member.recurringAvailability, { weeksOfMonth: [2, 4], includeLastWeekOfMonth: false });
+  await assert.rejects(operations.saveSchedulingPreferences({
+    ...identity,
+    expectedUpdatedAt: "admin-revision",
+    servingFrequency: "weekly",
+    recurringAvailability: { weeksOfMonth: [], includeLastWeekOfMonth: false },
+  }), { status: 409 });
+}));
+
 test("Firestore time off rechecks archive, account link and revision after request-time resolution", { skip: !enabled }, async () => fixture(async ({ operations, identity, memberRef, member, beforeTransaction }) => {
   const save = () => operations.saveBlockouts({ ...identity, expectedUpdatedAt: "baseline", blockoutDates: [] });
   beforeTransaction(() => memberRef.update({ archivedAt: "archived", firstName: "Admin edit" }));

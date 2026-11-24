@@ -109,7 +109,7 @@ test("Firestore human availability operation shares the recipient transaction an
   const formId = `volunteer_form_${suffix}`;
   const recipientId = `volunteer_recipient_${suffix}`;
   const session = { destroy(callback) { callback?.(); } };
-  const request = (headers = {}, body = {}) => ({ headers, body, params: { churchId }, session });
+  const request = (headers = {}, body = {}, query = {}) => ({ headers, body, query, params: { churchId }, session });
   const refs = [
     db.collection(COLLECTIONS.churches).doc(churchId),
     db.collection(COLLECTIONS.teamRosterMembers).doc(memberId),
@@ -144,17 +144,50 @@ test("Firestore human availability operation shares the recipient transaction an
     await authHandlers.getMyVolunteerAvailability(request(headers), read);
     assert.equal(read.statusCode, 200);
     assert.equal(read.payload.requests.length, 1);
+    assert.equal(read.payload.requests[0].editable, true);
+    assert.deepEqual(read.payload.requests[0].availability, {});
+    assert.deepEqual(read.payload.requests[0].unansweredOccurrenceIds, ["own"]);
+    assert.deepEqual(read.payload.requests[0].availabilityRevision, { own: 0 });
     assert.doesNotMatch(JSON.stringify(read.payload), /private|elsewhere/);
+    const summary = response();
+    await authHandlers.getMyVolunteerAvailability(request(headers, {}, { summary: "1" }), summary);
+    assert.equal(summary.statusCode, 200, JSON.stringify(summary.payload));
+    assert.deepEqual(summary.payload.requests, []);
+    assert.deepEqual(summary.payload.requestSummaries.map(({ recipientId: id, formId: summaryFormId }) => ({
+      recipientId: id,
+      formId: summaryFormId,
+    })), [{ recipientId, formId }]);
+    assert.deepEqual(summary.payload.requestSummaries[0].editable, true);
+    assert.equal(Object.hasOwn(summary.payload.requestSummaries[0], "occurrences"), false);
+    const detail = response();
+    await authHandlers.getMyVolunteerAvailability(request(headers, {}, { recipientId }), detail);
+    assert.equal(detail.statusCode, 200, JSON.stringify(detail.payload));
+    assert.equal(detail.payload.requests.length, 1);
+    assert.equal(detail.payload.requests[0].recipientId, recipientId);
     const saved = response();
     await authHandlers.submitMyVolunteerAvailability(request(headers, {
       recipientId, occurrenceAvailability: { own: "unavailable", outside: "available" },
+      availabilityRevision: { own: 0 },
     }), saved);
     assert.equal(saved.statusCode, 200, JSON.stringify(saved.payload));
     submissionId = saved.payload.submissionId;
+    assert.equal(saved.payload.requestSummary.recipientId, recipientId);
+    assert.equal(saved.payload.requestSummary.formId, formId);
+    assert.equal(saved.payload.requestSummary.submissionId, submissionId);
+    assert.equal(saved.payload.requestSummary.respondedAt, saved.payload.submittedAt);
+    assert.equal(saved.payload.requestSummary.editable, true);
+    assert.equal(Object.hasOwn(saved.payload.requestSummary, "occurrences"), false);
     const member = (await refs[1].get()).data();
     assert.deepEqual(member.serviceAvailability, { elsewhere: "unavailable", own: "unavailable" });
     assert.deepEqual(member.positionIds, ["position"]);
     assert.equal(member.notes, "private");
+    assert.equal(member.serviceAvailabilityRevisions.own, 1);
+    const stale = response();
+    await authHandlers.submitMyVolunteerAvailability(request(headers, {
+      recipientId, occurrenceAvailability: { own: "available" }, availabilityRevision: { own: 0 },
+    }), stale);
+    assert.equal(stale.statusCode, 409, JSON.stringify(stale.payload));
+    assert.equal((await refs[1].get()).data().serviceAvailability.own, "unavailable");
     const duplicateRef = db.collection(COLLECTIONS.teamRosterMembers).doc(`${memberId}_duplicate`);
     refs.push(duplicateRef);
     await duplicateRef.set({ ...member, memberId: duplicateRef.id });
@@ -170,9 +203,22 @@ test("Firestore human availability operation shares the recipient transaction an
     const revoked = response();
     await authHandlers.submitMyVolunteerAvailability(request(headers, {
       recipientId, occurrenceAvailability: { own: "available" },
+      availabilityRevision: { own: 0 },
     }), revoked);
     assert.equal(revoked.statusCode, 404);
     assert.equal((await refs[1].get()).data().serviceAvailability.own, "unavailable");
+    await refs[4].update({ revokedAt: null });
+    await refs[3].update({ active: false });
+    const pastSummary = response();
+    await authHandlers.getMyVolunteerAvailability(request(headers, {}, { summary: "1", history: "1" }), pastSummary);
+    assert.equal(pastSummary.statusCode, 200, JSON.stringify(pastSummary.payload));
+    assert.deepEqual(pastSummary.payload.requests, []);
+    assert.equal(pastSummary.payload.requestSummaries[0]?.recipientId, recipientId);
+    assert.equal(pastSummary.payload.requestSummaries[0]?.editable, false);
+    const pastDetail = response();
+    await authHandlers.getMyVolunteerAvailability(request(headers, {}, { recipientId }), pastDetail);
+    assert.equal(pastDetail.statusCode, 200, JSON.stringify(pastDetail.payload));
+    assert.equal(pastDetail.payload.requests[0]?.editable, false);
   } finally {
     if (submissionId) refs.push(db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId));
     await Promise.all(refs.map((ref) => ref.delete()));
@@ -321,6 +367,48 @@ test("Firestore portal uses isolated cookies, CSRF and safe shared projections; 
       blockoutDates: [{ startDate: "2099-11-01", endDate: "2099-11-01" }], expectedUpdatedAt: "baseline" }), timeOff);
     assert.equal(timeOff.statusCode, 200);
     assert.doesNotMatch(JSON.stringify(timeOff.payload), /PRIVATE/);
+    const savedBlockouts = timeOff.payload.memberSnapshot.blockoutDates;
+    const availabilityRequest = req(headers); availabilityRequest.query = { includeMemberSnapshot: "1" };
+    const availability = res(); await authHandlers.getVolunteerPersonalAvailability(availabilityRequest, availability);
+    assert.equal(availability.statusCode, 200);
+    assert.equal(availability.payload.schedulingPreferences.servingFrequency, "as_needed");
+    assert.equal(availability.payload.memberSnapshot.updatedAt, (await roster.get()).get("updatedAt"));
+    assert.equal("notes" in availability.payload.memberSnapshot, false);
+    const preferenceBaseline = (await roster.get()).data();
+    const noPreferenceCsrf = res(); await authHandlers.saveVolunteerPersonalSchedulingPreferences(req({ cookie, origin }, {
+      servingFrequency: "weekly",
+      recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
+      expectedUpdatedAt: preferenceBaseline.updatedAt || "",
+      memberId: "forged-member",
+      firstName: "Forged",
+    }), noPreferenceCsrf);
+    assert.equal(noPreferenceCsrf.statusCode, 403);
+    const preferences = res(); await authHandlers.saveVolunteerPersonalSchedulingPreferences(req(headers, {
+      servingFrequency: "weekly",
+      recurringAvailability: { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false },
+      expectedUpdatedAt: preferenceBaseline.updatedAt || "",
+      memberId: "forged-member",
+      firstName: "Forged",
+    }), preferences);
+    assert.equal(preferences.statusCode, 200, JSON.stringify(preferences.payload));
+    assert.equal(preferences.payload.memberSnapshot.updatedAt, preferences.payload.schedulingPreferences.updatedAt);
+    assert.deepEqual(preferences.payload.memberSnapshot.blockoutDates, savedBlockouts);
+    assert.deepEqual(preferences.payload.memberSnapshot.recurringAvailability, { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false });
+    assert.equal("notes" in preferences.payload.memberSnapshot, false);
+    const savedMember = (await roster.get()).data();
+    assert.equal(savedMember.servingFrequency, "weekly");
+    assert.deepEqual(savedMember.recurringAvailability, { weeksOfMonth: [1, 3], includeLastWeekOfMonth: false });
+    assert.equal(savedMember.firstName, "Volunteer");
+    assert.equal(savedMember.memberId, memberId);
+    await roster.update({ updatedAt: "2099-10-31T12:00:00.000Z", firstName: "Administrator updated" });
+    const stalePreferences = res(); await authHandlers.saveVolunteerPersonalSchedulingPreferences(req(headers, {
+      servingFrequency: "monthly",
+      recurringAvailability: { weeksOfMonth: [], includeLastWeekOfMonth: false },
+      expectedUpdatedAt: savedMember.updatedAt,
+    }), stalePreferences);
+    assert.equal(stalePreferences.statusCode, 409);
+    assert.equal((await roster.get()).get("firstName"), "Administrator updated");
+    assert.equal((await roster.get()).get("servingFrequency"), "weekly");
     const revoked = res(); await authHandlers.revokeVolunteerPersonalAccess(req(humanHeaders), revoked);
     assert.equal(revoked.statusCode, 200);
     const after = res(); await authHandlers.getVolunteerPersonalSchedule(req(headers), after);

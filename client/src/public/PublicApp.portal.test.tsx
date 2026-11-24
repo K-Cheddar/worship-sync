@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import PublicApp from "./PublicApp";
 import { clearVolunteerIngress, scrubVolunteerIngress } from "./volunteerIngress";
+import type { VolunteerAvailabilityRequest } from "../pages/myScheduleOperations";
 
 const slot = { memberId: "member", name: "Alex Volunteer", isMe: true, scheduleId: "schedule", teamId: "team", teamName: "Media",
   positionId: "camera", positionName: "Camera", columnKey: "camera::0", isPrimary: true, response: "pending" };
@@ -13,8 +14,9 @@ let fetchMock: jest.Mock;
 let accepted: boolean;
 let recovered: boolean;
 let assignmentResponse: "pending" | "accepted" | "declined";
+let availabilityRequest: VolunteerAvailabilityRequest | null;
 beforeEach(() => {
-  clearVolunteerIngress(); accepted = false; recovered = false; assignmentResponse = "pending";
+  clearVolunteerIngress(); accepted = false; recovered = false; assignmentResponse = "pending"; availabilityRequest = null;
   window.history.replaceState({}, "", "/s");
   fetchMock = jest.fn(async (path: string, options: RequestInit = {}) => {
     let result: unknown = { success: true };
@@ -22,7 +24,49 @@ beforeEach(() => {
     if (path.endsWith("/schedule")) result = { success: true, churchName: "Grace Chapel", serviceTimeZone: "America/New_York",
       member: { memberId: "member", firstName: "Alex", lastName: "Volunteer", updatedAt: "stamp", blockoutDates: [] },
       occurrences: [{ ...assignment, serving: [{ ...slot, response: assignmentResponse === "pending" && accepted ? "accepted" : assignmentResponse }] }] };
-    if (path.endsWith("/availability") && options.method !== "POST") result = { success: true, requests: [] };
+    if (String(path).includes("/availability") && options.method !== "POST") {
+      const url = new URL(String(path), "http://localhost");
+      const recipientId = url.searchParams.get("recipientId");
+      const summary = url.searchParams.get("summary") === "1";
+      const history = url.searchParams.get("history") === "1";
+      const requestSummary = availabilityRequest ? {
+        recipientId: availabilityRequest.recipientId,
+        formId: availabilityRequest.formId,
+        name: availabilityRequest.name,
+        responseDeadline: availabilityRequest.responseDeadline,
+        respondedAt: availabilityRequest.respondedAt,
+        submissionId: availabilityRequest.submissionId,
+        editable: availabilityRequest.editable,
+      } : null;
+      result = {
+        success: true,
+        serviceTimeZone: "America/New_York",
+        requests: recipientId && availabilityRequest?.recipientId === recipientId ? [availabilityRequest] : [],
+        ...(summary ? {
+          requestSummaries: history || !requestSummary ? [] : [requestSummary],
+          schedulingPreferences: null,
+        } : {}),
+      };
+    }
+    if (String(path).includes("/availability") && options.method === "POST") {
+      const body = JSON.parse(String(options.body || "{}"));
+      const answers = body.occurrenceAvailability || {};
+      if (availabilityRequest) {
+        availabilityRequest = {
+          ...availabilityRequest,
+          availability: answers,
+          unansweredOccurrenceIds: availabilityRequest.occurrences
+            .map(({ occurrenceId }) => occurrenceId)
+            .filter((occurrenceId) => !Object.hasOwn(answers, occurrenceId)),
+          availabilityRevision: Object.fromEntries(
+            availabilityRequest.occurrences.map(({ occurrenceId }) => [occurrenceId, 1]),
+          ),
+          submissionId: "personal-availability-submission",
+          respondedAt: "2099-10-20T12:00:00.000Z",
+        };
+      }
+      result = { success: true, submissionId: "personal-availability-submission" };
+    }
     if (path.endsWith("/respond")) {
       const body = JSON.parse(String(options.body || "{}"));
       assignmentResponse = body.response;
@@ -37,18 +81,121 @@ beforeEach(() => {
 });
 afterEach(() => { global.fetch = originalFetch; clearVolunteerIngress(); });
 
+it("opens the unified My Schedule from the accountless availability URL", async () => {
+  window.history.replaceState({}, "", "/s?view=availability");
+  render(<PublicApp />);
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/session"))).toBe(true));
+  expect(await screen.findByRole("heading", { name: "My schedule" })).toBeInTheDocument();
+  expect(screen.queryByRole("region", { name: "Availability requests" })).not.toBeInTheDocument();
+  expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
+  const availabilityRead = fetchMock.mock.calls.find(([path, options]) =>
+    String(path).includes("/availability") && options.method !== "POST",
+  )?.[0];
+  expect(String(availabilityRead)).toContain("summary=1");
+  expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/schedule"))).toBe(true);
+});
+
+it("opens a direct accountless availability link without loading the schedule overview", async () => {
+  availabilityRequest = {
+    recipientId: "personal-recipient",
+    formId: "personal-form",
+    name: "November availability",
+    responseDeadline: "2099-11-30",
+    availabilityMessage: "Choose the services you can serve.",
+    respondedAt: "",
+    submissionId: "",
+    editable: true,
+    occurrences: [{
+      occurrenceId: "service-a@2099-11-08",
+      name: "Sunday 1",
+      startsAt: "2099-11-08T14:00:00.000Z",
+      serviceDate: "2099-11-08",
+    }],
+    availability: {},
+    unansweredOccurrenceIds: ["service-a@2099-11-08"],
+    availabilityRevision: { "service-a@2099-11-08": 0 },
+  };
+  window.history.replaceState({}, "", "/s?view=availability&availabilityRequest=personal-recipient");
+  render(<PublicApp />);
+
+  expect(await screen.findByRole("heading", { name: "November availability" })).toBeInTheDocument();
+  const reads = fetchMock.mock.calls.filter(([path, options]) =>
+    String(path).includes("/availability") && options.method !== "POST",
+  );
+  expect(reads.map(([path]) => new URL(String(path), "http://localhost").searchParams.get("recipientId")))
+    .toEqual(["personal-recipient"]);
+  expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/schedule"))).toBe(false);
+  expect(screen.queryByRole("region", { name: "Scheduling preferences" })).not.toBeInTheDocument();
+});
+
+it("submits a confirmed checkbox response through the accountless availability API", async () => {
+  const user = userEvent.setup();
+  const ids = ["service-a@2099-11-08", "service-b@2099-11-15"];
+  availabilityRequest = {
+    recipientId: "personal-recipient",
+    formId: "personal-form",
+    name: "November availability",
+    responseDeadline: "2099-11-30",
+    availabilityMessage: "Choose the services you can serve.",
+    respondedAt: "",
+    submissionId: "",
+    editable: true,
+    occurrences: ids.map((occurrenceId, index) => ({
+      occurrenceId,
+      name: `Sunday ${index + 1}`,
+      startsAt: `2099-11-${String(8 + index * 7).padStart(2, "0")}T14:00:00.000Z`,
+      serviceDate: `2099-11-${String(8 + index * 7).padStart(2, "0")}`,
+    })),
+    availability: {},
+    unansweredOccurrenceIds: ids,
+    availabilityRevision: Object.fromEntries(ids.map((id) => [id, 0])),
+  };
+  window.history.replaceState({}, "", "/s?view=availability");
+  render(<PublicApp />);
+
+  await user.click(await screen.findByRole("button", { name: "Respond November availability" }));
+  expect(window.location.search).toContain("availabilityRequest=personal-recipient");
+  await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
+  await user.click(screen.getByRole("button", { name: "Review response" }));
+  expect(screen.getByRole("dialog", { name: "Review your response" }))
+    .toHaveTextContent("1 available, 1 unavailable");
+  await user.click(screen.getByRole("button", { name: "Submit response" }));
+
+  await waitFor(() => expect(fetchMock.mock.calls.some(([path, options]) =>
+    String(path).endsWith("/availability") && options.method === "POST",
+  )).toBe(true));
+  const post = fetchMock.mock.calls.find(([path, options]) =>
+    String(path).endsWith("/availability") && options.method === "POST",
+  );
+  expect(JSON.parse(post?.[1].body as string)).toEqual({
+    recipientId: "personal-recipient",
+    occurrenceAvailability: { [ids[0]]: "available", [ids[1]]: "unavailable" },
+    availabilityRevision: { [ids[0]]: 0, [ids[1]]: 0 },
+  });
+  const responseAction = await screen.findByRole("button", { name: "Change response November availability" });
+  expect(responseAction).toHaveAttribute("data-variant", "presentSecondary");
+  expect(screen.getByRole("group", { name: "November availability" }))
+    .toHaveTextContent("Response submitted");
+  expect(fetchMock.mock.calls.filter(([path]) => String(path).endsWith("/schedule"))).toHaveLength(1);
+});
+
 it("opens the same My Schedule through the real public providers, including deferred time off and plan views", async () => {
   const user = userEvent.setup();
   render(<PublicApp />);
   await screen.findByRole("button", { name: "Accept remaining assignments" });
-  expect(screen.queryByRole("button", { name: "Open menu" })).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Open menu" })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Time off/i }));
   expect(screen.getByRole("button", { name: /Add single day/i })).toBeInTheDocument();
   await user.click(screen.getByRole("button", { name: /Open Sunday Gathering/i }));
   await user.click(screen.getByRole("tab", { name: /Service plan/i }));
   expect(await screen.findByText("Welcome everyone")).toBeInTheDocument();
-  expect(fetchMock.mock.calls.every(([path]) => String(path).startsWith("/api/volunteer/"))).toBe(true);
-  const operationCalls = fetchMock.mock.calls.filter(([path]) => !String(path).endsWith("/session"));
+  expect(fetchMock.mock.calls.every(([path]) =>
+    String(path).startsWith("/api/volunteer/") || String(path) === "/api/version",
+  )).toBe(true);
+  const operationCalls = fetchMock.mock.calls.filter(([path]) =>
+    String(path).startsWith("/api/volunteer/") && !String(path).endsWith("/session"),
+  );
   expect(operationCalls.every(([, options]) => options.credentials === "include" && options.cache === "no-store" && !options.headers.authorization)).toBe(true);
 });
 
@@ -166,7 +313,9 @@ it("retries initial schedule loading through the dedicated personal session", as
   render(<PublicApp />);
   await user.click(await screen.findByRole("button", { name: "Retry My Schedule" }));
   expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
-  expect(fetchMock.mock.calls.every(([path]) => String(path).startsWith("/api/volunteer/"))).toBe(true);
+  expect(fetchMock.mock.calls.every(([path]) =>
+    String(path).startsWith("/api/volunteer/") || String(path) === "/api/version",
+  )).toBe(true);
 });
 
 it("keeps time-off self-service available when the volunteer has no assignments", async () => {

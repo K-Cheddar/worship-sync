@@ -12,6 +12,7 @@ const allowedSuites = new Set([
   "modal-mobile-focus.mjs",
   "schedule-quick-member.mjs",
   "my-schedule-service-cards.mjs",
+  "volunteer-workspace-layout.mjs",
   "service-plan-refresh.mjs",
   "service-public-efficiency.mjs",
   "availability-workspace.mjs",

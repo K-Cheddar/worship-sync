@@ -3,6 +3,13 @@ import crypto from "node:crypto";
 import { createVolunteerMutations } from "./volunteerMutations.js";
 import { createVolunteerPersonalAccess, DEFAULT_VOLUNTEER_ACCESS_TTL_MS } from "./volunteerPersonalAccess.js";
 import { createVolunteerPortalHandlers } from "./volunteerPortalHandlers.js";
+import { projectVolunteerAvailabilityResponse } from "./volunteerAvailabilityProjection.js";
+import {
+  getVolunteerAvailabilityCurrentDate,
+  isVolunteerAvailabilityFormCurrent,
+  mapVolunteerAvailabilityReads,
+  VOLUNTEER_AVAILABILITY_READ_CONCURRENCY,
+} from "./volunteerAvailabilityReadModel.js";
 import { createVolunteerRecovery } from "./volunteerRecovery.js";
 import { volunteerContactIndexFields } from "./volunteerContactIndex.js";
 import { sendSmsConsentVerificationCode } from "./smsConsent.js";
@@ -50,6 +57,9 @@ import {
   readAssignmentResponse,
 } from "./scheduleResponses.js";
 import { createVolunteerOperations } from "./volunteerOperations.js";
+import { createSchedulingCycleHandlers } from "./schedulingCycleHandlers.js";
+import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
+import { omitRedundantGroupedMemberOccurrences } from "../client/src/pages/Teams/intakeAvailabilitySuggestion.ts";
 import { resolveSignedInVolunteerMember } from "./volunteerIdentity.js";
 import {
   ASSIGNMENT_TOKEN_TTL_MS,
@@ -121,22 +131,22 @@ const APP_BASE_URL =
   process.env.AUTH_APP_BASE_URL?.replace(/\/$/, "") ||
   "https://www.worshipsync.net";
 
-const churchServiceTimeZoneWriteQueues = new Map();
-const withChurchServiceTimeZoneWriteLock = async (churchId, operation) => {
+const churchSettingsWriteQueues = new Map();
+const withChurchSettingsWriteLock = async (churchId, operation) => {
   const previous =
-    churchServiceTimeZoneWriteQueues.get(churchId) || Promise.resolve();
+    churchSettingsWriteQueues.get(churchId) || Promise.resolve();
   let release;
   const current = new Promise((resolve) => {
     release = resolve;
   });
-  churchServiceTimeZoneWriteQueues.set(churchId, current);
+  churchSettingsWriteQueues.set(churchId, current);
   await previous;
   try {
     return await operation();
   } finally {
     release();
-    if (churchServiceTimeZoneWriteQueues.get(churchId) === current) {
-      churchServiceTimeZoneWriteQueues.delete(churchId);
+    if (churchSettingsWriteQueues.get(churchId) === current) {
+      churchSettingsWriteQueues.delete(churchId);
     }
   }
 };
@@ -158,6 +168,7 @@ const teamIntakeRecipientTokenSecret = resolveTeamIntakeRecipientTokenSecret();
 // Upper bound for a single church's per-collection bootstrap query. Sized to
 // cover realistic roster/submission growth while still bounding Firestore reads.
 const TEAM_COLLECTION_QUERY_LIMIT = 5000;
+const VOLUNTEER_AVAILABILITY_FORM_ID_QUERY_LIMIT = 30;
 
 // Bounds for the self-service blockout endpoint only.
 //
@@ -800,7 +811,7 @@ export const createTeamsAuthHandlers = ({
    * batch: with one link covering a whole schedule, an owner reshuffling one
    * date must not block the reader from answering the other three.
    */
-  const { writeAssignmentResponses, saveBlockouts } = createVolunteerMutations({
+  const { writeAssignmentResponses, saveBlockouts, saveSchedulingPreferences } = createVolunteerMutations({
     COLLECTIONS, requireFirestore, getDoc, updateDocFields, nowIso, httpError,
     enqueueSchedule: enqueueInMemoryScheduleSave,
     enqueueMember: enqueueInMemoryRosterMemberMutation,
@@ -843,6 +854,20 @@ export const createTeamsAuthHandlers = ({
     firstName: member.firstName || "", lastName: member.lastName || "",
     blockoutDates: member.blockoutDates || [], updatedAt: member.updatedAt || "",
   } : member;
+
+  // A confirmed self-service write can advance the member revision shared by
+  // both editors. Return the fields needed to reconcile the other editor from
+  // the same transaction snapshot, while keeping the personal projection narrow.
+  const projectVolunteerMutationMember = (member) => ({
+    memberId: member.memberId,
+    churchId: member.churchId,
+    firstName: member.firstName || "",
+    lastName: member.lastName || "",
+    blockoutDates: member.blockoutDates || [],
+    servingFrequency: member.servingFrequency,
+    recurringAvailability: member.recurringAvailability,
+    updatedAt: member.updatedAt || "",
+  });
 
   const saveVolunteerBlockouts = async ({ churchId, memberId, actorUid, actorId, authorize, access }, body) => {
     const expectedUpdatedAt = normalizeShortText(body?.expectedUpdatedAt, { max: 64 });
@@ -920,7 +945,36 @@ export const createTeamsAuthHandlers = ({
       }),
     );
 
-    return { success: true, member: projectVolunteerMember(saved, access) };
+    return {
+      success: true,
+      member: projectVolunteerMember(saved, access),
+      memberSnapshot: projectVolunteerMutationMember(saved),
+    };
+  };
+
+  const saveVolunteerSchedulingPreferences = async ({ churchId, memberId, actorUid, actorId, authorize }, body) => {
+    const expectedUpdatedAt = normalizeShortText(body?.expectedUpdatedAt, { max: 64 });
+    const servingFrequency = normalizeTeamMemberServingFrequency(body?.servingFrequency);
+    const recurringAvailability = normalizeTeamMemberRecurringAvailability(body?.recurringAvailability);
+    const { member } = await saveSchedulingPreferences({
+      churchId, memberId, actorUid, actorId, authorize,
+      expectedUpdatedAt, servingFrequency, recurringAvailability,
+    });
+    await addSecurityEvent({
+      type: "team_roster_member_scheduling_preferences_self_updated",
+      churchId, userId: actorUid || actorId, memberId,
+    }).catch((error) => logAuthEvent("warn", "schedule.preferences.audit-error", {
+      churchId, memberId, errorMessage: error?.message || "audit failed",
+    }));
+    return {
+      success: true,
+      schedulingPreferences: {
+        servingFrequency: member.servingFrequency,
+        recurringAvailability: member.recurringAvailability,
+        updatedAt: member.updatedAt || "",
+      },
+      memberSnapshot: projectVolunteerMutationMember(member),
+    };
   };
 
   const respondToVolunteerAssignment = async (identity, body) => {
@@ -3738,17 +3792,114 @@ export const createTeamsAuthHandlers = ({
   };
 
   // Per-occurrence availability map keyed by occurrenceId (`serviceId@startsAt`).
-  // Any value other than "unavailable" is treated as available.
   const normalizeServiceAvailability = (value) => {
     const result = {};
-    if (value && typeof value === "object") {
-      Object.entries(value).forEach(([occurrenceId, status]) => {
-        const key = normalizeShortText(occurrenceId, { max: 200 });
-        if (!key) return;
-        result[key] = status === "unavailable" ? "unavailable" : "available";
-      });
+    if (value === undefined) return result;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw httpError(400, "Availability answers are invalid.");
     }
+    Object.entries(value).forEach(([occurrenceId, status]) => {
+      const key = normalizeShortText(occurrenceId, { max: 200 });
+      if (!key) return;
+      if (status !== "available" && status !== "unavailable") {
+        throw httpError(400, "Choose available or unavailable for each service date.");
+      }
+      if (Object.hasOwn(result, key)) {
+        throw httpError(400, "Availability answers contain a duplicate service date.");
+      }
+      result[key] = status;
+    });
     return result;
+  };
+
+  const normalizeServiceAvailabilityRevisions = (value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(Object.entries(value).filter(([, revision]) =>
+      Number.isSafeInteger(revision) && revision >= 0,
+    ));
+  };
+
+  const getServiceAvailabilityRevision = (member, occurrenceId) => {
+    const revisions = member?.serviceAvailabilityRevisions;
+    const revision = revisions && typeof revisions === "object" && !Array.isArray(revisions)
+      ? revisions[occurrenceId]
+      : undefined;
+    return Number.isSafeInteger(revision) ? revision : 0;
+  };
+
+  const getFormAvailabilityOccurrenceIds = (form) => Array.from(new Set(
+    (Array.isArray(form?.availabilityOccurrences) ? form.availabilityOccurrences : [])
+      .map((occurrence) => String(occurrence?.occurrenceId || "").trim())
+      .filter(Boolean),
+  ));
+
+  const getServiceAvailabilityRevisionSnapshot = (member, occurrenceIds) =>
+    Object.fromEntries(occurrenceIds.map((occurrenceId) => [
+      occurrenceId,
+      getServiceAvailabilityRevision(member, occurrenceId),
+    ]));
+
+  const normalizeSubmittedServiceAvailabilityRevision = (value, occurrenceIds) => {
+    // Deployed recipient-link clients predate revisions. Their safe legacy
+    // baseline is revision zero; once an occurrence has changed under this
+    // version, they receive 409 instead of being allowed to replace it stale.
+    if (value === undefined) return Object.fromEntries(occurrenceIds.map((id) => [id, 0]));
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw httpError(400, "Reload this availability request before saving.");
+    }
+    const expectedIds = new Set(occurrenceIds);
+    const suppliedIds = Object.keys(value);
+    if (suppliedIds.length !== expectedIds.size || suppliedIds.some((id) => !expectedIds.has(id))) {
+      throw httpError(409, "The service dates in this request changed. Reload the latest availability before saving.");
+    }
+    const revisions = {};
+    for (const occurrenceId of occurrenceIds) {
+      const revision = value[occurrenceId];
+      if (!Number.isSafeInteger(revision) || revision < 0) {
+        throw httpError(400, "Reload this availability request before saving.");
+      }
+      revisions[occurrenceId] = revision;
+    }
+    return revisions;
+  };
+
+  const assertServiceAvailabilityRevisionCurrent = (member, expectedRevisions) => {
+    for (const [occurrenceId, expected] of Object.entries(expectedRevisions || {})) {
+      if (getServiceAvailabilityRevision(member, occurrenceId) !== expected) {
+        throw httpError(409, "Availability changed since you opened this request. Reload the latest answers before saving.");
+      }
+    }
+  };
+
+  const nextServiceAvailabilityRevision = (revisions, member, occurrenceId) => {
+    const next = getServiceAvailabilityRevision(member, occurrenceId) + 1;
+    if (!Number.isSafeInteger(next)) {
+      throw httpError(409, "Availability changed too many times. Reload the latest answers before saving.");
+    }
+    revisions[occurrenceId] = next;
+  };
+
+  const replaceServiceAvailabilityWithRevisions = ({ member, serviceAvailability }) => {
+    const existingAvailability = member?.serviceAvailability || {};
+    const nextRevisions = normalizeServiceAvailabilityRevisions(
+      member?.serviceAvailabilityRevisions,
+    );
+    const occurrenceIds = new Set([
+      ...Object.keys(existingAvailability),
+      ...Object.keys(serviceAvailability || {}),
+    ]);
+    for (const occurrenceId of occurrenceIds) {
+      if (!isDeepStrictEqual(
+        existingAvailability[occurrenceId],
+        serviceAvailability?.[occurrenceId],
+      )) {
+        nextServiceAvailabilityRevision(nextRevisions, member, occurrenceId);
+      }
+    }
+    return {
+      serviceAvailability: serviceAvailability || {},
+      serviceAvailabilityRevisions: nextRevisions,
+    };
   };
 
   const isServiceAvailabilityKeyForOccurrence = ({
@@ -3781,6 +3932,11 @@ export const createTeamsAuthHandlers = ({
     replacementAvailability,
     form,
   }) => {
+    if (
+      !form ||
+      !normalizeTeamIntakeFields(undefined, form.enabledFields).includes("availability") ||
+      replacementAvailability === undefined
+    ) return existingAvailability || {};
     const formOccurrenceIds = new Set(
       (Array.isArray(form?.availabilityOccurrences)
         ? form.availabilityOccurrences
@@ -3794,7 +3950,31 @@ export const createTeamsAuthHandlers = ({
         ([occurrenceId]) => !formOccurrenceIds.has(occurrenceId),
       ),
     );
-    return { ...preserved, ...(replacementAvailability || {}) };
+    return { ...preserved, ...Object.fromEntries(
+      Object.entries(replacementAvailability || {}).filter(([id]) => formOccurrenceIds.has(id)),
+    ) };
+  };
+
+  const replaceServiceAvailabilityForFormWithRevisions = ({
+    member,
+    replacementAvailability,
+    form,
+  }) => {
+    const serviceAvailability = replaceServiceAvailabilityForForm({
+      existingAvailability: member?.serviceAvailability,
+      replacementAvailability,
+      form,
+    });
+    const revisions = normalizeServiceAvailabilityRevisions(
+      member?.serviceAvailabilityRevisions,
+    );
+    for (const occurrenceId of getFormAvailabilityOccurrenceIds(form)) {
+      // A submitted map is a complete write of this occurrence scope. Advancing
+      // even unchanged answers also gives the development fallback a durable
+      // marker for recovering a response after the member write succeeds.
+      nextServiceAvailabilityRevision(revisions, member, occurrenceId);
+    }
+    return { serviceAvailability, serviceAvailabilityRevisions: revisions };
   };
 
   // Combine the notes of merged blockout ranges, de-duplicating individual
@@ -6556,6 +6736,10 @@ export const createTeamsAuthHandlers = ({
   }) => {
     const config = TEAM_ENTITY_CONFIG[kind];
     const db = requireFirestore();
+    if (kind === "member" && id && Object.hasOwn(payload, "serviceAvailability") &&
+        expectedUpdatedAt === undefined) {
+      throw httpError(409, "Reload this member before changing service availability.");
+    }
     const now = nowIso();
     const nextId = id || (portableCreateKey
       ? `${config.idPrefix}_${portableCreateKey.slice(0, 40)}`
@@ -6663,15 +6847,23 @@ export const createTeamsAuthHandlers = ({
         if (current.memberId && current.memberId !== nextId) {
           throw httpError(409, "Member ownership is invalid.");
         }
-        if (current.updatedAt && expectedUpdatedAt !== current.updatedAt) {
+        if ((current.updatedAt || Object.hasOwn(payload, "serviceAvailability")) &&
+            expectedUpdatedAt !== current.updatedAt) {
           throw httpError(409, "This member changed somewhere else. Reload and try again.");
         }
+        const availabilityMutation = Object.hasOwn(payload, "serviceAvailability")
+          ? replaceServiceAvailabilityWithRevisions({
+              member: current,
+              serviceAvailability: payload.serviceAvailability,
+            })
+          : {};
         if (hasMemberships) {
           // Keep the established per-team key updates while binding them to
           // the same revision check as the member fields. Reading the current
           // map inside this transaction also preserves team keys added since
           // the editor loaded.
-          const { teamMemberships, ...memberFields } = doc;
+          const { teamMemberships, ...memberDocFields } = doc;
+          const memberFields = { ...memberDocFields, ...availabilityMutation };
           await updateDocMapKeys(
             config.collection,
             nextId,
@@ -6686,15 +6878,19 @@ export const createTeamsAuthHandlers = ({
             },
           );
         } else if (transaction) {
-          transaction.set(ref, {
+          transaction.update(ref, {
             ...doc,
+            ...availabilityMutation,
             ...volunteerContactIndexFields(
-              { ...current, ...doc },
+              { ...current, ...doc, ...availabilityMutation },
               process.env.AUTH_VOLUNTEER_PORTAL_SECRET,
             ),
-          }, { merge: true });
+          });
         } else {
-          await setDoc(config.collection, nextId, doc, { merge: true });
+          await setDoc(config.collection, nextId, {
+            ...doc,
+            ...availabilityMutation,
+          }, { merge: true });
         }
       };
       if (db?.runTransaction) {
@@ -7880,6 +8076,39 @@ export const createTeamsAuthHandlers = ({
       : normalizedFields;
   };
 
+  const validateIntakeFormDefaults = (settings, purpose) => {
+    const keys = purpose === "team_availability"
+      ? ["welcomeMessage", "availabilityMessage"]
+      : ["enabledFields", "welcomeMessage", "positionsMessage", "availabilityMessage", "notesMessage"];
+    if (!settings || typeof settings !== "object" || Array.isArray(settings) ||
+        Object.keys(settings).some((key) => !keys.includes(key))) {
+      throw httpError(400, "Choose supported form defaults only.");
+    }
+    const normalized = {};
+    for (const key of keys) {
+      if (key === "enabledFields") {
+        if (!Array.isArray(settings[key]) || settings[key].some((field) => !TEAM_INTAKE_FIELD_IDS.has(field))) {
+          throw httpError(400, "Choose supported form fields only.");
+        }
+        normalized[key] = normalizeTeamIntakeFields(settings[key]);
+      } else {
+        if (typeof settings[key] !== "string" || settings[key].length > 500) {
+          throw httpError(400, "Form messages must be text with 500 characters or fewer.");
+        }
+        normalized[key] = normalizeLongText(settings[key], { max: 500 });
+      }
+    }
+    return normalized;
+  };
+
+  const readIntakeFormDefaults = (church) => ({
+    defaults: church.intakeFormDefaults || {},
+    revisions: {
+      general_intake: church.intakeFormDefaultsRevisions?.general_intake || "legacy",
+      team_availability: church.intakeFormDefaultsRevisions?.team_availability || "legacy",
+    },
+  });
+
   const validateTeamIntakeFormPayload = (body, existing = null) => {
     const name = normalizeShortText(body?.name ?? existing?.name);
     if (!name) {
@@ -8192,21 +8421,18 @@ export const createTeamsAuthHandlers = ({
       : [];
     const occurrenceIds = new Set(
       (form.availabilityOccurrences || []).map(
-        (occurrence) => occurrence.occurrenceId,
+        (occurrence) => String(occurrence?.occurrenceId || "").trim(),
       ),
     );
+    const collects = (field, key) => enabledFields.has(field) && Object.hasOwn(body || {}, key);
     const occurrenceAvailability = {};
-    const rawAvailability =
-      body?.occurrenceAvailability &&
-      typeof body.occurrenceAvailability === "object"
-        ? body.occurrenceAvailability
-        : {};
-    Object.entries(rawAvailability).forEach(([occurrenceId, availability]) => {
-      if (!enabledFields.has("availability")) return;
-      if (!occurrenceIds.has(occurrenceId)) return;
-      occurrenceAvailability[occurrenceId] =
-        availability === "unavailable" ? "unavailable" : "available";
-    });
+    if (collects("availability", "occurrenceAvailability")) {
+      const rawAvailability = normalizeServiceAvailability(body.occurrenceAvailability);
+      Object.entries(rawAvailability).forEach(([occurrenceId, availability]) => {
+        if (!occurrenceIds.has(occurrenceId)) return;
+        occurrenceAvailability[occurrenceId] = availability;
+      });
+    }
     return {
       firstName,
       lastName,
@@ -8215,38 +8441,24 @@ export const createTeamsAuthHandlers = ({
       birthDate,
       ...(personalizedMember ? { submittedMemberDetails } : {}),
       normalizedName: normalizePersonNameKey(firstName, lastName),
-      positionIds,
-      occurrenceAvailability,
-      blockoutRanges: enabledFields.has("blockoutDates")
-        ? normalizeIntakeBlockoutRanges(
-            body?.blockoutRanges,
-            form.startDate,
-            form.endDate,
-          )
-        : [],
+      ...(collects("positions", "positionIds") ? { positionIds } : {}),
+      ...(collects("availability", "occurrenceAvailability") ? { occurrenceAvailability } : {}),
+      ...(collects("blockoutDates", "blockoutRanges") ? {
+        blockoutRanges: normalizeIntakeBlockoutRanges(
+          body.blockoutRanges,
+          form.startDate,
+          form.endDate,
+        ),
+      } : {}),
       notes: enabledFields.has("notes")
         ? normalizeLongText(body?.notes, { max: 2000 })
         : "",
-      ...(enabledFields.has("schedulingFrequency") ||
-      enabledFields.has("recurringAvailability")
-        ? {
-            ...(enabledFields.has("schedulingFrequency")
-              ? {
-                  servingFrequency: normalizeTeamMemberServingFrequency(
-                    body?.servingFrequency,
-                  ),
-                }
-              : {}),
-            ...(enabledFields.has("recurringAvailability")
-              ? {
-                  recurringAvailability:
-                    normalizeTeamMemberRecurringAvailability(
-                      body?.recurringAvailability,
-                    ),
-                }
-              : {}),
-          }
-        : {}),
+      ...(collects("schedulingFrequency", "servingFrequency") ? {
+        servingFrequency: normalizeTeamMemberServingFrequency(body.servingFrequency),
+      } : {}),
+      ...(collects("recurringAvailability", "recurringAvailability") ? {
+        recurringAvailability: normalizeTeamMemberRecurringAvailability(body.recurringAvailability),
+      } : {}),
     };
   };
 
@@ -8723,13 +8935,13 @@ export const createTeamsAuthHandlers = ({
     }
   };
 
-  const assertTeamIntakeFormResponseDeadline = (form) => {
+  const assertTeamIntakeFormResponseDeadline = (form, serviceTimeZone = "UTC") => {
     const responseDeadline = String(
       form?.responseDeadline || form?.endDate || "",
     ).trim();
     if (
       responseDeadline &&
-      responseDeadline < new Date().toISOString().slice(0, 10)
+      responseDeadline < getVolunteerAvailabilityCurrentDate(serviceTimeZone)
     ) {
       throw httpError(409, "The response deadline for this form has passed.");
     }
@@ -8992,7 +9204,7 @@ export const createTeamsAuthHandlers = ({
 
   const getTeamIntakeRecipientContext = async (
     recipient,
-    { requireTokenHash = true } = {},
+    { requireTokenHash = true, allowClosed = false } = {},
   ) => {
     const recipientId = String(
       recipient?.recipientId || recipient?.id || "",
@@ -9019,7 +9231,7 @@ export const createTeamsAuthHandlers = ({
     ) {
       throw httpError(404, "Request not found.");
     }
-    assertTeamIntakeFormIsOpen(form);
+    if (!allowClosed) assertTeamIntakeFormIsOpen(form);
     if (form.purpose === "team_availability") {
       const teamIds = teamAvailabilityFormTeamIds(form);
       const teams = await Promise.all(
@@ -9059,50 +9271,463 @@ export const createTeamsAuthHandlers = ({
     return getTeamIntakeRecipientContext(recipient);
   };
 
-  const getVolunteerAvailabilityContext = async (identity, recipientId) => {
+  const getVolunteerAvailabilityContext = async (
+    identity,
+    recipientId,
+    { forRead = false } = {},
+  ) => {
     await identity.authorize?.();
     const recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
     if (!recipient || recipient.churchId !== identity.churchId || recipient.memberId !== identity.memberId) {
       throw httpError(404, "This availability request is no longer available.");
     }
-    const context = await getTeamIntakeRecipientContext({ recipientId, ...recipient }, { requireTokenHash: false });
+    const context = await getTeamIntakeRecipientContext(
+      { recipientId, ...recipient },
+      { requireTokenHash: false, allowClosed: forRead },
+    );
     if (context.form.purpose !== "team_availability" ||
         (identity.actorUid && context.member.userId !== identity.actorUid)) {
       throw httpError(404, "This availability request is no longer available.");
     }
-    assertTeamIntakeFormResponseDeadline(context.form);
+    if (!forRead) {
+      const church = await getDoc(COLLECTIONS.churches, identity.churchId);
+      assertTeamIntakeFormResponseDeadline(
+        context.form,
+        church?.serviceTimeZone,
+      );
+    }
     return context;
   };
 
-  const getVolunteerAvailability = async (identity) => {
-    const recipients = await queryDocs(COLLECTIONS.teamIntakeRecipients, [
-      { field: "churchId", value: identity.churchId },
-      { field: "memberId", value: identity.memberId },
-    ], { limit: TEAM_COLLECTION_QUERY_LIMIT });
-    const requests = [];
-    for (const recipient of recipients) {
+  const getVolunteerAvailability = async (
+    identity,
+    {
+      summaryOnly = false,
+      historyOnly = false,
+      includeMemberSnapshot = false,
+      recipientId = "",
+      endpointStartedAt = null,
+      identityResolutionMs = 0,
+    } = {},
+  ) => {
+    historyOnly = Boolean(historyOnly && !recipientId);
+    summaryOnly = Boolean(summaryOnly || historyOnly);
+    const startedAt = performance.now();
+    const phaseMs = {};
+    const readCounts = { getDoc: 0, queryDocs: 0, serviceCatalog: 0 };
+    const diagnostics = {
+      activeFormCount: 0,
+      historicalFormCount: 0,
+      candidateRecipientCount: 0,
+      scopedRecipientCount: 0,
+      teamReadCount: 0,
+      scheduleQueryCount: 0,
+      requestCount: 0,
+      payloadBytes: 0,
+    };
+    const measure = async (phase, operation) => {
+      const phaseStartedAt = performance.now();
       try {
-        const { form, member, recipient: current } = await getVolunteerAvailabilityContext(
-          identity, recipient.recipientId || recipient.id,
-        );
-        const occurrenceIds = new Set((form.availabilityOccurrences || []).map((item) => item.occurrenceId));
-        requests.push({
-          recipientId: current.recipientId, formId: form.formId, name: form.name,
-          responseDeadline: form.responseDeadline || form.endDate || "",
-          availabilityMessage: form.availabilityMessage || "",
-          occurrences: (form.availabilityOccurrences || []).map((item) => ({
-            occurrenceId: item.occurrenceId, name: item.name || "Service", startsAt: item.startsAt || "",
-          })),
-          availability: Object.fromEntries(Object.entries(member.serviceAvailability || {})
-            .filter(([id]) => occurrenceIds.has(id))),
-          respondedAt: current.respondedAt || "",
-        });
-      } catch (error) {
-        // Revoked/closed/out-of-scope requests disappear; datastore failures do not.
-        if (![400, 403, 404, 409].includes(error?.status || error?.statusCode)) throw error;
+        return await operation();
+      } finally {
+        phaseMs[phase] = (phaseMs[phase] || 0) + performance.now() - phaseStartedAt;
       }
+    };
+    const readDoc = async (...args) => {
+      readCounts.getDoc += 1;
+      return getDoc(...args);
+    };
+    const readQuery = async (...args) => {
+      readCounts.queryDocs += 1;
+      return queryDocs(...args);
+    };
+    const logDiagnostics = () => {
+      if (
+        process.env.NODE_ENV === "production" ||
+        process.env.WORSHIPSYNC_AVAILABILITY_DIAGNOSTICS !== "1" ||
+        typeof logAuthEvent !== "function"
+      ) return;
+      try {
+        logAuthEvent("info", "availability.read.diagnostics", {
+          ...Object.fromEntries(Object.entries(phaseMs).map(([key, value]) => [
+            key,
+            Number(value.toFixed(2)),
+          ])),
+          totalMs: Number((performance.now() - (endpointStartedAt || startedAt)).toFixed(2)),
+          availabilityProcessingMs: Number((performance.now() - startedAt).toFixed(2)),
+          identityResolutionMs: Number(identityResolutionMs.toFixed(2)),
+          firestoreGetDocCount: readCounts.getDoc,
+          firestoreQueryCount: readCounts.queryDocs,
+          serviceCatalogReadCount: readCounts.serviceCatalog,
+          ...diagnostics,
+          summaryOnly,
+          historyOnly,
+          hasRecipientFilter: Boolean(recipientId),
+        });
+      } catch {
+        // Diagnostics are optional and must not change a volunteer read result.
+      }
+    };
+
+    try {
+      await measure("authorizationMs", () => identity.authorize?.());
+      const [church, linkedMember] = await measure("churchMemberLookupMs", () => Promise.all([
+        readDoc(COLLECTIONS.churches, identity.churchId),
+        identity.memberId
+          ? readDoc(COLLECTIONS.teamRosterMembers, identity.memberId)
+          : Promise.resolve(null),
+      ]));
+      const preferencesMember = linkedMember &&
+        linkedMember.churchId === identity.churchId &&
+        !linkedMember.archivedAt &&
+        (!identity.actorUid || linkedMember.userId === identity.actorUid)
+        ? { ...linkedMember, memberId: identity.memberId }
+        : null;
+      const serviceTimeZone = isValidPortableTimeZone(church?.serviceTimeZone)
+        ? church.serviceTimeZone
+        : null;
+      const currentDate = getVolunteerAvailabilityCurrentDate(serviceTimeZone || "UTC");
+      const formFields = [
+        "formId", "churchId", "purpose", "active", "archivedAt", "teamIds",
+        "name", "responseDeadline", "endDate",
+        ...(summaryOnly ? [] : ["availabilityMessage", "availabilityOccurrences"]),
+      ];
+      const recipientFields = [
+        "recipientId", "churchId", "memberId", "formId", "revokedAt",
+        "respondedAt", "submissionId",
+      ];
+      let formsById = new Map();
+      let targetedRecipients = null;
+      if (preferencesMember && recipientId) {
+        const [recipient] = recipientId.includes("/")
+          ? []
+          : await measure("recipientLookupMs", () => readQuery(
+            COLLECTIONS.teamIntakeRecipients,
+            [{ field: "__name__", value: recipientId }],
+            { limit: 1, select: recipientFields },
+          ));
+        targetedRecipients = recipient ? [recipient] : [];
+        const belongsToCurrentMember = recipient &&
+          recipient.churchId === identity.churchId &&
+          recipient.memberId === identity.memberId &&
+          !recipient.revokedAt &&
+          String(recipient.recipientId || recipient.id || "").trim() === recipientId;
+        const requestedFormId = belongsToCurrentMember
+          ? String(recipient.formId || "").trim()
+          : "";
+        if (requestedFormId && !requestedFormId.includes("/")) {
+          const [form] = await measure("formLookupMs", () => readQuery(
+            COLLECTIONS.teamIntakeForms,
+            [{ field: "__name__", value: requestedFormId }],
+            { limit: 1, select: formFields },
+          ));
+          if (form && form.churchId === identity.churchId &&
+              form.purpose === "team_availability" && !form.archivedAt) {
+            formsById.set(requestedFormId, { ...form, formId: requestedFormId });
+          }
+        }
+      } else if (preferencesMember && historyOnly) {
+        const historicalRecipients = await measure("recipientLookupMs", () => readQuery(
+          COLLECTIONS.teamIntakeRecipients,
+          [
+            { field: "churchId", value: identity.churchId },
+            { field: "memberId", value: identity.memberId },
+          ],
+          { limit: TEAM_COLLECTION_QUERY_LIMIT + 1, select: recipientFields },
+        ));
+        if (historicalRecipients.length > TEAM_COLLECTION_QUERY_LIMIT) {
+          throw httpError(503, "Past availability requests could not be loaded.");
+        }
+        targetedRecipients = historicalRecipients;
+        const historicalFormIds = [...new Set(historicalRecipients
+          .filter((recipient) => recipient.churchId === identity.churchId &&
+            recipient.memberId === identity.memberId && !recipient.revokedAt)
+          .map((recipient) => String(recipient.formId || "").trim())
+          .filter((formId) => formId && !formId.includes("/")))];
+        if (historicalFormIds.length > TEAM_COLLECTION_QUERY_LIMIT) {
+          throw httpError(503, "Past availability requests could not be loaded.");
+        }
+        const historicalFormBatches = [];
+        for (let index = 0; index < historicalFormIds.length; index += VOLUNTEER_AVAILABILITY_FORM_ID_QUERY_LIMIT) {
+          historicalFormBatches.push(historicalFormIds.slice(index, index + VOLUNTEER_AVAILABILITY_FORM_ID_QUERY_LIMIT));
+        }
+        const historicalFormRows = await measure("formLookupMs", () => mapVolunteerAvailabilityReads(
+          historicalFormBatches,
+          (ids) => readQuery(
+            COLLECTIONS.teamIntakeForms,
+            [{ field: "__name__", op: "in", value: ids }],
+            { limit: ids.length, select: formFields },
+          ),
+        ));
+        for (const form of historicalFormRows.flat()) {
+          const id = String(form.formId || form.id || "").trim();
+          if (!id || form.churchId !== identity.churchId ||
+              form.purpose !== "team_availability" || form.archivedAt ||
+              isVolunteerAvailabilityFormCurrent(form, currentDate)) continue;
+          formsById.set(id, { ...form, formId: id });
+        }
+      } else if (preferencesMember) {
+        const formsByDeadline = await measure("formLookupMs", () => Promise.all(
+          [
+            { field: "responseDeadline", op: ">=", value: currentDate },
+            { field: "endDate", op: ">=", value: currentDate },
+            { field: "responseDeadline", op: "==", value: "" },
+          ].map(({ field, op, value }) => readQuery(
+            COLLECTIONS.teamIntakeForms,
+            [
+              { field: "churchId", value: identity.churchId },
+              { field: "purpose", value: "team_availability" },
+              { field: "active", value: true },
+              { field, op, value },
+            ],
+            {
+              limit: TEAM_COLLECTION_QUERY_LIMIT + 1,
+              select: formFields,
+            },
+          )),
+        ));
+        if (formsByDeadline.some((rows) => rows.length > TEAM_COLLECTION_QUERY_LIMIT)) {
+          throw httpError(503, "Availability requests could not be loaded.");
+        }
+        formsById = new Map();
+        for (const row of formsByDeadline.flat()) {
+          const id = String(row.formId || row.id || "").trim();
+          if (!id || row.churchId !== identity.churchId ||
+              !isVolunteerAvailabilityFormCurrent(row, currentDate)) continue;
+          formsById.set(id, { ...row, formId: id });
+        }
+        if (formsById.size > TEAM_COLLECTION_QUERY_LIMIT) {
+          throw httpError(503, "Availability requests could not be loaded.");
+        }
+      }
+      diagnostics[historyOnly ? "historicalFormCount" : "activeFormCount"] = formsById.size;
+
+      const formIds = [...formsById.keys()].sort();
+      const formIdBatches = [];
+      if (!recipientId && !historyOnly) {
+        for (let index = 0; index < formIds.length; index += VOLUNTEER_AVAILABILITY_FORM_ID_QUERY_LIMIT) {
+          formIdBatches.push(formIds.slice(index, index + VOLUNTEER_AVAILABILITY_FORM_ID_QUERY_LIMIT));
+        }
+      }
+      const recipients = targetedRecipients || [];
+      for (let index = 0; index < formIdBatches.length; index += VOLUNTEER_AVAILABILITY_READ_CONCURRENCY) {
+        const batch = formIdBatches.slice(index, index + VOLUNTEER_AVAILABILITY_READ_CONCURRENCY);
+        const remaining = TEAM_COLLECTION_QUERY_LIMIT - recipients.length;
+        if (remaining < 0) throw httpError(503, "Availability requests could not be loaded.");
+        const recipientRows = await measure("recipientLookupMs", () => mapVolunteerAvailabilityReads(
+          batch,
+          (ids) => readQuery(
+            COLLECTIONS.teamIntakeRecipients,
+            [
+              { field: "churchId", value: identity.churchId },
+              { field: "memberId", value: identity.memberId },
+              { field: "formId", op: "in", value: ids },
+            ],
+            { limit: remaining + 1, select: recipientFields },
+          ),
+        ));
+        recipients.push(...recipientRows.flat());
+        if (recipients.length > TEAM_COLLECTION_QUERY_LIMIT) {
+          throw httpError(503, "Availability requests could not be loaded.");
+        }
+      }
+
+      const candidates = recipients.filter((recipient) => {
+        const storedId = String(recipient.recipientId || recipient.id || "").trim();
+        return recipient.churchId === identity.churchId &&
+          recipient.memberId === identity.memberId &&
+          !recipient.revokedAt &&
+          formsById.has(String(recipient.formId || "")) &&
+          (!recipientId || recipientId === storedId);
+      });
+      diagnostics.candidateRecipientCount = candidates.length;
+
+      const teamIds = new Set();
+      const teamIdsByFormId = new Map();
+      candidates.forEach((recipient) => {
+        const formId = String(recipient.formId || "");
+        if (teamIdsByFormId.has(formId)) return;
+        const ids = teamAvailabilityFormTeamIds(formsById.get(formId));
+        teamIdsByFormId.set(formId, ids);
+        ids.forEach((teamId) => teamIds.add(teamId));
+      });
+      if (teamIds.size > TEAM_COLLECTION_QUERY_LIMIT) {
+        throw httpError(503, "Availability requests could not be loaded.");
+      }
+      diagnostics.teamReadCount = teamIds.size;
+      const teamRows = await measure("teamScopeValidationMs", () => mapVolunteerAvailabilityReads(
+        [...teamIds],
+        async (teamId) => {
+          const team = await readDoc(COLLECTIONS.teams, teamId);
+          return team ? { ...team, teamId } : null;
+        },
+      ));
+      const teamsById = new Map([...teamIds].map((teamId, index) => [teamId, teamRows[index]]));
+      const contexts = candidates.flatMap((recipient) => {
+        const formId = String(recipient.formId || "");
+        const form = formsById.get(formId);
+        const teamIdsForForm = teamIdsByFormId.get(formId) || [];
+        if (!form || !teamIdsForForm.length || !isMemberWithinTeamAvailabilityScope({
+          form,
+          member: preferencesMember,
+          teams: teamIdsForForm.map((teamId) => teamsById.get(teamId)),
+        })) return [];
+        return [{
+          form,
+          member: preferencesMember,
+          current: {
+            ...recipient,
+            recipientId: String(recipient.recipientId || recipient.id || "").trim(),
+          },
+        }];
+      });
+      diagnostics.scopedRecipientCount = contexts.length;
+
+      const hasPossibleHistoricalPair = contexts.some(({ form }) => {
+        const occurrences = form.availabilityOccurrences || [];
+        return occurrences.some((occurrence) => String(occurrence.occurrenceId || "").startsWith("group:")) &&
+          occurrences.some((occurrence) => occurrence.serviceId && !String(occurrence.occurrenceId || "").startsWith("group:"));
+      });
+      let services = [];
+      let schedules = [];
+      let evidenceComplete = Boolean(serviceTimeZone);
+      if (hasPossibleHistoricalPair && evidenceComplete) {
+        const reconciliationStartedAt = performance.now();
+        try {
+          readCounts.serviceCatalog += 1;
+          services = await readChurchServiceTimes(identity.churchId);
+          const serviceById = new Map((Array.isArray(services) ? services : []).map((service) => [
+            String(service?.serviceId || service?.id || ""), service,
+          ]));
+          const formsWithPossiblePair = contexts.filter(({ form }) => {
+            const rows = form.availabilityOccurrences || [];
+            const groupedRows = rows.filter((occurrence) =>
+              String(occurrence?.occurrenceId || "").startsWith("group:"),
+            );
+            const standaloneRows = rows.filter((occurrence) =>
+              occurrence?.serviceId && !String(occurrence.occurrenceId || "").startsWith("group:"),
+            );
+            return groupedRows.some((grouped) => {
+              const match = String(grouped.occurrenceId || "").match(/^group:(.+)@(\d{4}-\d{2}-\d{2})$/);
+              if (!match) return false;
+              const [, groupId, serviceDate] = match;
+              const groupedIdentity = resolveOccurrenceIdentity(grouped, serviceTimeZone);
+              if (groupedIdentity?.logicalOccurrenceId !== logicalOccurrenceIdForGroup(groupId, serviceDate)) return false;
+              return standaloneRows.some((candidate) => {
+                const candidateIdentity = resolveOccurrenceIdentity(candidate, serviceTimeZone);
+                const service = serviceById.get(String(candidate.serviceId || ""));
+                return candidateIdentity?.serviceDate === serviceDate &&
+                  service && !service.archivedAt && service.serviceGroupId === groupId;
+              });
+            });
+          });
+          if (formsWithPossiblePair.length) {
+            const relevantTeamIds = [...new Set(formsWithPossiblePair.flatMap(({ form }) =>
+              teamAvailabilityFormTeamIds(form),
+            ))];
+            diagnostics.scheduleQueryCount = relevantTeamIds.length;
+            const schedulesByTeam = await mapVolunteerAvailabilityReads(
+              relevantTeamIds,
+              (teamId) => readQuery(COLLECTIONS.teamSchedules, [
+                { field: "churchId", value: identity.churchId },
+                { field: "teamId", value: teamId },
+              ], { limit: TEAM_COLLECTION_QUERY_LIMIT }),
+            );
+            schedules = schedulesByTeam.flat();
+            if (schedulesByTeam.some((rows) => rows.length >= TEAM_COLLECTION_QUERY_LIMIT)) {
+              evidenceComplete = false;
+            }
+          }
+        } catch (error) {
+          evidenceComplete = false;
+          logAuthEvent("warn", "availability.projection.evidence-error", {
+            churchId: identity.churchId,
+            errorMessage: error?.message || "schedule evidence unavailable",
+          });
+        } finally {
+          phaseMs.historicalReconciliationMs = performance.now() - reconciliationStartedAt;
+        }
+      }
+
+      let schedulingPreferences = null;
+      if (preferencesMember) {
+        try {
+          schedulingPreferences = {
+            servingFrequency: TEAM_MEMBER_SERVING_FREQUENCIES.has(preferencesMember.servingFrequency)
+              ? preferencesMember.servingFrequency
+              : "as_needed",
+            recurringAvailability: normalizeTeamMemberRecurringAvailability(preferencesMember.recurringAvailability),
+            updatedAt: preferencesMember.updatedAt || "",
+          };
+        } catch (error) {
+          logAuthEvent("warn", "availability.preferences.invalid", {
+            churchId: identity.churchId,
+            memberId: identity.memberId,
+            errorMessage: error?.message || "stored preferences are invalid",
+          });
+        }
+      }
+
+      const requestSummaries = contexts.map(({ form, current }) => ({
+        recipientId: current.recipientId,
+        formId: form.formId,
+        name: form.name || "",
+        responseDeadline: form.responseDeadline || form.endDate || "",
+        respondedAt: current.respondedAt || "",
+        submissionId: current.submissionId || "",
+        editable: isVolunteerAvailabilityFormCurrent(form, currentDate),
+      }));
+      let requests = [];
+      if (!summaryOnly) {
+        requests = await measure("projectionMs", async () => {
+          const projectionByFormId = new Map();
+          return contexts.map(({ form, member, current }) => {
+            let projection = projectionByFormId.get(form.formId);
+            if (!projection) {
+              projection = projectVolunteerAvailabilityResponse({
+                form, member, serviceTimeZone: church?.serviceTimeZone,
+                services, schedules, evidenceComplete,
+              });
+              projectionByFormId.set(form.formId, projection);
+            }
+            return {
+              recipientId: current.recipientId,
+              formId: form.formId,
+              name: form.name,
+              responseDeadline: form.responseDeadline || form.endDate || "",
+              availabilityMessage: form.availabilityMessage || "",
+              occurrences: projection.occurrences,
+              availability: projection.availability,
+              unansweredOccurrenceIds: projection.unansweredOccurrenceIds,
+              availabilityRevision: projection.availabilityRevision,
+              conflictingOccurrenceIds: projection.conflictingOccurrenceIds,
+              respondedAt: current.respondedAt || "",
+              submissionId: current.submissionId || "",
+              editable: isVolunteerAvailabilityFormCurrent(form, currentDate),
+            };
+          });
+        });
+      }
+      diagnostics.requestCount = summaryOnly ? requestSummaries.length : requests.length;
+      const response = {
+        success: true,
+        serviceTimeZone,
+        requests,
+        schedulingPreferences,
+        ...(includeMemberSnapshot ? {
+          memberSnapshot: preferencesMember
+            ? projectVolunteerMutationMember(preferencesMember)
+            : null,
+        } : {}),
+        ...(summaryOnly ? { requestSummaries } : {}),
+      };
+      const serializationStartedAt = performance.now();
+      diagnostics.payloadBytes = Buffer.byteLength(JSON.stringify(response));
+      phaseMs.serializationMs = performance.now() - serializationStartedAt;
+      return response;
+    } finally {
+      logDiagnostics();
     }
-    return { success: true, requests };
   };
 
   const writeTeamIntakeRecipientBatch = async (
@@ -9249,26 +9874,60 @@ export const createTeamsAuthHandlers = ({
     createMember = false,
     personalizedSubmission = false,
     submittedMemberDetails = {},
+    expectedAvailabilityRevision,
+    memberMutationAlreadyQueued = false,
     adminUserId,
     now = nowIso(),
   }) => {
     const formBelongsToChurch = Boolean(form && form.churchId === churchId);
+    const enabledFields = new Set(formBelongsToChurch
+      ? normalizeTeamIntakeFields(undefined, form.enabledFields) : []);
+    const collects = (field, key) => enabledFields.has(field) && Object.hasOwn(submission, key);
+    const db = requireFirestore?.();
+    const memberRef = memberId ? db?.collection(COLLECTIONS.teamRosterMembers).doc(memberId) : null;
+    const readMember = async (transaction) => {
+      if (formBelongsToChurch) {
+        const currentForm = transaction
+          ? (await transaction.get(db.collection(COLLECTIONS.teamIntakeForms).doc(submission.formId))).data()
+          : await getDoc(COLLECTIONS.teamIntakeForms, submission.formId);
+        const fields = ["churchId", "purpose", "enabledFields", "teamIds", "startDate", "endDate", "availabilityOccurrences"];
+        if (!currentForm || fields.some((field) => !isDeepStrictEqual(currentForm[field], form[field]))) {
+          throw httpError(409, "This form changed somewhere else. Reload and try again.");
+        }
+      }
+      if (!transaction) return assertTeamEntityInChurch("member", memberId, churchId, { label: "Member", active: false });
+      const snapshot = await transaction.get(memberRef);
+      if (!snapshot.exists || snapshot.data().churchId !== churchId) throw httpError(404, "Member not found.");
+      return { ...snapshot.data(), memberId: snapshot.id };
+    };
+    const writeMember = async (transaction, member, patch) => {
+      if (transaction) {
+        transaction.update(memberRef, {
+          ...patch,
+          ...volunteerContactIndexFields({ ...member, ...patch }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET),
+        });
+      } else {
+        await setDoc(COLLECTIONS.teamRosterMembers, member.memberId, patch, { merge: true });
+      }
+      return { ...member, ...patch };
+    };
     if (formBelongsToChurch && form.purpose === "team_availability") {
       if (createMember) {
         throw httpError(400, "Availability responses can only update an existing Team member.");
       }
-      const updateMember = async () => {
-        const member = await assertTeamEntityInChurch("member", memberId, churchId, {
-          label: "Member",
-          active: false,
-        });
-        const serviceAvailability = replaceServiceAvailabilityForForm({
-          existingAvailability: member.serviceAvailability,
-          replacementAvailability: normalizeServiceAvailability(
-            submission.occurrenceAvailability,
-          ),
-          form,
-        });
+      const updateMember = async (transaction) => {
+        const member = await readMember(transaction);
+        let availabilityMutation = {};
+        if (collects("availability", "occurrenceAvailability")) {
+          if (expectedAvailabilityRevision) {
+            assertServiceAvailabilityRevisionCurrent(member, expectedAvailabilityRevision);
+          }
+          availabilityMutation = replaceServiceAvailabilityForFormWithRevisions({
+            member,
+            replacementAvailability: normalizeServiceAvailability(submission.occurrenceAvailability),
+            form,
+          });
+        }
         const memberDetailPatch = personalizedSubmission
           ? buildTeamIntakeMissingMemberDetailPatch({
               member,
@@ -9276,22 +9935,21 @@ export const createTeamsAuthHandlers = ({
               form,
             })
           : {};
-        await setDoc(
-          COLLECTIONS.teamRosterMembers,
-          member.memberId,
+        await writeMember(transaction, member,
           {
-            serviceAvailability,
+            ...availabilityMutation,
             ...memberDetailPatch,
             updatedAt: now,
             updatedByUid: adminUserId,
           },
-          { merge: true },
         );
         return member.memberId;
       };
-      const memberIdForResponse = requireFirestore?.()?.runTransaction
-        ? await updateMember()
-        : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
+      const memberIdForResponse = db?.runTransaction
+        ? await db.runTransaction(updateMember)
+        : memberMutationAlreadyQueued
+          ? await updateMember(null)
+          : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       return {
         member: await getTeamEntity("member", memberIdForResponse),
         updatedTeams: [],
@@ -9307,20 +9965,18 @@ export const createTeamsAuthHandlers = ({
     const formCollectsBlockouts =
       formBelongsToChurch &&
       Boolean(form.startDate && form.endDate) &&
-      normalizeTeamIntakeFields(undefined, form.enabledFields).includes(
-        "blockoutDates",
-      );
+      collects("blockoutDates", "blockoutRanges");
     const blockoutDates = mergeBlockoutDateRanges(
-      (submission.blockoutRanges || []).map((range) => ({
+      (collects("blockoutDates", "blockoutRanges") ? submission.blockoutRanges || [] : []).map((range) => ({
         startDate: range.startDate,
         endDate: range.endDate,
         notes: "From intake form",
       })),
     );
-    const desiredPositionIds = submission.positionIds || [];
-    const submissionAvailability = normalizeServiceAvailability(
-      submission.occurrenceAvailability,
-    );
+    const desiredPositionIds = collects("positions", "positionIds") ? submission.positionIds : [];
+    const submissionAvailability = collects("availability", "occurrenceAvailability")
+      ? normalizeServiceAvailability(submission.occurrenceAvailability)
+      : undefined;
     const formTeamIds = formBelongsToChurch
       ? normalizeIdArray(form.teamIds)
       : [];
@@ -9340,9 +9996,9 @@ export const createTeamsAuthHandlers = ({
           email: normalizeMemberEmail(submission.email),
           birthDate: normalizeBirthDate(submission.birthDate),
           isMinor: isMinorFromBirthDate(submission.birthDate) ?? false,
-          servingFrequency: submission.servingFrequency || "as_needed",
+          servingFrequency: (collects("schedulingFrequency", "servingFrequency") && submission.servingFrequency) || "as_needed",
           recurringAvailability:
-            submission.recurringAvailability ||
+            (collects("recurringAvailability", "recurringAvailability") && submission.recurringAvailability) ||
             normalizeTeamMemberRecurringAvailability(null),
           positionIds: [],
           desiredPositionIds,
@@ -9373,11 +10029,8 @@ export const createTeamsAuthHandlers = ({
       const submittedEmail = normalizeMemberEmail(submission.email);
       const submittedTitle = normalizeShortText(submission.title, { max: 40 });
       const submittedBirthDate = normalizeBirthDate(submission.birthDate);
-      const updateMember = async () => {
-        const currentMember = await assertTeamEntityInChurch("member", memberId, churchId, {
-          label: "Member",
-          active: false,
-        });
+      const updateMember = async (transaction) => {
+        const currentMember = await readMember(transaction);
         const nextBlockoutDates = formCollectsBlockouts
           ? replaceBlockoutDateRangesInPeriod({
               existingRanges: currentMember.blockoutDates,
@@ -9385,17 +10038,18 @@ export const createTeamsAuthHandlers = ({
               startDate: form.startDate,
               endDate: form.endDate,
             })
-          : formBelongsToChurch
-            ? currentMember.blockoutDates || []
-            : mergeBlockoutDateRanges([
-                ...(currentMember.blockoutDates || []),
-                ...blockoutDates,
-              ]);
-        const nextServiceAvailability = replaceServiceAvailabilityForForm({
-          existingAvailability: currentMember.serviceAvailability,
-          replacementAvailability: submissionAvailability,
-          form,
-        });
+          : currentMember.blockoutDates || [];
+        let availabilityMutation = {};
+        if (submissionAvailability !== undefined) {
+          if (expectedAvailabilityRevision) {
+            assertServiceAvailabilityRevisionCurrent(currentMember, expectedAvailabilityRevision);
+          }
+          availabilityMutation = replaceServiceAvailabilityForFormWithRevisions({
+            member: currentMember,
+            replacementAvailability: submissionAvailability,
+            form,
+          });
+        }
         const memberDetailPatch = personalizedSubmission
           ? buildTeamIntakeMissingMemberDetailPatch({
               member: currentMember,
@@ -9420,30 +10074,28 @@ export const createTeamsAuthHandlers = ({
                   }
                 : {}),
             };
-        await setDoc(
-          COLLECTIONS.teamRosterMembers,
-          currentMember.memberId,
+        return writeMember(transaction, currentMember,
           {
-            desiredPositionIds: nextDesiredPositionIds,
-            serviceAvailability: nextServiceAvailability,
-            blockoutDates: nextBlockoutDates,
+            ...(collects("positions", "positionIds") ? { desiredPositionIds: nextDesiredPositionIds } : {}),
+            ...availabilityMutation,
+            ...(formCollectsBlockouts ? { blockoutDates: nextBlockoutDates } : {}),
             ...memberDetailPatch,
-            ...(submission.servingFrequency
+            ...(collects("schedulingFrequency", "servingFrequency") && submission.servingFrequency
               ? { servingFrequency: submission.servingFrequency }
               : {}),
-            ...(submission.recurringAvailability
+            ...(collects("recurringAvailability", "recurringAvailability") && submission.recurringAvailability
               ? { recurringAvailability: submission.recurringAvailability }
               : {}),
             updatedAt: now,
             updatedByUid: adminUserId,
           },
-          { merge: true },
         );
-        return getTeamEntity("member", currentMember.memberId);
       };
-      member = requireFirestore?.()?.runTransaction
-        ? await updateMember()
-        : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
+      member = db?.runTransaction
+        ? await db.runTransaction(updateMember)
+        : memberMutationAlreadyQueued
+          ? await updateMember(null)
+          : await enqueueInMemoryRosterMemberMutation(memberId, updateMember);
       trackTeams(
         await addMemberToTeamsForPositions({
           churchId,
@@ -9476,11 +10128,25 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const projectCommittedAvailabilityRequestSummary = ({ recipient, form, submissionId, submittedAt }) => ({
+    recipientId: recipient.recipientId,
+    formId: form.formId,
+    name: String(form.name || ""),
+    responseDeadline: String(form.responseDeadline || ""),
+    respondedAt: submittedAt,
+    submissionId,
+    // The form, deadline, recipient scope, and member scope were verified in
+    // the same transaction that committed this accepted response.
+    editable: true,
+  });
+
   const submitTeamIntakeRecipientWithFirestoreTransaction = async ({
     token,
     body,
     identity,
     recipientId,
+    expectedRecipient,
+    includeAvailabilitySummary = false,
   }) => {
     const db = requireFirestore?.();
     if (!db) return null;
@@ -9505,6 +10171,13 @@ export const createTeamsAuthHandlers = ({
         recipientId: recipientDocument.id,
         ...recipientDocument.data(),
       };
+      if (!expectedRecipient ||
+          recipient.recipientId !== expectedRecipient.recipientId ||
+          recipient.churchId !== expectedRecipient.churchId ||
+          recipient.memberId !== expectedRecipient.memberId ||
+          recipient.formId !== expectedRecipient.formId) {
+        throw httpError(409, "This request changed while you were saving. Reopen the request and try again.");
+      }
       if (recipient.revokedAt) throw httpError(404, "Request not found.");
 
       const formRef = db
@@ -9536,7 +10209,18 @@ export const createTeamsAuthHandlers = ({
       }
 
 
-      if (identity) assertTeamIntakeFormResponseDeadline(form);
+      if (identity) {
+        let serviceTimeZone = "UTC";
+        if (form.purpose === "team_availability") {
+          const churchSnapshot = await transaction.get(
+            db.collection(COLLECTIONS.churches).doc(form.churchId),
+          );
+          serviceTimeZone = churchSnapshot.exists
+            ? churchSnapshot.data()?.serviceTimeZone
+            : "UTC";
+        }
+        assertTeamIntakeFormResponseDeadline(form, serviceTimeZone);
+      }
       // Revalidate submitted fields against the member and form read in this
       // transaction so a value filled after preview cannot be overwritten.
       const currentPayload = await validateTeamIntakeSubmissionPayload(
@@ -9548,6 +10232,10 @@ export const createTeamsAuthHandlers = ({
       const submissionId =
         recipient.submissionId ||
         `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
+      const submissionRef = db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId);
+      const previousSubmissionSnapshot = await transaction.get(submissionRef);
+      const previousSubmission = previousSubmissionSnapshot.exists ? previousSubmissionSnapshot.data() : null;
+      const responseDigest = hashValue(stablePortableJson(body || {}));
 
       const desiredPositionIds = normalizeIdArray(currentPayload.positionIds);
       const positionSnapshots = [];
@@ -9597,8 +10285,42 @@ export const createTeamsAuthHandlers = ({
         throw httpError(404, "This request is no longer available.");
       }
 
+      // A lost acknowledgment must not replay a completed write over a later
+      // member edit. Authorization and current form scope still run above.
+      if (previousSubmission?.status === "applied" && previousSubmission.responseDigest === responseDigest &&
+          previousSubmission.appliedMemberId === member.memberId) {
+        return {
+          success: true,
+          submissionId,
+          formId: form.formId,
+          submittedAt: previousSubmission.submittedAt,
+          ...(includeAvailabilitySummary && availabilityOnly ? {
+            requestSummary: projectCommittedAvailabilityRequestSummary({
+              recipient, form, submissionId, submittedAt: previousSubmission.submittedAt,
+            }),
+          } : {}),
+        };
+      }
+
+      const availabilityMutation = Object.hasOwn(currentPayload, "occurrenceAvailability")
+        ? (() => {
+            const occurrenceIds = getFormAvailabilityOccurrenceIds(form);
+            const expectedRevisions = normalizeSubmittedServiceAvailabilityRevision(
+              body?.availabilityRevision,
+              occurrenceIds,
+            );
+            assertServiceAvailabilityRevisionCurrent(member, expectedRevisions);
+            return replaceServiceAvailabilityForFormWithRevisions({
+              member,
+              replacementAvailability: currentPayload.occurrenceAvailability,
+              form,
+            });
+          })()
+        : null;
+
       const formCollectsBlockouts =
         Boolean(form.startDate && form.endDate) &&
+        Object.hasOwn(currentPayload, "blockoutRanges") &&
         normalizeTeamIntakeFields(undefined, form.enabledFields).includes(
           "blockoutDates",
         );
@@ -9617,13 +10339,6 @@ export const createTeamsAuthHandlers = ({
             endDate: form.endDate,
           })
         : member.blockoutDates || [];
-      const nextServiceAvailability = replaceServiceAvailabilityForForm({
-        existingAvailability: member.serviceAvailability,
-        replacementAvailability: normalizeServiceAvailability(
-          currentPayload.occurrenceAvailability,
-        ),
-        form,
-      });
       const memberDetailPatch = buildTeamIntakeMissingMemberDetailPatch({
         member,
         submittedMemberDetails: currentPayload.submittedMemberDetails,
@@ -9631,9 +10346,9 @@ export const createTeamsAuthHandlers = ({
       });
       const adminUserId = `recipient:${recipient.recipientId}`;
       const memberUpdate = {
-        desiredPositionIds,
-        serviceAvailability: nextServiceAvailability,
-        blockoutDates: nextBlockoutDates,
+        ...(Object.hasOwn(currentPayload, "positionIds") ? { desiredPositionIds } : {}),
+        ...(availabilityMutation ? availabilityMutation : {}),
+        ...(formCollectsBlockouts ? { blockoutDates: nextBlockoutDates } : {}),
         ...memberDetailPatch,
         ...(currentPayload.servingFrequency
           ? { servingFrequency: currentPayload.servingFrequency }
@@ -9656,7 +10371,9 @@ export const createTeamsAuthHandlers = ({
         ...submissionPayload
       } = currentPayload;
       const submission = {
+        ...previousSubmission,
         ...submissionPayload,
+        responseDigest,
         submissionId,
         formId: form.formId,
         churchId: form.churchId,
@@ -9670,7 +10387,7 @@ export const createTeamsAuthHandlers = ({
       };
       const memberPatch = availabilityOnly
         ? {
-            serviceAvailability: nextServiceAvailability,
+            ...(availabilityMutation ? availabilityMutation : {}),
             ...memberDetailPatch,
             updatedAt: submittedAt,
             updatedByUid: adminUserId,
@@ -9685,15 +10402,13 @@ export const createTeamsAuthHandlers = ({
         transaction,
         formRef,
         formSnapshot,
-        submissionRef: db
-          .collection(COLLECTIONS.teamIntakeSubmissions)
-          .doc(submissionId),
+        submissionRef,
         submission,
       });
-      transaction.set(memberRef, {
+      transaction.update(memberRef, {
         ...memberPatch,
         ...volunteerContactIndexFields({ ...member, ...memberPatch }, process.env.AUTH_VOLUNTEER_PORTAL_SECRET),
-      }, { merge: true });
+      });
       for (const teamSnapshot of availabilityOnly ? [] : teamSnapshots) {
         if (!teamSnapshot.exists) continue;
         const team = teamSnapshot.data();
@@ -9729,6 +10444,11 @@ export const createTeamsAuthHandlers = ({
         submissionId,
         formId: form.formId,
         submittedAt,
+        ...(includeAvailabilitySummary && availabilityOnly ? {
+          requestSummary: projectCommittedAvailabilityRequestSummary({
+            recipient, form, submissionId, submittedAt,
+          }),
+        } : {}),
       };
     });
   };
@@ -9751,7 +10471,13 @@ export const createTeamsAuthHandlers = ({
     return run;
   };
 
-  const submitTeamIntakeRecipient = async (req, token, identity, recipientId) => {
+  const submitTeamIntakeRecipient = async (
+    req,
+    token,
+    identity,
+    recipientId,
+    { includeAvailabilitySummary = false } = {},
+  ) => {
     const readContext = () => identity
       ? getVolunteerAvailabilityContext(identity, recipientId)
       : getTeamIntakeRecipientContextByToken(token);
@@ -9760,6 +10486,12 @@ export const createTeamsAuthHandlers = ({
       async () => {
         let { recipient, form, member } =
           await readContext();
+        const expectedRecipient = {
+          recipientId: recipient.recipientId,
+          churchId: recipient.churchId,
+          memberId: recipient.memberId,
+          formId: recipient.formId,
+        };
         let payload = await validateTeamIntakeSubmissionPayload(
           req.body,
           form,
@@ -9771,19 +10503,33 @@ export const createTeamsAuthHandlers = ({
             body: req.body,
             identity,
             recipientId,
+            expectedRecipient,
+            includeAvailabilitySummary,
           });
         if (transactionalResult) return transactionalResult;
-        if (form.purpose === "team_availability") {
-          // The in-memory store has no transaction. Re-read authorization and
-          // form state immediately before creating its durable response.
-          ({ recipient, form, member } =
-            await readContext());
-          payload = await validateTeamIntakeSubmissionPayload(
-            req.body,
-            form,
-            { member },
-          );
-        }
+        const commitFallback = async (memberMutationAlreadyQueued = false) => {
+          if (form.purpose === "team_availability" || Object.hasOwn(payload, "occurrenceAvailability")) {
+            // The in-memory store has no transaction. Serialize the current
+            // member check, revision compare, and field-scoped write locally.
+            ({ recipient, form, member } = await readContext());
+            if (recipient.recipientId !== expectedRecipient.recipientId ||
+                recipient.churchId !== expectedRecipient.churchId ||
+                recipient.memberId !== expectedRecipient.memberId ||
+                recipient.formId !== expectedRecipient.formId) {
+              throw httpError(409, "This request changed while you were saving. Reopen the request and try again.");
+            }
+            payload = await validateTeamIntakeSubmissionPayload(
+              req.body,
+              form,
+              { member },
+            );
+          }
+          const expectedAvailabilityRevision = Object.hasOwn(payload, "occurrenceAvailability")
+            ? normalizeSubmittedServiceAvailabilityRevision(
+                req.body?.availabilityRevision,
+                getFormAvailabilityOccurrenceIds(form),
+              )
+            : undefined;
         const submittedAt = nowIso();
         const {
           submittedMemberDetails = {},
@@ -9792,8 +10538,39 @@ export const createTeamsAuthHandlers = ({
         const submissionId =
           recipient.submissionId ||
           `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
+        const previousSubmission = await getDoc(COLLECTIONS.teamIntakeSubmissions, submissionId);
+        const responseDigest = hashValue(stablePortableJson(req.body || {}));
+        if (previousSubmission?.status === "applied" && previousSubmission.responseDigest === responseDigest &&
+            previousSubmission.appliedMemberId === member.memberId) {
+          // Resume after the member/application checkpoint if the final
+          // recipient write was interrupted; never replay the member changes.
+          if (recipient.submissionId !== submissionId || !recipient.respondedAt) {
+            await setDoc(COLLECTIONS.teamIntakeRecipients, recipient.recipientId, {
+              submissionId,
+              respondedAt: previousSubmission.submittedAt,
+              updatedAt: nowIso(),
+              updatedByUid: `recipient:${recipient.recipientId}`,
+            }, { merge: true });
+          }
+          return {
+            success: true,
+            submissionId,
+            formId: form.formId,
+            submittedAt: previousSubmission.submittedAt,
+            ...(includeAvailabilitySummary && form.purpose === "team_availability" ? {
+              requestSummary: projectCommittedAvailabilityRequestSummary({
+                recipient, form, submissionId, submittedAt: previousSubmission.submittedAt,
+              }),
+            } : {}),
+          };
+        }
+        if (expectedAvailabilityRevision) {
+          assertServiceAvailabilityRevisionCurrent(member, expectedAvailabilityRevision);
+        }
         const submission = {
+          ...previousSubmission,
           ...submissionPayload,
+          responseDigest,
           submissionId,
           formId: form.formId,
           churchId: form.churchId,
@@ -9815,12 +10592,14 @@ export const createTeamsAuthHandlers = ({
           );
         }
         const application = await applyTeamIntakeSubmissionToMember({
-          submission,
+          submission: { ...submissionPayload, submissionId, formId: form.formId },
           form,
           churchId: form.churchId,
           memberId: member.memberId,
           personalizedSubmission: true,
           submittedMemberDetails,
+          expectedAvailabilityRevision,
+          memberMutationAlreadyQueued,
           adminUserId: `recipient:${recipient.recipientId}`,
           now: submittedAt,
         });
@@ -9853,7 +10632,20 @@ export const createTeamsAuthHandlers = ({
           submissionId,
           formId: form.formId,
           submittedAt,
+          ...(includeAvailabilitySummary && form.purpose === "team_availability" ? {
+            requestSummary: projectCommittedAvailabilityRequestSummary({
+              recipient, form, submissionId, submittedAt,
+            }),
+          } : {}),
         };
+        };
+        const serializesAvailability = Boolean(
+          form.purpose === "team_availability" ||
+          Object.hasOwn(payload, "occurrenceAvailability"),
+        );
+        return serializesAvailability
+          ? enqueueInMemoryRosterMemberMutation(member.memberId, () => commitFallback(true))
+          : commitFallback();
       },
     );
     // Both the Firestore transaction and the fallback have committed all
@@ -9875,9 +10667,20 @@ export const createTeamsAuthHandlers = ({
     const recipientId = normalizeShortText(body?.recipientId, { max: 160 });
     if (!recipientId) throw httpError(404, "This availability request is no longer available.");
     const result = await submitTeamIntakeRecipient({ body: {
-      occurrenceAvailability: body?.occurrenceAvailability,
-    } }, "", identity, recipientId);
-    return { success: result.success, submissionId: result.submissionId };
+      ...(Object.hasOwn(body || {}, "occurrenceAvailability")
+        ? { occurrenceAvailability: body.occurrenceAvailability }
+        : {}),
+      ...(Object.hasOwn(body || {}, "availabilityRevision")
+        ? { availabilityRevision: body.availabilityRevision }
+        : {}),
+    } }, "", identity, recipientId, { includeAvailabilitySummary: true });
+    return {
+      success: result.success,
+      recipientId,
+      submissionId: result.submissionId,
+      submittedAt: result.submittedAt,
+      ...(result.requestSummary ? { requestSummary: result.requestSummary } : {}),
+    };
   };
 
   const getScheduleAssignmentCellMemberIds = (cell) => {
@@ -13617,7 +14420,221 @@ export const createTeamsAuthHandlers = ({
     return result.schedule;
   };
 
+  const createAutomatedAvailabilityRequest = async ({ churchId, teamId, cycle, operationId }) => {
+    const [church, team] = await Promise.all([
+      getDoc(COLLECTIONS.churches, churchId),
+      getDoc(COLLECTIONS.teams, teamId),
+    ]);
+    if (!church || !team || team.churchId !== churchId || team.archivedAt) {
+      const error = new Error("The church or team is no longer available.");
+      error.safeMessage = error.message;
+      throw error;
+    }
+    if (cycle?.churchId !== churchId || cycle?.teamId !== teamId || !cycle?.cycleId || !operationId) {
+      const error = new Error("The saved cycle scope is invalid.");
+      error.safeMessage = error.message;
+      throw error;
+    }
+    const [services, positions, scheduleRows, allForms] = await Promise.all([
+      readChurchServiceTimes(churchId),
+      queryDocs(COLLECTIONS.teamPositions, [{ field: "churchId", value: churchId }], { limit: 1000 }),
+      queryDocs(COLLECTIONS.teamSchedules, [
+        { field: "churchId", value: churchId },
+        { field: "teamId", value: teamId },
+      ], { limit: 500 }),
+      queryDocs(COLLECTIONS.teamIntakeForms, [
+        { field: "churchId", value: churchId },
+        { field: "purpose", value: "team_availability" },
+        { field: "active", value: true },
+        { field: "endDate", op: ">=", value: cycle.periodStart },
+      ], { limit: 500 }),
+    ]);
+    if (positions.length >= 1000 || scheduleRows.length >= 500 || allForms.length >= 500) {
+      const error = new Error("The matching scope exceeded its safe review limit. Narrow or archive existing records before retrying.");
+      error.safeMessage = error.message;
+      error.reviewRequired = true;
+      throw error;
+    }
+    const period = buildTeamSchedulePeriod({
+      services: services.filter((service) => !service.archivedAt),
+      positions: positions.filter((position) => position.teamId === teamId && !position.archivedAt),
+      teamId,
+      schedules: scheduleRows.filter((schedule) => !schedule.archivedAt),
+      startDate: cycle.periodStart,
+      endDate: cycle.periodEnd,
+      timeZone: church.serviceTimeZone || "UTC",
+    });
+    const includedOccurrences = omitRedundantGroupedMemberOccurrences(
+      period.occurrences,
+      services.filter((service) => !service.archivedAt),
+      church.serviceTimeZone || "UTC",
+    ).map((occurrence) => ({
+      occurrenceId: occurrence.occurrenceId,
+      serviceId: occurrence.serviceId,
+      name: occurrence.name,
+      startsAt: occurrence.startsAt,
+      ...(occurrence.serviceDate ? { serviceDate: occurrence.serviceDate } : {}),
+    }));
+    if (!includedOccurrences.length) {
+      return { skipped: true, reason: "No eligible service occurrences were found for this team and period." };
+    }
+    const deadline = cycle.deadlines?.availabilityResponse?.localDate;
+    if (!deadline) {
+      const error = new Error("The saved cycle has no availability response deadline.");
+      error.safeMessage = error.message;
+      throw error;
+    }
+    const occurrenceIds = includedOccurrences.map((occurrence) => occurrence.occurrenceId).sort();
+    const sameIds = (left, right) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
+    const isSameTeamPeriod = (form) =>
+      form.churchId === churchId && form.purpose === "team_availability" && !form.archivedAt &&
+      form.startDate === cycle.periodStart && form.endDate === cycle.periodEnd &&
+      form.responseDeadline === deadline && sameIds(form.teamIds || [], [teamId]) &&
+      sameIds((form.enabledFields || []).filter(Boolean), ["availability"]);
+    const isExactOccurrenceScope = (form) => sameIds(
+      (form.availabilityOccurrences || []).map((occurrence) => occurrence.occurrenceId).filter(Boolean),
+      occurrenceIds,
+    );
+    const exactMatches = allForms.filter((form) => isSameTeamPeriod(form) && isExactOccurrenceScope(form));
+    const operationMatches = exactMatches.filter((form) => form.automationOperationId === operationId);
+    if (operationMatches.length > 1 || exactMatches.length > 1) {
+      const error = new Error("Multiple availability forms match this cycle. Review the existing forms before continuing.");
+      error.safeMessage = error.message;
+      error.reviewRequired = true;
+      throw error;
+    }
+    const overlap = allForms.filter((form) => {
+      if (form.churchId !== churchId || form.purpose !== "team_availability" || form.archivedAt) return false;
+      if (!(form.teamIds || []).includes(teamId)) return false;
+      if (String(form.endDate || "") < cycle.periodStart || String(form.startDate || "") > cycle.periodEnd) return false;
+      const existingIds = new Set((form.availabilityOccurrences || []).map((occurrence) => occurrence.occurrenceId));
+      return occurrenceIds.some((id) => existingIds.has(id));
+    });
+    if (!operationMatches.length && exactMatches.length === 0 && overlap.length > 0) {
+      const error = new Error("An existing availability form overlaps this cycle. Review it before creating another request.");
+      error.safeMessage = error.message;
+      error.reviewRequired = true;
+      throw error;
+    }
+
+    let form = operationMatches[0] || exactMatches[0] || null;
+    let reused = Boolean(form);
+    if (form && (!form.active || String(form.responseDeadline || "") < getVolunteerAvailabilityCurrentDate(church.serviceTimeZone || "UTC"))) {
+      const error = new Error("The matching availability form is closed or expired and needs leader review.");
+      error.safeMessage = error.message;
+      error.reviewRequired = true;
+      throw error;
+    }
+    if (!form) {
+      const formId = `teamIntakeAutomation_${hashValue(cycle.cycleId).slice(0, 40)}`;
+      const existingById = await getDoc(COLLECTIONS.teamIntakeForms, formId);
+      if (existingById) {
+        if (existingById.churchId !== churchId || existingById.automationOperationId !== operationId || !isSameTeamPeriod(existingById) || !isExactOccurrenceScope(existingById)) {
+          const error = new Error("The durable availability form identity is occupied by a different form.");
+          error.safeMessage = error.message;
+          error.reviewRequired = true;
+          throw error;
+        }
+        form = existingById;
+        reused = true;
+      } else {
+        const churchIntakeDefaults = church.intakeFormDefaults?.team_availability || {};
+        const serviceById = new Map(services.map((service) => [service.serviceId, service]));
+        const availabilityServices = [...new Set(period.serviceIds)].map((serviceId) => ({
+          serviceId,
+          name: serviceById.get(serviceId)?.name || serviceId,
+        }));
+        const payload = validateTeamIntakeFormPayload({
+          name: `${team.name || "Team"} availability - ${cycle.periodId}`,
+          startDate: cycle.periodStart,
+          endDate: cycle.periodEnd,
+          responseDeadline: deadline,
+          availabilityServices,
+          availabilityOccurrences: includedOccurrences,
+          teamIds: [teamId],
+          purpose: "team_availability",
+          enabledFields: ["availability"],
+          active: true,
+          welcomeMessage: churchIntakeDefaults.welcomeMessage || "",
+          availabilityMessage: churchIntakeDefaults.availabilityMessage ||
+            `Please share your availability for ${team.name || "this team"} for ${cycle.periodId}. Respond by ${deadline}.`,
+        });
+        const publicLinkToken = createTeamIntakeShortPublicToken();
+        const timestamp = nowIso();
+        const nextForm = {
+          ...payload,
+          formId,
+          churchId,
+          publicLinkToken,
+          publicTokenHash: hashValue(publicLinkToken),
+          archivedAt: null,
+          createdAt: timestamp,
+          createdByUid: "scheduling-automation",
+          updatedAt: timestamp,
+          updatedByUid: "scheduling-automation",
+          schedulingCycleId: cycle.cycleId,
+          automationOperationId: operationId,
+          createdByAutomation: true,
+        };
+        const db = requireFirestore();
+        if (db) {
+          const formRef = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
+          const created = await db.runTransaction(async (transaction) => {
+            const snapshot = await transaction.get(formRef);
+            if (snapshot.exists) return { form: { formId: snapshot.id, ...snapshot.data() }, created: false };
+            transaction.create(formRef, nextForm);
+            return { form: nextForm, created: true };
+          });
+          form = created.form;
+          reused = !created.created;
+          if (created.created) await addSecurityEvent({
+            type: "team_availability_form_automatically_created",
+            churchId,
+            formId,
+            details: { teamId, cycleId: cycle.cycleId, operationId },
+          });
+        } else {
+          await setDoc(COLLECTIONS.teamIntakeForms, formId, nextForm, { merge: false });
+          form = nextForm;
+          reused = false;
+        }
+      }
+    }
+
+    const memberIds = normalizeIdArray(team.memberIds);
+    const prepared = memberIds.length
+      ? await prepareAvailabilityNotificationRecipients({
+          churchId,
+          formId: form.formId,
+          memberIds,
+          purpose: "availability_request",
+          audienceType: "not_contacted",
+          actorUid: "scheduling-automation",
+        })
+      : { results: [] };
+    const materialized = (prepared.results || []).filter((result) => result.recipient && !result.recipient.revokedAt);
+    return {
+      formId: form.formId,
+      recipientCount: materialized.length,
+      skippedRecipientCount: Math.max(0, (prepared.results || []).length - materialized.length),
+      reused,
+    };
+  };
+
   return {
+    createAutomatedAvailabilityRequest,
+    ...createSchedulingCycleHandlers({
+      COLLECTIONS,
+      assertCsrf,
+      addSecurityEvent,
+      getDoc,
+      httpError,
+      nowIso,
+      requireAdminSession,
+      requireTeamsEditForTeamSession: requireTeamsEditForTeam,
+      requireFirestore,
+      setDoc,
+    }),
     ...createVolunteerPortalHandlers({
       getAccessStore: getVolunteerAccessStore, appBaseUrl: APP_BASE_URL,
       getRecoveryStore: getVolunteerRecoveryStore,
@@ -13626,6 +14643,7 @@ export const createTeamsAuthHandlers = ({
       getSchedule: getVolunteerSchedule, respond: respondToVolunteerAssignment,
       acceptUnanswered: acceptUnansweredVolunteerAssignments,
       saveBlockouts: saveVolunteerBlockouts, getAvailability: getVolunteerAvailability,
+      saveSchedulingPreferences: saveVolunteerSchedulingPreferences,
       submitAvailability: submitVolunteerAvailability,
     }),
     recoverPendingTeamSchedulePublicationEvents,
@@ -17583,6 +18601,33 @@ export const createTeamsAuthHandlers = ({
           if (String(current.updatedAt || "") !== expectedUpdatedAt) {
             throw httpError(409, "This member changed somewhere else. Refresh and review the latest availability.");
           }
+          const existingAvailability = current.serviceAvailability || {};
+          const nextAvailability = { ...existingAvailability };
+          remove.forEach((key) => delete nextAvailability[key]);
+          Object.assign(nextAvailability, set);
+          const availabilityRevisions = normalizeServiceAvailabilityRevisions(
+            current.serviceAvailabilityRevisions,
+          );
+          changes.forEach((change) => {
+            const matchingKeys = new Set([
+              ...Object.keys(existingAvailability),
+              ...Object.keys(nextAvailability),
+            ].filter((key) => isServiceAvailabilityKeyForOccurrence({
+              key,
+              occurrence: change.canonicalOccurrence,
+              timeZone,
+            })));
+            if ([...matchingKeys].some((key) => !isDeepStrictEqual(
+              existingAvailability[key],
+              nextAvailability[key],
+            ))) {
+              nextServiceAvailabilityRevision(
+                availabilityRevisions,
+                current,
+                change.logicalOccurrenceId,
+              );
+            }
+          });
           await updateDocMapKeys(
             COLLECTIONS.teamRosterMembers,
             memberId,
@@ -17590,7 +18635,11 @@ export const createTeamsAuthHandlers = ({
             {
               set,
               remove: [...remove],
-              fields: { updatedAt: now, updatedByUid: editor.user.uid },
+              fields: {
+                updatedAt: now,
+                updatedByUid: editor.user.uid,
+                serviceAvailabilityRevisions: availabilityRevisions,
+              },
               transaction,
             },
           );
@@ -18339,10 +19388,30 @@ export const createTeamsAuthHandlers = ({
      * dispatch work; both write through here so the two can never disagree.
      */
     async getMyVolunteerAvailability(req, res) {
+      const endpointStartedAt = performance.now();
       try {
+        const identityStartedAt = performance.now();
         const identity = await resolveHumanVolunteer(req);
-        if (!identity.memberId) return res.json({ success: true, requests: [] });
-        return res.json(await getVolunteerAvailability(identity));
+        const identityResolutionMs = performance.now() - identityStartedAt;
+        const options = {
+          summaryOnly: req.query?.summary === "1",
+          historyOnly: req.query?.history === "1",
+          includeMemberSnapshot: req.query?.includeMemberSnapshot === "1",
+          recipientId: typeof req.query?.recipientId === "string"
+            ? req.query.recipientId.trim()
+            : "",
+          endpointStartedAt,
+          identityResolutionMs,
+        };
+        if (!identity.memberId) {
+          return res.json({
+            success: true,
+            requests: [],
+            schedulingPreferences: null,
+            ...(options.summaryOnly ? { requestSummaries: [] } : {}),
+          });
+        }
+        return res.json(await getVolunteerAvailability(identity, options));
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not load your availability requests.");
       }
@@ -18356,6 +19425,20 @@ export const createTeamsAuthHandlers = ({
         return res.json(await submitVolunteerAvailability(identity, req.body));
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save your availability.");
+      }
+    },
+
+    async updateMySchedulingPreferences(req, res) {
+      try {
+        await assertCsrf(req);
+        const identity = await resolveHumanVolunteer(req);
+        if (!identity.memberId) {
+          if (identity.hasArchivedLinkedMember) throw httpError(403, "Your member record is archived. Ask an admin to restore it.");
+          throw httpError(404, "Your account is not linked to a team member yet.");
+        }
+        return res.json(await saveVolunteerSchedulingPreferences(identity, req.body));
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save your scheduling preferences.");
       }
     },
 
@@ -18607,6 +19690,58 @@ export const createTeamsAuthHandlers = ({
         return res.json({ success: true, position });
       } catch (error) {
         return sendTeamsJsonError(res, error, "Could not save this position.");
+      }
+    },
+
+    async getIntakeFormDefaults(req, res) {
+      try {
+        const churchId = req.params.churchId;
+        // Same broad/scoped edit access as the availability workspace. Never
+        // return the church document itself to a scoped editor.
+        const { scoped } = await requireMessagingHistoryAccess(req, churchId);
+        const church = await getDoc(COLLECTIONS.churches, churchId);
+        if (!church) throw httpError(404, "Church settings were not found.");
+        return res.json({ success: true, ...readIntakeFormDefaults(church), canEdit: !scoped });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not load form defaults.");
+      }
+    },
+
+    async saveIntakeFormDefaults(req, res) {
+      try {
+        await assertCsrf(req);
+        const churchId = req.params.churchId;
+        await requireTeamsEdit(req, churchId);
+        const { purpose, revision, settings } = req.body || {};
+        if (!["general_intake", "team_availability"].includes(purpose) || typeof revision !== "string") {
+          throw httpError(400, "Choose a form purpose and load its current defaults.");
+        }
+        const normalized = validateIntakeFormDefaults(settings, purpose);
+        const db = requireFirestore();
+        const commit = async (church, transaction = null) => {
+          await requireTeamsEdit(req, churchId);
+          if (!church) throw httpError(404, "Church settings were not found.");
+          const current = readIntakeFormDefaults(church);
+          if (current.revisions[purpose] !== revision) {
+            throw httpError(409, "Form defaults changed in another session. Reload defaults before saving again. Your form draft has been kept.");
+          }
+          const update = {
+            intakeFormDefaults: { ...current.defaults, [purpose]: normalized },
+            intakeFormDefaultsRevisions: { ...current.revisions, [purpose]: crypto.randomUUID() },
+          };
+          if (transaction) transaction.update(db.collection(COLLECTIONS.churches).doc(churchId), update);
+          else await updateDocFields(COLLECTIONS.churches, churchId, update);
+          return readIntakeFormDefaults(update);
+        };
+        const saved = db
+          ? await db.runTransaction(async (transaction) => {
+              const snap = await transaction.get(db.collection(COLLECTIONS.churches).doc(churchId));
+              return commit(snap.exists ? snap.data() : null, transaction);
+            })
+          : await withChurchSettingsWriteLock(churchId, async () => commit(await getDoc(COLLECTIONS.churches, churchId)));
+        return res.json({ success: true, ...saved, canEdit: true });
+      } catch (error) {
+        return sendTeamsJsonError(res, error, "Could not save form defaults.");
       }
     },
 
@@ -19406,6 +20541,12 @@ export const createTeamsAuthHandlers = ({
                 recipient: {
                   firstName: member.firstName || "there",
                   missingFields: getMissingTeamIntakeMemberDetailFields(member),
+                  ...(normalizeTeamIntakeFields(undefined, form.enabledFields).includes("availability")
+                    ? { availabilityRevision: getServiceAvailabilityRevisionSnapshot(
+                        member,
+                        getFormAvailabilityOccurrenceIds(form),
+                      ) }
+                    : {}),
                 },
               }
             : {}),
@@ -21323,7 +22464,7 @@ export const createTeamsAuthHandlers = ({
         if (!isValidPortableTimeZone(serviceTimeZone)) {
           throw httpError(400, "Choose a valid IANA timezone.");
         }
-        const serviceTimeZoneRevision = await withChurchServiceTimeZoneWriteLock(
+        const serviceTimeZoneRevision = await withChurchSettingsWriteLock(
           churchId,
           async () => {
             // A second check keeps a permission or device revocation that

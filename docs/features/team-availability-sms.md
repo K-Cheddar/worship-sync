@@ -104,3 +104,43 @@ Dispatch remains synchronous and request-bound in this phase. The extraction doe
 ## Delivery reliability decision (Phase 2, 2026-10-12)
 
 The current Phase 2 request authorizes shared monotonic reconciliation of send results, recovery and authenticated callbacks. Confirmed provider evidence is retained after persistence failure and used to repair the intent; accepted and uncertain sends stay blocked from another claim within that same notification intent. Recovery rechecks current claim ownership transactionally. New sends bind signed callbacks to an opaque persisted attempt token, allowing acceptance evidence before SID persistence; old data requires no migration and unattributable outcomes remain blocked. An older accepted attempt permanently fences further claims for that intent. Any separately reviewed new availability operation creates a separate intent and does not reset the prior fence. Consent, message text, private links, current permissions and history remain preserved. See [the authoritative delivery lifecycle](../sms-foundation-architecture.md#phase-2-delivery-reliability-contract-authoritative).
+
+## Reusable availability wording (Phase 2A, 2026-11-11)
+
+The existing editor exposes welcome and availability instructions for
+`team_availability` forms. New manual and suggested forms copy church defaults;
+updates retain their own wording and issued-request protections. Only broad
+Teams editors can save church defaults; scoped editors can use them. This action
+never sends messages or changes issued forms, links, recipients or responses.
+See [the defaults contract](personalized-team-intake.md#reusable-form-defaults-phase-2a).
+
+## Editable availability responses (Phase 2B-1, 2026-11-16)
+
+The existing response endpoints now expose the volunteer's form-scoped saved
+answers and per-occurrence revision, and accept revision-aware edits through the
+existing recipient and response records. Saving an answer does not send SMS or
+email, create a reminder, activate a provider, or change consent. The initial
+separate My Availability interface read and edited those answers in Phase 2B-2;
+that availability editor now lives inside My Schedule.
+
+## Historical grouped-occurrence projection (Phase 2B-4, 2026-11-20)
+
+Some already-issued forms contain both a grouped service occurrence and a
+standalone occurrence for the same date. The volunteer read model combines
+those rows only when the issued form contains the exact expected IDs, the
+current service catalog proves the standalone belongs to that active group,
+and a saved schedule snapshot in the form's Team scope proves an unambiguous
+matching group membership on the same church-local date. Missing, capped,
+ambiguous or conflicting evidence leaves the original rows separate. Same-day
+independent services remain separate.
+
+Projection does not rewrite the issued form, recipient scope or response
+records. The displayed group retains all raw occurrence IDs and revision
+counters; saving one answer writes through to each ID using every original
+revision. Different saved answers require explicit three-state reconciliation
+while the request is open; a closed request directs the volunteer to an
+administrator. The November 7, 14, 21 and 28 reported pairs are resolved only
+when each pair passes these checks. Unproven or conflicting records remain
+available for administrative review. Auto-fill recognizes an explicit
+unavailable answer on a historical individual ID only for its proven
+group/date; unanswered values remain neutral.

@@ -42,7 +42,7 @@ const fixture = () => {
     saveBlockouts: jest.fn(async (ranges, revision) => {
       if (revision !== saved.updatedAt) throw Object.assign(new Error("Saved dates changed"), { status: 409 });
       saved = { ...saved, updatedAt: "revision-c", blockoutDates: ranges };
-      return { success: true, member: saved };
+      return { success: true, member: saved, memberSnapshot: saved };
     }),
   };
   return { operations, setSaved: (next: MyScheduleMember) => { saved = next; }, getSaved: () => saved };
@@ -220,7 +220,7 @@ it.each(["before", "after"])("D: a refresh resolving %s save completion cannot r
   if (order === "before") await act(async () => { refresh.resolve(snapshot(member("revision-a", "Original dates"))); });
   const confirmed = member("revision-c", "Normalized saved dates", "2099-12-03");
   f.setSaved(confirmed);
-  await act(async () => { save.resolve({ success: true, member: confirmed }); });
+  await act(async () => { save.resolve({ success: true, member: confirmed, memberSnapshot: confirmed }); });
   if (order === "after") await act(async () => { refresh.resolve(snapshot(member("revision-a", "Original dates"))); });
   await openNotesEditor(user);
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("Normalized saved dates");
@@ -243,7 +243,8 @@ it.each([
   second.setSaved(member("revision-a", "New identity dates", "2099-12-04"));
   rerender(page(second.operations, to, church));
   await openEditor(user);
-  await act(async () => { oldSave.resolve({ success: true, member: member("revision-c", "Old saved dates") }); });
+  const oldSavedMember = member("revision-c", "Old saved dates");
+  await act(async () => { oldSave.resolve({ success: true, member: oldSavedMember, memberSnapshot: oldSavedMember }); });
   expect(screen.getByRole("textbox", { name: /Notes/i })).toHaveValue("New identity dates");
   expect(screen.queryByRole("button", { name: "Save time off" })).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: "Discard changes" })).not.toBeInTheDocument();

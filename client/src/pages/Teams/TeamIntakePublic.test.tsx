@@ -141,6 +141,38 @@ test("submits the entered availability for the form token", async () => {
   expect(await screen.findByText(/thanks, pat/i)).toBeInTheDocument();
 });
 
+test("recipient availability submission carries its hidden occurrence revision", async () => {
+  const availabilityRevision = { "service@2026-12-06T10:00:00.000Z": 7 };
+  mockGetPreview.mockResolvedValue({
+    ...preview,
+    form: {
+      ...preview.form,
+      enabledFields: ["availability"],
+      availabilityOccurrences: [{
+        occurrenceId: "service@2026-12-06T10:00:00.000Z",
+        serviceId: "service",
+        name: "Sunday",
+        startsAt: "2026-12-06T10:00:00.000Z",
+      }],
+    },
+    recipient: { firstName: "Kevin", missingFields: [], availabilityRevision },
+  } as never);
+  mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
+  renderPage("/a/recipient-token");
+  await screen.findByText("Fall Volunteers");
+  await userEvent.click(screen.getByRole("button", { name: /submit availability/i }));
+
+  await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+  expect(mockSubmit).toHaveBeenCalledWith(
+    "recipient-token",
+    expect.objectContaining({
+      occurrenceAvailability: {},
+      availabilityRevision,
+    }),
+    { personalized: true },
+  );
+});
+
 test("opens a personalized /a/:token request without an authenticated app session", async () => {
   mockGetPreview.mockResolvedValue(preview as never);
   renderPage("/a/recipient-token");
@@ -415,4 +447,21 @@ test("keeps a partial birthday while editing and validates it on submit", async 
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Birthday needs a valid month and day.",
   );
+});
+
+test.each([false, true])("availability-only public wording resolves saved or blank messages (custom=%s)", async (custom) => {
+  mockGetPreview.mockResolvedValue({
+    ...preview, form: { ...preview.form, purpose: "team_availability", enabledFields: ["availability"],
+      welcomeMessage: custom ? "Saved church welcome" : "  ",
+      availabilityMessage: custom ? "Saved church instructions" : "",
+      availabilityServices: [{ serviceId: "service", name: "Sunday" }],
+      availabilityOccurrences: [{ occurrenceId: "sunday", serviceId: "service", name: "Sunday", serviceDate: "2026-09-06", startsAt: "2026-09-06T10:00:00Z" }],
+    },
+  } as never);
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+  expect(screen.getByText(custom ? "Saved church welcome" : "Share the positions you can serve in, your availability, and any dates you're away.")).toBeInTheDocument();
+  expect(screen.getByText(custom ? "Saved church instructions" : "Mark each date you're available to serve.")).toBeInTheDocument();
+  expect(screen.queryByText("Vocalist")).not.toBeInTheDocument();
+  expect(screen.queryByLabelText(/First name|Email/)).not.toBeInTheDocument();
 });

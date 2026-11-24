@@ -2,7 +2,16 @@ import {
   getApiBasePath,
   isPackagedElectronRenderer,
 } from "../utils/environment";
-import type { VolunteerAvailabilityRequest, VolunteerBulkResult } from "../pages/myScheduleOperations";
+import type {
+  VolunteerAvailabilityRead,
+  VolunteerAvailabilityReadOptions,
+  VolunteerAvailabilityRequest,
+  VolunteerAvailabilitySaveResult,
+  VolunteerBulkResult,
+  VolunteerSchedulingPreferencesSave,
+  VolunteerSchedulingPreferences,
+  MyScheduleMember,
+} from "../pages/myScheduleOperations";
 import {
   getCsrfToken,
   getHumanApiToken,
@@ -82,6 +91,11 @@ import type {
   TeamScheduleGuest,
   TeamSchedulePublicSnapshot,
   TeamScheduleShadowKind,
+  SchedulingAutomationSettings,
+  SchedulingCycleAction,
+  SchedulingCycleRecord,
+  SchedulingEffectiveSettings,
+  SchedulingSettingsRecord,
   TeamsBootstrap,
   PortableDataType,
   PortableImportRow,
@@ -1448,8 +1462,10 @@ export type TeamIntakeSubmissionPayload = {
   title?: string;
   birthDate?: import("./authTypes").BirthDate | null;
   positionIds: string[];
-  occurrenceAvailability: TeamIntakeSubmission["occurrenceAvailability"];
-  blockoutRanges: TeamIntakeSubmission["blockoutRanges"];
+  occurrenceAvailability: NonNullable<TeamIntakeSubmission["occurrenceAvailability"]>;
+  /** Server-issued per-occurrence revisions from a recipient preview. */
+  availabilityRevision?: Record<string, number>;
+  blockoutRanges: NonNullable<TeamIntakeSubmission["blockoutRanges"]>;
   notes?: string;
   servingFrequency?: TeamIntakeSubmission["servingFrequency"];
   recurringAvailability?: TeamIntakeSubmission["recurringAvailability"];
@@ -2264,12 +2280,43 @@ export const acceptPendingMyAssignments = async (
 export const acceptMyUnansweredAssignments = (churchId: string, afterScheduleId?: string) => apiFetch<VolunteerBulkResult>(
   `api/churches/${churchId}/my-assignments/accept-unanswered`, { method: "POST", body: JSON.stringify(afterScheduleId ? { afterScheduleId } : {}) },
 );
-export const getMyVolunteerAvailability = (churchId: string) => apiFetch<{ success: boolean; requests: VolunteerAvailabilityRequest[] }>(
-  `api/churches/${churchId}/my-availability`,
+export const getMyVolunteerAvailability = (
+  churchId: string,
+  options: VolunteerAvailabilityReadOptions = {},
+) => {
+  const query = new URLSearchParams();
+  if (options.summary) query.set("summary", "1");
+  if (options.includeMemberSnapshot) query.set("includeMemberSnapshot", "1");
+  if (options.history) query.set("history", "1");
+  if (options.recipientId) query.set("recipientId", options.recipientId);
+  const search = query.toString();
+  const suffix = search ? `?${search}` : "";
+  return apiFetch<VolunteerAvailabilityRead>(
+    `api/churches/${churchId}/my-availability${suffix}`,
+  );
+};
+export const submitMyVolunteerAvailability = (
+  churchId: string,
+  recipientId: string,
+  occurrenceAvailability: VolunteerAvailabilityRequest["availability"],
+  availabilityRevision: VolunteerAvailabilityRequest["availabilityRevision"],
+) => apiFetch<VolunteerAvailabilitySaveResult>(
+  `api/churches/${churchId}/my-availability`, {
+    method: "POST",
+    body: JSON.stringify({ recipientId, occurrenceAvailability, availabilityRevision }),
+  },
 );
-export const submitMyVolunteerAvailability = (churchId: string, recipientId: string, occurrenceAvailability: VolunteerAvailabilityRequest["availability"]) => apiFetch<{ success: boolean }>(
-  `api/churches/${churchId}/my-availability`, { method: "POST", body: JSON.stringify({ recipientId, occurrenceAvailability }) },
-);
+export const updateMySchedulingPreferences = (
+  churchId: string,
+  preferences: VolunteerSchedulingPreferencesSave,
+) => apiFetch<{
+  success: boolean;
+  schedulingPreferences: VolunteerSchedulingPreferences;
+  memberSnapshot: MyScheduleMember;
+}>(`api/churches/${churchId}/my-scheduling-preferences`, {
+  method: "POST",
+  body: JSON.stringify(preferences),
+});
 
 export const manageVolunteerPersonalAccess = (churchId: string, memberId: string,
   action: "status" | "prepare" | "replace" | "revoke" | "restore" | "verify-contact/start" | "verify-contact/complete", body: unknown = {}) => apiFetch<{
@@ -2298,7 +2345,7 @@ export const updateMyBlockoutDates = async (
   blockoutDates: TeamRosterMember["blockoutDates"],
   expectedUpdatedAt: string,
 ) =>
-  apiFetch<{ success: boolean; member: TeamRosterMember }>(
+  apiFetch<{ success: boolean; member: TeamRosterMember; memberSnapshot: MyScheduleMember }>(
     `api/churches/${churchId}/my-blockout-dates`,
     {
       method: "POST",
@@ -2601,6 +2648,119 @@ export const ensureTeamScheduleForPeriod = async (
     `api/churches/${churchId}/team-schedules/ensure`,
     { method: "POST", body: JSON.stringify(body) },
   );
+
+export type SchedulingAutomationResponse = {
+  success: boolean;
+  churchId: string;
+  team: { teamId: string; name: string } | null;
+  serviceTimeZone: string | null;
+  defaults: SchedulingSettingsRecord;
+  override: SchedulingSettingsRecord | null;
+  effective: SchedulingEffectiveSettings;
+  savedCycle: SchedulingCycleRecord | null;
+  savedActions: SchedulingCycleAction[];
+};
+
+export const getSchedulingAutomation = async (
+  churchId: string,
+  { teamId, periodId }: { teamId?: string; periodId?: string } = {},
+) => {
+  const query = new URLSearchParams();
+  if (teamId) query.set("teamId", teamId);
+  if (periodId) query.set("period", periodId);
+  const suffix = query.toString();
+  return apiFetch<SchedulingAutomationResponse>(
+    `api/churches/${encodeURIComponent(churchId)}/scheduling-automation${suffix ? `?${suffix}` : ""}`,
+  );
+};
+
+export const getSchedulingCycle = async (
+  churchId: string,
+  teamId: string,
+  periodId: string,
+) => apiFetch<{
+  success: boolean;
+  savedCycle: SchedulingCycleRecord | null;
+  savedActions: SchedulingCycleAction[];
+}>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/teams/${encodeURIComponent(teamId)}/cycles/${encodeURIComponent(periodId)}`);
+
+export const previewSchedulingCycle = async (
+  churchId: string,
+  body: {
+    teamId: string;
+    periodId: string;
+    draftDefaults?: SchedulingAutomationSettings;
+    draftOverride?: { mode: "inherit" | "customize" | "disabled"; settings?: SchedulingAutomationSettings | null };
+  },
+) => apiFetch<{
+  success: boolean;
+  preview: { cycle: SchedulingCycleRecord; actions: SchedulingCycleAction[] };
+  savedCycle: SchedulingCycleRecord | null;
+  isUnsavedPreview: boolean;
+}>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/preview`, {
+  method: "POST",
+  body: JSON.stringify(body),
+});
+
+export const saveChurchSchedulingDefaults = async (
+  churchId: string,
+  body: { settings: SchedulingAutomationSettings; revision: number },
+) => apiFetch<{ success: boolean; defaults: SchedulingSettingsRecord }>(
+  `api/churches/${encodeURIComponent(churchId)}/scheduling-automation/defaults`,
+  { method: "POST", body: JSON.stringify(body) },
+);
+
+export const setAvailabilityAutomation = async (
+  churchId: string,
+  body: {
+    enabled: boolean;
+    formCreationEnabled: boolean;
+    revision: number;
+    teamId: string;
+    periodId: string;
+    confirmAlreadyStarted: boolean;
+  },
+) => apiFetch<{
+  success: boolean;
+  defaults: import("./authTypes").SchedulingSettingsRecord;
+  activationImpact: {
+    churchWide: boolean;
+    selectedTeamId: string | null;
+    selectedPeriodId: string | null;
+    selectedPeriodStarted: boolean;
+    upcomingActions: import("./authTypes").SchedulingCycleAction[];
+    notificationDeliveryEnabled: false;
+  };
+}>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/activation`, {
+  method: "POST",
+  body: JSON.stringify(body),
+});
+
+export const saveTeamSchedulingOverride = async (
+  churchId: string,
+  teamId: string,
+  body: {
+    mode: "inherit" | "customize" | "disabled";
+    settings?: SchedulingAutomationSettings | null;
+    revision: number;
+  },
+) => apiFetch<{ success: boolean; override: SchedulingSettingsRecord }>(
+  `api/churches/${encodeURIComponent(churchId)}/scheduling-automation/teams/${encodeURIComponent(teamId)}`,
+  { method: "POST", body: JSON.stringify(body) },
+);
+
+export const ensureSchedulingCycle = async (
+  churchId: string,
+  teamId: string,
+  periodId: string,
+) => apiFetch<{
+  success: boolean;
+  cycle: SchedulingCycleRecord;
+  actionsCreated: boolean;
+}>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/teams/${encodeURIComponent(teamId)}/cycles/ensure`, {
+  method: "POST",
+  body: JSON.stringify({ periodId }),
+});
 
 export const updateTeamSchedule = async (
   churchId: string,
@@ -3505,3 +3665,14 @@ export const downloadPortableData = async (
     `${type}${type === "all" ? ".zip" : ".csv"}`;
   return { blob: await response.blob(), filename };
 };
+
+export const getIntakeFormDefaults = (churchId: string) =>
+  apiFetch<import("./authTypes").IntakeFormDefaultsResponse>(`api/churches/${churchId}/team-intake/defaults`);
+
+export const saveIntakeFormDefaults = (
+  churchId: string,
+  body: { purpose: "general_intake"; settings: NonNullable<import("./authTypes").IntakeFormDefaults["general_intake"]>; revision: string }
+    | { purpose: "team_availability"; settings: NonNullable<import("./authTypes").IntakeFormDefaults["team_availability"]>; revision: string },
+) => apiFetch<import("./authTypes").IntakeFormDefaultsResponse>(`api/churches/${churchId}/team-intake/defaults`, {
+  method: "POST", body: JSON.stringify(body),
+});

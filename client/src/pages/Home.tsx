@@ -643,10 +643,10 @@ const Welcome = () => {
             >
               {showMySchedule ? (
                 <HomeNavigationLink
-                  title="My schedule"
+                  title="My Schedule"
                   to="/my-schedule"
                   {...PAGE_APPEARANCES.mySchedule}
-                  description="View assignments and availability."
+                  description="Assignments, availability, and time off."
                   showDescriptions={showDescriptions}
                 />
               ) : null}

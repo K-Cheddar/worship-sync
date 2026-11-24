@@ -5,16 +5,19 @@ Approval source: product-owner request, 2026-10-18, “Unified My Schedule for A
 
 The October 21, 2026 “Simplify My Schedule Cards and Share the Service Card Design” request supersedes the My Schedule availability-card decision below. My Schedule is assignment-focused; this does not revoke or migrate any form, recipient, answer, intake link, or established form-submission API.
 
+**Current workspace decision (2026-11-22):** The unified My Schedule request supersedes the assignment-only page boundary above and the earlier two-destination volunteer navigation below. My Schedule is the single volunteer self-service workspace; prior phase sections record the behavior when those decisions were made.
+
 ## Product decisions
 
 - Personal links, recovery and administrator controls are available to every church. Required security configuration is documented in [deployment prerequisites](../volunteer-portal-deployment.md); missing configuration fails closed and never creates fallback authority. Approval: October 21, 2026 Remove Volunteer Portal Feature Flag request.
 - Phase 3 completion is an end-to-end workflow, not removal of the flag alone. An active roster member needs no account, Firebase login, human church membership or Teams permission. Volunteers with no assignments still have Time Off. Availability forms remain available through existing intake links. Temporary ingress/data failures offer an explicit retry; usable ingress remains only in memory until successful redemption or definitive denial. Background access failures keep mounted unsaved dates and provide personal-link guidance. Confirmed by the October 21, 2026 Complete and Enable Accountless My Schedule request.
 - Account and accountless volunteers use the same My Schedule renderer and volunteer business operations. The server resolves church/member scope from a human session or validated personal credential; request member IDs never establish identity.
 - Both identities can read their current and previous assignments and own responses, respond individually, accept all unanswered, manage time off, see conflicts and teammate display names, read permitted service details, and use applicable self-service preferences. Preserve signed-in filters, navigation, exports, history and account capabilities. Availability forms stay in their existing intake flow.
+- Historical Phase 2B decision (superseded 2026-11-22): availability requests first used a separate recipient-scoped My Availability surface. The current unified workspace shows active requests within My Schedule; signed-in volunteers and personal-link volunteers still share the same scoped operations and may access only their own authorized requests. Approval of the earlier separation: current product-owner request, 2026-11-16.
 - Private notes, teammate contacts/responses, administrative data and Draft assignments are excluded. Missing schedule publication metadata retains legacy Published semantics. Publication and notification delivery remain separate.
 - Accept all unanswered checks persisted responses in each schedule transaction. Existing answers survive concurrent bulk acceptance. Multi-schedule outcomes identify committed schedules and failures; retry skips completed answers.
 - Both identities use Phase 1B's canonical pending-only acceptance over upcoming published primary assignments. Past occurrences, Drafts, existing answers and unrelated response metadata remain unchanged. Both clients follow bounded schedule pages and share partial-completion feedback. Personal credential/session generation and member authority are checked inside every independent schedule transaction, including retries. Confirmed by the October 21, 2026 Shared Volunteer Bulk Response fix request. Individual and legacy schedule-link responses retain explicit Accept/Decline semantics.
-- My Schedule lists assigned services only. Each card shows only the volunteer's actual positions and Teams; multiple primary and shadow assignments retain their existing identities and independent response semantics. Primary assignments have direct Accept/Decline controls, answered assignments show noninteractive Accepted/Declined status with Change response, and past answers remain read-only. Availability requests and availability-only cards are not part of My Schedule. Volunteers use their existing intake links, including `/a/:token`, to submit those forms. Existing recipient records, saved answers, links, public routes and established whole-form submission endpoints remain unchanged; this decision does not migrate or delete availability data. Confirmed by the October 21, 2026 “Simplify My Schedule Cards and Share the Service Card Design” request.
+- The October 21 assignment-card decision kept availability requests outside My Schedule at that time. The November 22 unified-workspace decision supersedes that page boundary while preserving the card behavior: each assignment shows only the volunteer's actual positions and Teams; primary and shadow assignments keep their existing identities and response semantics; past answers remain read-only. Existing intake links, including `/a/:token`, recipient records, saved answers, public routes and form-submission endpoints remain unchanged. No availability data is migrated or deleted.
 - Individual Accept/Decline changes display a new confirmed answer only after the operation returns `success: true` with the same response, or an authoritative schedule refresh shows that answer. After a rejected, malformed, or ambiguous write result, refresh the schedule without resubmitting. If that refresh fails, keep the prior confirmed answer and pending count, label the attempted response unconfirmed, and offer a refresh-only retry; block bulk acceptance until the individual response is resolved. Human-session and personal-link access use the same behavior. Confirmed by the October 21, 2026 “Shared Service Card and My Schedule Reliability Improvements” request.
 - Upcoming and past assigned services can be organized by month or service. Service groups use the occurrence's complete service ID set so a combined service appears once. Search and service/team filters use the assignment schedule and the volunteer's actual assignments; pending-only bulk acceptance remains separate and applies to all unanswered upcoming assignments regardless of filters. Time Off, service details and personal links remain available in their existing flows.
 - Unsaved time-off drafts own their baseline dates and revision together. Refreshes, other successful actions and HTTP 409 cannot rebase a dirty draft. Conflicts preserve edits and require explicit review/discard before re-editing against current saved dates. Successful saves invalidate older page loads. Confirmed by the October 19, 2026 Final Correctness and Pilot Readiness request.
@@ -66,6 +69,317 @@ See [implementation plan](../volunteer-portal-plan.md). Required milestones are
 A shared core, B personal access/recovery, C shared UI, D compact messaging.
 This contract records approved intent, not proof that those milestones have shipped.
 
+## My Availability: Phase 2B-2 (2026-11-18; separate page superseded)
+
+**Approval source:** current product-owner request for Phase 2B-2, 2026-11-18.
+
+### Before behavior
+
+Volunteers could respond to a request through its existing form link, but had
+no consolidated place to review their saved availability requests. My Schedule
+remained focused on assigned services and Time Off.
+
+### Initial behavior at that milestone (editor behavior is defined in Phase 2B-3 below)
+
+- At that milestone, signed-in volunteers opened **My Availability** at
+  `/my-availability` and accountless volunteers used `/s?view=availability`.
+  These URLs remain compatible and now focus availability within My Schedule.
+- Open requests with unanswered service dates appear under **Needs response**;
+  submitted open requests appear under **Submitted responses**. Each date
+  offers **Available**, **Unavailable**, or **Not answered**. An unanswered
+  choice is neutral and does not count as unavailable.
+- Saving sends one complete answer map for that request's occurrence scope and
+  the per-occurrence revisions returned by the server. A conflict keeps the
+  volunteer's draft, displays the original and latest answers for review, and
+  requires an explicit choice before another save. When a network result is
+  uncertain, the client reads the server state and does not blindly repeat the
+  write.
+- Date and time labels use the configured church service timezone when present.
+  If it is missing, the service date remains visible and the time is omitted
+  rather than silently substituting the browser's timezone.
+- My Schedule was assignment-only at that milestone. It now includes the
+  availability section; the existing Time Off and scheduling eligibility
+  behavior remains unchanged.
+
+### Behavior intentionally unchanged
+
+Existing form links, submissions, recipient records, saved answers, and
+revision-aware APIs remain in place. The availability response editor does not
+change blockouts, recurring serving preferences, positions, profile data,
+consent, assignments, messages, or notification behavior. Preference
+self-service was added later under Phase 2B-4.
+
+## My Availability response simplification (Phase 2B-3, 2026-11-19)
+
+**Approval source:** Current product-owner request, “Simplify My Availability
+and Correct Request Statuses,” 2026-11-19.
+
+### Before behavior
+
+My Availability used three choices for every service and grouped all open
+requests with unanswered dates under **Needs response**. Saved answer counts
+could look like a submitted response even when the request had never been
+submitted, and closed requests shared the previous-responses group.
+
+### After behavior
+
+- A new request with no saved answers uses positive service checkboxes. Checked
+  means available. Before first submission, a confirmation shows the resulting
+  available and unavailable counts; submitting no checked services asks the
+  volunteer to confirm they are unavailable for all services.
+- For a first response containing partial legacy answers, and for any saved
+  response with unanswered dates, the editor retains the three-state choices.
+  Unanswered dates stay absent from the submitted map unless explicitly changed.
+- Fully answered responses use checkboxes prepopulated from saved available
+  answers. **Edit individual answer states** exposes Available, Unavailable and
+  Not answered so a previously saved answer can be cleared. Checkbox choices
+  are expanded to a complete map only when the volunteer submits.
+- `respondedAt` or `submissionId` from the existing recipient-scoped read is the
+  submission signal. Answer counts, opening the editor and local draft changes
+  do not mark a request submitted. An accepted save response or authoritative
+  read updates the visible status; a failed or uncertain write does not infer
+  completion from an answer-map match alone.
+- Open requests without submission metadata appear under **Needs response**;
+  open requests with submission metadata appear under **Submitted responses**,
+  with unanswered dates called out. Routine reads omit closed or expired
+  requests. Volunteers can explicitly choose **Show past requests** to load
+  read-only summaries, then open one authorized request at a time. Revoked or
+  archived requests remain unavailable.
+- Request cards show a compact service-date range, service count, deadline and
+  accurate response summary. Full service names, dates and times remain inside
+  the request and use the church timezone.
+
+### Behavior intentionally unchanged
+
+Both signed-in `/my-availability` and accountless `/s?view=availability` keep
+their existing authorization and recipient scope. Saves still use the complete
+form-scoped availability map and per-occurrence revision snapshot. HTTP 409
+review, uncertain-save reconciliation, dirty-draft preservation, navigation
+protection and the existing three-state backend
+model and Auto-fill interpretation remain unchanged. Existing `/a/:token` links,
+public positive-selection checkboxes, submissions and response APIs remain
+compatible. No reminder automation or preference storage is introduced.
+
+## Active availability reads and unified-page integration (2026-11-20)
+
+**Approval source:** Current product-owner request, “Optimize Volunteer
+Availability API and Prepare for Unified My Schedule,” 2026-11-20.
+
+- Routine reads return only active, unarchived `team_availability` forms whose
+  response deadline (or legacy form end date) has not passed on the church's
+  calendar date. Recipient and current Team membership are checked under the
+  server-resolved church/member identity; revoked and out-of-scope recipients
+  are omitted. Open unanswered and open submitted requests remain editable.
+- Expired, inactive, archived, revoked and no-longer-in-scope requests are
+  omitted from volunteer reads. Their stored records and answers remain intact;
+  administrative form, reporting and audit paths retain their historical
+  records. There is no new volunteer history endpoint or client-controlled
+  authorization bypass.
+- Existing callers retain the full `requests` response by default, now scoped
+  to current requests. `summary=1` returns minimal `requestSummaries` and
+  scheduling preferences without occurrence projection or revision snapshots.
+  A full read may include `recipientId`; the server checks that exact recipient
+  against the resolved identity before loading its form details. Signed-in and
+  personal-link API adapters support both options.
+- Preferences remain in the availability response even when no current
+  requests exist. Existing schedule data already supplies member identity,
+  revision, blockout dates and service timezone. Its signed-in member object
+  currently includes preference fields; the accountless member projection
+  omits them. Reuse schedule data where present, and use the availability
+  summary preferences for accountless access. Keep the summary operation
+  independent so a delayed or failed availability read cannot hold back
+  assignments. Load full request details and revision snapshots when the
+  volunteer opens a summary.
+- Routine full reads reconcile only returned active requests that can contain
+  a matching identity; active summaries and past-request summaries skip that
+  work. Opening one past request may reconcile that selected form. Closed
+  history never triggers reconciliation during a routine read. If evidence is
+  incomplete or conflicting, the projection retains its integrity-safe
+  behavior and revision checks.
+- Firestore uses bounded form and recipient queries, deduplicates forms and
+  Team reads, and caps each collection's work. The required composite indexes
+  are declared in `firestore.indexes.json`; deploy them before production use.
+  See [the API performance record](../volunteer-availability-api-performance.md)
+  for measured results and emulator limitations.
+
+## Volunteer workspace layout and navigation (owner request, 2026-11-20)
+
+### Before behavior
+
+My Schedule and My Availability centered and capped the combined sidebar and
+content frame. Their separate page markup had no shared collapsed-sidebar
+state. Volunteer section links could change routes while Time Off or an
+availability response was dirty.
+
+### After behavior
+
+At that phase, both pages used the same full-width workspace frame and
+volunteer-specific sidebar/drawer navigation. This layout and its two-section
+navigation were superseded by the November 22 unified My Schedule workspace.
+The current workspace has one app Menu, no volunteer sidebar or volunteer
+bottom navigation, a readable-width content column, and safe-area scroll
+padding. Dirty editors still guard navigation and block it during saves.
+
+### Behavior intentionally unchanged
+
+Availability forms retain their occurrence scopes, answers, unanswered keys,
+revision snapshots, request deadlines, authorization and save semantics. Past
+occurrences remain in an editable form while its server-owned deadline allows
+responses. Their compact group-level past indicator does not disable editing. Time Off
+continues to use its existing conflict and revision checks. No service
+occurrence, form, response or schedule data is migrated by this layout change.
+
+### Historical grouped and individual occurrences
+
+New availability forms already omit a standalone occurrence when the saved
+schedule and current service catalog prove it belongs to the same grouped
+service/date. Form updates preserve issued occurrence scopes. For historical
+forms, My Availability projects an exact grouped/standalone pair as one logical
+card only when the current service group and a saved schedule snapshot confirm
+the same church-local date and service identity. The projection is read-only:
+the original form occurrence IDs, `serviceAvailability` entries and individual
+revision counters remain stored. Saving from the one card writes the selected
+answer through to every original ID and submits every original revision.
+
+When the saved answers agree, or only one ID has an answer, the card displays
+that answer. When the IDs contain different answers, the card does not choose
+one. An unresolved conflict in the focused editor offers Available, Unavailable
+and Not answered only for that occurrence and requires an explicit choice
+before saving; a closed request stays read-only and asks the volunteer to
+contact an administrator. Forms with no matching saved
+schedule, missing identity evidence, a changed service group, multiple distinct
+saved group memberships or incomplete schedule evidence keep the original rows
+visible. Archived schedule snapshots can prove an issued form's past identity;
+archiving prevents future scheduling but does not erase that evidence.
+Independent services on the same date remain separate. The reported
+November 7/14/21/28 records are resolved only where these checks pass;
+unresolved pairs stay visible for administrative review. No broad migration,
+form rewrite or response-history deletion occurs.
+
+Auto-fill continues to honor an explicit unavailable answer on the same saved
+group/date when it is stored under one of that grouped service's historical
+individual IDs. Unanswered responses remain neutral, and ranking behavior is
+unchanged.
+
+## Volunteer workspace consolidation and preference self-service (Phase 2B-4, 2026-11-20; historical navigation superseded)
+
+The home launcher presents one **My Schedule** card at `/my-schedule`,
+described as **Assignments, availability, and time off.** At that milestone,
+the shared workspace sidebar and mobile navigation linked to both My Schedule
+and My Availability. The November 22 unified-workspace request supersedes that
+navigation and page split. Signed-in `/my-availability`, accountless
+`/s?view=availability`, schedule links and existing `/a/:token` request links
+remain supported; `/my-availability` and `/s?view=availability` now focus the
+availability section within My Schedule.
+
+My Availability removes the standing overview, unanswered-date and Time Off
+paragraphs, routine checkbox instructions and repeated per-card past labels.
+It keeps the request name/deadline, action heading, compact group-level past
+counts and concise three-state guidance only when that editing mode is in use.
+The shared service-occurrence grid, whole-card `Checkbox`, existing
+`SegmentedControl` and design-system `Select` are reused. The first all-empty
+response still requires confirmation, partial responses retain the three
+states, and revision/409/uncertain-save recovery remains active.
+
+The **Scheduling preferences** section below requests shows the member's saved
+serving frequency and recurring availability, collapsed to a summary until
+**Edit preferences** is selected. Saving is explicit. Signed-in and personal
+link callers use self-scoped writes; the server derives the member from the
+session, validates only serving frequency and recurring-week values, compares
+`expectedUpdatedAt` transactionally, and updates only these two fields plus
+revision/audit stamps. A stale or concurrent profile change returns 409. Drafts
+remain until the volunteer reviews the latest values and explicitly keeps or
+replaces them. Empty recurring-week selections still mean every week is
+eligible; selected weeks remain hard scheduling eligibility rules.
+
+General intake remains the existing onboarding and administrator-requested
+form system. It may collect enabled personal details, positions, availability,
+scheduling preferences, serving frequency, blockout dates and notes. Dedicated
+`team_availability` forms continue to collect service-date availability. The
+unified My Schedule workspace provides recurring response editing, preference
+maintenance, assignments and Time Off. Existing form links, submissions,
+history and review remain intact. An intake response still changes only the
+enabled, explicitly submitted fields under its existing rules, so volunteers
+are not asked to resubmit the whole onboarding form each month.
+
+## Unified volunteer workspace (2026-11-22)
+
+My Schedule is the single volunteer destination for Time Off, Scheduling
+Preferences, active availability requests, upcoming assignments and collapsed
+past assignments. The existing Home launcher card remains the entry point;
+there is no separate volunteer sidebar or bottom navigation. The normal app
+header and Menu remain.
+
+Signed-in and validated personal-link sessions use the same workspace. Legacy
+`/my-availability` and `/s?view=availability` destinations remain compatible
+and focus the availability section. `/my-schedule` and `/s?view=schedule`
+continue to open the same workspace. An optional `availabilityRequest` query
+selects a recipient-scoped request after authorization; it carries no personal
+session credential. Existing `/a/:token` intake links continue to use the
+public intake flow.
+
+Initial schedule/Time Off/member data and `loadAvailability({ summary: true })`
+load independently. The summary supplies active request cards and preferences
+without occurrence lists or answer revisions. Opening a request loads only its
+authorized `recipientId`; closed history is fetched only after the volunteer
+chooses its secondary history action. Assignment cards and availability remain
+usable when the other read fails. The page reuses the established Time Off,
+assignment-response, preference and availability editors, including their
+revision checks, conflicts, uncertain-save recovery and shared navigation
+guard. Small schedules omit search and filters until needed; larger schedules
+can open the existing controls.
+
+The code change does not deploy Firestore indexes or establish production
+request latency. The index and production verification requirements remain in
+[deployment prerequisites](../volunteer-portal-deployment.md) and the
+[availability read-path record](../volunteer-availability-api-performance.md).
+
+After a confirmed Time Off or Scheduling Preferences save, the server returns a
+minimal member snapshot from that same transaction, including the shared
+revision and the saved fields needed by both editors. An explicit conflict or
+uncertain-save refresh can request the same safe member projection from the
+existing availability read, without an extra member lookup. Routine startup
+summaries stay compact. My Schedule adopts snapshots without refreshing
+assignment responses. A clean editor can use the latest saved state on its next
+edit; a dirty editor keeps its draft and original revision and uses the existing
+explicit conflict review. A rejected mutation is never retried automatically.
+Confirmed by the product-owner request for the Unified My Schedule reliability
+review, 2026-11-23.
+
+## Focused availability response editor (2026-11-23)
+
+**Approval source:** current product-owner request, “WorshipSync — Simplify Availability Editing and Introduce a Focused Subpage,” 2026-11-23.
+
+### Before behavior
+
+Request cards were whole-card buttons. Opening one expanded its editor inline below Time Off and Scheduling Preferences. Volunteers could switch between a checkbox list and three choices for every service, even when a request only needed a routine available/unavailable response.
+
+### After behavior
+
+- Request cards are informational containers. Only the reusable **Respond** or **Change response** button opens a request. The action uses the existing CTA variant when no response is submitted and the secondary variant when a response exists.
+- Opening a request adds its recipient-specific availabilityRequest query value to the existing route. My Schedule keeps its application header and Menu while showing only the selected request, service checklist and necessary review, conflict or recovery UI. **Back to My Schedule**, browser Back and Forward return to the surrounding workspace; the existing navigation guard protects dirty drafts and in-flight saves. Direct recipient links open the same focused view.
+- The routine editor uses one checkbox per logical service, grouped by church date, with a compact selected count and Select all where applicable. A checked service is available. For a new response, Review response confirms the complete available/unavailable counts; selecting no services retains the existing all-unavailable confirmation.
+- Previously saved available services stay checked and unavailable services stay unchecked. Historical unanswered services remain unanswered until the volunteer selects them or uses the contextual **Mark unavailable** action. **Clear response** returns an existing answer to unanswered when supported. Unresolved grouped/standalone answer conflicts still require one explicit choice in the affected service only. A partial response is never silently completed.
+- An accepted save updates the request summary and returns to My Schedule with concise success feedback. An uncertain outcome keeps the editor and draft until an authoritative read reconciles it. Opening a request fetches only its recipient detail; a direct focused link skips overview summaries and assignments until the volunteer returns to the workspace.
+- Historical alias projection remains server-owned. Proven grouped and standalone aliases render once and save to every original occurrence ID and revision. Exact church/team scope, group membership, service identity, timezone date and saved schedule evidence remain required; unknown or conflicting evidence never causes a guessed merge. Archived schedule snapshots remain eligible historical evidence because archiving prevents future scheduling but does not erase the identity of a service already on an issued form.
+
+### Behavior intentionally unchanged
+
+Signed-in and accountless volunteers share this editor and its existing recipient-scoped authorization. The /my-schedule, /my-availability, /s?view=schedule, /s?view=availability, recipient-specific deep links and /a/:token routes remain supported. Availability writes retain the complete scoped map, original occurrence IDs, revision snapshots, HTTP 409 review, uncertain-save reconciliation and no-automatic-retry behavior. Auto-fill continues to treat unanswered availability as neutral. Assignment responses, Time Off, scheduling preferences, request deadlines and historical records remain unchanged; no data migration or deletion is introduced.
+
+
+## Final availability correctness and save acknowledgment (2026-11-23)
+
+**Approval source:** current product-owner request, “WorshipSync — Final
+Availability Correctness, UX Polish, and Performance,” 2026-11-23.
+
+- Historical grouped and standalone occurrences are reconciled order-independently only with exact church/team, group, service, date and saved-schedule evidence. A proven logical service appears once while retaining every raw response occurrence ID, answer and revision. Unknown or contradictory identity remains separate and visible for review; names alone never prove identity.
+- A successful availability mutation returns a minimal request summary from the same commit, including recipient, form, display name, deadline, response timestamp and submission ID. It includes no occurrence projection. The focused editor updates the overview from this committed summary without a second detail read; uncertain or incomplete acknowledgments still require an authoritative read before the client reports success.
+- On HTTP 409, the volunteer can compare the original answers, current saved answers and local draft. Keeping a draft is available only if the canonical and raw occurrence scope is unchanged: locally changed or explicitly cleared choices remain, while untouched choices adopt the latest saved state and revisions. If scope or alias mappings changed, **Use latest answers** reloads the current map and revisions before further editing. Choosing the latest state removes stale clear and conflict-resolution metadata.
+- **Select all** selects every eligible service while leaving unresolved conflicts for an explicit service choice. The selected count includes all services. **Clear response** and **Mark unavailable** are contextual service actions; checkbox cards use one visible border and retain full service/date/time labels for assistive technology.
+- Switching recipient-specific routes invalidates the earlier in-flight detail read. Late results cannot replace the newly requested service list or leave its loading state attached to the prior request.
+
+Behavior remains recipient-scoped for signed-in and accountless volunteers. Writes retain per-occurrence revision checks, full form scope, explicit conflict review, uncertain-save reconciliation and no automatic retry. Unanswered stays distinct from unavailable and neutral to Auto-fill. No response history is migrated or deleted.
 
 ## Personal credential foundation: Phase 2 contract (2026-10-21)
 

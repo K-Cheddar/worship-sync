@@ -86,11 +86,46 @@ A schedule follows **Virtual → Draft ↔ Published**.
 - Forms has an authorized active-Team filter independent of its date-range filter. Administrators start at **All teams**; a manager of one active Team starts at that Team. A legacy form with an empty Team scope applies to all teams.
 - Upcoming availability is calculated for each selected Team's future occurrences using the same church-timezone schedule generation, combined-service identity, saved occurrence overrides, requirements, and explicit position slots as Team Scheduling. Combined groups are projected to each Team's staffing-relevant service members before coverage is compared; saved occurrence overrides apply across the group while service membership remains team-specific. Past services do not count as missing.
 - Existing open availability forms cover only their actual Team scope and the service dates they include. Coverage is accumulated across eligible forms, and volunteer responses do not affect coverage.
+- Volunteer request reads use only active, unarchived, unexpired forms and current recipient/team scope. This read filter does not remove historical forms or change administrator reporting, form coverage suggestions, Auto-fill, or audit records. The confirmed response-read contract is in [Unified volunteer My Schedule](volunteer-my-schedule.md#active-availability-reads-and-unified-page-integration-2026-11-20).
 - A suggested draft includes only uncovered Team/date coverage and uses `purpose: "team_availability"`. Teams share a draft only when their missing logical occurrence sets match; different staffed members of one combined occurrence are unioned for the shared draft, while unrelated events on the same date stay separate. Teams with different missing occurrences receive separate drafts.
 - Saved combined occurrences cover only their intersection with the form's known service list. Legacy forms without service lists retain their saved occurrence member. Closed or expired forms that cover future dates are grouped into one review suggestion per form, with affected Teams and dates. An existing form is suggested for update only when its scope and service-date additions are safe and no requests or responses have been issued; otherwise, uncovered dates use a separate draft.
 - The Team selector does not change the selected date range. Team options and suggestions are limited to authorized active Teams, and a church or permission-scope change cannot retain a stale Team selection.
 
 **Approval source:** Current product-owner request, 2026-10-15. This Forms behavior adds Team-level availability coverage and filtering without changing scheduling, form-link, response, SMS, or authorization contracts.
+
+### Availability answers and Auto-fill
+
+- The canonical date-specific answer is `teamRosterMembers.serviceAvailability`, keyed by logical service occurrence. Recurring preferences and time-off dates remain separate inputs to scheduling.
+- An availability request is optional. A missing or unanswered date is unknown and does not exclude a volunteer from Auto-fill. Only an explicit `unavailable` answer excludes that volunteer under the existing Auto-fill rules.
+- Saving an availability response changes only the occurrence scope of that form. Per-occurrence server revisions prevent an older response from silently replacing a newer answer from another device, form or administrator. Disjoint occurrence edits and unrelated roster fields remain intact.
+- The revision check does not change assignment ranking, eligibility, blockout, qualification or cross-Team conflict rules. It does not require a prior request before schedule creation.
+
+**Approval source:** Current product-owner Phase 2B-1 request, 2026-11-16.
+
+The availability response simplification, now shown inside My Schedule, is confirmed by the current
+product-owner request, 2026-11-19. Submission status comes from the existing
+recipient `respondedAt` / `submissionId` fields, independently of the saved
+occurrence answer map. Unanswered remains unknown until explicitly answered;
+the initial positive-checkbox response maps unchecked dates to unavailable
+only after confirmation. Partially answered legacy data retains three-state
+editing. These presentation and confirmation rules do not change Auto-fill:
+only an explicit unavailable answer excludes a volunteer.
+
+The 2026-11-23 availability correctness follow-up confirms that clearing an
+existing answer displays **Not answered** and leaves the submitted value
+unanswered until the volunteer explicitly chooses Available or Unavailable.
+An authoritative read can confirm an uncertain save only when the attempted
+answers match and the read contains no unresolved grouped-occurrence conflicts;
+conflicting answers stay in the existing review flow.
+
+The 2026-11-23 availability correctness review confirmed that a historical
+grouped service and its standalone aliases are projected once regardless of
+row order only when exact church/team scope, group membership, service identity,
+timezone date and saved-schedule evidence all agree. Every proven alias keeps
+its original occurrence ID, answer and revision for save. Missing or conflicting
+evidence remains separate for explicit review; it is never merged by name or
+date alone. This identity projection does not change the unknown/unanswered
+Auto-fill rule.
 
 ### Church-wide member service availability editing
 

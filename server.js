@@ -1481,6 +1481,8 @@ app.get(
   "/api/churches/:churchId/team-intake/forms/:formId/sms-attempts",
   authHandlers.getTeamIntakeSmsAttempts,
 );
+app.get("/api/churches/:churchId/team-intake/defaults", authHandlers.getIntakeFormDefaults);
+app.post("/api/churches/:churchId/team-intake/defaults", authHandlers.saveIntakeFormDefaults);
 app.post(
   "/api/churches/:churchId/team-intake/forms",
   authHandlers.createTeamIntakeForm,
@@ -1712,6 +1714,34 @@ app.post(
 app.post(
   "/api/churches/:churchId/team-schedules/ensure",
   authHandlers.ensureTeamScheduleForPeriod,
+);
+app.get(
+  "/api/churches/:churchId/scheduling-automation",
+  authHandlers.getSchedulingAutomation,
+);
+app.get(
+  "/api/churches/:churchId/scheduling-automation/teams/:teamId/cycles/:periodId",
+  authHandlers.getSchedulingCycle,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/preview",
+  authHandlers.previewSchedulingCycle,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/defaults",
+  authHandlers.saveChurchSchedulingDefaults,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/activation",
+  authHandlers.setAvailabilityAutomation,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/teams/:teamId",
+  authHandlers.saveTeamSchedulingOverride,
+);
+app.post(
+  "/api/churches/:churchId/scheduling-automation/teams/:teamId/cycles/ensure",
+  authHandlers.ensureSchedulingCycle,
 );
 app.post(
   "/api/churches/:churchId/team-schedules/:scheduleId",

@@ -33,6 +33,7 @@ import {
   dispatchAvailabilityNotificationBatch,
   createHumanSession,
   getAuthBootstrap,
+  getMyVolunteerAvailability,
   logoutSession,
   removeChurchMember,
   revokeTrustedDevice,
@@ -81,6 +82,21 @@ describe("api/auth", () => {
           "x-display-token": "dp-1",
         }),
       }),
+    );
+  });
+
+  it("requests a scoped lightweight volunteer availability summary", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ success: true, requests: [], requestSummaries: [] }),
+    });
+
+    await getMyVolunteerAvailability("church-1", { summary: true, history: true, recipientId: "recipient-1" });
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      "http://localhost:5000/api/churches/church-1/my-availability?summary=1&history=1&recipientId=recipient-1",
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 

@@ -66,6 +66,7 @@ const HUMAN_ALLOWED_EXACT = new Set([
   // on a roster uses it, and omitting it made Electron route restore fall back
   // to /home.
   "/my-schedule",
+  "/my-availability",
   "/overlay-controller",
   "/workstation/pair",
   "/display/pair",

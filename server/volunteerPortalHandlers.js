@@ -18,14 +18,15 @@ const equal = (first, second) => {
 export const createVolunteerPortalHandlers = ({
   getAccessStore, getRecoveryStore, appBaseUrl, httpError, requireAdminSession, assertCsrf,
   enforceRateLimit, getClientIp, addSecurityEvent, logAuthEvent,
-  getSchedule, respond, acceptUnanswered, saveBlockouts, getAvailability, submitAvailability,
+  getSchedule, respond, acceptUnanswered, saveBlockouts, saveSchedulingPreferences,
+  getAvailability, submitAvailability,
 }) => {
   const origin = new URL(appBaseUrl).origin;
   const assertOrigin = (req) => {
     if (req.headers?.origin !== origin) throw httpError(403, "Open My Schedule and try again.");
   };
   const storeForRequest = () => getAccessStore();
-  const handle = (operation) => async (req, res) => {
+  const handle = (operation, fallbackMessage = "Could not open My Schedule. Try again in a moment.") => async (req, res) => {
     res.set({ "Cache-Control": "no-store", Pragma: "no-cache", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff", "X-Robots-Tag": "noindex, nofollow, noarchive" });
     try {
       await enforceRateLimit({ scope: "volunteer-http", key: getClientIp(req),
@@ -34,7 +35,7 @@ export const createVolunteerPortalHandlers = ({
     } catch (error) {
       const status = error?.status || error?.statusCode || 500;
       return res.status(status).json({ success: false,
-        errorMessage: status >= 500 ? "Could not open My Schedule. Try again in a moment." : error.message,
+        errorMessage: status >= 500 ? fallbackMessage : error.message,
       });
     }
   };
@@ -170,7 +171,30 @@ export const createVolunteerPortalHandlers = ({
     respondToVolunteerPersonalAssignment: handle(async (req, res) => res.json(await respond(await sessionIdentity(req, true), req.body))),
     acceptVolunteerPersonalUnanswered: handle(async (req, res) => res.json(await acceptUnanswered(await sessionIdentity(req, true), req.body))),
     saveVolunteerPersonalBlockouts: handle(async (req, res) => res.json(await saveBlockouts(await sessionIdentity(req, true), req.body))),
-    getVolunteerPersonalAvailability: handle(async (req, res) => res.json(await getAvailability(await sessionIdentity(req)))),
-    submitVolunteerPersonalAvailability: handle(async (req, res) => res.json(await submitAvailability(await sessionIdentity(req, true), req.body))),
+    saveVolunteerPersonalSchedulingPreferences: handle(async (req, res) => res.json(await saveSchedulingPreferences(await sessionIdentity(req, true), req.body)),
+      "Could not save your scheduling preferences. Try again in a moment."),
+    getVolunteerPersonalAvailability: handle(
+      async (req, res) => {
+        const endpointStartedAt = performance.now();
+        const identityStartedAt = performance.now();
+        const identity = await sessionIdentity(req);
+        const identityResolutionMs = performance.now() - identityStartedAt;
+        return res.json(await getAvailability(identity, {
+          summaryOnly: req.query?.summary === "1",
+          historyOnly: req.query?.history === "1",
+          includeMemberSnapshot: req.query?.includeMemberSnapshot === "1",
+          recipientId: typeof req.query?.recipientId === "string"
+            ? req.query.recipientId.trim()
+            : "",
+          endpointStartedAt,
+          identityResolutionMs,
+        }));
+      },
+      "Could not load your availability requests. Try again in a moment.",
+    ),
+    submitVolunteerPersonalAvailability: handle(
+      async (req, res) => res.json(await submitAvailability(await sessionIdentity(req, true), req.body)),
+      "Could not save your availability. Try again in a moment.",
+    ),
   };
 };

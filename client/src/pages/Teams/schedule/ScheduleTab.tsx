@@ -78,6 +78,7 @@ import {
 } from "./schedulePeriodUtils";
 import { useScheduleWorkspacePeriod } from "./useScheduleWorkspacePeriod";
 import ScheduleStaffingSummary from "./ScheduleStaffingSummary";
+import SchedulingAutomationPanel from "../components/SchedulingAutomationPanel";
 import ScheduleWorkspaceToolbar, {
   getScheduleWorkspacePublicationClassName,
   resolveSchedulePublicationStatus,
@@ -85,6 +86,7 @@ import ScheduleWorkspaceToolbar, {
 import ScheduleSendScopeNotice from "./ScheduleSendScopeNotice";
 import { getScheduleSendScope, resolveScheduleWorkspace } from "./scheduleWorkspaceModel";
 import { isPersistedScheduleId } from "./scheduleNotificationHistory";
+import { hasUnavailableAvailabilityAnswer } from "./serviceAvailability";
 import { useScheduleNotificationHistory } from "./useScheduleNotificationHistory";
 import RangeSelector from "../components/RangeSelector";
 import { shiftRange } from "../rangeSelection";
@@ -614,6 +616,13 @@ const ScheduleTab = ({
     workspaceTeamId,
   ]);
   const matchedPeriodSchedule = periodScheduleMatch.schedule;
+  const schedulingCycleScheduleStatus = periodScheduleMatch.ownershipConflict || periodScheduleMatch.ambiguous
+    ? "Saved schedule ownership needs review."
+    : periodScheduleMatch.schedule
+      ? periodScheduleMatch.schedule.published === false
+        ? "Existing schedule: Draft."
+        : "Existing schedule: Published."
+      : "No saved schedule for this period.";
   const overlappingPeriodSchedules = useMemo(() => viewingSavedSchedule
     ? []
     : findOverlappingPeriodSchedules({
@@ -2898,12 +2907,13 @@ const ScheduleTab = ({
   const getServiceAvailabilityWarning = useCallback(
     (memberId: string, occurrenceId: string) => {
       const member = data.members.find((item) => item.memberId === memberId);
-      if (member?.serviceAvailability?.[occurrenceId] === "unavailable") {
+      const occurrence = scheduleOccurrences.find((item) => item.occurrenceId === occurrenceId);
+      if (hasUnavailableAvailabilityAnswer(member, occurrence, serviceTimeZone)) {
         return "Marked this service unavailable on intake";
       }
       return "";
     },
-    [data.members],
+    [data.members, scheduleOccurrences, serviceTimeZone],
   );
 
   const getBlockoutWarning = useCallback(
@@ -6970,6 +6980,19 @@ const ScheduleTab = ({
             {scheduleWorkflowActions}
           </header>
 
+          {workspaceTeamId && scheduleTeamFilter !== "" && (isChurchAdmin || editableTeamIds?.has(workspaceTeamId)) ? (
+            <SchedulingAutomationPanel
+              churchId={churchId}
+              teamId={workspaceTeamId}
+              teamName={activeTeams.find((team) => team.teamId === workspaceTeamId)?.name || ""}
+              periodId={periodRange.start.slice(0, 7)}
+              existingScheduleStatus={schedulingCycleScheduleStatus}
+              serviceTimeZone={serviceTimeZone}
+              canManageTeam={isChurchAdmin || Boolean(editableTeamIds?.has(workspaceTeamId))}
+              canManageDefaults={isChurchAdmin}
+            />
+          ) : null}
+
           <section className={cn(panelShellClassName, "w-full shrink-0 px-3 py-3")}>
             <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start sm:gap-4">
               <Select
@@ -7758,7 +7781,7 @@ const ScheduleTab = ({
                     if (holderId && selectedSchedule.responses?.[occurrence.occurrenceId]?.[column.columnKey]?.response !== "declined") return [];
                     return [{ occurrenceId: occurrence.occurrenceId, cellKey: column.columnKey,
                       label: `${occurrence.name} · ${formatOccurrenceRowLabel(occurrence, { sharedWeekday: null, sharedTime: null }, serviceTimeZone)} · ${column.label}`,
-                      memberIds: activeTeamMembers.filter((member) => member.memberId !== holderId && member.positionIds.includes(column.positionId) && member.serviceAvailability?.[occurrence.occurrenceId] !== "unavailable").map((member) => member.memberId),
+                      memberIds: activeTeamMembers.filter((member) => member.memberId !== holderId && member.positionIds.includes(column.positionId) && !hasUnavailableAvailabilityAnswer(member, occurrence, serviceTimeZone)).map((member) => member.memberId),
                     }];
                   }))}
                   onPrepareReplacement={async (vacancy, memberId) => {

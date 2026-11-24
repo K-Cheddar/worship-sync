@@ -46,6 +46,7 @@ import { useDocumentPageTitle } from "./hooks/useDocumentPageTitle";
 import WebUpdateCoordinator from "./components/WebUpdateCoordinator/WebUpdateCoordinator";
 import { RehearsalPlaybackProvider } from "./components/RehearsalPlayer/RehearsalPlaybackContext";
 import RehearsalPlayerHost from "./components/RehearsalPlayer/RehearsalPlayerHost";
+import { VolunteerNavigationGuardProvider } from "./pages/VolunteerNavigationGuard";
 
 /**
  * Route-level code splitting.
@@ -98,6 +99,7 @@ const PreparedVideoSurfaces = lazyRoute(
 
 // Planning / people
 const MySchedule = lazyRoute(() => import("./pages/MySchedule"));
+const MyAvailability = lazyRoute(() => import("./pages/MyAvailability"));
 const Account = lazyRoute(() => import("./pages/Account"));
 const Resources = lazyRoute(() => import("./pages/Resources"));
 const TeamsAndServices = lazyRoute(
@@ -262,7 +264,7 @@ const RouteChunkSplash = ({
   );
 };
 
-export const AppRoutes = () => {
+const AppRoutesContent = () => {
   const context = useContext(GlobalInfoContext);
   const location = useLocation();
   const initialRoutePendingRef = useRef(true);
@@ -423,7 +425,15 @@ export const AppRoutes = () => {
                 path="/my-schedule"
                 element={
                   <AuthGate allowedKinds={["human"]}>
-                    <MySchedule />
+                    <MySchedule navigationGuardProvided />
+                  </AuthGate>
+                }
+              />
+              <Route
+                path="/my-availability"
+                element={
+                  <AuthGate allowedKinds={["human"]}>
+                    <MyAvailability navigationGuardProvided />
                   </AuthGate>
                 }
               />
@@ -580,6 +590,12 @@ export const AppRoutes = () => {
     </>
   );
 };
+
+export const AppRoutes = () => (
+  <VolunteerNavigationGuardProvider>
+    <AppRoutesContent />
+  </VolunteerNavigationGuardProvider>
+);
 
 const App: React.FC = () => {
   useEffect(() => {

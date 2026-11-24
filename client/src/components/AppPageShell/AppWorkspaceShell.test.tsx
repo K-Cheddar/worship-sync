@@ -5,7 +5,7 @@ import { Users } from "lucide-react";
 import AppWorkspaceShell from "./AppWorkspaceShell";
 
 jest.mock("../HomeToolbarMenu/HomeToolbarMenu", () => () => <button>Menu</button>);
-jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => null);
+jest.mock("../../containers/Toolbar/ToolbarElements/UserSection", () => () => <div data-testid="account-controls" />);
 
 const renderShell = (collapseMobileHeader = true, nestedScrollOwner = false) => {
   const onAction = jest.fn();
@@ -136,4 +136,12 @@ it("keeps its legacy orange icon color when omitted", () => {
 
   const titleIcon = screen.getByTestId("app-workspace-title").querySelector("svg");
   expect(titleIcon?.parentElement).toHaveClass("text-orange-400");
+});
+
+it("can hide account controls for accountless workspace routes", () => {
+  render(<MemoryRouter><AppWorkspaceShell title="My Schedule" icon={Users} showUserSection={false}>
+    <div>Workspace</div>
+  </AppWorkspaceShell></MemoryRouter>);
+
+  expect(screen.queryByTestId("account-controls")).not.toBeInTheDocument();
 });

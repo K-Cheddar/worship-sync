@@ -291,6 +291,8 @@ export type TeamRosterMember = {
    * constraint: the member cannot be assigned to that occurrence.
    */
   serviceAvailability?: Record<string, "available" | "unavailable">;
+  /** Server-owned per-occurrence preconditions used by availability response writes. */
+  serviceAvailabilityRevisions?: Record<string, number>;
   teamMemberships?: Record<string, TeamMemberMembership>;
   qualifications?: TeamMemberQualification[];
   blockoutDates: TeamBlockoutDateRange[];
@@ -375,6 +377,104 @@ export type TeamRecord = {
   usesIemAssignments?: boolean;
   // a team's positions are derived from positions where position.teamId === teamId
   archivedAt?: string | null;
+};
+
+export type SchedulingAutomationSettings = {
+  frequency: "monthly";
+  preparationDay: number;
+  availabilityRequestLeadDays: number;
+  followUpAfterDays: number;
+  leaderSummaryAfterDays: number;
+  /** Calendar days before preparation by which volunteers should respond; default is three. */
+  availabilityResponseLeadDays: number;
+  localExecutionTime: string;
+  publicationPolicy: "manual";
+};
+
+export type SchedulingSettingsRecord = {
+  settingsId: string;
+  churchId: string;
+  teamId: string | null;
+  scopeType: "church_defaults" | "team_override";
+  mode?: "inherit" | "customize" | "disabled";
+  settings: SchedulingAutomationSettings | null;
+  availabilityAutomationEnabled?: boolean;
+  availabilityFormCreationEnabled?: boolean;
+  availabilityAutomationActivatedAt?: string | null;
+  availabilityAutomationDisabledAt?: string | null;
+  notificationDeliveryEnabled?: boolean;
+  revision: number;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+export type SchedulingEffectiveSettings = {
+  mode: "inherit" | "customize" | "disabled";
+  enabled: boolean;
+  settings: SchedulingAutomationSettings;
+  configurationRevision: string;
+  source: "church" | "team" | "disabled";
+};
+
+export type SchedulingCycleAction = {
+  actionId: string;
+  id: string;
+  cycleId: string;
+  churchId: string;
+  teamId: string;
+  periodId: string;
+  actionType: string;
+  localDate: string | null;
+  localTime: string | null;
+  serviceTimeZone: string;
+  dueAt: string | null;
+  state: "planned" | "pending" | "claimed" | "completed" | "retryable_failure" | "review_required" | "skipped" | "canceled" | "permanent_failure" | "manual";
+  enabled: boolean;
+  relatedFormId: string | null;
+  relatedScheduleId: string | null;
+  configurationRevision: string;
+  idempotencyKey: string;
+  cancelReason: string | null;
+  supersededByActionId: string | null;
+  attemptCount: number;
+  claimToken?: string | null;
+  claimOwner?: string | null;
+  claimedAt: string | null;
+  claimExpiresAt: string | null;
+  lastAttemptAt: string | null;
+  nextAttemptAt?: string | null;
+  completedAt: string | null;
+  lastFailureClassification?: "transient" | "review_required" | "uncertain_or_permanent" | null;
+  lastError: string | null;
+  result: Record<string, unknown> | null;
+  schemaVersion: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SchedulingCycleRecord = {
+  cycleId: string;
+  churchId: string;
+  scopeType: "team";
+  teamId: string;
+  periodId: string;
+  periodStart: string;
+  periodEnd: string;
+  serviceTimeZone: string;
+  configurationRevision: string;
+  effectiveConfiguration: SchedulingAutomationSettings;
+  lifecycleState: "planned" | "active" | "complete" | "cancelled";
+  automationEnabled: boolean;
+  availabilityFormCreationEnabled?: boolean;
+  activationBoundaryAt?: string | null;
+  publicationPolicy: "manual";
+  availabilityFormIds: string[];
+  scheduleIds: string[];
+  plannedActionIds: string[];
+  deadlines: Record<string, { localDate: string; localTime: string | null; dueAt: string }>;
+  schemaVersion: number;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type TeamRole = {
@@ -1000,9 +1100,10 @@ export type TeamIntakeSubmission = {
   title?: string;
   birthDate?: BirthDate | null;
   normalizedName: string;
-  positionIds: string[];
-  occurrenceAvailability: Record<string, "available" | "unavailable">;
-  blockoutRanges: TeamIntakeBlockoutRange[];
+  /** Absent when the form did not collect this field; empty means explicitly cleared. */
+  positionIds?: string[];
+  occurrenceAvailability?: Record<string, "available" | "unavailable">;
+  blockoutRanges?: TeamIntakeBlockoutRange[];
   notes?: string;
   servingFrequency?: TeamMemberServingFrequency;
   recurringAvailability?: TeamMemberRecurringAvailability;
@@ -1048,6 +1149,8 @@ export type TeamIntakePreview = {
   recipient?: {
     firstName: string;
     missingFields?: TeamIntakeMemberDetailField[];
+    /** Hidden save precondition for this recipient link's occurrence scope. */
+    availabilityRevision?: Record<string, number>;
   };
   /** Allowlisted position fields only — the public link never ships internal columns. */
   positions: Pick<TeamPosition, "positionId" | "teamId" | "name" | "icon">[];
@@ -1174,4 +1277,22 @@ export type DevicePairingRequestStatusResponse = {
   success: boolean;
   status: DevicePairingRequestStatus;
   expiresAt: string;
+};
+
+/** Reusable creation settings only; scheduling and response data never belong here. */
+export type IntakeFormDefaults = {
+  general_intake?: {
+    enabledFields: TeamIntakeFieldId[];
+    welcomeMessage: string;
+    positionsMessage: string;
+    availabilityMessage: string;
+    notesMessage: string;
+  };
+  team_availability?: { welcomeMessage: string; availabilityMessage: string };
+};
+export type IntakeFormDefaultsResponse = {
+  success: boolean;
+  defaults: IntakeFormDefaults;
+  revisions: Record<"general_intake" | "team_availability", string>;
+  canEdit: boolean;
 };

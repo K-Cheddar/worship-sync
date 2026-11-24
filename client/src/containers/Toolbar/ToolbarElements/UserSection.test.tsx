@@ -111,7 +111,7 @@ describe("UserSection", () => {
     mockedUseChat.mockReturnValue(null);
   });
 
-  it("uses a compact responsive account summary with a 44px touch target", () => {
+  it("uses a compact account summary with a 44px mobile touch target", () => {
     const globalInfo = createMockGlobalInfo({
       user: "Alex Operator",
       userEmail: "alex@example.com",
@@ -129,10 +129,10 @@ describe("UserSection", () => {
     );
 
     const accountButton = screen.getByRole("button", { name: /Account: Alex Operator/i });
-    expect(accountButton).toHaveClass("min-h-[44px]!", "max-lg:min-h-[44px]!", "lg:min-h-0!");
+    expect(accountButton).toHaveClass("min-h-[44px]!", "max-lg:min-h-[44px]!", "lg:min-h-0!", "lg:p-0!");
     expect(accountButton).toHaveTextContent("Synced");
     expect(accountButton).toHaveTextContent("Alex");
-    expect(screen.getAllByText("Fixture Church").some((node) => node.classList.contains("max-lg:hidden"))).toBe(true);
+    expect(accountButton).not.toHaveTextContent("Fixture Church");
   });
 
   it("does not count displays in the active session total", () => {

@@ -9,6 +9,8 @@ describe("getPageTitle", () => {
     ["/controller/item/123", "Controller | WorshipSync"],
     ["/current-service/view", "Current Service Viewer | WorshipSync"],
     ["/account/branding", "Account | WorshipSync"],
+    ["/my-availability", "My Schedule | WorshipSync"],
+    ["/my-schedule", "My Schedule | WorshipSync"],
     ["/teams-and-services/schedules", "Schedules | WorshipSync"],
     ["/teams-and-services/messages", "Messages | WorshipSync"],
     ["/projector", "Projector | WorshipSync"],

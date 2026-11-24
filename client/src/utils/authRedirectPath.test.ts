@@ -43,6 +43,7 @@ describe("authRedirectPath", () => {
     expect(sanitizeAuthRedirectPathname("/current-service")).toBe(
       "/current-service",
     );
+    expect(sanitizeAuthRedirectPathname("/my-availability")).toBe("/my-availability");
   });
 
   it("sanitizeAuthRedirectPathname rejects unsafe or unknown paths", () => {
@@ -56,6 +57,9 @@ describe("authRedirectPath", () => {
     expect(
       sanitizeAuthRedirectTo("/current-service?tab=plan#item-2"),
     ).toBe("/current-service?tab=plan#item-2");
+    expect(
+      sanitizeAuthRedirectTo("/my-availability?availabilityRequest=recipient-1"),
+    ).toBe("/my-availability?availabilityRequest=recipient-1");
     expect(sanitizeAuthRedirectTo("https://evil.example/controller")).toBeNull();
     expect(sanitizeAuthRedirectTo("//evil.example/controller")).toBeNull();
     expect(sanitizeAuthRedirectTo("/controller\\\\evil.example")).toBeNull();

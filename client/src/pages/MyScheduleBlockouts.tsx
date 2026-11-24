@@ -40,9 +40,11 @@ type MyScheduleBlockoutsProps = {
   saveBlockouts?: MyScheduleOperations["saveBlockouts"];
   /** Lets the page skip a background refresh while an edit is open. */
   onDirtyChange: (dirty: boolean) => void;
+  onSavingChange: (saving: boolean) => void;
   /** Called when the record moved underneath this edit, to pick up the change. */
   onStale: () => Promise<boolean> | undefined;
   savedDatesLoad: SavedDatesLoadState;
+  initiallyOpen?: boolean;
 };
 
 type BlockoutConflict = {
@@ -95,15 +97,17 @@ const MyScheduleBlockouts = ({
   occurrences,
   onSaved,
   onDirtyChange,
+  onSavingChange,
   onStale,
   savedDatesLoad,
   saveBlockouts,
+  initiallyOpen = false,
 }: MyScheduleBlockoutsProps) => {
   const { showToast } = useToast();
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const conflictHeadingId = useId();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const [showEnded, setShowEnded] = useState(false);
   const [draft, setDraft] = useState<TeamBlockoutDateRange[]>(blockoutDates);
   const { ended: draftEnded, current: draftCurrent } = useMemo(
@@ -199,6 +203,11 @@ const MyScheduleBlockouts = ({
   }, [hasOpenEditor, isDirty, onDirtyChange]);
 
   useEffect(() => {
+    onSavingChange(saving);
+    return () => onSavingChange(false);
+  }, [onSavingChange, saving]);
+
+  useEffect(() => {
     if (!open) setHasOpenEditor(false);
   }, [open]);
 
@@ -221,6 +230,7 @@ const MyScheduleBlockouts = ({
   const save = async () => {
     if (savingRef.current || hasConflict || hasIncompleteDraft) return;
     savingRef.current = true;
+    onSavingChange(true);
     setSaving(true);
     try {
       // Entries hidden from the editor are sent back untouched. Editing what is
@@ -229,11 +239,15 @@ const MyScheduleBlockouts = ({
         ? saveBlockouts(draft, baseline.updatedAt)
         : updateMyBlockoutDates(churchId, draft, baseline.updatedAt));
       if (!mounted.current) return;
-      const saved = result.member?.blockoutDates || [];
+      if (!result?.success || !result.memberSnapshot) {
+        throw new Error("Could not confirm your time off was saved.");
+      }
+      const savedMember = result.memberSnapshot;
+      const saved = savedMember.blockoutDates || [];
       // Re-seed from the server so its normalization is what stays on screen.
       // Seeding also moves the baseline, leaving the editor clean after save.
-      seedDraft(saved, result.member.updatedAt || "");
-      onSaved(result.member);
+      seedDraft(saved, savedMember.updatedAt || "");
+      onSaved(savedMember);
       showToast("Time off saved.", "success");
     } catch (error) {
       if (!mounted.current) return;
@@ -247,6 +261,7 @@ const MyScheduleBlockouts = ({
       showApiErrorToast(showToast, error, "Could not save your time off.");
     } finally {
       savingRef.current = false;
+      onSavingChange(false);
       if (mounted.current) setSaving(false);
     }
   };

@@ -173,6 +173,9 @@ jest.mock("./pages/Account", () => () => (
 jest.mock("./pages/Teams/TeamsAndServices", () => () => (
   <div data-testid="teams-page">Teams Page</div>
 ));
+jest.mock("./pages/MyAvailability", () => () => (
+  <div data-testid="my-schedule-page">My Schedule Page</div>
+));
 
 // Mock the context providers (value shape from shared mocks)
 jest.mock("./context/globalInfo", () => {
@@ -248,6 +251,20 @@ describe("App Component", () => {
     expect(container).toBeEmptyDOMElement();
     await act(async () => { mockBoardPending = null; finish(); });
     expect(screen.getByTestId("board-present-page")).toBeInTheDocument();
+  });
+
+  it("opens the signed-in unified workspace from the legacy availability route", async () => {
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({
+        sessionKind: "human",
+        permissions: { teams: "none" },
+      })}>
+        <MemoryRouter initialEntries={["/my-availability"]}>
+          <AppRoutes />
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+    expect(await screen.findByTestId("my-schedule-page")).toBeInTheDocument();
   });
 
   it.each(["/home", "/controller"])("uses the shared app startup screen on %s", (path) => {

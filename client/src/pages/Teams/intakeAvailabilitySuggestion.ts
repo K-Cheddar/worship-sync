@@ -1,5 +1,6 @@
 import type {
   TeamIntakeForm,
+  IntakeFormDefaults,
   TeamPosition,
   TeamSchedule,
   TeamScheduleOccurrence,
@@ -8,12 +9,19 @@ import type {
 } from "../../api/authTypes";
 import type { TeamIntakeFormPayload } from "../../api/auth";
 import { serverDate } from "../../utils/serverTime";
-import { calendarDateInTimeZone, generateScheduleOccurrences, getOccurrenceDate } from "../../utils/teamScheduleOccurrences";
+import {
+  calendarDateInTimeZone,
+  generateScheduleOccurrences,
+  getOccurrenceDate,
+  resolveOccurrenceIdentity,
+} from "../../utils/teamScheduleOccurrences";
 import { parsePlainDate } from "../../utils/plainDate";
-import { ALL_INTAKE_FORM_FIELDS, resolveIntakeFormFields } from "./intakeFormFields";
+import { resolveIntakeFormFields } from "./intakeFormFields";
 import { getUpcomingServiceRange } from "./servicePeriodRange";
 import { shiftRange } from "./rangeSelection";
 import { buildTeamSchedulePeriod, findInitialTeamSchedulePeriod } from "./schedule/teamSchedulePeriod";
+
+import { intakeCreationSettings } from "./intakeFormDefaults";
 
 type SuggestedAvailabilityOccurrence = Pick<TeamScheduleOccurrence, "occurrenceId" | "serviceId" | "name" | "startsAt" | "serviceDate">;
 
@@ -98,6 +106,47 @@ const getServiceIds = (occurrences: TeamScheduleOccurrence[]) =>
     occurrence.serviceIds?.length ? occurrence.serviceIds : [occurrence.serviceId],
   ))];
 
+/**
+ * Schedule periods retain unmatched saved rows so their assignment keys stay
+ * visible. A new availability form should use the current grouped occurrence
+ * when that exact group/date contains a preserved standalone member row.
+ * Ambiguous and unresolvable rows remain untouched for administrative review.
+ */
+export const omitRedundantGroupedMemberOccurrences = (
+  occurrences: TeamScheduleOccurrence[],
+  services: TeamService[],
+  timeZone?: string,
+) => {
+  const identityTimeZone = timeZone?.trim() || "UTC";
+  const serviceIdsByGroupId = new Map<string, string[]>();
+  services.forEach((service) => {
+    if (!service.serviceGroupId) return;
+    const serviceIds = serviceIdsByGroupId.get(service.serviceGroupId) || [];
+    serviceIds.push(service.serviceId);
+    serviceIdsByGroupId.set(service.serviceGroupId, serviceIds);
+  });
+  const groupedMembersByDate = new Map<string, Array<Set<string>>>();
+  occurrences.forEach((occurrence) => {
+    const identity = resolveOccurrenceIdentity(occurrence, identityTimeZone);
+    if (!identity?.groupId) return;
+    const key = `${identity.groupId}@${identity.serviceDate}`;
+    const rows = groupedMembersByDate.get(key) || [];
+    rows.push(new Set(serviceIdsByGroupId.get(identity.groupId) || identity.serviceIds));
+    groupedMembersByDate.set(key, rows);
+  });
+
+  const serviceById = new Map(services.map((service) => [service.serviceId, service]));
+  return occurrences.filter((occurrence) => {
+    const identity = resolveOccurrenceIdentity(occurrence, identityTimeZone);
+    if (!identity || identity.groupId || identity.serviceIds.length !== 1) return true;
+    const [serviceId] = identity.serviceIds;
+    const groupId = serviceById.get(serviceId)?.serviceGroupId;
+    if (!groupId) return true;
+    const matchingGroups = groupedMembersByDate.get(`${groupId}@${identity.serviceDate}`) || [];
+    return !(matchingGroups.length === 1 && matchingGroups[0].has(serviceId));
+  });
+};
+
 const getDraftForForm = (
   form: TeamIntakeForm,
   missingOccurrences: TeamScheduleOccurrence[],
@@ -151,6 +200,7 @@ export const getUpcomingAvailabilitySuggestions = ({
   issuedFormIds = [],
   now = serverDate(),
   timeZone,
+  defaults = {},
 }: {
   services: TeamService[];
   forms: TeamIntakeForm[];
@@ -161,6 +211,7 @@ export const getUpcomingAvailabilitySuggestions = ({
   issuedFormIds?: string[];
   now?: Date;
   timeZone?: string;
+  defaults?: IntakeFormDefaults;
 }): UpcomingAvailabilitySuggestion[] => {
   const today = calendarDateInTimeZone(now, timeZone || "UTC");
   const activeServices = services.filter((service) => !service.archivedAt);
@@ -206,15 +257,13 @@ export const getUpcomingAvailabilitySuggestions = ({
       const purpose = (template?.purpose || "general_intake") as "team_availability" | "general_intake";
       const canUpdate = Boolean(existing && !hasIssuedRequests(existing, issuedIds));
       const draft = canUpdate && existing
-        ? getDraftForForm(existing, missing, servicesById, purpose)
+        ? getDraftForForm(existing, missing, servicesById, existing.purpose || "general_intake")
         : {
             name: `${monthLabel(range.start)} Availability`, startDate: range.start, endDate: range.end, responseDeadline: range.end,
             availabilityServices: serviceIds.map((serviceId) => ({ serviceId, name: servicesById.get(serviceId)?.name || serviceId })),
             availabilityOccurrences: missing.map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate })),
             teamIds: [...generalTeamScope], purpose, active: true,
-            enabledFields: template ? resolveIntakeFormFields(template) : [...ALL_INTAKE_FORM_FIELDS],
-            requireEmail: Boolean(template?.requireEmail), welcomeMessage: template?.welcomeMessage || "",
-            positionsMessage: template?.positionsMessage || "", availabilityMessage: template?.availabilityMessage || "", notesMessage: template?.notesMessage || "",
+            ...intakeCreationSettings(defaults, purpose),
           } satisfies TeamIntakeFormPayload;
       if (canUpdate && existing) {
         allSuggestions.push({ kind: "update", formId: existing.formId, name: existing.name, startDate: range.start, endDate: range.end,
@@ -253,7 +302,12 @@ export const getUpcomingAvailabilitySuggestions = ({
     });
     for (let offset = 0; offset < 12; offset += 1) {
       const period = buildTeamSchedulePeriod({ services: activeServices, positions, teamId, schedules, startDate: range.start, endDate: range.end, timeZone });
-      const candidates = period.occurrences
+      const availabilityOccurrences = omitRedundantGroupedMemberOccurrences(
+        period.occurrences,
+        activeServices,
+        timeZone,
+      );
+      const candidates = availabilityOccurrences
         .filter((occurrence) => Date.parse(occurrence.startsAt) > now.getTime());
       const missing = candidates.flatMap((occurrence) => {
         const relevantServiceIds = period.serviceIdsByOccurrence.get(occurrence.occurrenceId) || [occurrence.serviceId];
@@ -331,8 +385,8 @@ export const getUpcomingAvailabilitySuggestions = ({
         name: `${monthLabel(range.start)} Availability`, startDate: range.start, endDate: range.end, responseDeadline: range.end,
         availabilityServices: serviceIds.map((serviceId) => ({ serviceId, name: servicesById.get(serviceId)?.name || serviceId })),
         availabilityOccurrences: missing.map(({ occurrenceId, serviceId, name, startsAt, serviceDate }) => ({ occurrenceId, serviceId, name, startsAt, serviceDate })),
-        teamIds: targetTeamIds, purpose: "team_availability", active: true, enabledFields: ["availability"], requireEmail: false,
-        welcomeMessage: "", positionsMessage: "", availabilityMessage: "", notesMessage: "",
+        teamIds: targetTeamIds, purpose: "team_availability", active: true,
+        ...intakeCreationSettings(defaults, "team_availability"),
       };
       allSuggestions.push({ kind: "create", name: draft.name, startDate: range.start, endDate: range.end,
         serviceCount: serviceIds.length, occurrenceCount: missingDateCount, teamIds: targetTeamIds,
