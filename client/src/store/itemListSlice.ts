@@ -231,14 +231,16 @@ export const itemListSlice = createSlice({
         const reconcileBaseline = outlineItemsEqual(remoteItems, conflict.baselineItems)
           ? conflict.baselineItems
           : conflict.remoteItems;
-        const refreshed = reconcileOutlineItems(reconcileBaseline, latestLocal, state.list,
-          undefined, state.pendingMoveIntents, conflict.baselineItems);
         const remoteChanged = didRemoteSnapshotChange(
           conflict.remoteItems,
-          refreshed.remoteItems,
+          remoteItems,
           conflict.revisionToken,
           payload.revisionToken,
         );
+        const revisionChanged = Boolean(conflict.revisionToken && payload.revisionToken &&
+          conflict.revisionToken !== payload.revisionToken);
+        const refreshed = reconcileOutlineItems(reconcileBaseline, latestLocal, state.list,
+          undefined, state.pendingMoveIntents, revisionChanged ? undefined : conflict.baselineItems);
         if (remoteChanged) {
           // A saved choice belongs to the winner that was reviewed. Returning
           // after another save must not apply it over unseen competing edits.
@@ -459,6 +461,14 @@ export const itemListSlice = createSlice({
       )
         ? unresolvedConflict.baselineItems
         : unresolvedConflict?.remoteItems ?? state.syncBaseline;
+      const remoteChanged = Boolean(unresolvedConflict && didRemoteSnapshotChange(
+        unresolvedConflict.remoteItems,
+        remoteItems,
+        unresolvedConflict.revisionToken,
+        payload.revisionToken,
+      ));
+      const revisionChanged = Boolean(unresolvedConflict?.revisionToken && payload.revisionToken &&
+        unresolvedConflict.revisionToken !== payload.revisionToken);
       const result = reconcileOutlineItems(
         // Treat the last remote snapshot as the next common base. This keeps
         // remote-origin candidate rows distinguishable from local additions:
@@ -469,15 +479,9 @@ export const itemListSlice = createSlice({
         remoteItems,
         undefined,
         state.pendingMoveIntents,
-        unresolvedConflict?.baselineItems,
+        !revisionChanged ? unresolvedConflict?.baselineItems : undefined,
       );
       state.list = preserveOutlineBackgroundPresentation(result.items, state.list);
-      const remoteChanged = Boolean(unresolvedConflict && didRemoteSnapshotChange(
-        unresolvedConflict.remoteItems,
-        result.remoteItems,
-        unresolvedConflict.revisionToken,
-        payload.revisionToken,
-      ));
       if (resolutionInvalidated && outlineId) {
         delete state.pendingRevisionResolutions[outlineId];
         if (unresolvedConflict) delete unresolvedConflict.resolutionChoice;
