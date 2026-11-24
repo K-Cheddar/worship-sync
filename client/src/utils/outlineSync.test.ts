@@ -69,8 +69,28 @@ describe("reconcileOutlineItems", () => {
     expect(result).toEqual({ kind: "merged", items: [remote[1]], remoteItems: remote });
   });
 
-  it("keeps matching public IDs from other Cloudinary accounts distinct", () => {
-    const baseline = [{ ...row("row-a", "Video"), type: "video", background: "media/sermon-thumbnail" }];
+  it.each(["thumbnail", "media/thumbnail"])(
+    "normalizes URLGen output for the %s Cloudinary public ID without treating formatting as a deletion edit",
+    (publicId) => {
+      const cloud = new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } });
+      const baseline = [{ ...row("row-a", "Video"), type: "video", background: publicId }];
+      const formatted = formatItemList(baseline, cloud);
+      const generatedUrl = formatted[0].background as string;
+      const remote = JSON.parse(JSON.stringify(baseline)) as ServiceItem[];
+
+      expect(outlineBackgroundsEqual(publicId, generatedUrl)).toBe(true);
+      expect(reconcileOutlineItems(formatted, [], remote)).toEqual({
+        kind: "merged",
+        items: [],
+        remoteItems: remote,
+      });
+    },
+  );
+
+  it.each(["thumbnail", "media/thumbnail"])(
+    "keeps the %s public ID distinct for other accounts and transformed URLs",
+    (publicId) => {
+    const baseline = [{ ...row("row-a", "Video"), type: "video", background: publicId }];
     const formattedBaseline = formatItemList(
       baseline,
       new Cloudinary({ cloud: { cloudName: CLOUDINARY_CLOUD_NAME } }),
@@ -81,11 +101,14 @@ describe("reconcileOutlineItems", () => {
       "/res.cloudinary.com/another-account/",
     );
     const remote = [{ ...baseline[0], background: otherAccount }];
+    const transformed = generated.replace("/image/upload/", "/image/upload/c_fill/");
 
-    expect(outlineBackgroundsEqual("media/sermon-thumbnail", generated)).toBe(true);
-    expect(outlineBackgroundsEqual("media/sermon-thumbnail", otherAccount)).toBe(false);
+    expect(outlineBackgroundsEqual(publicId, generated)).toBe(true);
+    expect(outlineBackgroundsEqual(publicId, otherAccount)).toBe(false);
+    expect(outlineBackgroundsEqual(publicId, transformed)).toBe(false);
     expect(reconcileOutlineItems(formattedBaseline, [], remote).kind).toBe("conflict");
-  });
+    },
+  );
 
   it("treats missing optional JSON values as persisted equivalents without ignoring media fields", () => {
     const localVideoFile = {
@@ -139,6 +162,11 @@ describe("reconcileOutlineItems", () => {
       background: "https://res.cloudinary.com/portable-media/image/upload/c_fill/v1/media/old-thumbnail",
     }];
     expect(reconcileOutlineItems(formattedBaseline, [], transformedRemote).kind).toBe("conflict");
+    const transformedSingleSegment = [{
+      ...baseline[0],
+      background: "https://res.cloudinary.com/portable-media/image/upload/c_fill/thumbnail?_a=generated",
+    }];
+    expect(outlineBackgroundsEqual("thumbnail", transformedSingleSegment[0].background)).toBe(false);
   });
 
   it("merges edits to separate fields on the same row", () => {

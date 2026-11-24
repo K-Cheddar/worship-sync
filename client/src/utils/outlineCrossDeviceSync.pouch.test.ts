@@ -14,7 +14,7 @@ import {
   resolveServiceListRevisionConflict,
   ServiceListConflictError,
 } from "./persistServiceListField";
-import { createOutlineMoveIntent, getOutlineItemConflicts } from "./outlineSync";
+import { createOutlineMoveIntent, getOutlineItemConflicts, reconcileOutlineItems } from "./outlineSync";
 
 const row = (listId: string, name: string): ServiceItem => ({
   _id: `song-${listId}`,
@@ -36,6 +36,66 @@ const savedMoveMarker = (
 });
 
 describe("two-client outline synchronization with replicated PouchDB state", () => {
+  it("keeps local provenance through repeated replicated conflict candidates and later remote deletion", async () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const shared = new PouchDB(`outline-provenance-shared-${suffix}`);
+    const clientA = new PouchDB(`outline-provenance-a-${suffix}`);
+    const clientB = new PouchDB(`outline-provenance-b-${suffix}`);
+    const outlineId = "outline-provenance";
+    const base = [row("a", "A"), row("b", "B"), row("d", "D"), row("both-delete", "Both delete")];
+    const localEdit = { ...base[0], name: "A local edit" };
+    const localConflict = { ...base[2], name: "D local edit" };
+    const localAddition = row("local-add", "A local addition");
+    const remoteConflict = { ...base[2], name: "D remote edit" };
+    const remoteAddition = row("remote-add", "B remote addition");
+    const remoteInitial = [base[0], { ...base[1], name: "B remote edit" }, remoteConflict, remoteAddition];
+    const localDraft = [localEdit, base[1], localConflict, localAddition];
+
+    try {
+      await shared.put({ _id: outlineId, docType: "itemListDetails", name: "Sunday", items: base, overlays: [] });
+      await Promise.all([clientA.replicate.from(shared), clientB.replicate.from(shared)]);
+      await persistServiceListItems(clientB as never, outlineId, remoteInitial, base);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+
+      const firstRemote = (await clientA.get<DBItemListDetails>(outlineId)).items ?? [];
+      const firstCandidate = reconcileOutlineItems(base, localDraft, firstRemote);
+      expect(firstCandidate.kind).toBe("conflict");
+      expect(firstCandidate.remoteItems.map(item => item.listId)).toContain("remote-add");
+      expect(firstCandidate.items.map(item => item.listId)).toEqual(["a", "b", "d", "remote-add", "local-add"]);
+      expect(firstCandidate.items.find(item => item.listId === "both-delete")).toBeUndefined();
+
+      const remoteAfterDelete = remoteInitial.filter(item => item.listId !== "remote-add");
+      await persistServiceListItems(clientB as never, outlineId, remoteAfterDelete, firstRemote);
+      await clientB.replicate.to(shared);
+      await clientA.replicate.from(shared);
+      const secondRemote = (await clientA.get<DBItemListDetails>(outlineId)).items ?? [];
+
+      // Advance the common base from the previous remote snapshot. Its copied
+      // remote addition is therefore a remote deletion now, while A's actual
+      // insertions and independent edit retain local provenance.
+      const secondCandidate = reconcileOutlineItems(firstCandidate.remoteItems, firstCandidate.items, secondRemote);
+      expect(secondCandidate.kind).toBe("conflict");
+      expect(secondCandidate.items.map(item => item.listId)).toEqual(["a", "b", "d", "local-add"]);
+      expect(secondCandidate.items.find(item => item.listId === "a")?.name).toBe("A local edit");
+      expect(secondCandidate.items.find(item => item.listId === "remote-add")).toBeUndefined();
+
+      const repeated = reconcileOutlineItems(secondCandidate.remoteItems, secondCandidate.items, secondRemote);
+      expect(repeated).toEqual(secondCandidate);
+
+      const locallyEditedRemoteRow = firstCandidate.items.map(item => item.listId === "remote-add"
+        ? { ...item, name: "A edits B's new row" }
+        : item);
+      const deleteEditCandidate = reconcileOutlineItems(firstCandidate.remoteItems, locallyEditedRemoteRow, secondRemote);
+      expect(deleteEditCandidate.kind).toBe("conflict");
+      expect(deleteEditCandidate.items.find(item => item.listId === "remote-add")?.name).toBe("A edits B's new row");
+      expect(getOutlineItemConflicts(firstCandidate.remoteItems, locallyEditedRemoteRow, secondRemote))
+        .toContainEqual(expect.objectContaining({ listId: "remote-add", reason: "delete-edit" }));
+    } finally {
+      await Promise.all([shared.destroy(), clientA.destroy(), clientB.destroy()]);
+    }
+  });
+
   it.each([
     ["video", { type: "video", background: "media/sermon-thumbnail" }],
     ["local video", {

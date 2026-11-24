@@ -29,6 +29,14 @@ export type OutlineRevisionGraph = {
   histories: Record<string, string[]>;
 };
 
+/** Stable identity for the currently observed winning CouchDB revision graph. */
+export const outlineRevisionToken = (
+  winningRevision?: string,
+  conflictRevisions: string[] = [],
+) => winningRevision
+  ? JSON.stringify([winningRevision, [...conflictRevisions].sort()])
+  : undefined;
+
 export type OutlineRevisionConflict = {
   graph: OutlineRevisionGraph;
   versions: Array<{ revision: string; items: ServiceItem[]; document?: DBItemListDetails }>;

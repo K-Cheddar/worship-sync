@@ -2906,6 +2906,12 @@ listenerMiddleware.startListening({
     const restoringResolution = itemListSlice.actions.initiateItemList.match(action) &&
       Boolean(selectedId && state.remoteConflicts?.[selectedId]?.resolutionChoice);
     const restoringDraft = itemListSlice.actions.initiateItemList.match(action) && state.hasPendingUpdate;
+    const refreshingPendingRevision = (
+      itemListSlice.actions.initiateItemList.match(action) ||
+      itemListSlice.actions.updateItemListFromRemote.match(action)
+    ) && Boolean(
+      selectedId && state.hasPendingUpdate && state.pendingRevisionResolutions?.[selectedId],
+    );
     const resolvingConflict = itemListSlice.actions.resolveOutlineConflict.match(action) &&
       action.payload.outlineId === selectedId &&
       state.hasPendingUpdate &&
@@ -2945,8 +2951,8 @@ listenerMiddleware.startListening({
       );
     }
     return (
-      ((itemListChanged || itemListSlice.actions.forceUpdate.match(action) || restoringSavedIntent || resolvingConflict) &&
-      (!excluded(action) || restoringResolution || restoringDraft || restoringSavedIntent) &&
+      ((itemListChanged || itemListSlice.actions.forceUpdate.match(action) || restoringSavedIntent || resolvingConflict || refreshingPendingRevision) &&
+      (!excluded(action) || restoringResolution || restoringDraft || restoringSavedIntent || refreshingPendingRevision) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       !hasOutlineConflict &&
