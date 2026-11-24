@@ -51,6 +51,10 @@ const liveSyncOwners: string[] = [];
 const liveSyncOptions: Array<Record<string, unknown>> = [];
 const replicationCalls: Array<{ name: string; options?: Record<string, unknown> }> = [];
 const initialPullHandles: Array<{ emit: (event: string, value?: any) => void }> = [];
+const changeFeedHandles: Array<{
+  databaseName: string;
+  emit: (event: string, value?: any) => void;
+}> = [];
 let completeInitialPullAutomatically = true;
 let localPouchConstructorFailureName: string | null = null;
 let deferredLocalItemSnapshot: Promise<unknown> | null = null;
@@ -119,7 +123,11 @@ jest.mock("pouchdb-browser", () => {
           return handle;
         }),
       },
-      changes: jest.fn(() => createSyncHandle()),
+      changes: jest.fn(() => {
+        const handle = createSyncHandle();
+        changeFeedHandles.push({ databaseName: name, emit: handle.emit });
+        return handle;
+      }),
     };
     mockPouchInstances.push(instance);
     return instance;
@@ -182,11 +190,13 @@ describe("ControllerInfoProvider", () => {
     liveSyncOptions.length = 0;
     replicationCalls.length = 0;
     initialPullHandles.length = 0;
+    changeFeedHandles.length = 0;
     completeInitialPullAutomatically = true;
     localPouchConstructorFailureName = null;
     deferredLocalItemSnapshot = null;
     verifiedCheckpointDatabaseNames.clear();
     jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("off");
+    jest.mocked(startupDiagnostics.recordStartupDiagnostic).mockClear();
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -285,9 +295,22 @@ describe("ControllerInfoProvider", () => {
     expect(mockPouchInstances).toHaveLength(0);
     expect(global.fetch).not.toHaveBeenCalled();
     expect(screen.getByTestId("has-db")).toHaveTextContent("no");
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "startup",
+      "database-plan",
+      expect.objectContaining({
+        mode: "skip-databases",
+        content: false,
+        bible: false,
+        contentInitialPullBatchSize: 150,
+        contentInitialPullBatchesLimit: 15,
+        bibleInitialPullBatchSize: 1000,
+        bibleInitialPullBatchesLimit: 25,
+      }),
+    );
   });
 
-  it("initializes content only and uses the bounded normal queue", async () => {
+  it("initializes content only with the original baseline settings", async () => {
     jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("content-only");
     resolveCouchSession();
     renderAuthenticatedStartup();
@@ -295,10 +318,16 @@ describe("ControllerInfoProvider", () => {
     await waitFor(() => expect(replicationCalls).toHaveLength(1));
     expect(replicationCalls[0].name).not.toContain("bibles");
     expect(replicationCalls[0].options).toEqual(expect.objectContaining({
-      batch_size: 100,
-      batches_limit: 2,
+      batch_size: 150,
+      batches_limit: 15,
       selector: { _id: { $ne: "media" } },
     }));
+    await waitFor(() => expect(screen.getByTestId("startup-stage")).toHaveTextContent("completed"));
+    expect(startupDiagnostics.recordStartupDiagnostic).not.toHaveBeenCalledWith(
+      "startup",
+      "application.ready",
+      expect.anything(),
+    );
   });
 
   it("initializes Bible only when its authenticated database session is ready", async () => {
@@ -309,10 +338,33 @@ describe("ControllerInfoProvider", () => {
     await waitFor(() => expect(replicationCalls).toHaveLength(1));
     expect(replicationCalls[0].name).toContain("bibles");
     expect(replicationCalls[0].options).toEqual(expect.objectContaining({
-      batch_size: 100,
-      batches_limit: 2,
+      batch_size: 1000,
+      batches_limit: 25,
     }));
     expect(mockPouchInstances.some((instance) => instance.name === "worship-sync-startup-test-church")).toBe(false);
+  });
+
+  it("uses the bounded queue for both database initial pulls", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("bounded-batches");
+    resolveCouchSession();
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(replicationCalls).toHaveLength(2));
+    expect(replicationCalls.map(({ options }) => [options?.batch_size, options?.batches_limit])).toEqual([
+      [100, 2],
+      [100, 2],
+    ]);
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "startup",
+      "database-plan",
+      expect.objectContaining({
+        mode: "bounded-batches",
+        contentInitialPullBatchSize: 100,
+        contentInitialPullBatchesLimit: 2,
+        bibleInitialPullBatchSize: 100,
+        bibleInitialPullBatchesLimit: 2,
+      }),
+    );
   });
 
   it("uses smaller batch and queue settings for both databases", async () => {
@@ -344,6 +396,10 @@ describe("ControllerInfoProvider", () => {
     });
     await waitFor(() => expect(replicationCalls).toHaveLength(1));
     expect(replicationCalls[0].name).not.toContain("bibles");
+    expect(replicationCalls[0].options).toEqual(expect.objectContaining({
+      batch_size: 150,
+      batches_limit: 15,
+    }));
     expect(mockPouchInstances.some((instance) => instance.name === "worship-sync-bibles")).toBe(false);
 
     await act(async () => {
@@ -351,6 +407,52 @@ describe("ControllerInfoProvider", () => {
     });
     await waitFor(() => expect(replicationCalls).toHaveLength(2));
     expect(replicationCalls[1].name).toContain("bibles");
+    expect(replicationCalls[1].options).toEqual(expect.objectContaining({
+      batch_size: 1000,
+      batches_limit: 25,
+    }));
+    await waitFor(() => expect(screen.getByTestId("startup-stage")).toHaveTextContent("completed"));
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "startup",
+      "application.ready",
+      expect.objectContaining({ sessionKind: "authenticated" }),
+    );
+  });
+
+  it("keeps subsequent Bible synchronization active with the original settings", async () => {
+    resolveCouchSession();
+    const { unmount } = renderAuthenticatedStartup();
+
+    await waitFor(() => expect(
+      replicationCalls.some(({ name }) => name.includes("bibles")),
+    ).toBe(true));
+    await waitFor(() => expect(
+      changeFeedHandles.some(({ databaseName }) => databaseName.includes("bibles")),
+    ).toBe(true));
+    expect(replicationCalls.find(({ name }) => name.includes("bibles"))?.options).toEqual(
+      expect.objectContaining({ batch_size: 1000, batches_limit: 25 }),
+    );
+
+    jest.useFakeTimers();
+    try {
+      const bibleChangeFeed = changeFeedHandles.find(({ databaseName }) =>
+        databaseName.includes("bibles"),
+      )!;
+      act(() => bibleChangeFeed.emit("change"));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(10_000);
+      });
+      const bibleLiveSyncIndex = liveSyncOwners.lastIndexOf("worship-sync-bibles");
+      expect(bibleLiveSyncIndex).toBeGreaterThanOrEqual(0);
+      expect(liveSyncOptions[bibleLiveSyncIndex]).toEqual(expect.objectContaining({
+        retry: true,
+        batch_size: 1000,
+        batches_limit: 25,
+      }));
+    } finally {
+      unmount();
+      jest.useRealTimers();
+    }
   });
 });
 
@@ -364,6 +466,7 @@ describe("controller replication 413 batch policy", () => {
     liveSyncOptions.length = 0;
     replicationCalls.length = 0;
     initialPullHandles.length = 0;
+    changeFeedHandles.length = 0;
     completeInitialPullAutomatically = true;
     localPouchConstructorFailureName = null;
     verifiedCheckpointDatabaseNames.clear();
@@ -461,7 +564,7 @@ describe("controller replication 413 batch policy", () => {
     );
     await waitFor(() => expect(liveSyncHandles).toHaveLength(1));
 
-    const startupPull = replicationCalls.find(({ options }) => options?.batch_size === 100);
+    const startupPull = replicationCalls.find(({ options }) => options?.batch_size === 150);
     expect(startupPull?.options).toEqual(expect.objectContaining({
       selector: { _id: { $ne: "media" } },
     }));

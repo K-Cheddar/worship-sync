@@ -1,6 +1,7 @@
 export const STARTUP_DIAGNOSTIC_STORAGE_KEY = "worshipsync.startup-diagnostics.mode";
 export const STARTUP_DIAGNOSTIC_SAMPLE_INTERVAL_MS = 5_000;
 const MAX_DIAGNOSTIC_EVENTS = 200;
+const RECENT_HEAP_SAMPLE_COUNT = 5;
 
 export const STARTUP_DIAGNOSTIC_MODES = [
   "off",
@@ -8,6 +9,7 @@ export const STARTUP_DIAGNOSTIC_MODES = [
   "skip-databases",
   "content-only",
   "bible-only",
+  "bounded-batches",
   "reduced-batches",
   "sequential",
 ] as const;
@@ -18,7 +20,6 @@ export type StartupDatabaseKind = "content" | "bible";
 type StartupDatabasePlan = {
   content: boolean;
   bible: boolean;
-  reducedBatches: boolean;
   sequential: boolean;
 };
 
@@ -43,49 +44,49 @@ export type StartupReplicationRun = {
   finish: (outcome: "complete" | "cancelled" | "error" | "replaced") => void;
 };
 
-export const isStartupDiagnosticsBuildEnabled = (
-  mode: string,
-  explicitStagingFlag: string | undefined,
-) => mode === "staging" && explicitStagingFlag === "true";
-
-const stagingBuildEnabled = isStartupDiagnosticsBuildEnabled(
-  import.meta.env.MODE,
-  import.meta.env.VITE_STARTUP_DIAGNOSTICS_STAGING,
-);
 const diagnosticEvents: StartupDiagnosticEvent[] = [];
 const replicationStats: Record<StartupDatabaseKind, ReplicationStats> = {
   content: { active: 0, batches: 0, documents: 0 },
   bible: { active: 0, batches: 0, documents: 0 },
 };
 const startedAt = typeof performance === "undefined" ? 0 : performance.now();
+const recentHeapSamples: number[] = [];
 let eventCursor = 0;
 let currentMode: StartupDiagnosticMode = readStoredMode();
 let longTaskCount = 0;
 let longTaskTotalMs = 0;
 let longTaskMaxMs = 0;
+let heapSampleCount = 0;
+let heapSupported: boolean | null = null;
+let heapPeakUsedMb: number | null = null;
+let heapLimitMb: number | null = null;
 
 function isStartupDiagnosticMode(value: unknown): value is StartupDiagnosticMode {
   return STARTUP_DIAGNOSTIC_MODES.includes(value as StartupDiagnosticMode);
 }
 
 function readStoredMode(): StartupDiagnosticMode {
-  if (!stagingBuildEnabled || typeof window === "undefined") return "off";
+  if (typeof window === "undefined") return "normal";
   try {
     const value = window.localStorage.getItem(STARTUP_DIAGNOSTIC_STORAGE_KEY);
-    return isStartupDiagnosticMode(value) ? value : "off";
+    return isStartupDiagnosticMode(value) ? value : "normal";
   } catch {
-    return "off";
+    return "normal";
   }
 }
 
 export const isStartupDiagnosticsActive = () =>
-  stagingBuildEnabled && currentMode !== "off";
+  currentMode !== "off";
+
+export const isStartupDiagnosticIsolationMode = (mode: StartupDiagnosticMode) =>
+  mode === "skip-databases" || mode === "content-only" || mode === "bible-only";
 
 export const shouldShowStartupDiagnosticsPanel = (
-  diagnosticsActive: boolean,
+  mode: StartupDiagnosticMode,
   pathname: string,
-) => diagnosticsActive &&
+) => isStartupDiagnosticIsolationMode(mode) &&
   pathname !== "/workstation/pair" &&
+  pathname !== "/workstation/operator" &&
   pathname !== "/login" &&
   !pathname.startsWith("/login/");
 
@@ -96,15 +97,25 @@ export const resolveStartupDatabasePlan = (
 ): StartupDatabasePlan => ({
   content: mode !== "skip-databases" && mode !== "bible-only",
   bible: mode !== "skip-databases" && mode !== "content-only",
-  reducedBatches: mode === "reduced-batches",
   sequential: mode === "sequential",
 });
 
 export const resolveStartupReplicationOptions = (
   mode: StartupDiagnosticMode,
-) => mode === "reduced-batches"
-  ? { batch_size: 25, batches_limit: 2 }
-  : { batch_size: 100, batches_limit: 2 };
+  database: StartupDatabaseKind,
+) => {
+  if (mode === "bounded-batches") return { batch_size: 100, batches_limit: 2 };
+  if (mode === "reduced-batches") return { batch_size: 25, batches_limit: 2 };
+  return database === "content"
+    ? { batch_size: 150, batches_limit: 15 }
+    : { batch_size: 1000, batches_limit: 25 };
+};
+
+export const getSettledHeapUsageMb = (samples: readonly number[]) => {
+  if (samples.length < RECENT_HEAP_SAMPLE_COUNT) return null;
+  const recentSamples = samples.slice(-RECENT_HEAP_SAMPLE_COUNT).sort((a, b) => a - b);
+  return recentSamples[Math.floor(recentSamples.length / 2)];
+};
 
 const elapsedMs = () => Math.round(performance.now() - startedAt);
 
@@ -200,6 +211,15 @@ const snapshotEvents = () => {
 const getSnapshot = () => ({
   mode: currentMode,
   elapsedMs: elapsedMs(),
+  heap: {
+    supported: heapSupported,
+    sampleCount: heapSampleCount,
+    peakUsedMb: heapPeakUsedMb,
+    latestUsedMb: recentHeapSamples.at(-1) ?? null,
+    settledUsedMb: getSettledHeapUsageMb(recentHeapSamples),
+    settledWindowSamples: Math.min(recentHeapSamples.length, RECENT_HEAP_SAMPLE_COUNT),
+    heapLimitMb,
+  },
   activeReplications: {
     content: { ...replicationStats.content },
     bible: { ...replicationStats.bible },
@@ -208,7 +228,7 @@ const getSnapshot = () => ({
 });
 
 export const setStartupDiagnosticMode = (mode: StartupDiagnosticMode) => {
-  if (!stagingBuildEnabled || !isStartupDiagnosticMode(mode) || typeof window === "undefined") {
+  if (!isStartupDiagnosticMode(mode) || typeof window === "undefined") {
     return false;
   }
   try {
@@ -230,7 +250,7 @@ declare global {
   }
 }
 
-if (stagingBuildEnabled && typeof window !== "undefined") {
+if (typeof window !== "undefined") {
   window.__worshipSyncStartupDiagnostics = {
     getMode: getStartupDiagnosticMode,
     setMode: setStartupDiagnosticMode,
@@ -239,7 +259,7 @@ if (stagingBuildEnabled && typeof window !== "undefined") {
 
   window.addEventListener("storage", (event) => {
     if (event.key !== STARTUP_DIAGNOSTIC_STORAGE_KEY) return;
-    currentMode = isStartupDiagnosticMode(event.newValue) ? event.newValue : "off";
+    currentMode = isStartupDiagnosticMode(event.newValue) ? event.newValue : "normal";
     window.location.reload();
   });
 }
@@ -267,11 +287,26 @@ if (isStartupDiagnosticsActive() && typeof window !== "undefined") {
       memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number };
     }).memory;
     const toMb = (bytes: number) => Math.round((bytes / 1024 / 1024) * 10) / 10;
+    heapSampleCount += 1;
+    heapSupported = Boolean(memory);
+    const heapUsedMb = memory ? toMb(memory.usedJSHeapSize) : null;
+    heapLimitMb = memory ? toMb(memory.jsHeapSizeLimit) : null;
+    if (heapUsedMb !== null) {
+      heapPeakUsedMb = heapPeakUsedMb === null
+        ? heapUsedMb
+        : Math.max(heapPeakUsedMb, heapUsedMb);
+      recentHeapSamples.push(heapUsedMb);
+      if (recentHeapSamples.length > RECENT_HEAP_SAMPLE_COUNT) {
+        recentHeapSamples.shift();
+      }
+    }
     recordStartupDiagnostic("runtime", "memory.sample", {
-      heapSupported: Boolean(memory),
-      heapUsedMb: memory ? toMb(memory.usedJSHeapSize) : null,
+      heapSupported,
+      heapUsedMb,
       heapAllocatedMb: memory ? toMb(memory.totalJSHeapSize) : null,
-      heapLimitMb: memory ? toMb(memory.jsHeapSizeLimit) : null,
+      heapLimitMb,
+      peakHeapUsedMb: heapPeakUsedMb,
+      settledHeapUsedMb: getSettledHeapUsageMb(recentHeapSamples),
       contentActiveReplications: replicationStats.content.active,
       bibleActiveReplications: replicationStats.bible.active,
       contentBatches: replicationStats.content.batches,

@@ -47,7 +47,7 @@ import WebUpdateCoordinator from "./components/WebUpdateCoordinator/WebUpdateCoo
 import { RehearsalPlaybackProvider } from "./components/RehearsalPlayer/RehearsalPlaybackContext";
 import StartupDiagnosticsPanel from "./components/StartupDiagnosticsPanel";
 import {
-  isStartupDiagnosticsActive,
+  getStartupDiagnosticMode,
   recordStartupDiagnostic,
   shouldShowStartupDiagnosticsPanel,
 } from "./utils/startupDiagnostics";
@@ -188,6 +188,18 @@ const isBootstrapSplashRoute = (pathname: string) => {
 
 const HOMEPAGE_CANVAS_COLOR = "#2b3544";
 
+const getStartupDiagnosticRoute = (pathname: string) => {
+  const [section, subsection] = pathname.split("/").filter(Boolean);
+  if (section === "home") return "home";
+  if (section === "controller") return "presentation-controller";
+  if (section === "current-service") {
+    return subsection === "view" ? "current-service-viewer" : "current-service";
+  }
+  if (section === "workstation" && subsection === "pair") return "workstation-pairing";
+  if (section === "workstation" && subsection === "operator") return "operator-selection";
+  return "other";
+};
+
 /** Compat redirect: the admin shell used to live at "/teams" (renamed to
  * "/teams-and-services" since it covers both roster/scheduling and service
  * planning now) — old bookmarks/links still land on the right page. Public
@@ -283,6 +295,12 @@ export const AppRoutes = () => {
 
   useDocumentPageTitle();
 
+  useEffect(() => {
+    recordStartupDiagnostic("route", "changed", {
+      route: getStartupDiagnosticRoute(location.pathname),
+    });
+  }, [location.pathname]);
+
   useLayoutEffect(() => {
     const routeNeedsTransparentCanvas = isTransparentDisplayRoute(location.pathname);
     const canvasColor = routeNeedsTransparentCanvas
@@ -325,9 +343,18 @@ export const AppRoutes = () => {
   );
 
   if (shouldShowStartupDiagnosticsPanel(
-    isStartupDiagnosticsActive(),
+    getStartupDiagnosticMode(),
     location.pathname,
   )) {
+    if (isTransparentDisplayRoute(location.pathname)) {
+      return (
+        <div
+          aria-hidden="true"
+          className="min-h-dvh w-full bg-transparent"
+          data-testid="startup-diagnostics-display-lock"
+        />
+      );
+    }
     return (
       <ErrorBoundary>
         <ControllerContextWrapper>

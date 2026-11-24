@@ -15,6 +15,7 @@ const modeLabels: Record<StartupDiagnosticMode, string> = {
   "skip-databases": "Authenticated startup, databases paused",
   "content-only": "Content database only",
   "bible-only": "Bible database only",
+  "bounded-batches": "Both databases, bounded batches",
   "reduced-batches": "Both databases, reduced batches",
   sequential: "Content, then Bible",
 };
@@ -40,11 +41,11 @@ const StartupDiagnosticsPanel = () => {
           Mode: <span className="font-medium text-cyan-200">{modeLabels[activeMode]}</span>
         </p>
         <p className="mt-3 text-sm text-gray-300">
-          Controller and display screens are locked in all open staging tabs during this test. Workstation pairing and sign-in remain available.
+          Application routes that need both databases are locked for this isolation test. Workstation pairing, sign-in, and operator selection remain available.
           Startup events appear in Chrome DevTools with the label <code>[WorshipSync startup]</code>.
         </p>
         <p className="mt-3 text-sm text-gray-300">
-          Diagnostic modes are for staging investigation. Pair a workstation after selecting a mode to measure authenticated startup.
+          Select a mode in Chrome DevTools to reload into another experiment. Normal, bounded, reduced, and sequential modes open the regular application.
         </p>
         <label className="mt-5 block text-sm font-medium" htmlFor="startup-diagnostic-mode">
           Test mode

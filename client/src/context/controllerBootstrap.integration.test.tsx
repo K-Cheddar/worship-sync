@@ -40,6 +40,7 @@ const mockHandle = () => {
 };
 jest.mock("pouchdb-browser", () => ({ __esModule: true, default: jest.fn((name: string) => ({
   name, get: mockGet, put: mockPut, destroy: jest.fn().mockResolvedValue(undefined),
+  info: jest.fn(async () => ({ doc_count: mockDocs.size })),
   allDocs: jest.fn(async () => ({ rows: [], update_seq: 0 })), changes: mockHandle, sync: mockHandle,
   replicate: { to: (_target: unknown, options: { batch_size?: number; selector?: unknown }) => {
     const handle = mockHandle();

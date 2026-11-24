@@ -26,7 +26,7 @@ type LocalSourceStatusProps = {
   state?: "loading" | "unavailable";
   /** `canvas` compensates for a fixed preview surface. `thumbnail` uses reference-space sizing. */
   size?: LocalSourceStatusSize;
-  variant?: "overlay" | "indicator" | "thumbnail";
+  variant?: "overlay" | "indicator" | "thumbnail" | "icon";
   indicatorLabel?: string;
   scaleFactor?: number;
   className?: string;
@@ -78,6 +78,23 @@ const LocalSourceStatus = ({
   ]
     .filter(Boolean)
     .join(" · ");
+
+  if (variant === "icon") {
+    return (
+      <div
+        className={`pointer-events-none absolute inset-0 z-30 flex items-center justify-center overflow-hidden rounded bg-black/85 text-white shadow ${className}`}
+        role="status"
+        aria-label={accessibleLabel}
+        title={accessibleLabel}
+        data-local-source-status-size="icon"
+      >
+        <StatusIcon
+          aria-hidden
+          className={`size-4 shrink-0 text-neutral-200 ${state === "loading" ? "animate-spin" : ""}`}
+        />
+      </div>
+    );
+  }
 
   if (variant === "indicator") {
     return (
