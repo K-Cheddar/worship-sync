@@ -162,7 +162,7 @@ describe("itemListSlice", () => {
       expect(store.getState().itemList.hasPendingUpdate).toBe(pending);
     });
 
-    it("rechecks a retained conflict against the winner when the outline is reloaded", () => {
+    it("clears a conflict when the reloaded winner matches the local draft", () => {
       const store = createStore();
       const base = createServiceItem({ name: "Base", _id: "a", listId: "row" });
       const local = { ...base, name: "Local" };

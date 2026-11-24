@@ -74,19 +74,40 @@ describe("two-client outline synchronization with replicated PouchDB state", () 
       // Advance the common base from the previous remote snapshot. Its copied
       // remote addition is therefore a remote deletion now, while A's actual
       // insertions and independent edit retain local provenance.
-      const secondCandidate = reconcileOutlineItems(firstCandidate.remoteItems, firstCandidate.items, secondRemote);
+      const secondCandidate = reconcileOutlineItems(
+        firstCandidate.remoteItems,
+        firstCandidate.items,
+        secondRemote,
+        undefined,
+        [],
+        base,
+      );
       expect(secondCandidate.kind).toBe("conflict");
       expect(secondCandidate.items.map(item => item.listId)).toEqual(["a", "b", "d", "local-add"]);
       expect(secondCandidate.items.find(item => item.listId === "a")?.name).toBe("A local edit");
       expect(secondCandidate.items.find(item => item.listId === "remote-add")).toBeUndefined();
 
-      const repeated = reconcileOutlineItems(secondCandidate.remoteItems, secondCandidate.items, secondRemote);
+      const repeated = reconcileOutlineItems(
+        secondCandidate.remoteItems,
+        secondCandidate.items,
+        secondRemote,
+        undefined,
+        [],
+        base,
+      );
       expect(repeated).toEqual(secondCandidate);
 
       const locallyEditedRemoteRow = firstCandidate.items.map(item => item.listId === "remote-add"
         ? { ...item, name: "A edits B's new row" }
         : item);
-      const deleteEditCandidate = reconcileOutlineItems(firstCandidate.remoteItems, locallyEditedRemoteRow, secondRemote);
+      const deleteEditCandidate = reconcileOutlineItems(
+        firstCandidate.remoteItems,
+        locallyEditedRemoteRow,
+        secondRemote,
+        undefined,
+        [],
+        base,
+      );
       expect(deleteEditCandidate.kind).toBe("conflict");
       expect(deleteEditCandidate.items.find(item => item.listId === "remote-add")?.name).toBe("A edits B's new row");
       expect(getOutlineItemConflicts(firstCandidate.remoteItems, locallyEditedRemoteRow, secondRemote))

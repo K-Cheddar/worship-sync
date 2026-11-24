@@ -250,7 +250,7 @@ describe("CreditsEditor", () => {
     expect(loadingOverlay).toHaveTextContent("Database sync: 50%");
   });
 
-  it("keeps a slow Credits Editor startup loading without a retry action", () => {
+  it("offers retry during a slow Credits Editor startup", () => {
     jest.useFakeTimers();
     try {
       const contextWithLoading = {
@@ -287,10 +287,10 @@ describe("CreditsEditor", () => {
         jest.advanceTimersByTime(SLOW_STARTUP_MESSAGE_DELAY_MS);
       });
 
-      expect(screen.getByText(/taking a little longer than usual/)).toBeInTheDocument();
+      expect(screen.getByText(/reported progress for a while/)).toBeInTheDocument();
       expect(screen.getByRole("img", { name: "WorshipSync" })).toBeInTheDocument();
       expect(screen.getByText("Database sync: 7%")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /reload|try again/i })).toBeNull();
+      expect(screen.getByRole("button", { name: "Retry startup" })).toBeInTheDocument();
     } finally {
       jest.useRealTimers();
     }

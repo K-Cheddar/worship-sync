@@ -28,7 +28,7 @@ describe("ControllerLoadingOverlay", () => {
     jest.useRealTimers();
   });
 
-  it("keeps a healthy 0% startup loading without a prominent retry action", () => {
+  it("offers retry after a prolonged startup while keeping 0% progress visible", () => {
     render(
       <StrictMode>
         <ControllerLoadingOverlay
@@ -40,15 +40,11 @@ describe("ControllerLoadingOverlay", () => {
     );
 
     expect(screen.getByText("Database sync: 0%")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /reload|try again/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Retry startup" })).toBeNull();
     act(() => jest.advanceTimersByTime(SLOW_STARTUP_MESSAGE_DELAY_MS));
-    expect(
-      screen.getByText(
-        "This is taking a little longer than usual. Please keep this window open while WorshipSync gets everything ready.",
-      ),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/hasn.*reported progress for a while/)).toBeInTheDocument();
     expect(screen.getByText("Database sync: 0%")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /reload|try again/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Retry startup" })).toBeInTheDocument();
   });
 
   it("uses indeterminate progress when replication progress is unknown", () => {
@@ -94,7 +90,7 @@ describe("ControllerLoadingOverlay", () => {
       />,
     );
     act(() => jest.advanceTimersByTime(SLOW_STARTUP_MESSAGE_DELAY_MS));
-    expect(screen.getByText(/taking a little longer/)).toBeInTheDocument();
+    expect(screen.getByText(/reported progress for a while/)).toBeInTheDocument();
 
     rerender(
       <ControllerLoadingOverlay
@@ -104,7 +100,7 @@ describe("ControllerLoadingOverlay", () => {
       />,
     );
     expect(screen.queryByTestId("controller-loading-overlay")).toBeNull();
-    expect(screen.queryByText(/taking a little longer/)).toBeNull();
+    expect(screen.queryByText(/reported progress for a while/)).toBeNull();
     expect(screen.queryByRole("button", { name: /reload|try again/i })).toBeNull();
   });
 
@@ -127,11 +123,11 @@ describe("ControllerLoadingOverlay", () => {
 
     act(() => jest.advanceTimersByTime(SLOW_STARTUP_MESSAGE_DELAY_MS - 1));
     act(() => publishActivity?.(Date.now()));
-    expect(screen.queryByText(/taking a little longer/)).toBeNull();
+    expect(screen.queryByText(/reported progress for a while/)).toBeNull();
     act(() => jest.advanceTimersByTime(SLOW_STARTUP_MESSAGE_DELAY_MS - 1));
-    expect(screen.queryByText(/taking a little longer/)).toBeNull();
+    expect(screen.queryByText(/reported progress for a while/)).toBeNull();
     act(() => jest.advanceTimersByTime(1));
-    expect(screen.getByText(/taking a little longer/)).toBeInTheDocument();
+    expect(screen.getByText(/reported progress for a while/)).toBeInTheDocument();
     expect(screen.getByText("Database sync: 42%")).toBeInTheDocument();
   });
 

@@ -42,9 +42,9 @@ jest.mock("pouchdb-browser", () => ({ __esModule: true, default: jest.fn((name: 
   name, get: mockGet, put: mockPut, destroy: jest.fn().mockResolvedValue(undefined),
   info: jest.fn(async () => ({ doc_count: mockDocs.size })),
   allDocs: jest.fn(async () => ({ rows: [], update_seq: 0 })), changes: mockHandle, sync: mockHandle,
-  replicate: { to: (_target: unknown, options: { batch_size?: number }) => {
+  replicate: { to: (_target: unknown, options: { batch_size?: number; selector?: unknown }) => {
     const handle = mockHandle();
-    if (options.batch_size === 150) mockPulls.push(handle);
+    if (options.selector) mockPulls.push(handle);
     return handle;
   } },
 })) }));
@@ -112,6 +112,7 @@ describe("controller bootstrap production consumers", () => {
     seedSaved();
     mount();
     await screen.findAllByRole("button", { name: "Saved Sunday" });
+    await waitFor(() => expect(mockPulls).toHaveLength(1));
     act(() => { store.dispatch(itemListsSlice.actions.setOutlineScope("aux")); });
     expect(mockPut).not.toHaveBeenCalled();
     const registry = mockDocs.get("ItemLists")!;
@@ -160,6 +161,7 @@ describe("controller bootstrap production consumers", () => {
     });
     const view = mount();
     await screen.findAllByRole("button", { name: "Saved Sunday" });
+    await waitFor(() => expect(mockPulls).toHaveLength(1));
     act(() => { store.dispatch(itemListsSlice.actions.setOutlineScope("aux")); });
     const before = store.getState().undoable.present.itemLists;
     act(() => mockPulls[0].emit("complete", { ok: true }));
@@ -183,6 +185,7 @@ describe("controller bootstrap production consumers", () => {
     const view = mount();
     await screen.findAllByRole("button", { name: "Saved Sunday" });
     await waitFor(() => expect(screen.getByTestId("item")).toHaveTextContent("Saved song"));
+    await waitFor(() => expect(mockPulls).toHaveLength(1));
     act(() => {
       store.dispatch(setDefaultSongBackgroundBrightness(91));
       store.dispatch(itemListSlice.actions.updateItemList([{ _id: "edited", name: "Operator edit", type: "song" } as never]));

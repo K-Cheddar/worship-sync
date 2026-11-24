@@ -166,6 +166,14 @@ type CloudShareBatch = {
   completion?: Promise<void>;
 };
 
+const sameLocalDatabase = (left: unknown, right: unknown) => {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  const leftName = (left as { name?: unknown }).name;
+  const rightName = (right as { name?: unknown }).name;
+  return typeof leftName === "string" && leftName.length > 0 && leftName === rightName;
+};
+
 export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
   const dispatch = useDispatch();
   const reduxStore = useStore<RootState>();
@@ -280,7 +288,7 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
           : { db: globalDb, churchId: globalFireDbInfo.churchId };
         return Boolean(
           batch.database && batch.churchId &&
-          activeScope.db === batch.database &&
+          sameLocalDatabase(activeScope.db, batch.database) &&
           activeScope.churchId === batch.churchId,
         );
       };

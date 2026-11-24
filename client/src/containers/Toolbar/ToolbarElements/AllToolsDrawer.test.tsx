@@ -1,5 +1,6 @@
 import { createPortal } from "react-dom";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import type { ControllerProfile } from "../../../utils/controllerProfiles";
 import { getDefaultControllerProfiles } from "../../../utils/controllerProfiles";
@@ -141,7 +142,7 @@ describe("AllToolsDrawer quick toolbar targets", () => {
     expect(screen.getByRole("button", { name: "All Tools" })).toBeVisible();
   });
 
-  it("keeps the quick scope indicator and drawer radios synchronized without dispatching item changes", () => {
+  it("keeps the quick scope indicator and drawer radios synchronized without dispatching item changes", async () => {
     render(<ScopeHarness />);
 
     const scopeButton = screen.getByRole("button", {
@@ -156,8 +157,9 @@ describe("AllToolsDrawer quick toolbar targets", () => {
       "true",
     );
 
-    fireEvent.click(scopeButton);
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "This slide" }));
+    const user = userEvent.setup();
+    await user.click(scopeButton);
+    await user.click(screen.getByRole("menuitemradio", { name: "This slide" }));
     expect(screen.getByRole("button", { name: "Formatting scope: This slide" })).toHaveTextContent(
       "This slide",
     );
@@ -166,8 +168,8 @@ describe("AllToolsDrawer quick toolbar targets", () => {
       "true",
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Formatting scope: This slide" }));
-    fireEvent.click(screen.getByRole("menuitemradio", { name: "All slides" }));
+    await user.click(screen.getByRole("button", { name: "Formatting scope: This slide" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "All slides" }));
     expect(screen.getByRole("button", { name: "Formatting scope: All slides" })).toHaveTextContent(
       "All slides",
     );
