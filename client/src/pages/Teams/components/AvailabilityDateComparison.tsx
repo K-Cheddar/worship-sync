@@ -17,6 +17,7 @@ type Category =
   | "available"
   | "unavailable"
   | "incomplete"
+  | "conflict"
   | "no-response"
   | "details-unavailable";
 
@@ -58,7 +59,7 @@ const AvailabilityDateComparison = ({
       (!teamId || row.memberTeamIds.has(teamId)),
   );
   const answerFor = (row: AvailabilityProgressRow) => {
-    if (row.status !== "Responded" || !row.hasResponseDetails || !occurrence)
+    if (row.responseConflict || row.status !== "Responded" || !row.hasResponseDetails || !occurrence)
       return undefined;
     return row.occurrenceAvailability[occurrence.occurrenceId];
   };
@@ -66,18 +67,21 @@ const AvailabilityDateComparison = ({
     row.status === "Responded" && row.hasResponseDetails && !answerFor(row);
   const hasUnavailableDetails = (row: AvailabilityProgressRow) =>
     row.status === "Responded" && !row.hasResponseDetails;
+  const hasResponseConflict = (row: AvailabilityProgressRow) => row.responseConflict;
   const counts = {
     available: scopedRows.filter((row) => answerFor(row) === "available").length,
     unavailable: scopedRows.filter((row) => answerFor(row) === "unavailable").length,
     incomplete: scopedRows.filter(isIncomplete).length,
-    noResponse: scopedRows.filter((row) => row.status !== "Responded").length,
+    conflicts: scopedRows.filter(hasResponseConflict).length,
+    noResponse: scopedRows.filter((row) => !row.responded).length,
     detailsUnavailable: scopedRows.filter(hasUnavailableDetails).length,
   };
   const visibleRows = scopedRows.filter((row) => {
     if (category === "available") return answerFor(row) === "available";
     if (category === "unavailable") return answerFor(row) === "unavailable";
     if (category === "incomplete") return isIncomplete(row);
-    if (category === "no-response") return row.status !== "Responded";
+    if (category === "conflict") return hasResponseConflict(row);
+    if (category === "no-response") return !row.responded;
     if (category === "details-unavailable") return hasUnavailableDetails(row);
     return true;
   });
@@ -92,11 +96,13 @@ const AvailabilityDateComparison = ({
     { value: "available", label: "Available" },
     { value: "unavailable", label: "Unavailable" },
     { value: "incomplete", label: "Incomplete answer" },
+    { value: "conflict", label: "Response conflict" },
     { value: "no-response", label: "No response" },
     { value: "details-unavailable", label: "Response details unavailable" },
   ];
 
   const answerLabel = (row: AvailabilityProgressRow) => {
+    if (row.responseConflict) return "Conflicting responses";
     const answer = answerFor(row);
     if (answer === "available") return "Available";
     if (answer === "unavailable") return "Unavailable";
@@ -110,6 +116,7 @@ const AvailabilityDateComparison = ({
     row: AvailabilityProgressRow,
     item: (typeof occurrences)[number],
   ) => {
+    if (row.responseConflict) return "Conflicting responses";
     if (row.status !== "Responded" || !row.hasResponseDetails) return "—";
     const answer = row.occurrenceAvailability[item.occurrenceId];
     if (answer === "available") return "Available";
@@ -185,10 +192,11 @@ const AvailabilityDateComparison = ({
               </p>
             ) : null}
 
-            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-y border-gray-700 py-3 xl:grid-cols-5">
+            <dl className="grid grid-cols-2 gap-x-4 gap-y-2 border-y border-gray-700 py-3 xl:grid-cols-6">
               <div><dt className="text-xs text-gray-400">Available</dt><dd className="mt-1 font-semibold text-emerald-300">{counts.available}</dd></div>
               <div><dt className="text-xs text-gray-400">Unavailable</dt><dd className="mt-1 font-semibold text-rose-300">{counts.unavailable}</dd></div>
               <div><dt className="text-xs text-gray-400">Incomplete answer</dt><dd className="mt-1 font-semibold text-amber-200">{counts.incomplete}</dd></div>
+              <div><dt className="text-xs text-gray-400">Response conflict</dt><dd className="mt-1 font-semibold text-amber-200">{counts.conflicts}</dd></div>
               <div><dt className="text-xs text-gray-400">No response</dt><dd className="mt-1 font-semibold text-gray-200">{counts.noResponse}</dd></div>
               <div><dt className="text-xs text-gray-400">Response details unavailable</dt><dd className="mt-1 font-semibold text-gray-300">{counts.detailsUnavailable}</dd></div>
             </dl>

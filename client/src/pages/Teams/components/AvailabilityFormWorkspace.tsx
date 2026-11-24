@@ -89,7 +89,7 @@ const AvailabilityFormWorkspace = ({
     (row) => row.member.memberId === historyMemberId,
   );
   const historyRecipient = historyRow?.recipient;
-  const responded = rows.filter((row) => row.status === "Responded").length;
+  const responded = rows.filter((row) => row.responded).length;
   const awaiting = rows.filter(
     (row) => row.status === "Awaiting response",
   ).length;

@@ -264,3 +264,48 @@ export const selectIntakeMemberMatch = (
     );
   });
 };
+
+/**
+ * Availability responses are never linked from a name alone. Prefer a unique
+ * name match, use a submitted email only to disambiguate otherwise equal or
+ * close names, and leave unresolved candidates for an administrator to choose.
+ */
+export const selectAvailabilitySubmissionMemberMatch = (
+  submission: TeamIntakeSubmission,
+  members: TeamRosterMember[],
+) => {
+  const { first: submissionFirst, last: submissionLast } = splitNormalizedName(
+    submission.normalizedName,
+  );
+  if (!submissionFirst) return undefined;
+  const email = submission.email?.trim().toLowerCase() || "";
+  const exactNameMatches = members.filter(
+    (member) =>
+      normalizeMemberNameKey(member.firstName, member.lastName) ===
+      submission.normalizedName,
+  );
+  if (exactNameMatches.length === 1) return exactNameMatches[0];
+  if (email && exactNameMatches.length > 1) {
+    const emailMatches = exactNameMatches.filter(
+      (member) => member.email?.trim().toLowerCase() === email,
+    );
+    if (emailMatches.length === 1) return emailMatches[0];
+    return undefined;
+  }
+  if (exactNameMatches.length > 1) return undefined;
+
+  const closeNameMatches = members.filter((member) => {
+    const { first, last } = splitNormalizedName(
+      normalizeMemberNameKey(member.firstName, member.lastName),
+    );
+    return first === submissionFirst && isCloseLastNameMatch(submissionLast, last);
+  });
+  if (email && closeNameMatches.length > 1) {
+    const emailMatches = closeNameMatches.filter(
+      (member) => member.email?.trim().toLowerCase() === email,
+    );
+    if (emailMatches.length === 1) return emailMatches[0];
+    return undefined;
+  }
+  return closeNameMatches.length === 1 ? closeNameMatches[0] : undefined;
+};

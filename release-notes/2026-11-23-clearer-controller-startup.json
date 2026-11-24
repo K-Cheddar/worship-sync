@@ -3,5 +3,5 @@
   "date": "2026-11-23",
   "type": "improved",
   "title": "Clearer controller startup",
-  "description": "See what WorshipSync is preparing, with a reload option only when setup cannot continue."
+  "description": "See what WorshipSync is preparing, with a retry option if startup stops reporting activity or cannot continue."
 }

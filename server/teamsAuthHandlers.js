@@ -8080,6 +8080,8 @@ export const createTeamsAuthHandlers = ({
     const enabledFields = new Set(
       normalizeTeamIntakeFields(undefined, form?.enabledFields),
     );
+    const generalAvailabilityIdentity =
+      form?.purpose === "team_availability" && !personalizedMember;
     const missingPersonalFields = new Set(
       personalizedMember
         ? getMissingTeamIntakeMemberDetailFields(personalizedMember)
@@ -8089,20 +8091,20 @@ export const createTeamsAuthHandlers = ({
       ? enabledFields.has("firstName") && missingPersonalFields.has("firstName")
         ? normalizeShortText(body?.firstName, { max: 80 })
         : normalizeShortText(personalizedMember.firstName, { max: 80 })
-      : enabledFields.has("firstName")
+      : enabledFields.has("firstName") || generalAvailabilityIdentity
         ? normalizeShortText(body?.firstName, { max: 80 })
         : "";
     const lastName = personalizedMember
       ? enabledFields.has("lastName") && missingPersonalFields.has("lastName")
         ? normalizeShortText(body?.lastName, { max: 80 })
         : normalizeShortText(personalizedMember.lastName, { max: 80 })
-      : enabledFields.has("lastName")
+      : enabledFields.has("lastName") || generalAvailabilityIdentity
         ? normalizeShortText(body?.lastName, { max: 80 })
         : "";
-    if (enabledFields.has("firstName") && !firstName) {
+    if ((enabledFields.has("firstName") || generalAvailabilityIdentity) && !firstName) {
       throw httpError(400, "First name is required.");
     }
-    if (enabledFields.has("lastName") && !lastName) {
+    if ((enabledFields.has("lastName") || generalAvailabilityIdentity) && !lastName) {
       throw httpError(400, "Last name is required.");
     }
     // Intake is the only scalable way to collect member addresses — nothing in
@@ -8117,7 +8119,7 @@ export const createTeamsAuthHandlers = ({
       ? enabledFields.has("email") && missingPersonalFields.has("email")
         ? normalizeMemberEmail(body?.email)
         : ""
-      : enabledFields.has("email")
+      : enabledFields.has("email") || generalAvailabilityIdentity
         ? normalizeMemberEmail(body?.email)
         : "";
     if (
@@ -8190,23 +8192,74 @@ export const createTeamsAuthHandlers = ({
           },
         )
       : [];
-    const occurrenceIds = new Set(
-      (form.availabilityOccurrences || []).map(
-        (occurrence) => occurrence.occurrenceId,
-      ),
-    );
+    const formOccurrenceIds = (form.availabilityOccurrences || [])
+      .map((occurrence) => occurrence?.occurrenceId)
+      .filter((occurrenceId) => typeof occurrenceId === "string" && occurrenceId);
+    const occurrenceIds = new Set(formOccurrenceIds);
     const occurrenceAvailability = {};
-    const rawAvailability =
-      body?.occurrenceAvailability &&
-      typeof body.occurrenceAvailability === "object"
-        ? body.occurrenceAvailability
-        : {};
-    Object.entries(rawAvailability).forEach(([occurrenceId, availability]) => {
-      if (!enabledFields.has("availability")) return;
-      if (!occurrenceIds.has(occurrenceId)) return;
-      occurrenceAvailability[occurrenceId] =
-        availability === "unavailable" ? "unavailable" : "available";
+    const rawAvailability = body?.occurrenceAvailability;
+    if (
+      rawAvailability !== undefined &&
+      (!rawAvailability || typeof rawAvailability !== "object" || Array.isArray(rawAvailability))
+    ) {
+      throw httpError(400, "Availability answers must be a date response map.");
+    }
+    const availabilityEntries = Object.entries(rawAvailability || {});
+    if (!enabledFields.has("availability") && availabilityEntries.length) {
+      throw httpError(400, "This form does not collect service-date availability.");
+    }
+    const unknownOccurrence = availabilityEntries.find(
+      ([occurrenceId]) => !occurrenceIds.has(occurrenceId),
+    );
+    if (unknownOccurrence) {
+      throw httpError(409, "The service dates changed. Reload this form before submitting.");
+    }
+    const malformedAnswer = availabilityEntries.find(
+      ([, availability]) =>
+        availability !== "available" && availability !== "unavailable",
+    );
+    if (malformedAnswer) {
+      throw httpError(400, "Choose available or unavailable for each service date.");
+    }
+    availabilityEntries.forEach(([occurrenceId, availability]) => {
+      occurrenceAvailability[occurrenceId] = availability;
     });
+    if (body?.availabilityOccurrenceIds !== undefined) {
+      const rawCoverageIds = body.availabilityOccurrenceIds;
+      if (
+        !enabledFields.has("availability") ||
+        !Array.isArray(rawCoverageIds) ||
+        rawCoverageIds.some((id) => typeof id !== "string" || !id) ||
+        new Set(rawCoverageIds).size !== rawCoverageIds.length
+      ) {
+        throw httpError(400, "The service-date list is invalid. Reload this form and try again.");
+      }
+      const submittedCoverage = new Set(rawCoverageIds);
+      if (
+        submittedCoverage.size !== occurrenceIds.size ||
+        [...occurrenceIds].some((occurrenceId) => !submittedCoverage.has(occurrenceId))
+      ) {
+        throw httpError(409, "The service dates changed. Reload this form before submitting.");
+      }
+      if (
+        availabilityEntries.length !== occurrenceIds.size ||
+        [...occurrenceIds].some((occurrenceId) =>
+          !Object.hasOwn(occurrenceAvailability, occurrenceId),
+        )
+      ) {
+        throw httpError(400, "Answer every service date before submitting.");
+      }
+    } else if (
+      form?.purpose === "team_availability" &&
+      enabledFields.has("availability") &&
+      occurrenceIds.size &&
+      !availabilityEntries.length
+    ) {
+      // Older clients may still send partial maps, which remain valid. An
+      // empty map cannot distinguish an untouched form from an explicit
+      // all-unavailable response, so it is never recorded as a new answer.
+      throw httpError(400, "Select at least one service date or indicate that none work.");
+    }
     return {
       firstName,
       lastName,
@@ -9262,13 +9315,21 @@ export const createTeamsAuthHandlers = ({
           label: "Member",
           active: false,
         });
-        const serviceAvailability = replaceServiceAvailabilityForForm({
-          existingAvailability: member.serviceAvailability,
-          replacementAvailability: normalizeServiceAvailability(
-            submission.occurrenceAvailability,
-          ),
-          form,
-        });
+        const teams = await listTeamCollectionForChurch(
+          COLLECTIONS.teams,
+          "teamId",
+          churchId,
+        );
+        if (
+          member.archivedAt ||
+          !isMemberWithinTeamAvailabilityScope({ form, member, teams })
+        ) {
+          throw httpError(409, "This member is outside the form's current Team scope.");
+        }
+        const serviceAvailability = {
+          ...(member.serviceAvailability || {}),
+          ...normalizeServiceAvailability(submission.occurrenceAvailability),
+        };
         const memberDetailPatch = personalizedSubmission
           ? buildTeamIntakeMissingMemberDetailPatch({
               member,
@@ -9476,6 +9537,307 @@ export const createTeamsAuthHandlers = ({
     };
   };
 
+  const getValidatedAvailabilitySubmissionAnswers = (submission, form) => {
+    const allowedOccurrenceIds = new Set(
+      (form.availabilityOccurrences || [])
+        .map((occurrence) => occurrence?.occurrenceId)
+        .filter((occurrenceId) => typeof occurrenceId === "string" && occurrenceId),
+    );
+    const rawAnswers = submission.occurrenceAvailability;
+    if (!rawAnswers || typeof rawAnswers !== "object" || Array.isArray(rawAnswers)) {
+      throw httpError(409, "This response has no service-date answers to apply.");
+    }
+    const answers = {};
+    for (const [occurrenceId, answer] of Object.entries(rawAnswers)) {
+      if (!allowedOccurrenceIds.has(occurrenceId)) {
+        throw httpError(409, "This response includes service dates outside the form.");
+      }
+      if (answer !== "available" && answer !== "unavailable") {
+        throw httpError(409, "This response includes an invalid service-date answer.");
+      }
+      answers[occurrenceId] = answer;
+    }
+    if (!Object.keys(answers).length) {
+      throw httpError(409, "This response has no service-date answers to apply.");
+    }
+    return answers;
+  };
+
+  const applyGeneralTeamAvailabilitySubmission = async ({
+    churchId,
+    submissionId,
+    memberId,
+    createMember = false,
+    adminUserId,
+  }) => {
+    if (createMember) {
+      throw httpError(400, "Availability responses can only be applied to an existing Team member.");
+    }
+    const normalizedMemberId = normalizeShortText(memberId, { max: 160 });
+    if (!normalizedMemberId) {
+      throw httpError(400, "Choose an existing member for this response.");
+    }
+    const db = requireFirestore?.();
+    const now = nowIso();
+    const applyInFirestore = async () => db.runTransaction(async (transaction) => {
+      const submissionRef = db.collection(COLLECTIONS.teamIntakeSubmissions).doc(submissionId);
+      const submissionSnapshot = await transaction.get(submissionRef);
+      if (!submissionSnapshot.exists) throw httpError(404, "Submission not found.");
+      const currentSubmission = {
+        submissionId: submissionSnapshot.id,
+        ...submissionSnapshot.data(),
+      };
+      if (currentSubmission.churchId !== churchId) {
+        throw httpError(404, "Submission not found.");
+      }
+      const formRef = db.collection(COLLECTIONS.teamIntakeForms).doc(currentSubmission.formId);
+      const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc(normalizedMemberId);
+      const recipientRef = db
+        .collection(COLLECTIONS.teamIntakeRecipients)
+        .doc(createTeamIntakeRecipientId(currentSubmission.formId, normalizedMemberId));
+      const [formSnapshot, memberSnapshot, recipientSnapshot] = await Promise.all([
+        transaction.get(formRef),
+        transaction.get(memberRef),
+        transaction.get(recipientRef),
+      ]);
+      if (!formSnapshot.exists || !memberSnapshot.exists) {
+        throw httpError(404, "The form or selected member is no longer available.");
+      }
+      const form = { formId: formSnapshot.id, ...formSnapshot.data() };
+      const member = { memberId: memberSnapshot.id, ...memberSnapshot.data() };
+      if (form.churchId !== churchId || form.purpose !== "team_availability") {
+        throw httpError(409, "This response is not for an availability form.");
+      }
+      const teamIds = teamAvailabilityFormTeamIds(form);
+      if (!teamIds.length) {
+        throw httpError(409, "This availability form no longer has a valid Team scope.");
+      }
+      const teamSnapshots = await Promise.all(
+        teamIds.map((teamId) =>
+          transaction.get(db.collection(COLLECTIONS.teams).doc(teamId)),
+        ),
+      );
+      const teams = teamSnapshots
+        .filter((snapshot) => snapshot.exists)
+        .map((snapshot) => ({ ...snapshot.data(), teamId: snapshot.id }));
+      if (
+        member.churchId !== churchId ||
+        member.archivedAt ||
+        !isMemberWithinTeamAvailabilityScope({ form, member, teams })
+      ) {
+        throw httpError(409, "Choose an active member in this form's Team scope.");
+      }
+      if (
+        currentSubmission.status === "applied" &&
+        currentSubmission.appliedMemberId === normalizedMemberId &&
+        !currentSubmission.appliedMemberCreated
+      ) {
+        return {
+          submission: currentSubmission,
+          member,
+          alreadyApplied: true,
+        };
+      }
+      if (currentSubmission.status !== "new") {
+        throw httpError(409, "This response has already been reviewed.");
+      }
+      if (recipientSnapshot.exists && recipientSnapshot.data()?.respondedAt) {
+        throw httpError(
+          409,
+          "This member already responded through a personal link. Review that response before applying this one.",
+        );
+      }
+      const formSubmissionsQuery = db
+        .collection(COLLECTIONS.teamIntakeSubmissions)
+        .where("formId", "==", form.formId);
+      const formRecipientsQuery = db
+        .collection(COLLECTIONS.teamIntakeRecipients)
+        .where("formId", "==", form.formId);
+      const [formSubmissionsSnapshot, formRecipientsSnapshot] = await Promise.all([
+        transaction.get(formSubmissionsQuery),
+        transaction.get(formRecipientsQuery),
+      ]);
+      const personalSubmissionIds = new Set(
+        formRecipientsSnapshot.docs
+          .map((document) => document.data()?.submissionId)
+          .filter(Boolean),
+      );
+      if (
+        currentSubmission.availabilityResponseSource === "personalized" ||
+        personalSubmissionIds.has(currentSubmission.submissionId)
+      ) {
+        throw httpError(409, "Personalized responses are applied only through their private link.");
+      }
+      const otherAppliedResponse = formSubmissionsSnapshot.docs.some((document) => {
+        if (document.id === currentSubmission.submissionId) return false;
+        const other = document.data();
+        return other.status === "applied" &&
+          other.appliedMemberId === normalizedMemberId &&
+          !other.appliedMemberCreated &&
+          !personalSubmissionIds.has(document.id);
+      });
+      if (otherAppliedResponse) {
+        throw httpError(
+          409,
+          "This member already has another availability response for this form. Review both responses before applying one.",
+        );
+      }
+      const answers = getValidatedAvailabilitySubmissionAnswers(currentSubmission, form);
+      const serviceAvailability = {
+        ...(member.serviceAvailability || {}),
+        ...answers,
+      };
+      const application = {
+        status: "applied",
+        reviewedAt: now,
+        reviewedByUid: adminUserId,
+        appliedAt: now,
+        appliedByUid: adminUserId,
+        appliedMemberId: normalizedMemberId,
+        appliedMemberCreated: false,
+        updatedAt: now,
+        updatedByUid: adminUserId,
+      };
+      const updatedSubmission = { ...currentSubmission, ...application };
+      transaction.set(memberRef, {
+        serviceAvailability,
+        updatedAt: now,
+        updatedByUid: adminUserId,
+      }, { merge: true });
+      transaction.set(submissionRef, application, { merge: true });
+      return {
+        submission: updatedSubmission,
+        member: { ...member, serviceAvailability, updatedAt: now, updatedByUid: adminUserId },
+        alreadyApplied: false,
+      };
+    });
+
+    const applyInMemory = async () => {
+      const initialSubmission = await getDoc(
+        COLLECTIONS.teamIntakeSubmissions,
+        submissionId,
+      );
+      if (!initialSubmission || initialSubmission.churchId !== churchId) {
+        throw httpError(404, "Submission not found.");
+      }
+      const initialForm = await getDoc(
+        COLLECTIONS.teamIntakeForms,
+        initialSubmission.formId,
+      );
+      if (!initialForm || initialForm.churchId !== churchId || initialForm.purpose !== "team_availability") {
+        throw httpError(409, "This response is not for an availability form.");
+      }
+      return withTeamAvailabilityFormLock(initialForm.formId, () =>
+        enqueueInMemoryRosterMemberMutation(normalizedMemberId, async () => {
+          const currentSubmission = await getDoc(
+            COLLECTIONS.teamIntakeSubmissions,
+            submissionId,
+          );
+          if (!currentSubmission || currentSubmission.churchId !== churchId) {
+            throw httpError(404, "Submission not found.");
+          }
+          const currentForm = await getDoc(
+            COLLECTIONS.teamIntakeForms,
+            currentSubmission.formId,
+          );
+          if (!currentForm || currentForm.churchId !== churchId || currentForm.purpose !== "team_availability") {
+            throw httpError(409, "This response is not for an availability form.");
+          }
+          const [member, recipient, formSubmissions, teams, recipients] = await Promise.all([
+            getDoc(COLLECTIONS.teamRosterMembers, normalizedMemberId),
+            getDoc(
+              COLLECTIONS.teamIntakeRecipients,
+              createTeamIntakeRecipientId(currentForm.formId, normalizedMemberId),
+            ),
+            queryDocs(
+              COLLECTIONS.teamIntakeSubmissions,
+              [{ field: "formId", value: currentForm.formId }],
+              { limit: TEAM_COLLECTION_QUERY_LIMIT },
+            ),
+            listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId),
+            queryDocs(
+              COLLECTIONS.teamIntakeRecipients,
+              [{ field: "formId", value: currentForm.formId }],
+              { limit: TEAM_COLLECTION_QUERY_LIMIT },
+            ),
+          ]);
+          if (
+            !member ||
+            member.churchId !== churchId ||
+            member.archivedAt ||
+            !isMemberWithinTeamAvailabilityScope({ form: currentForm, member, teams })
+          ) {
+            throw httpError(409, "Choose an active member in this form's Team scope.");
+          }
+          if (
+            currentSubmission.status === "applied" &&
+            currentSubmission.appliedMemberId === normalizedMemberId &&
+            !currentSubmission.appliedMemberCreated
+          ) {
+            return { submission: currentSubmission, member, alreadyApplied: true };
+          }
+          if (currentSubmission.status !== "new") {
+            throw httpError(409, "This response has already been reviewed.");
+          }
+          if (recipient?.respondedAt) {
+            throw httpError(
+              409,
+              "This member already responded through a personal link. Review that response before applying this one.",
+            );
+          }
+          const personalSubmissionIds = new Set(
+            recipients.map((item) => item.submissionId).filter(Boolean),
+          );
+          if (
+            currentSubmission.availabilityResponseSource === "personalized" ||
+            personalSubmissionIds.has(currentSubmission.submissionId)
+          ) {
+            throw httpError(409, "Personalized responses are applied only through their private link.");
+          }
+          if (formSubmissions.some((other) =>
+            other.submissionId !== currentSubmission.submissionId &&
+            other.status === "applied" &&
+            other.appliedMemberId === normalizedMemberId &&
+            !other.appliedMemberCreated &&
+            !personalSubmissionIds.has(other.submissionId)
+          )) {
+            throw httpError(
+              409,
+              "This member already has another availability response for this form. Review both responses before applying one.",
+            );
+          }
+          const answers = getValidatedAvailabilitySubmissionAnswers(currentSubmission, currentForm);
+          const serviceAvailability = { ...(member.serviceAvailability || {}), ...answers };
+          const application = {
+            status: "applied",
+            availabilityResponseSource: "general",
+            reviewedAt: now,
+            reviewedByUid: adminUserId,
+            appliedAt: now,
+            appliedByUid: adminUserId,
+            appliedMemberId: normalizedMemberId,
+            appliedMemberCreated: false,
+            updatedAt: now,
+            updatedByUid: adminUserId,
+          };
+          await setDoc(COLLECTIONS.teamRosterMembers, normalizedMemberId, {
+            serviceAvailability,
+            updatedAt: now,
+            updatedByUid: adminUserId,
+          }, { merge: true });
+          await setDoc(COLLECTIONS.teamIntakeSubmissions, submissionId, application, { merge: true });
+          return {
+            submission: { ...currentSubmission, ...application },
+            member: { ...member, serviceAvailability, updatedAt: now, updatedByUid: adminUserId },
+            alreadyApplied: false,
+          };
+        }),
+      );
+    };
+
+    return db?.runTransaction ? applyInFirestore() : applyInMemory();
+  };
+
   const submitTeamIntakeRecipientWithFirestoreTransaction = async ({
     token,
     body,
@@ -9549,6 +9911,40 @@ export const createTeamsAuthHandlers = ({
         recipient.submissionId ||
         `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
 
+      if (availabilityOnly) {
+        const [formSubmissionsSnapshot, formRecipientsSnapshot] = await Promise.all([
+          transaction.get(
+            db.collection(COLLECTIONS.teamIntakeSubmissions)
+              .where("formId", "==", form.formId),
+          ),
+          transaction.get(
+            db.collection(COLLECTIONS.teamIntakeRecipients)
+              .where("formId", "==", form.formId),
+          ),
+        ]);
+        const personalSubmissionIds = new Set(
+          formRecipientsSnapshot.docs
+            .map((document) => document.data()?.submissionId)
+            .filter(Boolean),
+        );
+        const hasAppliedGeneralResponse = formSubmissionsSnapshot.docs.some(
+          (document) => {
+            if (document.id === submissionId) return false;
+            const other = document.data();
+            return other.status === "applied" &&
+              other.appliedMemberId === member.memberId &&
+              !other.appliedMemberCreated &&
+              !personalSubmissionIds.has(document.id);
+          },
+        );
+        if (hasAppliedGeneralResponse) {
+          throw httpError(
+            409,
+            "This member already has an applied general availability response for this form. Review both responses before submitting another.",
+          );
+        }
+      }
+
       const desiredPositionIds = normalizeIdArray(currentPayload.positionIds);
       const positionSnapshots = [];
       for (const positionId of desiredPositionIds) {
@@ -9617,13 +10013,16 @@ export const createTeamsAuthHandlers = ({
             endDate: form.endDate,
           })
         : member.blockoutDates || [];
-      const nextServiceAvailability = replaceServiceAvailabilityForForm({
-        existingAvailability: member.serviceAvailability,
-        replacementAvailability: normalizeServiceAvailability(
-          currentPayload.occurrenceAvailability,
-        ),
-        form,
-      });
+      const submittedAvailability = normalizeServiceAvailability(
+        currentPayload.occurrenceAvailability,
+      );
+      const nextServiceAvailability = availabilityOnly
+        ? { ...(member.serviceAvailability || {}), ...submittedAvailability }
+        : replaceServiceAvailabilityForForm({
+            existingAvailability: member.serviceAvailability,
+            replacementAvailability: submittedAvailability,
+            form,
+          });
       const memberDetailPatch = buildTeamIntakeMissingMemberDetailPatch({
         member,
         submittedMemberDetails: currentPayload.submittedMemberDetails,
@@ -9646,6 +10045,7 @@ export const createTeamsAuthHandlers = ({
       };
       const application = {
         status: "applied",
+        ...(availabilityOnly ? { availabilityResponseSource: "personalized" } : {}),
         appliedAt: submittedAt,
         appliedByUid: adminUserId,
         appliedMemberId: member.memberId,
@@ -9773,87 +10173,118 @@ export const createTeamsAuthHandlers = ({
             recipientId,
           });
         if (transactionalResult) return transactionalResult;
-        if (form.purpose === "team_availability") {
-          // The in-memory store has no transaction. Re-read authorization and
-          // form state immediately before creating its durable response.
-          ({ recipient, form, member } =
-            await readContext());
-          payload = await validateTeamIntakeSubmissionPayload(
-            req.body,
-            form,
-            { member },
-          );
-        }
-        const submittedAt = nowIso();
-        const {
-          submittedMemberDetails = {},
-          ...submissionPayload
-        } = payload;
-        const submissionId =
-          recipient.submissionId ||
-          `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
-        const submission = {
-          ...submissionPayload,
-          submissionId,
-          formId: form.formId,
-          churchId: form.churchId,
-          status: "new",
-          submittedAt,
-        };
+        const persistFallback = async () => {
+          if (form.purpose === "team_availability") {
+            // The in-memory store has no transaction. Re-read authorization and
+            // form state while holding the same form lock used by manual applies.
+            ({ recipient, form, member } = await readContext());
+            payload = await validateTeamIntakeSubmissionPayload(
+              req.body,
+              form,
+              { member },
+            );
+            const [formSubmissions, formRecipients] = await Promise.all([
+              queryDocs(
+                COLLECTIONS.teamIntakeSubmissions,
+                [{ field: "formId", value: form.formId }],
+                { limit: TEAM_COLLECTION_QUERY_LIMIT },
+              ),
+              queryDocs(
+                COLLECTIONS.teamIntakeRecipients,
+                [{ field: "formId", value: form.formId }],
+                { limit: TEAM_COLLECTION_QUERY_LIMIT },
+              ),
+            ]);
+            const personalSubmissionIds = new Set(
+              formRecipients.map((item) => item.submissionId).filter(Boolean),
+            );
+            if (formSubmissions.some((other) =>
+              other.status === "applied" &&
+              other.appliedMemberId === member.memberId &&
+              !other.appliedMemberCreated &&
+              !personalSubmissionIds.has(other.submissionId)
+            )) {
+              throw httpError(
+                409,
+                "This member already has an applied general availability response for this form. Review both responses before submitting another.",
+              );
+            }
+          }
+          const submittedAt = nowIso();
+          const {
+            submittedMemberDetails = {},
+            ...submissionPayload
+          } = payload;
+          const submissionId =
+            recipient.submissionId ||
+            `teamIntakeSubmission_${hashValue(recipient.recipientId).slice(0, 32)}`;
+          const submission = {
+            ...submissionPayload,
+            submissionId,
+            formId: form.formId,
+            churchId: form.churchId,
+            status: "new",
+            submittedAt,
+          };
 
-        // A recipient has one current response. Reusing its deterministic audit
-        // record makes retries safe: a lost response or a second submission never
-        // creates a second applied side effect or a second queue row.
-        if (persistTeamIntakeSubmission) {
-          await persistTeamIntakeSubmission(submission);
-        } else {
+          // Reusing a deterministic recipient row makes retries safe.
+          if (persistTeamIntakeSubmission) {
+            await persistTeamIntakeSubmission(submission);
+          } else {
+            await setDoc(
+              COLLECTIONS.teamIntakeSubmissions,
+              submissionId,
+              submission,
+              { merge: false },
+            );
+          }
+          const application = await applyTeamIntakeSubmissionToMember({
+            submission,
+            form,
+            churchId: form.churchId,
+            memberId: member.memberId,
+            personalizedSubmission: true,
+            submittedMemberDetails,
+            adminUserId: `recipient:${recipient.recipientId}`,
+            now: submittedAt,
+          });
+          const applicationUpdate = {
+            ...application.application,
+            ...(form.purpose === "team_availability"
+              ? { availabilityResponseSource: "personalized" }
+              : {}),
+            reviewedAt: submittedAt,
+            reviewedByUid: `recipient:${recipient.recipientId}`,
+            updatedAt: submittedAt,
+            updatedByUid: `recipient:${recipient.recipientId}`,
+          };
           await setDoc(
             COLLECTIONS.teamIntakeSubmissions,
             submissionId,
-            submission,
-            { merge: false },
+            applicationUpdate,
+            { merge: true },
           );
-        }
-        const application = await applyTeamIntakeSubmissionToMember({
-          submission,
-          form,
-          churchId: form.churchId,
-          memberId: member.memberId,
-          personalizedSubmission: true,
-          submittedMemberDetails,
-          adminUserId: `recipient:${recipient.recipientId}`,
-          now: submittedAt,
-        });
-        const applicationUpdate = {
-          ...application.application,
-          reviewedAt: submittedAt,
-          reviewedByUid: `recipient:${recipient.recipientId}`,
-          updatedAt: submittedAt,
-          updatedByUid: `recipient:${recipient.recipientId}`,
-        };
-        await setDoc(
-          COLLECTIONS.teamIntakeSubmissions,
-          submissionId,
-          applicationUpdate,
-          { merge: true },
-        );
-        await setDoc(
-          COLLECTIONS.teamIntakeRecipients,
-          recipient.recipientId,
-          {
-            respondedAt: submittedAt,
+          await setDoc(
+            COLLECTIONS.teamIntakeRecipients,
+            recipient.recipientId,
+            {
+              respondedAt: submittedAt,
+              submissionId,
+              updatedAt: submittedAt,
+              updatedByUid: `recipient:${recipient.recipientId}`,
+            },
+            { merge: true },
+          );
+          return {
+            success: true,
             submissionId,
-            updatedAt: submittedAt,
-            updatedByUid: `recipient:${recipient.recipientId}`,
-          },
-          { merge: true },
-        );
-        return {
-          success: true,
-          submissionId,
-          formId: form.formId,
-          submittedAt,
+            formId: form.formId,
+            submittedAt,
+          };
         };
+        return form.purpose === "team_availability"
+          ? withTeamAvailabilityFormLock(form.formId, persistFallback)
+          : persistFallback();
       },
     );
     // Both the Firestore transaction and the fallback have committed all
@@ -9874,8 +10305,20 @@ export const createTeamsAuthHandlers = ({
   const submitVolunteerAvailability = async (identity, body) => {
     const recipientId = normalizeShortText(body?.recipientId, { max: 160 });
     if (!recipientId) throw httpError(404, "This availability request is no longer available.");
+    const { form } = await getVolunteerAvailabilityContext(identity, recipientId);
+    const occurrenceIds = new Set(
+      (form.availabilityOccurrences || []).map((item) => item.occurrenceId),
+    );
+    const rawAvailability = body?.occurrenceAvailability;
+    const occurrenceAvailability = rawAvailability &&
+      typeof rawAvailability === "object" &&
+      !Array.isArray(rawAvailability)
+      ? Object.fromEntries(
+          Object.entries(rawAvailability).filter(([id]) => occurrenceIds.has(id)),
+        )
+      : rawAvailability;
     const result = await submitTeamIntakeRecipient({ body: {
-      occurrenceAvailability: body?.occurrenceAvailability,
+      occurrenceAvailability,
     } }, "", identity, recipientId);
     return { success: result.success, submissionId: result.submissionId };
   };
@@ -16997,6 +17440,9 @@ export const createTeamsAuthHandlers = ({
             form.teamIds.some((teamId) => memberTeamIds.has(teamId)),
           );
         });
+        const recipientSubmissionIds = new Set(
+          recipients.map((recipient) => recipient.submissionId).filter(Boolean),
+        );
         const submissionIds = [...new Set(
           scopedRecipients.map((recipient) => recipient.submissionId).filter(Boolean),
         )];
@@ -17072,6 +17518,7 @@ export const createTeamsAuthHandlers = ({
           purpose: "team_availability",
           active: Boolean(form.active),
           enabledFields: ["availability"],
+          welcomeMessage: form.welcomeMessage || "",
           availabilityMessage: form.availabilityMessage || "",
           archivedAt: form.archivedAt || null,
           createdAt: form.createdAt || "",
@@ -17083,7 +17530,7 @@ export const createTeamsAuthHandlers = ({
             (recipient) => recipient.formId === form.formId,
           ),
         }));
-        const availabilityResponses = scopedRecipients.flatMap((recipient) => {
+        const personalAvailabilityResponses = scopedRecipients.flatMap((recipient) => {
           if (!recipient.respondedAt || !recipient.submissionId) return [];
           const submission = submissionById.get(recipient.submissionId);
           const form = formById.get(recipient.formId);
@@ -17108,6 +17555,7 @@ export const createTeamsAuthHandlers = ({
           );
           return [{
             formId: recipient.formId,
+            source: "recipient",
             recipientId: recipient.recipientId,
             memberId: recipient.memberId,
             respondedAt: recipient.respondedAt,
@@ -17115,6 +17563,57 @@ export const createTeamsAuthHandlers = ({
             occurrenceAvailability: availability,
           }];
         });
+        const formSubmissions = (
+          await Promise.all(forms.map((form) =>
+            queryDocs(
+              COLLECTIONS.teamIntakeSubmissions,
+              [{ field: "formId", value: form.formId }],
+              { limit: TEAM_COLLECTION_QUERY_LIMIT },
+            ),
+          ))
+        ).flat();
+        const generalAvailabilityResponses = formSubmissions.flatMap((submission) => {
+          const form = formById.get(submission.formId);
+          const memberId = submission.appliedMemberId;
+          if (
+            submission.churchId !== churchId ||
+            submission.status !== "applied" ||
+            submission.appliedMemberCreated ||
+            !memberId ||
+            !form ||
+            recipientSubmissionIds.has(submission.submissionId) ||
+            !memberIds.has(memberId) ||
+            !isMemberWithinTeamAvailabilityScope({
+              form,
+              member: memberById.get(memberId),
+              teams: activeTeams,
+            })
+          ) return [];
+          const allowedIds = new Set(
+            (form.availabilityOccurrences || [])
+              .map((occurrence) => occurrence?.occurrenceId)
+              .filter(Boolean),
+          );
+          const availability = Object.fromEntries(
+            Object.entries(submission.occurrenceAvailability || {}).filter(
+              ([occurrenceId, value]) =>
+                allowedIds.has(occurrenceId) &&
+                (value === "available" || value === "unavailable"),
+            ),
+          );
+          return [{
+            formId: form.formId,
+            source: "general",
+            memberId,
+            respondedAt: submission.appliedAt || submission.submittedAt || "",
+            submittedAt: submission.submittedAt || submission.appliedAt || "",
+            occurrenceAvailability: availability,
+          }];
+        });
+        const availabilityResponses = [
+          ...personalAvailabilityResponses,
+          ...generalAvailabilityResponses,
+        ];
         const smsEligibilityByMemberId = Object.fromEntries(
           [...memberIds].map((memberId) => [memberId, {
             eligible: Boolean(eligibility[memberId]?.eligible),
@@ -19386,6 +19885,7 @@ export const createTeamsAuthHandlers = ({
             name: form.name,
             startDate: form.startDate,
             endDate: form.endDate,
+            purpose: form.purpose || "general_intake",
             enabledFields: normalizeTeamIntakeFields(
               undefined,
               form.enabledFields,
@@ -22708,6 +23208,29 @@ export const createTeamsAuthHandlers = ({
             COLLECTIONS.teamIntakeForms,
             submission.formId,
           );
+          if (intakeForm?.purpose === "team_availability") {
+            const application = await applyGeneralTeamAvailabilitySubmission({
+              churchId: req.params.churchId,
+              submissionId: req.params.submissionId,
+              memberId: normalizeShortText(req.body?.memberId, { max: 160 }),
+              createMember: Boolean(req.body?.createMember),
+              adminUserId: admin.user.uid,
+            });
+            if (!application.alreadyApplied) {
+              await addSecurityEvent({
+                type: "team_intake_submission_applied",
+                churchId: req.params.churchId,
+                userId: admin.user.uid,
+                submissionId: req.params.submissionId,
+                memberId: application.member.memberId,
+              });
+            }
+            return res.json({
+              success: true,
+              submission: application.submission,
+              member: application.member,
+            });
+          }
           const application = await applyTeamIntakeSubmissionToMember({
             submission,
             form: intakeForm,

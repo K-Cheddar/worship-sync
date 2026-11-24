@@ -13,8 +13,10 @@ const allowedSuites = new Set([
   "schedule-quick-member.mjs",
   "my-schedule-service-cards.mjs",
   "service-plan-refresh.mjs",
+  "unavailable-source-thumbnail-layering.mjs",
   "service-public-efficiency.mjs",
   "availability-workspace.mjs",
+  "team-availability-intake.mjs",
 ]);
 if (!allowedSuites.has(suite)) {
   throw new Error(`Unknown browser suite: ${suite || "(missing)"}`);

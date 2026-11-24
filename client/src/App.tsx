@@ -45,6 +45,12 @@ import ChatWindowHost from "./chat/ChatWindowHost";
 import { useDocumentPageTitle } from "./hooks/useDocumentPageTitle";
 import WebUpdateCoordinator from "./components/WebUpdateCoordinator/WebUpdateCoordinator";
 import { RehearsalPlaybackProvider } from "./components/RehearsalPlayer/RehearsalPlaybackContext";
+import StartupDiagnosticsPanel from "./components/StartupDiagnosticsPanel";
+import {
+  isStartupDiagnosticsActive,
+  recordStartupDiagnostic,
+  shouldShowStartupDiagnosticsPanel,
+} from "./utils/startupDiagnostics";
 import RehearsalPlayerHost from "./components/RehearsalPlayer/RehearsalPlayerHost";
 
 /**
@@ -318,6 +324,19 @@ export const AppRoutes = () => {
     />
   );
 
+  if (shouldShowStartupDiagnosticsPanel(
+    isStartupDiagnosticsActive(),
+    location.pathname,
+  )) {
+    return (
+      <ErrorBoundary>
+        <ControllerContextWrapper>
+          <StartupDiagnosticsPanel />
+        </ControllerContextWrapper>
+      </ErrorBoundary>
+    );
+  }
+
   return (
     <>
       <WebUpdateCoordinator
@@ -582,6 +601,19 @@ export const AppRoutes = () => {
 };
 
 const App: React.FC = () => {
+  useEffect(() => {
+    recordStartupDiagnostic("manager", "app-global-managers.mounted", {
+      chat: true,
+      chatWindowHost: true,
+      routePersistence: true,
+      displayOutputsSync: true,
+      controllerProfilesSync: true,
+      timerManager: true,
+      rehearsalPlaybackProvider: true,
+      rehearsalPlayerHost: true,
+    });
+  }, []);
+
   useEffect(() => {
     const url = new URL(window.location.href);
     delay(1000);

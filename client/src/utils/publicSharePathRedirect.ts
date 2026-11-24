@@ -1,6 +1,6 @@
 /**
- * Path-based public share URLs (`/services/...`) boot {@link PublicApp}
- * (BrowserRouter). Kept in sync with `server/publicShareMeta.js`.
+ * Path-based public pages and share URLs boot {@link PublicApp} (BrowserRouter).
+ * Keep public-share patterns aligned with `server/publicShareMeta.js`.
  */
 
 const RESERVED_BOARD_SEGMENTS = new Set(["controller", "display"]);
@@ -38,6 +38,7 @@ export const isPublicSharePathname = (pathname: string): boolean => {
   if (
     path === "/sms-opt-in" ||
     /^\/sms-opt-in\/[^/]+$/.test(path) ||
+    path === "/support" ||
     path === "/privacy" ||
     path === "/terms"
   ) {

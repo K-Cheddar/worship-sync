@@ -20,12 +20,21 @@ import {
   loadSongV2LibraryProjection,
   SongV2DocumentError,
 } from "../utils/songPersistence";
+import { recordStartupDiagnostic } from "../utils/startupDiagnostics";
+
+type ItemCacheSyncOptions = {
+  onHydrated?: () => void;
+};
 export { isItemDocument } from "./allDocsSlice";
 
 const PROJECTION_RETRY_DELAYS_MS = [250, 1000, 3000];
 
 /** One owner per database session. Cleanup invalidates every pending continuation. */
-export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => {
+export const startItemCacheSync = (
+  db: PouchDB.Database,
+  dispatch: Dispatch,
+  options: ItemCacheSyncOptions = {},
+) => {
   let active = true;
   let feed: PouchDB.Core.Changes<{}> | undefined;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -201,6 +210,7 @@ export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => 
   const connect = async () => {
     try {
       if (sequence === undefined) {
+        const hydrationStartedAt = performance.now();
         const snapshot = await db.allDocs<DBItem | DBHeading>({ include_docs: true, update_seq: true });
         if (!active) return;
         // An empty IndexedDB database can omit the sequence; replay from zero.
@@ -211,11 +221,21 @@ export const startItemCacheSync = (db: PouchDB.Database, dispatch: Dispatch) => 
         const otherItems = snapshotDocs.filter((doc): doc is DBItem | DBHeading =>
           isItemDocument(doc) && (doc as DBItem).type !== "song",
         );
+        const documents = [...otherItems, ...songLibrary.songs];
         dispatch(hydrateItemCache({
-          documents: [...otherItems, ...songLibrary.songs],
+          documents,
           activatedSongIds: songLibrary.activatedSongIds,
           songLibraryDiagnostics: songLibrary.diagnostics,
         }));
+        recordStartupDiagnostic("redux", "item-cache.hydrated", {
+          databaseDocuments: snapshot.rows.length,
+          cachedDocuments: documents.length,
+          songDocuments: songLibrary.songs.length,
+          activatedSongs: songLibrary.activatedSongIds.length,
+          diagnostics: songLibrary.diagnostics.length,
+          durationMs: Math.round(performance.now() - hydrationStartedAt),
+        });
+        options.onHydrated?.();
       }
       if (!active) return;
       dispatch(setItemCacheError(null));

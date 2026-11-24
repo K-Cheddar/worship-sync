@@ -10,6 +10,7 @@ import {
   DbStartupFailurePanel,
   getStartupStageLabel,
 } from "./DbStartupStatusUi";
+import Button from "../Button/Button";
 import type {
   ConnectionStatus,
   ControllerStartupInfo,
@@ -104,11 +105,19 @@ const ControllerLoadingOverlay = ({
                 Database sync: {dbProgress}%
               </p>
             )}
-            {showSlowStartupMessage && (
-              <p role="status" aria-live="polite" className="max-w-lg text-center text-sm">
-                This is taking a little longer than usual. Please keep this
-                window open while WorshipSync gets everything ready.
-              </p>
+            {showSlowStartupMessage && connectionStatus?.status !== "retrying" && (
+              <div className="flex flex-col items-center gap-3">
+                <p role="status" aria-live="polite" className="max-w-lg text-center text-sm">
+                  WorshipSync hasn’t reported progress for a while. If startup seems stuck, you can retry.
+                </p>
+                <Button
+                  onClick={() => window.location.reload()}
+                  variant="cta"
+                  padding="px-4 py-2"
+                >
+                  Retry startup
+                </Button>
+              </div>
             )}
             <DbStartupLoadingDetails
               startupInfo={currentStartupInfo}

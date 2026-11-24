@@ -179,6 +179,97 @@ test("recreating a revoked link cannot reuse a stale response projection", () =>
   expect(row.occurrenceAvailability).toEqual({});
 });
 
+test("applied general responses count without a synthetic recipient or SMS delivery", () => {
+  const generalResponse = {
+    formId: form.formId,
+    memberId: member.memberId,
+    source: "general" as const,
+    respondedAt: recipient.createdAt,
+    submittedAt: recipient.createdAt,
+    occurrenceAvailability: { sunday: "available" as const },
+  };
+  const [row] = getAvailabilityFormProgress(
+    { ...input, recipients: [] },
+    [generalResponse],
+    [],
+  );
+
+  expect(row.status).toBe("Responded");
+  expect(row.responded).toBe(true);
+  expect(row.availabilitySource).toBe("general");
+  expect(row.occurrenceAvailability).toEqual({ sunday: "available" });
+  expect(row.delivery).toBe("\u2014");
+});
+
+test("church-wide progress uses an applied general submission only after member confirmation", () => {
+  const pending: TeamIntakeSubmission = {
+    submissionId: "pending-general",
+    churchId: "church",
+    formId: "form",
+    firstName: "Jane",
+    lastName: "Smith",
+    normalizedName: "jane smith",
+    positionIds: [],
+    occurrenceAvailability: { sunday: "available" },
+    blockoutRanges: [],
+    status: "new",
+    submittedAt: recipient.createdAt,
+  };
+  const generalOnlyInput = {
+    ...input,
+    recipients: [],
+    notificationIntents: [],
+    smsDeliveryAttempts: [],
+  };
+  const [unlinked] = getAvailabilityFormProgress(generalOnlyInput, [], [pending]);
+  expect(unlinked.responded).toBe(false);
+
+  const [applied] = getAvailabilityFormProgress(generalOnlyInput, [], [{
+    ...pending,
+    status: "applied",
+    appliedMemberId: member.memberId,
+    appliedMemberCreated: false,
+  }]);
+  expect(applied.status).toBe("Responded");
+  expect(applied.availabilitySource).toBe("general");
+  expect(applied.occurrenceAvailability).toEqual({ sunday: "available" });
+  expect(applied.delivery).toBe("\u2014");
+});
+
+test("personal and general answers for one member are shown as a conflict", () => {
+  const respondedAt = "2026-10-02T00:00:00Z";
+  const personalResponse = {
+    formId: form.formId,
+    memberId: member.memberId,
+    recipientId: recipient.recipientId,
+    source: "recipient" as const,
+    respondedAt,
+    submittedAt: respondedAt,
+    occurrenceAvailability: { sunday: "available" as const },
+  };
+  const generalResponse = {
+    formId: form.formId,
+    memberId: member.memberId,
+    source: "general" as const,
+    respondedAt: "2026-10-03T00:00:00Z",
+    submittedAt: "2026-10-03T00:00:00Z",
+    occurrenceAvailability: { sunday: "unavailable" as const },
+  };
+  const [row] = getAvailabilityFormProgress(
+    {
+      ...input,
+      recipients: [{ ...recipient, respondedAt }],
+    },
+    [personalResponse, generalResponse],
+    [],
+  );
+
+  expect(row.status).toBe("Review conflict");
+  expect(row.responseConflict).toBe(true);
+  expect(row.hasResponseDetails).toBe(false);
+  expect(row.occurrenceAvailability).toEqual({});
+});
+
 test("a replacement request cannot inherit an earlier response and current timestamps select updated answers", () => {
   const oldResponse = {
     formId: form.formId,

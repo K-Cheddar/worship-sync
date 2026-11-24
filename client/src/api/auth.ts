@@ -1449,6 +1449,8 @@ export type TeamIntakeSubmissionPayload = {
   birthDate?: import("./authTypes").BirthDate | null;
   positionIds: string[];
   occurrenceAvailability: TeamIntakeSubmission["occurrenceAvailability"];
+  /** Present on current public clients to bind complete answers to the dates shown. */
+  availabilityOccurrenceIds?: string[];
   blockoutRanges: TeamIntakeSubmission["blockoutRanges"];
   notes?: string;
   servingFrequency?: TeamIntakeSubmission["servingFrequency"];

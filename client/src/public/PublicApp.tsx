@@ -36,6 +36,7 @@ const BoardPresent = lazyRoute(() => import("../pages/BoardPresent"));
 const InviteAccept = lazyRoute(() => import("../pages/InviteAccept"));
 const PrivacyPolicy = lazyRoute(() => import("../pages/Legal/PrivacyPolicy"));
 const TermsOfService = lazyRoute(() => import("../pages/Legal/TermsOfService"));
+const Support = lazyRoute(() => import("../pages/Support"));
 const SmsOptIn = lazyRoute(() => import("../pages/SmsOptIn"));
 const VolunteerPortal = lazyRoute(() => import("../pages/VolunteerPortal"));
 
@@ -52,8 +53,8 @@ const PublicFallback = () => {
   );
 };
 
-/** Invite + schedule-response need Firebase session helpers from GlobalInfo (+ Redux). */
-const InviteProviderLayout = () => (
+/** Public routes that use current session information need GlobalInfo (+ Redux). */
+const PublicSessionProviderLayout = () => (
   <Provider store={store}>
     <GlobalInfoProvider>
       <Outlet />
@@ -98,6 +99,9 @@ const PublicApp = ({
             <Route path="/sms-opt-in/:churchId" element={<SmsOptIn />} />
             <Route path="/privacy" element={<PrivacyPolicy />} />
             <Route path="/terms" element={<TermsOfService />} />
+            <Route element={<PublicSessionProviderLayout />}>
+              <Route path="/support" element={<Support />} />
+            </Route>
             <Route path="/services/:shareId" element={<ServicePublic />} />
             <Route
               path="/teams/schedule/:token"
@@ -108,7 +112,7 @@ const PublicApp = ({
             <Route path="/a/:token" element={<TeamIntakePublic />} />
             <Route path="/boards/present/:aliasId" element={<BoardPresent />} />
             <Route path="/boards/:aliasId" element={<BoardPage />} />
-            <Route element={<InviteProviderLayout />}>
+            <Route element={<PublicSessionProviderLayout />}>
               <Route
                 path="/schedule-response/:token"
                 element={<ScheduleResponsePublic />}

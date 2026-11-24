@@ -20,7 +20,7 @@ describe("LocalSourceStatus", () => {
     });
   });
 
-  it("keeps thumbnail warnings readable while fitting the scaled thumbnail", () => {
+  it("uses reference-space typography for thumbnail warnings", () => {
     render(
       <LocalSourceStatus
         sourceLabel="Local image · Welcome.png"
@@ -35,9 +35,57 @@ describe("LocalSourceStatus", () => {
       "thumbnail",
     );
     expect(screen.getByText("Local source on another device")).toHaveStyle({
-      fontSize: "70px",
+      fontSize: "80px",
     });
     expect(screen.getByText("Available on Booth PC")).toBeInTheDocument();
+  });
+
+  it("keeps thumbnail sizing stable from a zero scale factor through zoom changes", () => {
+    const { rerender } = render(
+      <LocalSourceStatus
+        sourceLabel="Local image · A very long Sunday worship image filename.png"
+        ownerLabel="Booth PC with a long workstation name"
+        size="thumbnail"
+        scaleFactor={0}
+      />,
+    );
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveStyle({ gap: "24px", padding: "48px" });
+    expect(status).toHaveAttribute(
+      "title",
+      "Local source on another device · Local image · A very long Sunday worship image filename.png · Available on Booth PC with a long workstation name",
+    );
+    expect(screen.getByText("Local source on another device")).toHaveStyle({
+      fontSize: "80px",
+    });
+    expect(screen.getByText(/A very long Sunday/)).toHaveStyle({
+      fontSize: "48px",
+    });
+
+    rerender(
+      <LocalSourceStatus
+        sourceLabel="Local image · A very long Sunday worship image filename.png"
+        ownerLabel="Booth PC with a long workstation name"
+        size="thumbnail"
+        scaleFactor={0.12}
+      />,
+    );
+    expect(screen.getByText("Local source on another device")).toHaveStyle({
+      fontSize: "80px",
+    });
+
+    rerender(
+      <LocalSourceStatus
+        sourceLabel="Local image · A very long Sunday worship image filename.png"
+        ownerLabel="Booth PC with a long workstation name"
+        size="thumbnail"
+        scaleFactor={0.4}
+      />,
+    );
+    expect(screen.getByText("Local source on another device")).toHaveStyle({
+      fontSize: "80px",
+    });
   });
 
   it("shows compact indicators with accessible source details and no filesystem path", () => {

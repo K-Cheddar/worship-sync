@@ -111,6 +111,7 @@ const renderManager = ({
   serviceTimeZone = "UTC",
   smsEligibilityByMemberId,
   selfMemberId = null,
+  onFormSaved,
 }: {
   canEdit?: boolean;
   availabilityResponses?: TeamAvailabilityResponse[];
@@ -129,54 +130,68 @@ const renderManager = ({
   serviceTimeZone?: string;
   selfMemberId?: string | null;
   smsEligibilityByMemberId?: Record<string, { eligible: boolean; status?: "no_mobile" | "consent_needed" | "enabled" | "opted_out" }>;
+  onFormSaved?: (form: TeamIntakeForm) => void;
 } = {}) => {
   mockServiceTimeZone = serviceTimeZone;
   const onSmsDeliveryAttemptSaved = jest.fn();
   const onRecipientSaved = jest.fn();
-  const view = render(
-    <MemoryRouter>
-      <GlobalInfoContext.Provider
-        value={{ churchId: "church-1", role: "admin" } as ContextType<
-          typeof GlobalInfoContext
-        >}
-      >
-        <ToastProvider>
-          <CurrentMemberIdentityProvider memberId={selfMemberId}>
-            <TeamsNavigationGuardProvider>
-              <IntakeManager
-              availabilityOnly={availabilityOnly}
-              managedTeamIds={managedTeamIds}
-              forms={forms}
-              submissions={submissions}
-              intakeRecipients={intakeRecipients}
-              services={services}
-              schedules={schedules}
-              members={members}
-              positions={positions}
-              teams={teams}
-              canEdit={canEdit}
-              availabilityResponses={availabilityResponses}
-              onAvailabilityRefresh={onAvailabilityRefresh}
-              onFormSaved={jest.fn()}
-              onSubmissionSaved={jest.fn()}
-              onMemberSaved={jest.fn()}
-              onTeamSaved={jest.fn()}
-              onRecipientSaved={onRecipientSaved}
-              onSmsDeliveryAttemptSaved={onSmsDeliveryAttemptSaved}
-              smsEligibilityByMemberId={smsEligibilityByMemberId || {
-                "member-1": {
-                  status: eligibilityStatus,
-                  eligible: eligibilityStatus === "enabled",
-                },
-              }}
-              smsDeliveryAttempts={[]}
-              />
-            </TeamsNavigationGuardProvider>
-          </CurrentMemberIdentityProvider>
-        </ToastProvider>
-      </GlobalInfoContext.Provider>
-    </MemoryRouter>,
-  );
+  const ManagerHarness = () => {
+    const [currentForms, setCurrentForms] = useState(forms);
+    const handleFormSaved = (savedForm: TeamIntakeForm) => {
+      setCurrentForms((current) => {
+        const found = current.some((item) => item.formId === savedForm.formId);
+        return found
+          ? current.map((item) => item.formId === savedForm.formId ? savedForm : item)
+          : [...current, savedForm];
+      });
+      onFormSaved?.(savedForm);
+    };
+    return (
+      <MemoryRouter>
+        <GlobalInfoContext.Provider
+          value={{ churchId: "church-1", role: "admin" } as ContextType<
+            typeof GlobalInfoContext
+          >}
+        >
+          <ToastProvider>
+            <CurrentMemberIdentityProvider memberId={selfMemberId}>
+              <TeamsNavigationGuardProvider>
+                <IntakeManager
+                  availabilityOnly={availabilityOnly}
+                  managedTeamIds={managedTeamIds}
+                  forms={currentForms}
+                  submissions={submissions}
+                  intakeRecipients={intakeRecipients}
+                  services={services}
+                  schedules={schedules}
+                  members={members}
+                  positions={positions}
+                  teams={teams}
+                  canEdit={canEdit}
+                  availabilityResponses={availabilityResponses}
+                  onAvailabilityRefresh={onAvailabilityRefresh}
+                  onFormSaved={handleFormSaved}
+                  onSubmissionSaved={jest.fn()}
+                  onMemberSaved={jest.fn()}
+                  onTeamSaved={jest.fn()}
+                  onRecipientSaved={onRecipientSaved}
+                  onSmsDeliveryAttemptSaved={onSmsDeliveryAttemptSaved}
+                  smsEligibilityByMemberId={smsEligibilityByMemberId || {
+                    "member-1": {
+                      status: eligibilityStatus,
+                      eligible: eligibilityStatus === "enabled",
+                    },
+                  }}
+                  smsDeliveryAttempts={[]}
+                />
+              </TeamsNavigationGuardProvider>
+            </CurrentMemberIdentityProvider>
+          </ToastProvider>
+        </GlobalInfoContext.Provider>
+      </MemoryRouter>
+    );
+  };
+  const view = render(<ManagerHarness />);
   return { ...view, onSmsDeliveryAttemptSaved, onRecipientSaved };
 };
 
@@ -459,7 +474,8 @@ test("availability-only manager hides member intake and consent details", async 
   expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
   expect(screen.getByRole("group", { name: "Teams to collect for" })).toBeInTheDocument();
   expect(screen.getByText("Availability services: None")).toBeInTheDocument();
-  expect(screen.queryByText("Form wording")).not.toBeInTheDocument();
+  expect(screen.getByText("Form wording")).toBeInTheDocument();
+  expect(screen.getByLabelText(/Welcome message/)).toBeInTheDocument();
   expect(screen.queryByText("Fields to collect")).not.toBeInTheDocument();
   expect(screen.queryByRole("button", { name: /public form link/i })).not.toBeInTheDocument();
 });
@@ -499,7 +515,8 @@ test("a church-wide editor gets the restricted editor and immutable payload for 
   await user.click(screen.getByRole("button", { name: "Edit" }));
 
   expect(screen.queryByRole("group", { name: "Fields to include" })).not.toBeInTheDocument();
-  expect(screen.queryByLabelText("Welcome message")).not.toBeInTheDocument();
+  expect(screen.getByLabelText(/Welcome message/)).toBeInTheDocument();
+  expect(screen.getByText(/Default: Please let us know which upcoming services you're available to serve\./)).toBeInTheDocument();
   expect(screen.queryByText("Birthday (year optional)")).not.toBeInTheDocument();
   expect(screen.queryByLabelText("Notes message")).not.toBeInTheDocument();
   expect(screen.getByRole("group", { name: "Service dates" })).toBeInTheDocument();
@@ -514,8 +531,48 @@ test("a church-wide editor gets the restricted editor and immutable payload for 
       enabledFields: ["availability"],
       teamIds: ["team-1"],
       availabilityOccurrences: [savedOccurrence],
+      welcomeMessage: "",
     }),
   ));
+});
+
+test("availability welcome wording can reset, save, and reopen", async () => {
+  const user = userEvent.setup();
+  const availabilityForm: TeamIntakeForm = {
+    ...form,
+    purpose: "team_availability",
+    enabledFields: ["availability"],
+    welcomeMessage: "Existing custom welcome.",
+    availabilityOccurrences: [{
+      occurrenceId: "saved-service@2026-10-18T14:00:00.000Z",
+      serviceId: "saved-service",
+      name: "Saved service",
+      startsAt: "2026-10-18T14:00:00.000Z",
+      serviceDate: "2026-10-18",
+    }],
+  };
+  const savedForm = { ...availabilityForm, welcomeMessage: "Welcome, Worship team." };
+  jest.mocked(updateTeamIntakeForm).mockResolvedValue({ success: true, form: savedForm });
+  renderManager({ forms: [availabilityForm], intakeRecipients: [] });
+
+  await openForm(user);
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  const welcome = screen.getByLabelText(/Welcome message/);
+  expect(welcome).toHaveValue("Existing custom welcome.");
+  await user.click(screen.getByRole("button", { name: "Reset to default" }));
+  expect(welcome).toHaveValue("");
+  expect(screen.getByText(/Default: Please let us know which upcoming services you're available to serve\./)).toBeInTheDocument();
+  await user.type(welcome, "Welcome, Worship team.");
+  await user.click(screen.getByRole("button", { name: "Save form" }));
+  await waitFor(() => expect(updateTeamIntakeForm).toHaveBeenCalledWith(
+    "church-1",
+    availabilityForm.formId,
+    expect.objectContaining({ welcomeMessage: "Welcome, Worship team." }),
+  ));
+
+  await screen.findByRole("button", { name: "Send requests" });
+  await user.click(screen.getByRole("button", { name: "Edit" }));
+  expect(screen.getByLabelText(/Welcome message/)).toHaveValue("Welcome, Worship team.");
 });
 
 test("saved availability forms stay readable and keep their dates when the church time zone is unavailable", async () => {
@@ -925,6 +982,80 @@ test("does not mark an unmatched intake submission by name", async () => {
     name: "Expand submission from Rae Kim",
   });
   expect(within(submissionCard).queryByText("You")).not.toBeInTheDocument();
+});
+
+test("general availability review suggests only in-scope members and requires an explicit apply", async () => {
+  const user = userEvent.setup();
+  const outsideMember = {
+    ...member,
+    memberId: "member-outside",
+    teamMemberships: { "team-2": { teamId: "team-2" } },
+    email: "rae@example.com",
+  };
+  const submission: TeamIntakeSubmission = {
+    ...submittedAvailability,
+    formId: workspaceForm.formId,
+    email: "rae@example.com",
+    occurrenceAvailability: { sunday: "available" },
+  };
+  renderManager({
+    forms: [workspaceForm],
+    submissions: [submission],
+    intakeRecipients: [],
+    members: [member, outsideMember],
+    teams: [
+      { teamId: "team-1", churchId: "church-1", name: "Worship", memberIds: [member.memberId] },
+      { teamId: "team-2", churchId: "church-1", name: "Media", memberIds: [outsideMember.memberId] },
+    ],
+  });
+  await openForm(user);
+  await user.click(screen.getByText(/Review availability link responses/));
+  await user.click(screen.getByRole("button", { name: "Expand submission from Rae Kim" }));
+
+  expect(screen.getByText("Suggested match:")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Apply to member" })).toBeEnabled();
+  expect(screen.queryByRole("button", { name: "Create member" })).not.toBeInTheDocument();
+  expect(screen.queryByRole("button", { name: "Link exact matches" })).not.toBeInTheDocument();
+});
+
+test("ambiguous availability matches and duplicate responses stay manual", async () => {
+  const user = userEvent.setup();
+  const firstMember = { ...member, email: "rae@example.com" };
+  const secondMember = {
+    ...member,
+    memberId: "member-2",
+    email: "rae@example.com",
+  };
+  const firstSubmission: TeamIntakeSubmission = {
+    ...submittedAvailability,
+    formId: workspaceForm.formId,
+    email: "rae@example.com",
+  };
+  const secondSubmission: TeamIntakeSubmission = {
+    ...firstSubmission,
+    submissionId: "submission-2",
+  };
+  renderManager({
+    forms: [workspaceForm],
+    submissions: [firstSubmission, secondSubmission],
+    intakeRecipients: [],
+    members: [firstMember, secondMember],
+    teams: [{
+      teamId: "team-1",
+      churchId: "church-1",
+      name: "Worship",
+      memberIds: [firstMember.memberId, secondMember.memberId],
+    }],
+  });
+  await openForm(user);
+  await user.click(screen.getByText(/Review availability link responses/));
+  const cards = screen.getAllByRole("button", { name: "Expand submission from Rae Kim" });
+  await user.click(cards[0]);
+
+  expect(screen.getByText(/same name and email/i)).toBeInTheDocument();
+  expect(screen.queryByText("Suggested match:")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Apply to member" })).toBeDisabled();
+  expect(screen.queryByRole("button", { name: "Create member" })).not.toBeInTheDocument();
 });
 
 test.each([

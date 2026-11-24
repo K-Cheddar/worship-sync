@@ -12,6 +12,18 @@ An existing church opens its saved content safely, including offline, and overla
 - Refresh bootstrap readers after verification. Show replicated content without navigation, retain operator edits, and create defaults only when the post-pull authoritative state still lacks the document. Preserve guest/demo seeding.
 - Register/select a newly created outline only after its detail document is saved successfully. Only a genuine missing-document read permits creation; other read failures must propagate without writing. This durable-success boundary also applies to copied outlines. (Current follow-up request, 2026-10-29.)
 
+## Startup inactivity recovery
+
+Confirmed by the current user request, November 24, 2026:
+
+- After 15 seconds without meaningful startup activity, offer an accessible
+  **Retry startup** action that reloads WorshipSync.
+- New meaningful activity clears the slow-startup message and resets the
+  inactivity period. Ordinary startup and automatic server reconnection remain
+  visible while work continues.
+- While automatic server reconnection is actively retrying, keep its status
+  visible without presenting the startup reload action.
+
 ## Saving
 - Capture concrete database and outline ownership at operation start. Serialize local writes by database, outline, and field; independent items and overlay order remain concurrent.
 - Superseded intentions cannot resume a read/write/retry and overwrite the latest intention. An entered put must settle before the newer same-field put. Keep conflict retries bounded and genuine failures visible.

@@ -13,6 +13,22 @@ import ControllerInfoProvider, {
 import { GlobalInfoContext } from "./globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
 import { hasSuccessfulInitialContentReplication } from "../utils/contentReplicationActivity";
+import * as startupDiagnostics from "../utils/startupDiagnostics";
+
+jest.mock("../utils/startupDiagnostics", () => {
+  const actual = jest.requireActual("../utils/startupDiagnostics");
+  return {
+    ...actual,
+    getStartupDiagnosticMode: jest.fn(() => "off"),
+    isStartupDiagnosticsActive: jest.fn(() => false),
+    recordStartupDiagnostic: jest.fn(),
+    beginStartupReplication: jest.fn(() => ({
+      recordBatch: jest.fn(),
+      recordRetry: jest.fn(),
+      finish: jest.fn(),
+    })),
+  };
+});
 
 const mockPouchInstances: Array<{
   name: string;
@@ -37,6 +53,7 @@ const replicationCalls: Array<{ name: string; options?: Record<string, unknown> 
 const initialPullHandles: Array<{ emit: (event: string, value?: any) => void }> = [];
 let completeInitialPullAutomatically = true;
 let localPouchConstructorFailureName: string | null = null;
+let deferredLocalItemSnapshot: Promise<unknown> | null = null;
 const verifiedCheckpointDatabaseNames = new Set<string>();
 
 const createSyncHandle = (completeAfterSetup = false) => {
@@ -85,7 +102,7 @@ jest.mock("pouchdb-browser", () => {
       }),
       destroy: jest.fn().mockResolvedValue(undefined),
       bulkDocs: jest.fn().mockResolvedValue([]),
-      allDocs: jest.fn().mockImplementation(async () => ({ update_seq: 0, rows: mockLocalItemDocs.map((doc) => ({ doc })) })),
+      allDocs: jest.fn().mockImplementation(() => deferredLocalItemSnapshot ?? Promise.resolve({ update_seq: 0, rows: mockLocalItemDocs.map((doc) => ({ doc })) })),
       sync: jest.fn((_remote: unknown, options?: Record<string, unknown>) => {
         liveSyncOwners.push(name);
         liveSyncOptions.push(options ?? {});
@@ -98,7 +115,7 @@ jest.mock("pouchdb-browser", () => {
         to: jest.fn((_target: unknown, options?: Record<string, unknown>) => {
           replicationCalls.push({ name, options });
           const handle = createSyncHandle(completeInitialPullAutomatically);
-          if (options?.batch_size === 150) initialPullHandles.push(handle);
+          if (!name.includes("bibles")) initialPullHandles.push(handle);
           return handle;
         }),
       },
@@ -133,6 +150,29 @@ const Probe = () => {
 };
 
 describe("ControllerInfoProvider", () => {
+  const renderAuthenticatedStartup = (path = "/workstation/operator") => render(
+    <Provider store={store}>
+      <GlobalInfoContext.Provider value={createMockGlobalContext({
+        loginState: "success",
+        sessionKind: "workstation",
+        database: "startup-test-church",
+      }) as any}>
+        <MemoryRouter initialEntries={[path]}>
+          <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>
+    </Provider>,
+  );
+
+  const resolveCouchSession = () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+  };
+
   beforeEach(() => {
     mockLocalItemDocs = [];
     mockPouchInstances.length = 0;
@@ -144,7 +184,9 @@ describe("ControllerInfoProvider", () => {
     initialPullHandles.length = 0;
     completeInitialPullAutomatically = true;
     localPouchConstructorFailureName = null;
+    deferredLocalItemSnapshot = null;
     verifiedCheckpointDatabaseNames.clear();
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("off");
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -156,6 +198,7 @@ describe("ControllerInfoProvider", () => {
   });
 
   afterEach(() => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("off");
     jest.restoreAllMocks();
     jest.useRealTimers();
   });
@@ -232,6 +275,82 @@ describe("ControllerInfoProvider", () => {
         expect.objectContaining({ _id: "offline-demo-outline" }),
       ]),
     );
+  });
+
+  it("skips both database initializations without starting session retries", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("skip-databases");
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(screen.getByTestId("startup-stage")).toHaveTextContent("idle"));
+    expect(mockPouchInstances).toHaveLength(0);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("has-db")).toHaveTextContent("no");
+  });
+
+  it("initializes content only and uses the bounded normal queue", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("content-only");
+    resolveCouchSession();
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(replicationCalls).toHaveLength(1));
+    expect(replicationCalls[0].name).not.toContain("bibles");
+    expect(replicationCalls[0].options).toEqual(expect.objectContaining({
+      batch_size: 100,
+      batches_limit: 2,
+      selector: { _id: { $ne: "media" } },
+    }));
+  });
+
+  it("initializes Bible only when its authenticated database session is ready", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("bible-only");
+    resolveCouchSession();
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(replicationCalls).toHaveLength(1));
+    expect(replicationCalls[0].name).toContain("bibles");
+    expect(replicationCalls[0].options).toEqual(expect.objectContaining({
+      batch_size: 100,
+      batches_limit: 2,
+    }));
+    expect(mockPouchInstances.some((instance) => instance.name === "worship-sync-startup-test-church")).toBe(false);
+  });
+
+  it("uses smaller batch and queue settings for both databases", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("reduced-batches");
+    resolveCouchSession();
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(replicationCalls).toHaveLength(2));
+    expect(replicationCalls.map(({ options }) => [options?.batch_size, options?.batches_limit])).toEqual([
+      [25, 2],
+      [25, 2],
+    ]);
+  });
+
+  it("waits for content's initial pull before opening the Bible database in sequential mode", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("sequential");
+    resolveCouchSession();
+    completeInitialPullAutomatically = false;
+    let resolveItemSnapshot!: (value: unknown) => void;
+    deferredLocalItemSnapshot = new Promise((resolve) => { resolveItemSnapshot = resolve; });
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(mockPouchInstances.find(({ name }) => name === "worship-sync-startup-test-church")?.allDocs).toHaveBeenCalled());
+    expect(replicationCalls).toHaveLength(0);
+    expect(mockPouchInstances.some((instance) => instance.name === "worship-sync-bibles")).toBe(false);
+
+    await act(async () => {
+      resolveItemSnapshot({ update_seq: 0, rows: [] });
+    });
+    await waitFor(() => expect(replicationCalls).toHaveLength(1));
+    expect(replicationCalls[0].name).not.toContain("bibles");
+    expect(mockPouchInstances.some((instance) => instance.name === "worship-sync-bibles")).toBe(false);
+
+    await act(async () => {
+      initialPullHandles[0].emit("complete", { ok: true });
+    });
+    await waitFor(() => expect(replicationCalls).toHaveLength(2));
+    expect(replicationCalls[1].name).toContain("bibles");
   });
 });
 
@@ -342,7 +461,7 @@ describe("controller replication 413 batch policy", () => {
     );
     await waitFor(() => expect(liveSyncHandles).toHaveLength(1));
 
-    const startupPull = replicationCalls.find(({ options }) => options?.batch_size === 150);
+    const startupPull = replicationCalls.find(({ options }) => options?.batch_size === 100);
     expect(startupPull?.options).toEqual(expect.objectContaining({
       selector: { _id: { $ne: "media" } },
     }));

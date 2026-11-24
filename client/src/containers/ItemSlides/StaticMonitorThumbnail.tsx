@@ -13,6 +13,7 @@ import MonitorBandBackground from "../../components/DisplayWindow/MonitorBandBac
 import MonitorDisplayBox from "../../components/DisplayWindow/MonitorDisplayBox";
 import VerseDisplay from "../../components/DisplayWindow/VerseDisplay";
 import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
+import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadge/LocalVideoInputSlideBadge";
 import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 
@@ -139,7 +140,7 @@ const StaticMonitorThumbnail = ({
 
   return (
     <div
-      className="relative aspect-video w-full overflow-hidden overflow-anywhere border border-gray-500 text-white bg-black"
+      className="relative isolate aspect-video w-full overflow-hidden overflow-anywhere border border-gray-500 text-white bg-black"
       style={{ fontFamily: "Inter, sans-serif" }}
       data-testid="static-slide-thumbnail"
       data-preview-mode="monitor"
@@ -270,13 +271,33 @@ const StaticMonitorThumbnail = ({
             {showClockTimer && renderClockTimerBand()}
           </div>
         )}
+        {localVideoInputStatus && !localVideoInputThumbnailUrl ? (
+          <LocalSourceStatus
+            {...localVideoInputStatus}
+            size="thumbnail"
+            scaleFactor={scaleFactor}
+            testId="local-video-input-thumbnail-status"
+          />
+        ) : null}
       </div>
-      {localVideoInputStatus ? (
+      {localVideoInputStatus && localVideoInputThumbnailUrl ? (
         <LocalSourceStatus
           {...localVideoInputStatus}
-          {...(localVideoInputThumbnailUrl
-            ? { variant: "indicator" as const }
-            : { size: "thumbnail" as const, scaleFactor: 1 })}
+          variant="indicator"
+        />
+      ) : null}
+      {slide.mediaSource?.kind === "local-video-input" &&
+      !localVideoInputStatus ? (
+        <LocalVideoInputSlideBadge
+          label={slide.mediaSource.label}
+          captureKind={slide.mediaSource.captureKind}
+          variant={localVideoInputThumbnailUrl ? "indicator" : "overlay"}
+          coverTitleBar={!localVideoInputThumbnailUrl}
+          className={
+            localVideoInputThumbnailUrl
+              ? "!bottom-2 !left-2 !right-auto !max-w-[65%]"
+              : undefined
+          }
         />
       ) : null}
     </div>

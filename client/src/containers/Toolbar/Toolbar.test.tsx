@@ -403,6 +403,7 @@ describe("Toolbar", () => {
     expect(mockDispatch).not.toHaveBeenCalled();
 
     act(() => screen.getByRole("button", { name: "Formatting scope: This slide" }).click());
+    act(() => screen.getByRole("menuitemradio", { name: "All slides" }).click());
     expect(screen.getByRole("radio", { name: "All slides" })).toHaveAttribute(
       "aria-checked",
       "true",
@@ -417,6 +418,7 @@ describe("Toolbar", () => {
   it("remembers the selected editing scope after the toolbar remounts", () => {
     const view = renderToolbar({ access: "full", itemType: "song" });
     act(() => screen.getByRole("button", { name: "Formatting scope: All slides" }).click());
+    act(() => screen.getByRole("menuitemradio", { name: "This slide" }).click());
     expect(localStorage.getItem("worshipsync_slide_editing_scope")).toBe("selected");
 
     view.unmount();

@@ -95,6 +95,7 @@ import {
   getVerifyEmailCodeErrorMessage,
   SIGN_IN_UNEXPECTED_RESPONSE,
 } from "../utils/authUserMessages";
+import { recordStartupDiagnostic } from "../utils/startupDiagnostics";
 import {
   clearCsrfToken,
   clearDisplayToken,
@@ -876,10 +877,17 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     presentationListenerGenerationRef.current += 1;
     contentHiddenFreshnessCleanupRef.current();
     const subs = onValueRef.current;
+    let stoppedCount = 0;
     if (subs) {
       (Object.keys(subs) as (keyof typeof subs)[]).forEach((key) => {
+        if (subs[key]) stoppedCount += 1;
         subs[key]?.();
         subs[key] = undefined;
+      });
+    }
+    if (stoppedCount > 0) {
+      recordStartupDiagnostic("firebase", "presentation-subscriptions.stopped", {
+        count: stoppedCount,
       });
     }
     storageListenerCleanupRef.current?.();
@@ -917,6 +925,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
     bootstrap?: AuthBootstrap | null,
     options?: { clearWorkstationSessionOperator?: boolean }
   ) => {
+    recordStartupDiagnostic("auth", "bootstrap.applied", {
+      authenticated: Boolean(bootstrap?.authenticated),
+      sessionKind: bootstrap?.sessionKind ?? "none",
+    });
     setAuthenticatedSessionExpected(Boolean(bootstrap?.authenticated));
     if (!bootstrap?.authenticated) {
       setLoginState("idle");
@@ -1637,11 +1649,15 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
   const refreshAuthBootstrap = useCallback(async (options?: { requireFresh?: boolean }): Promise<boolean> => {
     if (refreshAuthBootstrapPromiseRef.current) {
+      recordStartupDiagnostic("auth", "bootstrap.coalesced");
       const refreshed = await refreshAuthBootstrapPromiseRef.current;
       // A mutation must not reuse a request that read access before it committed.
       if (options?.requireFresh) return refreshAuthBootstrapRef.current();
       return refreshed;
     }
+
+    const bootstrapStartedAt = performance.now();
+    recordStartupDiagnostic("auth", "bootstrap.started");
 
     if (bootstrapStatusRef.current !== "ready") {
       setBootstrapStatus("loading");
@@ -1801,7 +1817,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
 
     refreshAuthBootstrapPromiseRef.current = promise;
     try {
-      return await promise;
+      const authenticated = await promise;
+      recordStartupDiagnostic("auth", "bootstrap.finished", {
+        authenticated,
+        durationMs: Math.round(performance.now() - bootstrapStartedAt),
+      });
+      return authenticated;
+    } catch (error) {
+      recordStartupDiagnostic("auth", "bootstrap.finished", {
+        outcome: "error",
+        durationMs: Math.round(performance.now() - bootstrapStartedAt),
+      });
+      throw error;
     } finally {
       refreshAuthBootstrapPromiseRef.current = null;
     }
@@ -1897,6 +1924,8 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       scopeReady: false,
     });
 
+    const sharedAuthStartedAt = performance.now();
+    recordStartupDiagnostic("firebase", "shared-auth.started");
     setFirebaseDb(undefined);
     setIsSharedDataReady(false);
     setAuthenticatedSharedDataScope(null);
@@ -1933,6 +1962,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             setIsSharedDataReady(true);
             setAuthenticatedSharedDataScope(targetSharedDataScope);
             globalFireDbInfo.db = _db;
+            recordStartupDiagnostic("firebase", "shared-auth.ready", {
+              durationMs: Math.round(performance.now() - sharedAuthStartedAt),
+            });
           })
           .catch((error) => {
             if (cancelled || requestId !== sharedDataAuthRequestIdRef.current) {
@@ -1951,6 +1983,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
             globalFireDbInfo.db = undefined;
             globalFireDbInfo.isConnected = false;
             setAuthError("Could not connect live data.");
+            recordStartupDiagnostic("firebase", "shared-auth.failed", {
+              durationMs: Math.round(performance.now() - sharedAuthStartedAt),
+            });
           });
       })
       .catch((error) => {
@@ -1970,6 +2005,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         globalFireDbInfo.db = undefined;
         globalFireDbInfo.isConnected = false;
         setAuthError("Could not connect live data.");
+        recordStartupDiagnostic("firebase", "shared-token.failed", {
+          durationMs: Math.round(performance.now() - sharedAuthStartedAt),
+        });
       });
 
     return () => {
@@ -2300,6 +2338,10 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
           ),
     );
     if (!firebaseDb || !isSharedDataScopeReady) {
+      recordStartupDiagnostic("firebase", "presentation-subscriptions.skipped", {
+        databaseReady: Boolean(firebaseDb),
+        sharedScopeReady: isSharedDataScopeReady,
+      });
       clearPresentationFirebaseListeners();
       cancelFreshnessWork();
       return;
@@ -2424,6 +2466,9 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
         );
       }
     }
+    recordStartupDiagnostic("firebase", "presentation-subscriptions.started", {
+      count: Object.values(onValueRef.current).filter(Boolean).length,
+    });
   }, [
     churchId,
     firebaseDb,
@@ -2546,11 +2591,18 @@ const GlobalInfoProvider = ({ children }: { children: React.ReactNode }) => {
       setServerTimeOffset(snap.val() ?? 0);
     });
 
+    recordStartupDiagnostic("firebase", "connection-subscriptions.started", {
+      count: 2,
+    });
+
     return () => {
       globalFireDbInfo.isConnected = false;
       setRealtimeConnected(false);
       unsubscribe();
       unsubscribeOffset();
+      recordStartupDiagnostic("firebase", "connection-subscriptions.stopped", {
+        count: 2,
+      });
     };
   }, [
     activeInstanceName,

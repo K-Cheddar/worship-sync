@@ -157,6 +157,7 @@ describe("AllToolsDrawer quick toolbar targets", () => {
     );
 
     fireEvent.click(scopeButton);
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "This slide" }));
     expect(screen.getByRole("button", { name: "Formatting scope: This slide" })).toHaveTextContent(
       "This slide",
     );
@@ -165,7 +166,8 @@ describe("AllToolsDrawer quick toolbar targets", () => {
       "true",
     );
 
-    fireEvent.click(screen.getByRole("radio", { name: "All slides" }));
+    fireEvent.click(screen.getByRole("button", { name: "Formatting scope: This slide" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "All slides" }));
     expect(screen.getByRole("button", { name: "Formatting scope: All slides" })).toHaveTextContent(
       "All slides",
     );

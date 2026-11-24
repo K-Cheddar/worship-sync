@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { SlidersHorizontal } from "lucide-react";
+import { ChevronDown, SlidersHorizontal } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Drawer from "../../../components/Drawer/Drawer";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/DropdownMenu";
 import RadioButton, { RadioGroup } from "../../../components/RadioButton/RadioButton";
 import type { SlideEditingScope } from "../../../utils/slideEditingScope";
 
@@ -89,21 +97,38 @@ const AllToolsDrawer = ({
               data-testid="quick-editing-toolbar-groups"
             >
               <div className="flex shrink-0 items-center border-r border-gray-600 px-1">
-                <Button
-                  type="button"
-                  variant="tertiary"
-                  className="h-8 shrink-0 px-2 text-xs"
-                  aria-label={`Formatting scope: ${editingScope === "all" ? "All slides" : "This slide"}`}
-                  aria-pressed={editingScope === "all"}
-                  title="Choose whether text, appearance, and layout changes apply to this slide or all slides"
-                  onClick={() =>
-                    onEditingScopeChange(
-                      editingScope === "all" ? "selected" : "all",
-                    )
-                  }
-                >
-                  {editingScope === "all" ? "All slides" : "This slide"}
-                </Button>
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      className="h-8 shrink-0 gap-1.5 rounded-md border-gray-500 bg-gray-800/70 px-2 text-xs hover:border-cyan-400 hover:bg-gray-700"
+                      aria-label={`Formatting scope: ${editingScope === "all" ? "All slides" : "This slide"}`}
+                      title="Choose whether text, appearance, and layout changes apply to this slide or all slides"
+                    >
+                      {editingScope === "all" ? "All slides" : "This slide"}
+                      <ChevronDown className="size-3.5 text-gray-300" aria-hidden="true" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" sideOffset={4} className="min-w-40">
+                    <DropdownMenuLabel className="text-xs text-gray-400">
+                      Apply changes to
+                    </DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={editingScope}
+                      onValueChange={(value) =>
+                        onEditingScopeChange(value as SlideEditingScope)
+                      }
+                    >
+                      <DropdownMenuRadioItem value="selected">
+                        This slide
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="all">
+                        All slides
+                      </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
               <div
                 ref={setQuickFontSize}

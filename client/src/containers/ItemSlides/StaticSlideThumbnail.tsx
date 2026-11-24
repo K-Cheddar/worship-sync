@@ -20,6 +20,7 @@ import {
 } from "../../utils/displaySettings";
 import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import LocalSourceStatus from "../../components/DisplayWindow/LocalSourceStatus";
+import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadge/LocalVideoInputSlideBadge";
 import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
 import { useLocalVideoFileUrl } from "../../hooks/useLocalVideoFileUrl";
 
@@ -104,7 +105,7 @@ const StaticSlideThumbnail = ({
   );
   return (
     <div
-      className={`relative aspect-video w-full overflow-hidden overflow-anywhere border border-gray-500 text-white ${
+      className={`relative isolate aspect-video w-full overflow-hidden overflow-anywhere border border-gray-500 text-white ${
         isStreamFormat ? "bg-transparent" : "bg-black"
       }`}
       style={{ fontFamily: "Inter, sans-serif" }}
@@ -188,48 +189,65 @@ const StaticSlideThumbnail = ({
             />
           ))
         )}
+        {localVideoInputStatus && !localVideoInputThumbnailUrl ? (
+          <LocalSourceStatus
+            {...localVideoInputStatus}
+            size="thumbnail"
+            scaleFactor={scaleFactor}
+            transparentBackground={isStreamFormat}
+            testId="local-video-input-thumbnail-status"
+          />
+        ) : null}
+        {isStreamFormat &&
+        streamVideoSource.isLocalVideoFile &&
+        streamVideoSource.status !== "ready" &&
+        streamVideoSource.status !== "not-local" ? (
+          <LocalSourceStatus
+            sourceLabel={`Local video · ${slide.boxes[0]?.mediaInfo?.localVideoFile?.fileName || "Background"}`}
+            ownerLabel={
+              streamVideoSource.isOwner
+                ? undefined
+                : slide.boxes[0]?.mediaInfo?.localVideoFile?.ownerLabel
+            }
+            heading={
+              streamVideoSource.status === "loading"
+                ? "Loading local video"
+                : streamVideoSource.isOwner
+                  ? "Local video unavailable"
+                  : undefined
+            }
+            state={
+              streamVideoSource.status === "loading" ? "loading" : undefined
+            }
+            detail={
+              streamVideoSource.isOwner
+                ? "Open Media on this device and relink the file."
+                : undefined
+            }
+            size="thumbnail"
+            scaleFactor={scaleFactor}
+            transparentBackground
+          />
+        ) : null}
       </div>
-      {localVideoInputStatus ? (
+      {localVideoInputStatus && localVideoInputThumbnailUrl ? (
         <LocalSourceStatus
           {...localVideoInputStatus}
-          {...(localVideoInputThumbnailUrl
-            ? { variant: "indicator" as const }
-            : {
-                size: "thumbnail" as const,
-                scaleFactor: 1,
-                transparentBackground: isStreamFormat,
-              })}
+          variant="indicator"
         />
       ) : null}
-      {isStreamFormat &&
-      streamVideoSource.isLocalVideoFile &&
-      streamVideoSource.status !== "ready" &&
-      streamVideoSource.status !== "not-local" ? (
-        <LocalSourceStatus
-          sourceLabel={`Local video · ${slide.boxes[0]?.mediaInfo?.localVideoFile?.fileName || "Background"}`}
-          ownerLabel={
-            streamVideoSource.isOwner
-              ? undefined
-              : slide.boxes[0]?.mediaInfo?.localVideoFile?.ownerLabel
-          }
-          heading={
-            streamVideoSource.status === "loading"
-              ? "Loading local video"
-              : streamVideoSource.isOwner
-                ? "Local video unavailable"
-                : undefined
-          }
-          state={
-            streamVideoSource.status === "loading" ? "loading" : undefined
-          }
-          detail={
-            streamVideoSource.isOwner
-              ? "Open Media on this device and relink the file."
+      {slide.mediaSource?.kind === "local-video-input" &&
+      !localVideoInputStatus ? (
+        <LocalVideoInputSlideBadge
+          label={slide.mediaSource.label}
+          captureKind={slide.mediaSource.captureKind}
+          variant={localVideoInputThumbnailUrl ? "indicator" : "overlay"}
+          coverTitleBar={!localVideoInputThumbnailUrl}
+          className={
+            localVideoInputThumbnailUrl
+              ? "!bottom-2 !left-2 !right-auto !max-w-[65%]"
               : undefined
           }
-          size="thumbnail"
-          scaleFactor={1}
-          transparentBackground
         />
       ) : null}
     </div>
