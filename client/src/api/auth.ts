@@ -2694,7 +2694,11 @@ export const previewSchedulingCycle = async (
   },
 ) => apiFetch<{
   success: boolean;
-  preview: { cycle: SchedulingCycleRecord; actions: SchedulingCycleAction[] };
+  preview: {
+    cycle: SchedulingCycleRecord;
+    actions: SchedulingCycleAction[];
+    requestTiming: { eligible: boolean; status: string; reason: string | null } | null;
+  };
   savedCycle: SchedulingCycleRecord | null;
   isUnsavedPreview: boolean;
 }>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/preview`, {
@@ -2729,7 +2733,7 @@ export const setAvailabilityAutomation = async (
     selectedPeriodId: string | null;
     selectedPeriodStarted: boolean;
     upcomingActions: import("./authTypes").SchedulingCycleAction[];
-    notificationDeliveryEnabled: false;
+    notificationDeliveryEnabled: boolean;
   };
 }>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/activation`, {
   method: "POST",

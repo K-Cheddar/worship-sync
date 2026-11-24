@@ -120,7 +120,7 @@ const renderPanel = () => {
   jest.mocked(getSchedulingCycle).mockResolvedValue({ success: true, savedCycle: null, savedActions: [] });
   jest.mocked(previewSchedulingCycle).mockResolvedValue({
     success: true,
-    preview: { cycle, actions },
+    preview: { cycle, actions, requestTiming: { eligible: true, status: "scheduled", reason: null } },
     savedCycle: null,
     isUnsavedPreview: true,
   });

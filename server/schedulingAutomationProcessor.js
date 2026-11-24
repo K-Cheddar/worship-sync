@@ -1,5 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { calendarDateInTimeZone } from "../shared/teamScheduleOccurrences.ts";
+import { evaluateAvailabilityRequestTiming } from "../shared/schedulingAutomationPolicy.ts";
 import {
   planSchedulingCycle,
   resolveEffectiveSchedulingSettings,
@@ -9,7 +10,8 @@ import {
 
 export const SCHEDULING_PROCESSOR_LIMITS = Object.freeze({
   churches: 100,
-  teamsPerChurch: 500,
+  teamsPerChurch: 50,
+  maxTeamScopesPerRun: 250,
   cyclesPerRun: 250,
   actionsPerRun: 100,
   claimLeaseMs: 5 * 60 * 1000,
@@ -18,7 +20,8 @@ export const SCHEDULING_PROCESSOR_LIMITS = Object.freeze({
   lookAheadMonths: 4,
 });
 
-export const MINIMUM_AUTOMATIC_AVAILABILITY_RESPONSE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const SCHEDULING_REQUEST_ON_TIME_GRACE_HOURS = 24;
+export const SCHEDULING_CATCH_UP_MINIMUM_LOCAL_DAYS = 7;
 
 const dateParts = (value) => {
   const [year, month, day] = String(value || "").split("-").map(Number);
@@ -32,15 +35,18 @@ const periodForOffset = (localDate, offset) => {
   return `${String(date.getUTCFullYear()).padStart(4, "0")}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
 };
 
-const addDays = (localDate, count) => {
-  const parts = dateParts(localDate);
-  if (!parts) return "";
-  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + count));
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}-${String(date.getUTCDate()).padStart(2, "0")}`;
-};
-
-const iso = (value) => new Date(value).toISOString();
 const stableUnique = (values) => [...new Set(values.filter(Boolean))];
+
+const timingForAction = ({ action, cycle, activationAt, now }) => evaluateAvailabilityRequestTiming({
+  dueAt: action.dueAt,
+  responseExpiresAt: cycle?.deadlines?.availabilityResponse?.dueAt,
+  responseDeadlineLocalDate: cycle?.deadlines?.availabilityResponse?.localDate,
+  serviceTimeZone: action.serviceTimeZone || cycle?.serviceTimeZone || "UTC",
+  activationAt,
+  now,
+  graceHours: SCHEDULING_REQUEST_ON_TIME_GRACE_HOURS,
+  catchUpCalendarDays: SCHEDULING_CATCH_UP_MINIMUM_LOCAL_DAYS,
+});
 
 const defaultLogger = {
   info: (event) => console.log(JSON.stringify(event)),
@@ -55,6 +61,7 @@ export const createSchedulingAutomationProcessor = ({
   now = () => new Date(),
   logger = defaultLogger,
   limits = SCHEDULING_PROCESSOR_LIMITS,
+  processorStateNamespace = "global",
 }) => {
   if (!firestore?.collection || typeof createAvailabilityRequest !== "function") {
     throw new TypeError("Firestore and the shared availability-request operation are required.");
@@ -67,6 +74,28 @@ export const createSchedulingAutomationProcessor = ({
 
   const settingsId = (churchId, teamId = "defaults") => schedulingSettingsIdFor({ churchId, teamId });
   const cycleId = (churchId, teamId, periodId) => schedulingCycleIdFor({ churchId, teamId, periodId });
+  const processorStateCollection = collections.teamSchedulingProcessorState || "teamSchedulingProcessorState";
+  const teamCursorId = (churchId) => `${processorStateNamespace}-team-page-${createHash("sha256").update(churchId).digest("hex")}`;
+  const readCursor = async (id) => {
+    const state = await getData(processorStateCollection, id);
+    return { value: String(state?.cursor || ""), revision: Number(state?.revision || 0) };
+  };
+  const saveCursor = async ({ id, expectedRevision, value, shouldPersist }) => {
+    if (!shouldPersist || !value) return false;
+    const ref = firestore.collection(processorStateCollection).doc(id);
+    return firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      const currentRevision = Number(snapshot.exists ? snapshot.data().revision || 0 : 0);
+      if (currentRevision !== expectedRevision) return false;
+      transaction.set(ref, { namespace: processorStateNamespace, cursor: value, revision: currentRevision + 1, updatedAt: now().toISOString() }, { merge: false });
+      return true;
+    });
+  };
+  const readPage = async ({ query, cursor, limit }) => {
+    const first = await (cursor ? query.startAfter(cursor).limit(limit).get() : query.limit(limit).get());
+    if (first.size > 0 || !cursor) return first.docs;
+    return (await query.limit(limit).get()).docs;
+  };
 
   const ensureCycle = async ({ churchId, team, church, defaults, override, periodId, activationAt }) => {
     const effective = resolveEffectiveSchedulingSettings({ defaults, override });
@@ -107,8 +136,7 @@ export const createSchedulingAutomationProcessor = ({
           createdAt: now().toISOString(),
           createdBy: null,
         });
-        const deadline = fresh.cycle.deadlines.availabilityResponse?.dueAt;
-        const responseWindowOpen = Date.parse(deadline || "") > now().getTime();
+        const responseDeadline = fresh.cycle.deadlines.availabilityResponse;
         const runnableTypes = new Set(["availability_request", "availability_follow_up", "leader_summary"]);
         fresh.cycle.automationEnabled = true;
         fresh.cycle.availabilityFormCreationEnabled = true;
@@ -116,15 +144,11 @@ export const createSchedulingAutomationProcessor = ({
         fresh.cycle.createdByAutomation = true;
         fresh.actions = fresh.actions.map((action) => {
           if (!runnableTypes.has(action.actionType)) return action;
-          const withinActivation = Date.parse(action.dueAt || "") >= Date.parse(activationAt || "");
-          const enoughTimeToRespond = action.actionType !== "availability_request" ||
-            Date.parse(deadline || "") - now().getTime() >= MINIMUM_AUTOMATIC_AVAILABILITY_RESPONSE_WINDOW_MS;
-          const state = withinActivation && responseWindowOpen && enoughTimeToRespond ? "pending" : "review_required";
-          const reason = state === "pending" ? null : !responseWindowOpen
-            ? "The availability response window has closed; a leader must review this cycle."
-            : !enoughTimeToRespond
-              ? "Less than seven days remain for availability responses; a leader must review this cycle."
-            : "This action date predates automation activation; a leader must review this cycle.";
+          const timing = action.actionType === "availability_request"
+            ? timingForAction({ action, cycle: fresh.cycle, activationAt, now: now() })
+            : { eligible: Date.parse(action.dueAt || "") >= Date.parse(activationAt || ""), reason: "The action date predates automation activation; leader review is required." };
+          const state = timing.eligible ? "pending" : "review_required";
+          const reason = timing.eligible ? null : timing.reason;
           return { ...action, enabled: state === "pending", state, ...(reason ? { lastError: reason } : {}) };
         });
         transaction.create(cycleRef, fresh.cycle);
@@ -165,16 +189,13 @@ export const createSchedulingAutomationProcessor = ({
       const updatedActions = actions.map((action) => {
         if (!runnableTypes.has(action.actionType) || ["completed", "skipped", "review_required", "canceled", "permanent_failure"].includes(action.state)) return action;
         const dueAt = Date.parse(action.dueAt || "");
-        const deadlineAt = Date.parse(cycle.deadlines?.availabilityResponse?.dueAt || "");
-        const enoughTimeToRespond = action.actionType !== "availability_request" ||
-          deadlineAt - now().getTime() >= MINIMUM_AUTOMATIC_AVAILABILITY_RESPONSE_WINDOW_MS;
-        const shouldRun = dueAt >= Date.parse(activationAt || "") && deadlineAt > now().getTime() && enoughTimeToRespond;
-        const nextState = shouldRun ? (action.state === "claimed" ? "claimed" : "pending") : "review_required";
-        const reason = shouldRun ? null : deadlineAt <= now().getTime()
-          ? "The availability response window has closed; a leader must review this cycle."
-          : !enoughTimeToRespond
-            ? "Less than seven days remain for availability responses; a leader must review this cycle."
-          : "The request date predates automation activation; a leader must review this cycle.";
+        if (action.state === "retryable_failure" || action.state === "claimed" || action.state === "pending") return action;
+        const timing = action.actionType === "availability_request"
+          ? timingForAction({ action, cycle, activationAt, now: now() })
+          : { eligible: dueAt >= Date.parse(activationAt || ""), reason: "The action date predates automation activation; leader review is required." };
+        const shouldRun = timing.eligible;
+        const nextState = shouldRun ? "pending" : "review_required";
+        const reason = shouldRun ? null : timing.reason;
         if (action.enabled !== shouldRun || action.state !== nextState || (reason && action.lastError !== reason)) {
           transaction.set(firestore.collection(collections.teamSchedulingActions).doc(action.actionId), {
             enabled: shouldRun,
@@ -189,12 +210,19 @@ export const createSchedulingAutomationProcessor = ({
     });
   };
 
-  const claimAction = async ({ candidate, runId, claimToken }) => {
+  const matchesScope = (action, scope = {}) =>
+    (!scope.churchId || action.churchId === scope.churchId) &&
+    (!scope.teamId || action.teamId === scope.teamId) &&
+    (!scope.periodId || action.periodId === scope.periodId) &&
+    (!scope.requestedCycleId || action.cycleId === scope.requestedCycleId);
+
+  const claimAction = async ({ candidate, runId, claimToken, scope }) => {
     const actionRef = firestore.collection(collections.teamSchedulingActions).doc(candidate.actionId);
     return firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(actionRef);
       if (!snapshot.exists) return null;
       const current = { actionId: snapshot.id, ...snapshot.data() };
+      if (!matchesScope(current, scope)) return null;
       const stateIsClaimable = ["pending", "retryable_failure", "claimed"].includes(current.state);
       const leaseStillActive = current.state === "claimed" && Date.parse(current.claimExpiresAt || "") > now().getTime();
       if (!current.enabled || !stateIsClaimable || leaseStillActive || Date.parse(current.dueAt || "") > now().getTime() ||
@@ -216,7 +244,25 @@ export const createSchedulingAutomationProcessor = ({
     });
   };
 
-  const finalizeAction = async ({ action, claimToken, state, result = null, error = null, retryAt = null }) => {
+  const renewClaim = async ({ action, claimToken }) => {
+    const actionRef = firestore.collection(collections.teamSchedulingActions).doc(action.actionId);
+    return firestore.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(actionRef);
+      if (!snapshot.exists) return false;
+      const current = snapshot.data();
+      const expiresAt = Date.parse(current.claimExpiresAt || "");
+      if (current.state !== "claimed" || current.claimToken !== claimToken || !Number.isFinite(expiresAt) || expiresAt <= now().getTime()) return false;
+      const timestamp = now().toISOString();
+      transaction.set(actionRef, {
+        claimExpiresAt: new Date(now().getTime() + limits.claimLeaseMs).toISOString(),
+        claimHeartbeatAt: timestamp,
+        updatedAt: timestamp,
+      }, { merge: true });
+      return true;
+    });
+  };
+
+  const finalizeAction = async ({ action, claimToken, state, result = null, error = null, retryAt = null, enabledOverride }) => {
     const actionRef = firestore.collection(collections.teamSchedulingActions).doc(action.actionId);
     return firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(actionRef);
@@ -232,7 +278,7 @@ export const createSchedulingAutomationProcessor = ({
       const timestamp = now().toISOString();
       const patch = {
         state,
-        enabled: state === "retryable_failure",
+        enabled: enabledOverride === undefined ? state === "retryable_failure" : enabledOverride,
         claimToken: null,
         claimOwner: null,
         claimedAt: null,
@@ -245,6 +291,7 @@ export const createSchedulingAutomationProcessor = ({
         ...(result?.failureClass ? { lastFailureClassification: result.failureClass } :
           state === "completed" ? { lastFailureClassification: null } : {}),
         ...(retryAt ? { nextAttemptAt: retryAt } : {}),
+        ...(!retryAt ? { nextAttemptAt: null } : {}),
       };
       transaction.set(actionRef, patch, { merge: true });
       if (cycleRef && cycleSnapshot?.exists) {
@@ -274,6 +321,10 @@ export const createSchedulingAutomationProcessor = ({
         !cycle.availabilityFormCreationEnabled || cycle.activationBoundaryAt !== defaults.availabilityAutomationActivatedAt) {
       return { eligible: false, reason: "The saved cycle is not eligible under the current activation." };
     }
+    if (action.actionType === "availability_request") {
+      const timing = timingForAction({ action, cycle, activationAt: defaults.availabilityAutomationActivatedAt, now: now() });
+      if (!timing.eligible) return { eligible: false, reason: timing.reason };
+    }
     const responseDeadline = Date.parse(cycle.deadlines?.availabilityResponse?.dueAt || "");
     if (responseDeadline <= now().getTime()) return { eligible: false, reason: "The availability response window has expired." };
     const schedules = await firestore.collection(collections.teamSchedules)
@@ -282,6 +333,9 @@ export const createSchedulingAutomationProcessor = ({
       .limit(500)
       .select("startDate", "endDate", "published", "archivedAt", "occurrences")
       .get();
+    if (schedules.size >= 500) {
+      return { eligible: false, reason: "The schedule review exceeded its safe read limit; a leader must review this cycle." };
+    }
     const published = schedules.docs.some((doc) => {
       const schedule = doc.data();
       if (schedule.archivedAt || schedule.published === false) return false;
@@ -298,104 +352,211 @@ export const createSchedulingAutomationProcessor = ({
   };
 
   const discoverAndEnsure = async ({ dryRun, churchId, teamId, periodId, requestedCycleId, startedAt, signal }) => {
-    const scopeQuery = firestore.collection(collections.teamSchedulingAutomationSettings)
+    const scoped = Boolean(churchId || teamId || periodId || requestedCycleId);
+    const persistCursors = !dryRun && !scoped;
+    const stateId = `${processorStateNamespace}-cycle-discovery`;
+    const initialChurchCursor = scoped ? { value: "", revision: 0 } : await readCursor(stateId);
+    let churchCursor = initialChurchCursor;
+    let churchQuery = firestore.collection(collections.teamSchedulingAutomationSettings)
       .where("scopeType", "==", "church_defaults")
       .where("availabilityAutomationEnabled", "==", true)
-      .limit(limits.churches);
-    const scopeSnapshot = churchId
-      ? await firestore.collection(collections.teamSchedulingAutomationSettings)
-        .where("churchId", "==", churchId)
-        .where("scopeType", "==", "church_defaults")
-        .where("availabilityAutomationEnabled", "==", true)
-        .limit(1).get()
-      : await scopeQuery.get();
-    const defaultDocs = scopeSnapshot.docs.filter((doc) => {
+      .orderBy("churchId");
+    if (churchId) churchQuery = churchQuery.where("churchId", "==", churchId);
+    const defaultDocs = churchId
+      ? (await churchQuery.limit(1).get()).docs
+      : await readPage({ query: churchQuery, cursor: churchCursor.value, limit: limits.churches });
+    const eligibleDefaultDocs = defaultDocs.filter((doc) => {
       const data = doc.data();
       return data.scopeType === "church_defaults" && data.availabilityAutomationEnabled === true;
     });
-    const summary = { churchesExamined: 0, cyclesCreated: 0, cyclesReused: 0, actionsReady: 0, actionsHeldForReview: 0, scopesSkipped: 0 };
+    const summary = { churchesExamined: 0, teamsExamined: 0, cyclesCreated: 0, cyclesReused: 0, actionsReady: 0, actionsHeldForReview: 0, scopesSkipped: 0, discoveryIncomplete: false };
     const actions = [];
-    for (const defaultsDoc of defaultDocs) {
-      if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs || summary.cyclesCreated + summary.cyclesReused >= limits.cyclesPerRun) break;
+    let totalTeamScopes = 0;
+    for (const defaultsDoc of eligibleDefaultDocs) {
+      if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs ||
+          summary.cyclesCreated >= limits.cyclesPerRun || totalTeamScopes >= limits.maxTeamScopesPerRun) {
+        summary.discoveryIncomplete = true;
+        break;
+      }
       const defaults = { id: defaultsDoc.id, ...defaultsDoc.data() };
       const currentChurchId = String(defaults.churchId || "");
       if (!currentChurchId) continue;
       summary.churchesExamined += 1;
       const church = await getData(collections.churches, currentChurchId);
-      if (!church || church.archivedAt || (church.status && church.status !== "active")) { summary.scopesSkipped += 1; continue; }
-      const timeZone = String(church.serviceTimeZone || "");
-      const localDate = calendarDateInTimeZone(now(), timeZone);
-      const teamSnapshot = await firestore.collection(collections.teams)
-        .where("churchId", "==", currentChurchId)
-        .limit(limits.teamsPerChurch)
-        .get();
-      const teams = teamSnapshot.docs
-        .map((doc) => ({ teamId: doc.id, ...doc.data() }))
-        .filter((team) => !team.archivedAt && (!teamId || team.teamId === teamId));
-      for (const team of teams) {
-        if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs || summary.cyclesCreated + summary.cyclesReused >= limits.cyclesPerRun) break;
-        const override = await getData(collections.teamSchedulingAutomationSettings, settingsId(currentChurchId, team.teamId));
-        const effective = resolveEffectiveSchedulingSettings({ defaults, override: override || { mode: "inherit" } });
-        if (!effective.enabled) { summary.scopesSkipped += 1; continue; }
-        const periodIds = periodId ? [periodId] : Array.from({ length: limits.lookAheadMonths }, (_, index) => periodForOffset(localDate, index + 1));
-        for (const targetPeriodId of periodIds) {
-          if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs || summary.cyclesCreated + summary.cyclesReused >= limits.cyclesPerRun) break;
-          const planned = planSchedulingCycle({ churchId: currentChurchId, teamId: team.teamId, periodId: targetPeriodId,
-            serviceTimeZone: timeZone, effective, createdAt: now().toISOString(), createdBy: null });
-          if (requestedCycleId && planned.cycle.cycleId !== requestedCycleId) continue;
-          const requestAction = planned.actions.find((action) => action.actionType === "availability_request");
-          if (!requestAction || Date.parse(planned.cycle.deadlines.availabilityResponse.dueAt) <= now().getTime()) continue;
-          const existing = await getData(collections.teamSchedulingCycles, cycleId(currentChurchId, team.teamId, targetPeriodId));
-          if (dryRun) {
-            const deadlineAt = Date.parse(planned.cycle.deadlines.availabilityResponse.dueAt);
-            const withinActivation = Date.parse(requestAction.dueAt) >= Date.parse(defaults.availabilityAutomationActivatedAt || "");
-            const enoughTimeToRespond = deadlineAt - now().getTime() >= MINIMUM_AUTOMATIC_AVAILABILITY_RESPONSE_WINDOW_MS;
-            const projectedState = withinActivation && enoughTimeToRespond ? "pending" : "review_required";
-            const why = !defaults.availabilityFormCreationEnabled
-              ? "Automatic form creation is disabled."
-              : projectedState === "pending"
-                ? existing ? "Existing cycle is retained; eligible due actions will be claimed." : "Cycle and request action are eligible to be ensured."
-                : !enoughTimeToRespond
-                  ? "Less than seven days remain for responses; leader review is required."
-                  : "The request date predates activation; leader review is required.";
-            actions.push({ churchId: currentChurchId, teamId: team.teamId, periodId: targetPeriodId,
-              cycleId: planned.cycle.cycleId, actionType: requestAction.actionType,
-              dueAt: requestAction.dueAt, existingCycle: Boolean(existing), wouldBe: existing ? "reuse" : "ensure",
-              projectedState: defaults.availabilityFormCreationEnabled ? projectedState : "disabled", why });
-            if (existing) summary.cyclesReused += 1;
-            else summary.cyclesCreated += 1;
-            continue;
-          }
-          const result = await ensureCycle({ churchId: currentChurchId, team, church, defaults, override,
-            periodId: targetPeriodId, activationAt: defaults.availabilityAutomationActivatedAt });
-          if (result.status === "created") summary.cyclesCreated += 1;
-          else if (result.status === "existing") summary.cyclesReused += 1;
-          result.actions.forEach((action) => {
-            if (["availability_request", "availability_follow_up", "leader_summary"].includes(action.actionType) && action.enabled && ["pending", "retryable_failure"].includes(action.state)) {
-              summary.actionsReady += 1;
-              actions.push(action);
-            } else if (["availability_request", "availability_follow_up", "leader_summary"].includes(action.actionType) && action.state === "review_required") {
-              summary.actionsHeldForReview += 1;
-            }
-          });
+      if (!church || church.archivedAt || (church.status && church.status !== "active")) {
+        summary.scopesSkipped += 1;
+        if (!scoped && currentChurchId) {
+          const saved = await saveCursor({ id: stateId, expectedRevision: churchCursor.revision,
+            value: currentChurchId, shouldPersist: persistCursors });
+          if (saved) churchCursor.revision += 1;
         }
+        continue;
       }
+      const timeZone = String(church.serviceTimeZone || "");
+      let localDate;
+      try {
+        localDate = calendarDateInTimeZone(now(), timeZone);
+      } catch (error) {
+        summary.scopesSkipped += 1;
+        logger.error({ event: "scheduling_processor.scope_skipped", churchId: currentChurchId,
+          reason: "invalid_service_timezone", error: String(error?.message || error).slice(0, 120) });
+        if (!scoped) {
+          const saved = await saveCursor({ id: stateId, expectedRevision: churchCursor.revision,
+            value: currentChurchId, shouldPersist: persistCursors });
+          if (saved) churchCursor.revision += 1;
+        }
+        continue;
+      }
+      const teamCursor = !scoped ? await readCursor(teamCursorId(currentChurchId)) : { value: "", revision: 0 };
+      let teamQuery = firestore.collection(collections.teams).where("churchId", "==", currentChurchId).orderBy("teamId");
+      if (teamId) teamQuery = teamQuery.where("teamId", "==", teamId);
+      const teamPageLimit = teamId
+        ? 1
+        : Math.min(scoped ? limits.maxTeamScopesPerRun : limits.teamsPerChurch, limits.maxTeamScopesPerRun - totalTeamScopes);
+      const teamDocs = teamId
+        ? (await teamQuery.limit(1).get()).docs
+        : await readPage({ query: teamQuery, cursor: teamCursor.value, limit: teamPageLimit });
+      const teams = teamDocs
+        .map((doc) => ({ teamId: doc.id, ...doc.data() }));
+      let lastTeamProcessed = "";
+      let churchComplete = true;
+      for (const team of teams) {
+        if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs ||
+            summary.cyclesCreated >= limits.cyclesPerRun || totalTeamScopes >= limits.maxTeamScopesPerRun) {
+          churchComplete = false;
+          summary.discoveryIncomplete = true;
+          break;
+        }
+        if (team.archivedAt || (teamId && team.teamId !== teamId)) {
+          lastTeamProcessed = team.teamId;
+          continue;
+        }
+        totalTeamScopes += 1;
+        summary.teamsExamined += 1;
+        const override = await getData(collections.teamSchedulingAutomationSettings, settingsId(currentChurchId, team.teamId));
+        let effective;
+        try {
+          effective = resolveEffectiveSchedulingSettings({ defaults, override: override || { mode: "inherit" } });
+        } catch (error) {
+          summary.scopesSkipped += 1;
+          lastTeamProcessed = team.teamId;
+          logger.error({ event: "scheduling_processor.scope_skipped", churchId: currentChurchId, teamId: team.teamId,
+            reason: "invalid_scheduling_configuration", error: String(error?.message || error).slice(0, 120) });
+          continue;
+        }
+        if (!effective.enabled) { summary.scopesSkipped += 1; lastTeamProcessed = team.teamId; continue; }
+        const periodIds = periodId ? [periodId] : Array.from({ length: limits.lookAheadMonths }, (_, index) => periodForOffset(localDate, index + 1));
+        let teamComplete = true;
+        for (const targetPeriodId of periodIds) {
+          if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs ||
+              summary.cyclesCreated >= limits.cyclesPerRun) {
+            teamComplete = false;
+            churchComplete = false;
+            summary.discoveryIncomplete = true;
+            break;
+          }
+          try {
+            const planned = planSchedulingCycle({ churchId: currentChurchId, teamId: team.teamId, periodId: targetPeriodId,
+              serviceTimeZone: timeZone, effective, createdAt: now().toISOString(), createdBy: null });
+            if (requestedCycleId && planned.cycle.cycleId !== requestedCycleId) continue;
+            const requestAction = planned.actions.find((action) => action.actionType === "availability_request");
+            if (!requestAction) continue;
+            const existing = await getData(collections.teamSchedulingCycles, cycleId(currentChurchId, team.teamId, targetPeriodId));
+            if (dryRun) {
+              const timing = timingForAction({ action: requestAction, cycle: planned.cycle,
+                activationAt: defaults.availabilityAutomationActivatedAt, now: now() });
+              const projectedState = timing.eligible ? "pending" : "review_required";
+              const why = !defaults.availabilityFormCreationEnabled
+                ? "Automatic form creation is disabled."
+                : projectedState === "pending"
+                  ? existing ? "Existing cycle is retained; eligible due actions will be claimed." : "Cycle and request action are eligible to be ensured."
+                  : timing.reason;
+              actions.push({ churchId: currentChurchId, teamId: team.teamId, periodId: targetPeriodId,
+                cycleId: planned.cycle.cycleId, actionType: requestAction.actionType,
+                dueAt: requestAction.dueAt, existingCycle: Boolean(existing), wouldBe: existing ? "reuse" : "ensure",
+                projectedState: defaults.availabilityFormCreationEnabled ? projectedState : "disabled", why });
+              if (existing) summary.cyclesReused += 1;
+              else summary.cyclesCreated += 1;
+              continue;
+            }
+            const result = await ensureCycle({ churchId: currentChurchId, team, church, defaults, override,
+              periodId: targetPeriodId, activationAt: defaults.availabilityAutomationActivatedAt });
+            if (result.status === "created") summary.cyclesCreated += 1;
+            else if (result.status === "existing") summary.cyclesReused += 1;
+            result.actions.forEach((action) => {
+              if (["availability_request", "availability_follow_up", "leader_summary"].includes(action.actionType) && action.enabled && ["pending", "retryable_failure"].includes(action.state)) {
+                summary.actionsReady += 1;
+                actions.push(action);
+              } else if (["availability_request", "availability_follow_up", "leader_summary"].includes(action.actionType) && action.state === "review_required") {
+                summary.actionsHeldForReview += 1;
+              }
+            });
+          } catch (error) {
+            summary.scopesSkipped += 1;
+            logger.error({ event: "scheduling_processor.scope_skipped", churchId: currentChurchId, teamId: team.teamId,
+              periodId: targetPeriodId, reason: "cycle_planning_failed", error: String(error?.message || error).slice(0, 120) });
+          }
+        }
+        if (!teamComplete) break;
+        lastTeamProcessed = team.teamId;
+      }
+      if (!teamId && !scoped && teams.length === teamPageLimit && lastTeamProcessed) {
+        const laterTeams = await teamQuery.startAfter(lastTeamProcessed).limit(1).get();
+        if (!laterTeams.empty) {
+          churchComplete = false;
+          summary.discoveryIncomplete = true;
+        }
+      } else if (!teamId && scoped && teams.length === teamPageLimit && lastTeamProcessed) {
+        const laterTeams = await teamQuery.startAfter(lastTeamProcessed).limit(1).get();
+        if (!laterTeams.empty) summary.discoveryIncomplete = true;
+      }
+      if (!teamId && lastTeamProcessed && !scoped) {
+        const saved = await saveCursor({ id: teamCursorId(currentChurchId), expectedRevision: teamCursor.revision,
+          value: lastTeamProcessed, shouldPersist: persistCursors });
+        if (saved) teamCursor.revision += 1;
+      }
+      if (!scoped && churchComplete) {
+        const saved = await saveCursor({ id: stateId, expectedRevision: churchCursor.revision,
+          value: currentChurchId, shouldPersist: persistCursors });
+        if (saved) churchCursor.revision += 1;
+      }
+      if (!churchComplete) break;
     }
     return { summary, actions };
   };
 
   const processDueActions = async ({ candidates, runId, dryRun, maxActions, signal, startedAt }) => {
-    const counts = { claimed: 0, completed: 0, skipped: 0, retryableFailures: 0, reviewRequired: 0, staleClaims: 0 };
+    const counts = { claimed: 0, completed: 0, skipped: 0, retryableFailures: 0, reviewRequired: 0, staleClaims: 0, expiredClaimsRecovered: 0, waitingForDelivery: 0 };
     if (dryRun) return counts;
     for (const candidate of candidates) {
       if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs) break;
       if (counts.claimed >= maxActions) break;
       const runClaimToken = randomUUID();
-      const action = await claimAction({ candidate, runId, claimToken: runClaimToken });
+      const action = await claimAction({ candidate, runId, claimToken: runClaimToken, scope: candidate.scope });
       if (!action) continue;
       counts.claimed += 1;
+      if (candidate.state === "claimed" && Date.parse(candidate.claimExpiresAt || "") <= now().getTime()) {
+        counts.expiredClaimsRecovered += 1;
+      }
+      let heartbeatLost = false;
+      let heartbeatInFlight = Promise.resolve();
+      const heartbeatTimer = setInterval(() => {
+        heartbeatInFlight = heartbeatInFlight.then(async () => {
+          if (!heartbeatLost && !await renewClaim({ action, claimToken: runClaimToken })) heartbeatLost = true;
+        }).catch(() => { heartbeatLost = true; });
+      }, Math.max(1000, Math.floor(limits.claimLeaseMs / 3)));
+      heartbeatTimer.unref?.();
       try {
+        if (!await renewClaim({ action, claimToken: runClaimToken })) {
+          heartbeatLost = true;
+          counts.staleClaims += 1;
+          continue;
+        }
         const current = await revalidate(action);
+        if (heartbeatLost) {
+          counts.staleClaims += 1;
+          continue;
+        }
         if (!current.eligible) {
           const finalized = await finalizeAction({ action, claimToken: runClaimToken, state: "skipped", error: current.reason,
             result: { reason: current.reason } });
@@ -404,10 +565,16 @@ export const createSchedulingAutomationProcessor = ({
           continue;
         }
         if (action.actionType !== "availability_request") {
-          const finalized = await finalizeAction({ action, claimToken: runClaimToken, state: "review_required",
-            error: "Automated delivery for this action is not enabled.", result: { reason: "notification_delivery_disabled" } });
-          if (finalized) counts.reviewRequired += 1;
+          const waitingReason = "This action is waiting for availability notification delivery to be enabled.";
+          const finalized = await finalizeAction({ action, claimToken: runClaimToken, state: "pending", enabledOverride: false,
+            error: waitingReason, result: { reason: "notification_delivery_disabled", waitingForDelivery: true } });
+          if (finalized) counts.waitingForDelivery += 1;
           else counts.staleClaims += 1;
+          continue;
+        }
+        if (!await renewClaim({ action, claimToken: runClaimToken })) {
+          heartbeatLost = true;
+          counts.staleClaims += 1;
           continue;
         }
           const result = await createAvailabilityRequest({
@@ -426,6 +593,10 @@ export const createSchedulingAutomationProcessor = ({
         else if (finalized) counts.completed += 1;
         else counts.staleClaims += 1;
       } catch (error) {
+        if (heartbeatLost) {
+          counts.staleClaims += 1;
+          continue;
+        }
         const retryable = !error?.reviewRequired && (error?.retryable === true || error?.code === "UNAVAILABLE" || error?.code === "DEADLINE_EXCEEDED" || error?.code === "ABORTED");
         const attemptCount = Number(action.attemptCount || 0);
         const canRetry = retryable && attemptCount < limits.maxAttempts;
@@ -447,9 +618,72 @@ export const createSchedulingAutomationProcessor = ({
         if (!finalized) counts.staleClaims += 1;
         else if (canRetry) counts.retryableFailures += 1;
         else counts.reviewRequired += 1;
+      } finally {
+        clearInterval(heartbeatTimer);
+        await heartbeatInFlight;
       }
     }
     return counts;
+  };
+
+  const discoverDueActions = async ({ scope, limit, selectedCycle }) => {
+    const dueBefore = now().toISOString();
+    const candidates = [];
+    const appendQuery = async (state, field, operator, value) => {
+      let query = firestore.collection(collections.teamSchedulingActions)
+        .where("enabled", "==", true)
+        .where("state", "==", state)
+        .where(field, operator, value)
+        .orderBy(field, "asc");
+      if (scope.churchId) query = query.where("churchId", "==", scope.churchId);
+      if (scope.teamId) query = query.where("teamId", "==", scope.teamId);
+      if (scope.periodId) query = query.where("periodId", "==", scope.periodId);
+      if (scope.requestedCycleId) query = query.where("cycleId", "==", scope.requestedCycleId);
+      const result = await query.limit(limit).get();
+      for (const doc of result.docs) {
+        const action = { actionId: doc.id, ...doc.data(), scope };
+        if (matchesScope(action, scope) && Date.parse(action.dueAt || "") <= now().getTime()) candidates.push(action);
+      }
+    };
+
+    if (selectedCycle?.plannedActionIds?.length) {
+      const snapshots = await Promise.all(selectedCycle.plannedActionIds.map((id) =>
+        firestore.collection(collections.teamSchedulingActions).doc(id).get(),
+      ));
+      for (const snapshot of snapshots) {
+        if (!snapshot.exists) continue;
+        const action = { actionId: snapshot.id, ...snapshot.data(), scope };
+        const eligibleState = action.state === "pending" || action.state === "retryable_failure" ||
+          (action.state === "claimed" && Date.parse(action.claimExpiresAt || "") <= now().getTime());
+        const eligibleTime = action.state === "retryable_failure"
+          ? Date.parse(action.nextAttemptAt || "") <= now().getTime()
+          : Date.parse(action.dueAt || "") <= now().getTime();
+        if (action.enabled && eligibleState && eligibleTime && matchesScope(action, scope)) candidates.push(action);
+      }
+    } else {
+      await Promise.all([
+        appendQuery("pending", "dueAt", "<=", dueBefore),
+        appendQuery("retryable_failure", "nextAttemptAt", "<=", dueBefore),
+        appendQuery("claimed", "claimExpiresAt", "<=", dueBefore),
+      ]);
+    }
+    const unique = [...new Map(candidates.map((action) => [action.actionId, action])).values()];
+    return unique.sort((left, right) => Date.parse(left.dueAt || "") - Date.parse(right.dueAt || ""));
+  };
+
+  const validateScope = ({ churchId, teamId, periodId, requestedCycleId, limit }) => {
+    const idPattern = /^[A-Za-z0-9_-]{1,128}$/;
+    for (const [label, value] of [["church", churchId], ["team", teamId], ["cycle", requestedCycleId]]) {
+      if (value && !idPattern.test(value)) throw new Error(`The ${label} scope is malformed.`);
+    }
+    if (teamId && !churchId) throw new Error("A team scope requires --church.");
+    if (periodId && (!churchId || !teamId || !/^\d{4}-(0[1-9]|1[0-2])$/.test(periodId))) {
+      throw new Error("A period scope requires --church, --team, and a valid YYYY-MM period.");
+    }
+    const numericLimit = Number(limit);
+    if (!Number.isSafeInteger(numericLimit) || numericLimit < 1 || numericLimit > limits.actionsPerRun) {
+      throw new Error(`Limit must be a whole number from 1 to ${limits.actionsPerRun}.`);
+    }
   };
 
   const run = async ({
@@ -463,42 +697,58 @@ export const createSchedulingAutomationProcessor = ({
     signal,
   } = {}) => {
     if (!new Set(["dry-run", "execute", "live"]).has(mode)) throw new Error("Mode must be dry-run, execute, or live.");
+    churchId = String(churchId || "").trim();
+    teamId = String(teamId || "").trim();
+    periodId = String(periodId || "").trim();
+    requestedCycleId = String(requestedCycleId || "").trim();
+    validateScope({ churchId, teamId, periodId, requestedCycleId, limit: limit ?? limits.actionsPerRun });
     if (mode === "live") throw new Error("Live notification delivery is disabled by the server safety switch.");
     const startedAt = now().getTime();
     const startIso = now().toISOString();
-    const safeLimit = Math.min(Math.max(Number(limit) || limits.actionsPerRun, 1), limits.actionsPerRun);
+    const safeLimit = Number(limit ?? limits.actionsPerRun);
+    let selectedCycle = null;
+    const selectedCycleLookupId = requestedCycleId || (churchId && teamId && periodId
+      ? cycleId(churchId, teamId, periodId) : "");
     if (requestedCycleId) {
-      const selectedCycle = await getData(collections.teamSchedulingCycles, requestedCycleId);
+      selectedCycle = await getData(collections.teamSchedulingCycles, requestedCycleId);
       if (!selectedCycle || (churchId && selectedCycle.churchId !== churchId) || (teamId && selectedCycle.teamId !== teamId) || (periodId && selectedCycle.periodId !== periodId)) {
         throw new Error("The requested cycle does not match the selected church, team, and period.");
       }
       churchId = selectedCycle.churchId;
       teamId = selectedCycle.teamId;
       periodId = selectedCycle.periodId;
+    } else if (selectedCycleLookupId) {
+      selectedCycle = await getData(collections.teamSchedulingCycles, selectedCycleLookupId);
     }
     const discovery = await discoverAndEnsure({ dryRun: mode === "dry-run", churchId, teamId, periodId,
       requestedCycleId, startedAt, signal });
     let dueCandidates = [];
-    let executionCounts = { claimed: 0, completed: 0, skipped: 0, retryableFailures: 0, reviewRequired: 0, staleClaims: 0 };
-    if (mode === "execute") {
-      const churches = stableUnique(discovery.actions.map((action) => action.churchId));
-      for (const currentChurchId of churches) {
-        if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs || executionCounts.claimed >= safeLimit) break;
-        let query = firestore.collection(collections.teamSchedulingActions)
-          .where("churchId", "==", currentChurchId)
-          .where("enabled", "==", true)
-          .where("state", "in", ["pending", "retryable_failure", "claimed"])
-          .where("dueAt", "<=", now().toISOString())
-          .orderBy("dueAt", "asc")
-          .limit(safeLimit - executionCounts.claimed);
-        if (teamId) query = query.where("teamId", "==", teamId);
-        if (requestedCycleId) query = query.where("cycleId", "==", requestedCycleId);
-        const due = await query.get();
-        dueCandidates.push(...due.docs.map((doc) => ({ actionId: doc.id, ...doc.data() })));
-      }
-      executionCounts = await processDueActions({ candidates: dueCandidates, runId, dryRun: false,
+    let executionCounts = { claimed: 0, completed: 0, skipped: 0, retryableFailures: 0, reviewRequired: 0, staleClaims: 0, expiredClaimsRecovered: 0, waitingForDelivery: 0 };
+    if (mode === "execute" || mode === "dry-run") {
+      if (selectedCycleLookupId && !selectedCycle) selectedCycle = await getData(collections.teamSchedulingCycles, selectedCycleLookupId);
+      const scope = { churchId, teamId, periodId, requestedCycleId };
+      dueCandidates = await discoverDueActions({ scope, limit: safeLimit, selectedCycle });
+      executionCounts = await processDueActions({ candidates: dueCandidates, runId, dryRun: mode === "dry-run",
         maxActions: safeLimit, signal, startedAt });
     }
+    const dueActionKeys = new Set(dueCandidates.map((action) => `${action.cycleId}|${action.actionType}`));
+    const dryRunActions = mode === "dry-run" ? [
+      ...dueCandidates.map((action) => ({
+        churchId: action.churchId, teamId: action.teamId, periodId: action.periodId,
+        cycleId: action.cycleId, actionType: action.actionType, dueAt: action.dueAt,
+        existingCycle: true, wouldBe: "claim",
+        projectedState: action.state === "claimed" ? "expired_claim_recovery" : action.state,
+        attemptCount: Number(action.attemptCount || 0),
+        why: action.state === "claimed" ? "The prior claim expired and can be recovered." :
+          action.state === "retryable_failure" ? "The retry time has arrived." : "The action is due and eligible for a claim.",
+      })),
+      ...discovery.actions.filter((action) => !dueActionKeys.has(`${action.cycleId}|${action.actionType}`)).map((action) => ({
+        churchId: action.churchId, teamId: action.teamId, periodId: action.periodId,
+        cycleId: action.cycleId, actionType: action.actionType, dueAt: action.dueAt,
+        existingCycle: action.existingCycle, wouldBe: action.wouldBe,
+        projectedState: action.projectedState, why: action.why,
+      })),
+    ] : [];
     const result = {
       runId,
       mode,
@@ -506,12 +756,7 @@ export const createSchedulingAutomationProcessor = ({
       completedAt: now().toISOString(),
       durationMs: now().getTime() - startedAt,
       summary: { ...discovery.summary, ...executionCounts, dueActionsDiscovered: dueCandidates.length },
-      actions: mode === "dry-run" ? discovery.actions.slice(0, safeLimit).map((action) => ({
-        churchId: action.churchId, teamId: action.teamId, periodId: action.periodId,
-        cycleId: action.cycleId, actionType: action.actionType, dueAt: action.dueAt,
-        existingCycle: action.existingCycle, wouldBe: action.wouldBe, projectedState: action.projectedState,
-        why: action.why,
-      })) : [],
+      actions: dryRunActions.slice(0, safeLimit),
     };
     logger.info({ event: "scheduling_processor.completed", ...result });
     return result;

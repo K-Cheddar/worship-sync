@@ -159,6 +159,13 @@ test("scheduling automation settings are scoped, revisioned, preview-only, and c
   assert.equal(savedDefaults.payload.defaults.availabilityAutomationEnabled, false);
   assert.equal(savedDefaults.payload.defaults.availabilityFormCreationEnabled, false);
   assert.equal(savedDefaults.payload.defaults.settings.availabilityResponseLeadDays, 3);
+  const defaultsRow = (await queryDocs(COLLECTIONS.teamSchedulingAutomationSettings,
+    [{ field: "churchId", value: admin.churchId }, { field: "scopeType", value: "church_defaults" }], { limit: 1 }))[0];
+  await setDoc(COLLECTIONS.teamSchedulingAutomationSettings, defaultsRow.settingsId, {
+    notificationDeliveryEnabled: true,
+    notificationDeliveryActivatedAt: "2026-11-25T14:00:00.000Z",
+    notificationDeliveryDisabledAt: null,
+  }, { merge: true });
   const staleDefaults = await callHandler(authHandlers.saveChurchSchedulingDefaults, {
     context: admin,
     body: { settings: { ...settings, preparationDay: 22 }, revision: 0 },
@@ -201,7 +208,8 @@ test("scheduling automation settings are scoped, revisioned, preview-only, and c
   assert.equal(activated.statusCode, 200, JSON.stringify(activated.payload));
   assert.equal(activated.payload.defaults.availabilityAutomationEnabled, true);
   assert.equal(activated.payload.defaults.availabilityFormCreationEnabled, true);
-  assert.equal(activated.payload.defaults.notificationDeliveryEnabled, false);
+  assert.equal(activated.payload.defaults.notificationDeliveryEnabled, true);
+  assert.equal(activated.payload.defaults.notificationDeliveryActivatedAt, "2026-11-25T14:00:00.000Z");
   assert.equal(activated.payload.activationImpact.churchWide, true);
   assert.equal(activated.payload.activationImpact.selectedPeriodStarted, false);
   assert.ok(activated.payload.activationImpact.upcomingActions.length > 0);
@@ -265,6 +273,7 @@ test("scheduling automation settings are scoped, revisioned, preview-only, and c
   });
   assert.equal(changedDefaults.statusCode, 200);
   assert.equal(changedDefaults.payload.defaults.availabilityAutomationEnabled, true);
+  assert.equal(changedDefaults.payload.defaults.notificationDeliveryEnabled, true);
   const oldCycle = await getDoc(COLLECTIONS.teamSchedulingCycles, firstEnsure.payload.cycle.cycleId);
   assert.equal(oldCycle.effectiveConfiguration.preparationDay, 24);
   const nextCycle = await callHandler(authHandlers.ensureSchedulingCycle, {

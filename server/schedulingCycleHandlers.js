@@ -1,5 +1,6 @@
 import { serializeAuthError } from "./authErrorResponse.js";
 import { calendarDateInTimeZone } from "../shared/teamScheduleOccurrences.ts";
+import { evaluateAvailabilityRequestTiming } from "../shared/schedulingAutomationPolicy.ts";
 import {
   DEFAULT_SCHEDULING_AUTOMATION_SETTINGS,
   SchedulingCycleValidationError,
@@ -93,6 +94,8 @@ export const createSchedulingCycleHandlers = ({
       availabilityFormCreationEnabled: false,
       availabilityAutomationActivatedAt: null,
       notificationDeliveryEnabled: false,
+      notificationDeliveryActivatedAt: null,
+      notificationDeliveryDisabledAt: null,
       revision: 0,
       createdAt: null,
       updatedAt: null,
@@ -237,9 +240,18 @@ export const createSchedulingCycleHandlers = ({
         createdBy: actorUid(actor),
       });
       const existing = await getDoc(COLLECTIONS.teamSchedulingCycles, planned.cycle.cycleId);
+      const requestAction = planned.actions.find((action) => action.actionType === "availability_request");
+      const requestTiming = requestAction ? evaluateAvailabilityRequestTiming({
+        dueAt: requestAction.dueAt,
+        responseExpiresAt: planned.cycle.deadlines.availabilityResponse?.dueAt,
+        responseDeadlineLocalDate: planned.cycle.deadlines.availabilityResponse?.localDate,
+        serviceTimeZone: church.serviceTimeZone || "UTC",
+        activationAt: defaults.availabilityAutomationActivatedAt,
+        now: new Date(),
+      }) : null;
       return res.json({
         success: true,
-        preview: { cycle: planned.cycle, actions: planned.actions },
+        preview: { cycle: planned.cycle, actions: planned.actions, requestTiming },
         savedCycle: existing,
         isUnsavedPreview: req.body?.draftDefaults !== undefined || req.body?.draftOverride !== undefined,
       });
@@ -273,7 +285,9 @@ export const createSchedulingCycleHandlers = ({
           availabilityFormCreationEnabled: current?.availabilityFormCreationEnabled === true,
           availabilityAutomationActivatedAt: current?.availabilityAutomationActivatedAt || null,
           availabilityAutomationDisabledAt: current?.availabilityAutomationDisabledAt || null,
-          notificationDeliveryEnabled: false,
+          notificationDeliveryEnabled: current?.notificationDeliveryEnabled === true,
+          notificationDeliveryActivatedAt: current?.notificationDeliveryActivatedAt || null,
+          notificationDeliveryDisabledAt: current?.notificationDeliveryDisabledAt || null,
           revision,
           updatedAt: timestamp,
           audit: { updatedBy: actorUid(actor) },
@@ -392,8 +406,10 @@ export const createSchedulingCycleHandlers = ({
           availabilityFormCreationEnabled: formCreationEnabled,
           availabilityAutomationActivatedAt: enabled ? (current?.availabilityAutomationEnabled ? current.availabilityAutomationActivatedAt || updatedAt : updatedAt) : null,
           availabilityAutomationDisabledAt: enabled ? null : updatedAt,
-          // Notification delivery remains under its separate server-side safety gate.
-          notificationDeliveryEnabled: false,
+          // Saving cycle activation cannot change the independent delivery switch.
+          notificationDeliveryEnabled: current?.notificationDeliveryEnabled === true,
+          notificationDeliveryActivatedAt: current?.notificationDeliveryActivatedAt || null,
+          notificationDeliveryDisabledAt: current?.notificationDeliveryDisabledAt || null,
           revision,
           updatedAt,
           audit: { updatedBy: actorUid(actor) },
@@ -406,7 +422,7 @@ export const createSchedulingCycleHandlers = ({
         selectedPeriodId: periodId || null,
         selectedPeriodStarted,
         upcomingActions: selectedCycleActions,
-        notificationDeliveryEnabled: false,
+        notificationDeliveryEnabled: saved.notificationDeliveryEnabled === true,
       } });
     } catch (error) {
       return sendError(res, error, "Could not update availability automation.");

@@ -30,7 +30,7 @@ The [Local video input thumbnails contract](local-video-input-thumbnails.md) rec
 
 The [Unavailable local-source previews contract](unavailable-local-source-previews.md) records operator-facing status for local media and capture sources that cannot preview on this device, while preserving cloud fallback and audience-output behavior confirmed November 18, 2026.
 
-The [Scheduling Cycles contract](scheduling-cycles.md) records the scheduling-cycle foundation, configurable response deadline, church/team activation policy, bounded form-creation processor, and its notification-delivery restrictions confirmed November 24, 2026.
+The [Scheduling Cycles contract](scheduling-cycles.md) records the scheduling-cycle foundation, configurable response deadline, church/team activation policy, processor recovery and pagination hardening, and the still-disabled notification-delivery boundary confirmed November 24, 2026.
 
 ## Feature inventory
 

@@ -3,5 +3,5 @@
   "date": "2026-11-24",
   "type": "improved",
   "title": "Automatic availability setup",
-  "description": "Church administrators can separately enable bounded scheduling-cycle processing. The processor can create or reuse availability forms and secure volunteer recipients, with durable action claims and recovery. Notification delivery remains disabled; reminders, leader summaries, schedule preparation, and publication still require manual review."
+  "description": "Church administrators can separately enable bounded scheduling-cycle processing. The processor recovers expired claims independently, preserves retry state, paginates fairly, and creates or reuses availability forms and secure volunteer recipients. Notification delivery remains disabled; initial messages, reminders, leader summaries, schedule preparation, and publication are not automated."
 }

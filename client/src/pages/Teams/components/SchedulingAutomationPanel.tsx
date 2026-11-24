@@ -19,7 +19,11 @@ import type {
 
 type OverrideMode = "inherit" | "customize" | "disabled";
 type SettingsScope = "church" | "team";
-type PlannedCycle = { cycle: SchedulingCycleRecord; actions: SchedulingCycleAction[] };
+type PlannedCycle = {
+  cycle: SchedulingCycleRecord;
+  actions: SchedulingCycleAction[];
+  requestTiming?: { eligible: boolean; status: string; reason: string | null } | null;
+};
 
 const actionTitles: Record<string, string> = {
   availability_request: "Request availability",
@@ -332,7 +336,11 @@ export const SchedulingAutomationPanel = ({
         } } : {}),
       };
       void previewSchedulingCycle(churchId, body).then((result) => {
-        if (active && requestId === previewRequestRef.current) setPreview({ cycle: result.preview.cycle, actions: result.preview.actions });
+        if (active && requestId === previewRequestRef.current) setPreview({
+          cycle: result.preview.cycle,
+          actions: result.preview.actions,
+          requestTiming: result.preview.requestTiming,
+        });
       }).catch((error: unknown) => {
         if (active && requestId === previewRequestRef.current) setPreviewError(error instanceof Error ? error.message : "Could not calculate this timeline.");
       });
@@ -528,6 +536,9 @@ export const SchedulingAutomationPanel = ({
             <div className="rounded-lg border border-amber-700/60 bg-amber-950/20 px-3 py-2 text-sm text-amber-100">
               Volunteer responses remain open through the response-deadline date in the church timezone. Review and publication remain manual.
             </div>
+            {!savedView && preview?.requestTiming?.eligible === false ? (
+              <p role="status" className="text-sm text-amber-200">{preview.requestTiming.reason}</p>
+            ) : null}
 
             {previewError ? <p role="alert" className="text-sm text-red-300">{previewError}</p> : null}
             {saveError ? <p role="alert" className="text-sm text-red-300">{saveError}</p> : null}

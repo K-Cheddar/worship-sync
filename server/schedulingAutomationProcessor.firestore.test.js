@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { deleteApp, initializeApp } from "firebase-admin/app";
 import { getFirestore } from "firebase-admin/firestore";
 import { createSchedulingAutomationProcessor } from "./schedulingAutomationProcessor.js";
-import { schedulingSettingsIdFor } from "./schedulingCycles.js";
+import { planSchedulingCycle, resolveEffectiveSchedulingSettings, schedulingSettingsIdFor } from "./schedulingCycles.js";
 
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 const COLLECTIONS = {
@@ -18,6 +18,7 @@ const COLLECTIONS = {
   teamSchedulingAutomationSettings: "teamSchedulingAutomationSettings",
   teamSchedulingCycles: "teamSchedulingCycles",
   teamSchedulingActions: "teamSchedulingActions",
+    teamSchedulingProcessorState: "teamSchedulingProcessorState",
 };
 const settings = {
   frequency: "monthly",
@@ -51,18 +52,22 @@ const createFixture = async (suffix) => {
       const rows = await db.collection(collection).where("churchId", "==", churchId).get();
       await Promise.all(rows.docs.map((doc) => doc.ref.delete()));
     }
+    const cursorRows = await db.collection(COLLECTIONS.teamSchedulingProcessorState).where("namespace", "==", suffix).get();
+    await Promise.all(cursorRows.docs.map((doc) => doc.ref.delete()));
     await db.collection(COLLECTIONS.churches).doc(churchId).delete();
     await db.terminate();
     await deleteApp(app);
   };
-  return { app, db, churchId, teamId, activationAt, cleanup };
+  return { app, db, churchId, teamId, activationAt, namespace: suffix, cleanup };
 };
 
-const processorFor = ({ db, createAvailabilityRequest, now = fixedNow }) => createSchedulingAutomationProcessor({
+const processorFor = ({ db, createAvailabilityRequest, now = fixedNow, limits, processorStateNamespace = "global" }) => createSchedulingAutomationProcessor({
   firestore: db,
   collections: COLLECTIONS,
   createAvailabilityRequest,
   now,
+  limits,
+  processorStateNamespace,
   logger: { info() {}, error() {} },
 });
 
@@ -147,6 +152,128 @@ test("Firestore processor reclaims an expired action lease and fences the stale 
     assert.equal(request.claimOwner, null);
   } finally {
     releaseFirst?.();
+    await fixture.cleanup();
+  }
+});
+
+test("an isolated expired claim is recovered without cycle discovery", { skip: !enabled }, async () => {
+  const fixture = await createFixture(randomUUID());
+  const now = fixedNow();
+  let calls = 0;
+  const defaults = (await fixture.db.collection(COLLECTIONS.teamSchedulingAutomationSettings)
+    .doc(schedulingSettingsIdFor({ churchId: fixture.churchId })).get()).data();
+  const planned = planSchedulingCycle({ churchId: fixture.churchId, teamId: fixture.teamId,
+    periodId: "2027-01", serviceTimeZone: "America/New_York",
+    effective: resolveEffectiveSchedulingSettings({ defaults, override: { mode: "inherit" } }),
+    createdAt: now.toISOString(), createdBy: null });
+  planned.cycle.automationEnabled = true;
+  planned.cycle.availabilityFormCreationEnabled = true;
+  planned.cycle.activationBoundaryAt = fixture.activationAt;
+  const request = planned.actions.find((action) => action.actionType === "availability_request");
+  Object.assign(request, { enabled: true, state: "claimed", claimToken: "expired-owner-token",
+    claimOwner: "previous-run", claimedAt: "2026-12-01T14:00:00.000Z",
+    claimExpiresAt: "2026-12-01T15:00:00.000Z", attemptCount: 1 });
+  await fixture.db.collection(COLLECTIONS.teamSchedulingCycles).doc(planned.cycle.cycleId).set(planned.cycle);
+  await Promise.all(planned.actions.map((action) => fixture.db.collection(COLLECTIONS.teamSchedulingActions)
+    .doc(action.actionId).set(action)));
+  const processor = processorFor({ db: fixture.db, now: () => now,
+    processorStateNamespace: fixture.namespace,
+    limits: { churches: 10, teamsPerChurch: 10, maxTeamScopesPerRun: 10, cyclesPerRun: 10,
+      actionsPerRun: 10, claimLeaseMs: 300000, maxAttempts: 5, budgetMs: 480000, lookAheadMonths: 0 },
+    createAvailabilityRequest: async () => { calls += 1; return { formId: "isolated-form" }; } });
+  try {
+    const result = await processor.run({ mode: "execute", limit: 10 });
+    const saved = (await fixture.db.collection(COLLECTIONS.teamSchedulingActions).doc(request.actionId).get()).data();
+    assert.equal(calls, 1);
+    assert.equal(result.summary.cyclesCreated, 0);
+    assert.equal(result.summary.expiredClaimsRecovered, 1);
+    assert.equal(saved.state, "completed");
+    assert.equal(saved.attemptCount, 2);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cycle discovery stops at its per-run cycle budget and reports remaining work", { skip: !enabled }, async () => {
+  const fixture = await createFixture(randomUUID());
+  const processor = processorFor({ db: fixture.db, now: fixedNow,
+    processorStateNamespace: fixture.namespace,
+    limits: { churches: 10, teamsPerChurch: 10, maxTeamScopesPerRun: 10, cyclesPerRun: 1,
+      actionsPerRun: 10, claimLeaseMs: 300000, maxAttempts: 5, budgetMs: 480000, lookAheadMonths: 4 },
+    createAvailabilityRequest: async () => ({ skipped: true, reason: "test result" }) });
+  try {
+    const result = await processor.run({ mode: "execute", limit: 10 });
+    const cycles = await fixture.db.collection(COLLECTIONS.teamSchedulingCycles)
+      .where("churchId", "==", fixture.churchId).get();
+    assert.equal(result.summary.cyclesCreated, 1);
+    assert.equal(result.summary.discoveryIncomplete, true);
+    assert.equal(cycles.size, 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("team discovery resumes after a full page before advancing its church cursor", { skip: !enabled }, async () => {
+  const fixture = await createFixture(randomUUID());
+  await Promise.all(["processor-extra-a", "processor-extra-b"].map((teamId) =>
+    fixture.db.collection(COLLECTIONS.teams).doc(`${teamId}-${fixture.namespace}`).set({
+      teamId: `${teamId}-${fixture.namespace}`, churchId: fixture.churchId, name: "Media", archivedAt: null,
+    })));
+  const processor = processorFor({ db: fixture.db, now: fixedNow,
+    processorStateNamespace: fixture.namespace,
+    limits: { churches: 10, teamsPerChurch: 1, maxTeamScopesPerRun: 10, cyclesPerRun: 10,
+      actionsPerRun: 10, claimLeaseMs: 300000, maxAttempts: 5, budgetMs: 480000, lookAheadMonths: 0 },
+    createAvailabilityRequest: async () => ({ skipped: true, reason: "test result" }) });
+  try {
+    const first = await processor.run({ mode: "execute", limit: 10 });
+    const second = await processor.run({ mode: "execute", limit: 10 });
+    const third = await processor.run({ mode: "execute", limit: 10 });
+    assert.equal(first.summary.teamsExamined, 1);
+    assert.equal(second.summary.teamsExamined, 1);
+    assert.equal(third.summary.teamsExamined, 1);
+    assert.equal(first.summary.discoveryIncomplete, true);
+    assert.equal(second.summary.discoveryIncomplete, true);
+    assert.equal(third.summary.discoveryIncomplete, false);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cycle rediscovery preserves retry timing and exhausts repeated transient failures", { skip: !enabled }, async () => {
+  const fixture = await createFixture(randomUUID());
+  let currentTime = fixedNow();
+  let calls = 0;
+  const processor = processorFor({ db: fixture.db, now: () => new Date(currentTime),
+    processorStateNamespace: fixture.namespace,
+    limits: { churches: 10, teamsPerChurch: 10, maxTeamScopesPerRun: 10, cyclesPerRun: 10,
+      actionsPerRun: 10, claimLeaseMs: 300000, maxAttempts: 3, budgetMs: 480000, lookAheadMonths: 4 },
+    createAvailabilityRequest: async () => {
+      calls += 1;
+      throw Object.assign(new Error("temporary Firestore failure"), { code: "UNAVAILABLE" });
+    } });
+  try {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await scopedRun(fixture, processor);
+      const cycleId = (await fixture.db.collection(COLLECTIONS.teamSchedulingCycles)
+        .where("churchId", "==", fixture.churchId).get()).docs[0].id;
+      const cycle = (await fixture.db.collection(COLLECTIONS.teamSchedulingCycles).doc(cycleId).get()).data();
+      const cycleActions = await Promise.all(cycle.plannedActionIds.map((id) =>
+        fixture.db.collection(COLLECTIONS.teamSchedulingActions).doc(id).get()));
+      const requestSnapshot = cycleActions.find((snapshot) => snapshot.data()?.actionType === "availability_request");
+      const request = requestSnapshot.data();
+      if (attempt < 2) {
+        assert.equal(request.state, "retryable_failure");
+        assert.ok(request.nextAttemptAt);
+        currentTime = new Date(Date.parse(request.nextAttemptAt) + 1000);
+      }
+    }
+    const actions = await fixture.db.collection(COLLECTIONS.teamSchedulingActions).where("churchId", "==", fixture.churchId).get();
+    const request = actions.docs.map((doc) => doc.data()).find((action) => action.actionType === "availability_request");
+    assert.equal(calls, 3);
+    assert.equal(request.state, "review_required");
+    assert.equal(request.attemptCount, 3);
+    assert.equal(request.nextAttemptAt, null);
+  } finally {
     await fixture.cleanup();
   }
 });
