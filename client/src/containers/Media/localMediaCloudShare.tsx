@@ -163,10 +163,15 @@ type CloudShareBatch = {
   cancelFiles: Map<string, () => Promise<void>>;
   claims: Map<string, MediaUploadClaim>;
   unregister: Array<() => void>;
-  detachedUnregister: Array<() => void>;
-  activityDismissed: boolean;
-  retryCleanup?: () => Promise<void>;
   completion?: Promise<void>;
+};
+
+const sameLocalDatabase = (left: unknown, right: unknown) => {
+  if (left === right) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  const leftName = (left as { name?: unknown }).name;
+  const rightName = (right as { name?: unknown }).name;
+  return typeof leftName === "string" && leftName.length > 0 && leftName === rightName;
 };
 
 export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
@@ -188,34 +193,11 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
   useEffect(() => () => {
     for (const batch of batches.current.values()) {
       batch.ownerActive = false;
-      batch.unregister.splice(0).forEach((unregister) => unregister());
-      const dismiss = () => {
-        batch.activityDismissed = true;
-        batch.detachedUnregister.splice(0).forEach((unregister) => unregister());
-        batches.current.delete(batch.id);
-        actionsRef.current?.removeTransfer(batch.id);
-      };
-      const unregisterDismiss = actionsRef.current?.registerTransferAction(batch.id, "dismiss", dismiss);
-      if (unregisterDismiss) batch.detachedUnregister.push(unregisterDismiss);
-      if (batch.files.some((file) => file.retryCleanup) && batch.retryCleanup) {
-        const unregisterCleanup = actionsRef.current?.registerTransferAction(batch.id, "retry-cleanup", batch.retryCleanup);
-        if (unregisterCleanup) batch.detachedUnregister.push(unregisterCleanup);
-      }
       const transfer = actionsRef.current?.getTransfer(batch.id);
-      if (transfer) {
-        const hasCleanup = batch.files.some((file) => file.retryCleanup);
+      if (transfer?.status === "active") {
         actionsRef.current?.updateTransfer({
           ...transfer,
-          status: transfer.status,
-          phase: transfer.status === "active"
-            ? { key: "active", label: "Upload continues after Media closes" }
-            : transfer.phase,
-          canCancel: false,
-          blocksUnload: false,
-          actions: [
-            ...(hasCleanup ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
-            { key: "dismiss", label: "Dismiss" },
-          ],
+          phase: { ...transfer.phase, key: "active", label: "Upload continues after Media closes" },
         });
       }
     }
@@ -264,6 +246,10 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
         showToast("Could not start the upload. Try again.", "error");
         return;
       }
+      if (!db || activeScopeRef.current.db !== db || activeScopeRef.current.churchId !== churchId) {
+        showToast("Media Library changed. Refresh it before starting this upload.", "error");
+        return;
+      }
       const files = candidates
         .filter((media) => canUploadLocalMediaToCloud(media, deviceId) && !isMediaUploadClaimed(media.id))
         .map((media) => ({ media, status: "queued" as const, progress: 0, phase: "Queued" }));
@@ -294,19 +280,35 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
         cancelFiles: new Map(),
         claims: new Map(),
         unregister: [],
-        detachedUnregister: [],
-        activityDismissed: false,
       };
       batches.current.set(id, batch);
-      const publish = (terminal?: Transfer["status"]) => {
-        if (!batch.ownerActive && batch.activityDismissed) {
-          if (!terminal) return;
-          const cleanupStillRequired = batch.files.some((file) => file.retryCleanup);
-          if (!cleanupStillRequired) return;
-          batch.activityDismissed = false;
+      const isBatchScopeCurrent = () => {
+        const activeScope = batch.ownerActive
+          ? activeScopeRef.current
+          : { db: globalDb, churchId: globalFireDbInfo.churchId };
+        return Boolean(
+          batch.database && batch.churchId &&
+          sameLocalDatabase(activeScope.db, batch.database) &&
+          activeScope.churchId === batch.churchId,
+        );
+      };
+      const assertBatchScope = () => {
+        if (!isBatchScopeCurrent()) {
+          throw new Error("This upload belongs to another church. Return to the original church to continue.");
         }
+      };
+      const reportScopeMismatch = (entries: CloudShareFile[]) => {
+        entries.forEach((entry) => {
+          entry.status = "failed";
+          entry.progress = null;
+          entry.error = "Return to the original church to retry this upload.";
+        });
+        publish("failed");
+      };
+      const publish = (terminal?: Transfer["status"]) => {
         const complete = batch.files.filter((file) => file.status === "complete").length;
         const failed = batch.files.filter((file) => file.status === "failed");
+        const retryableFailures = failed.filter((file) => !file.retryCleanup);
         const cancelled = batch.files.filter((file) => file.status === "cancelled").length;
         const status: Transfer["status"] = terminal || "active";
         const measurable = batch.files.filter((file) => file.progress !== null);
@@ -323,21 +325,19 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
           detail: `${complete} of ${files.length} uploaded${failed.length ? ` · ${failed.length} failed` : ""}${cancelled ? ` · ${cancelled} cancelled` : ""}${batch.skipped ? ` · Skipped: ${batch.skipped}` : ""}`,
           ...(failed.length ? { error: { message: `${failed.length} ${failed.length === 1 ? "item" : "items"} failed to upload.` } } : {}),
           files: batch.files.map((file) => ({ id: file.media.id, name: file.media.name, status: file.status, progress: file.progress, phase: file.phase, ...(file.error ? { error: file.error } : {}) })),
-          canCancel: batch.ownerActive && status === "active" && !batch.stopping,
-          blocksUnload: batch.ownerActive && status === "active",
-          actions: !batch.ownerActive
-            ? [
-                ...(failed.some((file) => file.retryCleanup) ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
-                { key: "dismiss", label: "Dismiss" },
-              ]
-            : status === "active"
+          canCancel: status === "active" && !batch.stopping,
+          blocksUnload: status === "active",
+          actions: status === "active"
             ? [{ key: "cancel", label: batch.stopping ? "Cancelling…" : "Cancel upload", ...(batch.stopping ? { pending: true } : {}) }]
             : [
                 ...(failed.some((file) => file.retryCleanup) ? [{ key: "retry-cleanup", label: "Retry cleanup" }] : []),
-                ...(failed.length && !batch.cancelled ? [{ key: "retry-failed", label: "Retry failed files" }] : []),
+                ...(retryableFailures.length && !batch.cancelled ? [{ key: "retry-failed", label: "Retry failed files" }] : []),
                 { key: "dismiss", label: "Dismiss" },
               ],
         };
+        if (!batch.ownerActive && status === "active") {
+          transfer.phase = { ...transfer.phase, key: "active", label: "Upload continues after Media closes" };
+        }
         actionsRef.current?.updateTransfer(transfer);
         return transfer;
       };
@@ -353,8 +353,13 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
         }
         publish(batch.files.some((file) => file.status === "complete") ? "partial" : "failed");
       };
-      batch.retryCleanup = retryCleanup;
       const runBatch = async (retryFailedOnly = false) => {
+        if (!isBatchScopeCurrent()) {
+          reportScopeMismatch(batch.files.filter((file) => retryFailedOnly
+            ? file.status === "failed" && !file.retryCleanup
+            : file.status === "queued"));
+          return;
+        }
         batch.cancelled = false;
         batch.active = true;
         const targets = batch.files.filter((file) => retryFailedOnly ? file.status === "failed" && !file.retryCleanup : file.status === "queued");
@@ -371,7 +376,7 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
             return;
           }
           batch.claims.set(media.id, claim);
-          setBusy([media.id], true);
+          if (batch.ownerActive) setBusy([media.id], true);
           let cancelMuxUpload: (() => Promise<void>) | undefined;
           const cancelOne = async () => {
             batch.cancelledMediaIds.add(media.id);
@@ -390,7 +395,7 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
               try {
                 await cancelLocalImageUpload(media.localImage.id);
               } catch (error) {
-                const retry = () => retryLocalImageUploadCancellation(media.localImage!.id, churchId);
+                const retry = () => retryLocalImageUploadCancellation(media.localImage!.id, batch.churchId);
                 claim.failCleanup(error instanceof Error ? error : new Error("Image cleanup failed."), retry);
                 entry.retryCleanup = retry;
                 throw error;
@@ -404,8 +409,10 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
           entry.progress = 0;
           publish();
           try {
+            assertBatchScope();
             if (retryFailedOnly) {
               const latestMedia = reduxStore.getState().media.list.find((item) => item.id === media.id);
+              assertBatchScope();
               if (!latestMedia) throw new Error("This video was removed from Media Library. Select an available item to upload.");
               if (!canUploadLocalMediaToCloud(latestMedia, deviceId)) {
                 throw new Error("This video is no longer available for cloud upload. Refresh Media Library and select the current item.");
@@ -416,20 +423,39 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
             if (media.localImage) {
               const assetId = media.localImage.id;
               if (retryFailedOnly) {
+                assertBatchScope();
                 const job = await getLocalImageUploadJob(assetId);
-                if (job?.status === "failed" && !job.cancelRequested) await retryLocalImageUpload(assetId);
+                assertBatchScope();
+                if (job?.status === "failed" && !job.cancelRequested) {
+                  await retryLocalImageUpload(assetId);
+                  assertBatchScope();
+                }
               }
               if (!claim.isCurrent() || batch.cancelledMediaIds.has(media.id)) { entry.status = "cancelled"; return; }
-              await enqueueLocalImageUpload({ assetId, itemId: "", workspaceId: churchId, uploadPreset, mediaId: media.id });
+              assertBatchScope();
+              await enqueueLocalImageUpload({ assetId, itemId: "", workspaceId: batch.churchId, uploadPreset, mediaId: media.id });
               if (!claim.isCurrent() || batch.cancelledMediaIds.has(media.id)) {
                 try { await cancelLocalImageUpload(assetId); }
                 catch (error) {
-                  const retry = () => retryLocalImageUploadCancellation(assetId, churchId);
+                  const retry = () => retryLocalImageUploadCancellation(assetId, batch.churchId);
                   claim.failCleanup(error instanceof Error ? error : new Error("Image cleanup failed."), retry);
                   entry.retryCleanup = retry;
                   throw error;
                 }
                 entry.status = "cancelled";
+                return;
+              }
+              if (!isBatchScopeCurrent()) {
+                try { await cancelLocalImageUpload(assetId); }
+                catch (error) {
+                  const retry = () => retryLocalImageUploadCancellation(assetId, batch.churchId);
+                  claim.failCleanup(error instanceof Error ? error : new Error("Image cleanup failed."), retry);
+                  entry.retryCleanup = retry;
+                  throw error;
+                }
+                entry.status = "failed";
+                entry.error = "Church changed before this upload started. Return to the original church to retry.";
+                entry.progress = null;
                 return;
               }
               await waitForLocalImageUpload(assetId, (state) => {
@@ -448,8 +474,9 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
             } else if (media.localVideoFile) {
               if (media.localVideoFile.storageMode === "linked") {
                 if (!batch.database) throw new Error("Media Library is not ready. Retry when this controller is connected.");
+                assertBatchScope();
                 const persisted = await readMediaItemForDeletion(batch.database as PouchDB.Database, media.id);
-                if (!claim.isCurrent() || activeScopeRef.current.db !== batch.database || activeScopeRef.current.churchId !== batch.churchId) {
+                if (!claim.isCurrent() || !isBatchScopeCurrent()) {
                   entry.status = "cancelled"; return;
                 }
                 const reference = persisted?.item.localVideoFile;
@@ -467,12 +494,13 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
                 if (!reference || reference.id !== media.localVideoFile.id || reference.contentHash !== media.localVideoFile.contentHash) {
                   throw sourceNotReady("This video changed. Finish any pending relink in Activity, then select the video again and restart the upload.");
                 }
+                assertBatchScope();
                 const native = await window.electronAPI?.getLocalAsset(reference.id);
                 if (!native || native.workspaceId !== batch.churchId ||
                     (reference.contentHash && native.contentHash !== reference.contentHash)) {
                   throw sourceNotReady("This video's local source is not ready. Finish relinking in Activity or reconnect its drive, then retry the upload.");
                 }
-                if (!claim.isCurrent() || activeScopeRef.current.db !== batch.database || activeScopeRef.current.churchId !== batch.churchId) {
+                if (!claim.isCurrent() || !isBatchScopeCurrent()) {
                   entry.status = "cancelled"; return;
                 }
               }
@@ -489,21 +517,24 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
                 setCancelUpload: (cancel) => { cancelMuxUpload = cancel; },
               };
               let result: MuxUploadResult;
-              if (await canUploadLocalVideoAssetNatively()) {
+              const canStreamNatively = await canUploadLocalVideoAssetNatively();
+              assertBatchScope();
+              if (canStreamNatively) {
                 result = await uploadLocalVideoAssetToMux(
                   media.localVideoFile.id,
                   media.localVideoFile.fileName || `${media.name}.mp4`,
-                  { churchId, mediaId: media.id, title: media.name },
+                  { churchId: batch.churchId, mediaId: media.id, title: media.name },
                   callbacks,
                 );
               } else {
                 const parts = await getLocalVideoFileBlob(media.localVideoFile.id);
                 if (!parts) throw new Error("This video is not available on this device.");
+                assertBatchScope();
                 if (!claim.isCurrent() || batch.cancelledMediaIds.has(media.id)) { entry.status = "cancelled"; return; }
                 const file = new File([parts.blob], parts.fileName, { type: parts.contentType || "video/mp4" });
-                result = await uploadVideoToMux(file, { churchId, mediaId: media.id, title: media.name }, callbacks);
+                result = await uploadVideoToMux(file, { churchId: batch.churchId, mediaId: media.id, title: media.name }, callbacks);
               }
-              if (!batch.ownerActive || activeScopeRef.current.db !== batch.database || activeScopeRef.current.churchId !== batch.churchId) {
+              if (!isBatchScopeCurrent()) {
                 const cleanup = async () => { await deleteChurchMuxAsset(batch.churchId, result.assetId); };
                 try {
                   await cleanup();
@@ -515,18 +546,14 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
                   entry.status = "failed";
                   entry.error = error instanceof Error ? error.message : "Church changed; cloud cleanup needs attention.";
                   entry.progress = null;
-                  if (!batch.ownerActive) {
-                    const unregister = actionsRef.current?.registerTransferAction(batch.id, "retry-cleanup", retryCleanup);
-                    if (unregister) batch.detachedUnregister.push(unregister);
-                  }
                 }
                 return;
               }
               if (!claim.isCurrent() || batch.cancelledMediaIds.has(media.id)) {
                 try {
-                  await deleteChurchMuxAsset(churchId, result.assetId);
+                  await deleteChurchMuxAsset(batch.churchId, result.assetId);
                 } catch (error) {
-                  const retry = async () => { await deleteChurchMuxAsset(churchId, result.assetId); };
+                  const retry = async () => { await deleteChurchMuxAsset(batch.churchId, result.assetId); };
                   claim.failCleanup(error instanceof Error ? error : new Error("Mux cleanup failed."), retry);
                   entry.retryCleanup = retry;
                   throw error;
@@ -542,16 +569,17 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
                   currentMedia.localVideoFile.contentHash !== media.localVideoFile.contentHash) {
                 const sourceChanged = new Error("This video's local source changed or was removed before the cloud upload finished. Select the current item in Media Library to start a new upload.");
                 try {
-                  await deleteChurchMuxAsset(churchId, result.assetId);
+                  await deleteChurchMuxAsset(batch.churchId, result.assetId);
                 } catch (cleanupError) {
-                  const retry = async () => { await deleteChurchMuxAsset(churchId, result.assetId); };
+                  const retry = async () => { await deleteChurchMuxAsset(batch.churchId, result.assetId); };
                   claim.failCleanup(cleanupError instanceof Error ? cleanupError : new Error("Mux cleanup failed."), retry);
                   entry.retryCleanup = retry;
                   throw new Error(`${sourceChanged.message} Cloud cleanup needs attention: ${cleanupError instanceof Error ? cleanupError.message : "retry cleanup"}`);
                 }
                 throw sourceChanged;
               }
-              dispatch(updateMediaItemFields({ id: media.id, patch: buildLocalVideoCloudSharePatch(currentMedia, result, churchId) }));
+              assertBatchScope();
+              dispatch(updateMediaItemFields({ id: media.id, patch: buildLocalVideoCloudSharePatch(currentMedia, result, batch.churchId) }));
               entry.status = "complete";
               entry.progress = 100;
               entry.phase = "Upload complete";
@@ -595,7 +623,7 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
         batch.active = false;
         batch.stopping = false;
         publish(terminal);
-        if (successes.length && batch.ownerActive) onStorageUsageChanged?.();
+        if (successes.length && batch.ownerActive && isBatchScopeCurrent()) onStorageUsageChanged?.();
       };
       const register = (key: string, handler: () => void | Promise<void>) => {
         const unregister = actions?.registerTransferAction(id, key, handler);
@@ -612,6 +640,10 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
       });
       register("retry-failed", async () => {
         if (batch.completion) await batch.completion;
+        if (!isBatchScopeCurrent()) {
+          reportScopeMismatch(batch.files.filter((file) => file.status === "failed" && !file.retryCleanup));
+          return;
+        }
         batch.completion = runBatch(true);
         await batch.completion;
       });
@@ -621,7 +653,6 @@ export function useLocalMediaCloudShare(onStorageUsageChanged?: () => void) {
         batch.ownerActive = false;
         batches.current.delete(id);
         batch.unregister.forEach((unregister) => unregister());
-        batch.detachedUnregister.forEach((unregister) => unregister());
         actions?.removeTransfer(id);
       });
       publish();

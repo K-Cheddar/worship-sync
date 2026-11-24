@@ -11,7 +11,6 @@ import { getFreeSectionDisplayName, getFreeSectionNumber } from "../../utils/fre
 import Button from "../../components/Button/Button";
 import Input from "../../components/Input/Input";
 import FloatingWindow from "../../components/FloatingWindow/FloatingWindow";
-import LocalVideoInputSlideBadge from "../../components/LocalVideoInputSlideBadge/LocalVideoInputSlideBadge";
 import { useSelector } from "../../hooks";
 import { RootState } from "../../store/store";
 import { useDroppable } from "@dnd-kit/core";
@@ -21,7 +20,6 @@ import type { ThumbnailPreviewMode } from "../../context/thumbnailPreviewMode";
 import type { ResolvedDisplaySettings } from "../../utils/displaySettings";
 import { useLocalImageUrl } from "../../hooks/useLocalImageUrl";
 import { isLocalImageUrl } from "../../utils/localImageAssets";
-import { getLocalVideoInputPreviewStatus } from "../../utils/localVideoInput";
 
 /** Stable empty list: a fresh [] re-renders every slide on any action. */
 const EMPTY_SLIDE_IDS: string[] = [];
@@ -140,14 +138,6 @@ const ItemSlide = ({
       ? localVideoInputThumbnail.thumbnail
       : undefined
   );
-  const localVideoInputStatus = getLocalVideoInputPreviewStatus(
-    slide.mediaSource?.kind === "local-video-input"
-      ? slide.mediaSource
-      : undefined,
-  );
-  const localVideoInputPreviewUnavailable = localVideoThumbnailUrl
-    ? undefined
-    : localVideoInputStatus;
   const backgroundTargetSlideIds = useSelector(
     (state: RootState) =>
       state.undoable.present.item.backgroundTargetSlideIds ?? EMPTY_SLIDE_IDS,
@@ -310,6 +300,9 @@ const ItemSlide = ({
       key={slide.id}
       className={cn(
         "relative cursor-pointer select-none w-full rounded-lg transition-[background-color,box-shadow] duration-150 ease-out",
+        // The fixed rename window is rendered in this tile's React subtree;
+        // release the tile context while it is open so its managed z-index works.
+        !isEditingName && "isolate",
         isDragging && !isDragOverlay && "opacity-30",
         isDragOverlay && "pointer-events-none shadow-2xl scale-[1.02]",
         !isDragging &&
@@ -457,26 +450,6 @@ const ItemSlide = ({
             itemType === "bible" ? getBibleInfo(index) : undefined
           }
         />
-        {slide.mediaSource?.kind === "local-video-input" ? (
-          <LocalVideoInputSlideBadge
-            label={slide.mediaSource.label}
-            captureKind={slide.mediaSource.captureKind}
-            unavailable={Boolean(localVideoInputStatus)}
-            ownerLabel={localVideoInputStatus?.ownerLabel}
-            variant={
-              localVideoThumbnailUrl || localVideoInputPreviewUnavailable
-                ? "indicator"
-                : "overlay"
-            }
-            className={
-              localVideoThumbnailUrl
-                ? "!bottom-2 !left-2 !right-auto !max-w-[65%]"
-                : localVideoInputPreviewUnavailable
-                  ? "!bottom-2 !left-2 !right-auto !max-w-[65%] !z-40"
-                  : undefined
-            }
-          />
-        ) : null}
       </div>
       {isFree && isEditingName && onRenameSection ? (
         <div

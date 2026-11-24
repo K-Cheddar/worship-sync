@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createReadStream, type ReadStream } from "node:fs";
 import { access, mkdir, readdir, readFile, rm, stat, statfs, type FileHandle } from "node:fs/promises";
-import { type ClientRequest } from "node:http";
+import { type ClientRequest, type IncomingMessage } from "node:http";
 import { request as requestHttps } from "node:https";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -81,21 +81,9 @@ const MAX_DOWNLOAD_STDOUT_BYTES = 8 * 1024 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f-]{27}$/i;
 const UPLOAD_PROGRESS_INTERVAL_MS = 250;
 
-const safeMuxUploadDiagnostic = (error: unknown) => {
-  if (!(error instanceof Error)) return "No low-level diagnostic was returned.";
-  return error.message
-    .replace(/https?:\/\/\S+/gi, "[URL]")
-    .replace(/\?[^\s"'<>]*/g, "?[redacted]")
-    .replace(/\b(cookie|authorization|token|signature|sig|api[_-]?key|client[_-]?secret)\b\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
-    .replace(/\b[A-Za-z]:\\[^\r\n]+/g, "[path]")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 600);
-};
-
 const safeErrorCode = (error: unknown) =>
   error && typeof error === "object" && "code" in error && typeof error.code === "string"
-    ? error.code.slice(0, 80)
+    ? /^[A-Z0-9_]{1,80}$/i.test(error.code) ? error.code : undefined
     : undefined;
 
 type NativeCommandPolicy = {
@@ -836,8 +824,8 @@ export class VideoDownloader extends EventEmitter {
       console.warn("[VideoDownloader] Mux upload source could not be read", {
         stage: "file-read",
         category: "file-read-failed",
+        operation: "stat-upload-source",
         code: safeErrorCode(error),
-        diagnostic: safeMuxUploadDiagnostic(error),
       });
       throw new Error("The local video could not be read. Check that it is available and retry.");
     }
@@ -850,8 +838,8 @@ export class VideoDownloader extends EventEmitter {
       console.warn("[VideoDownloader] Mux upload source could not be read", {
         stage: "file-read",
         category: "file-read-failed",
+        operation: "open-upload-source",
         code: safeErrorCode(error),
-        diagnostic: safeMuxUploadDiagnostic(error),
       });
       throw new Error("The local video could not be read. Check that it is available and retry.");
     }
@@ -874,9 +862,9 @@ export class VideoDownloader extends EventEmitter {
       console.warn("[VideoDownloader] Mux upload request could not start", {
         stage: "http-transport",
         category: "request-creation-failed",
+        operation: "create-upload-request",
         hostname: new URL(validatedUpload.url).hostname,
         code: safeErrorCode(error),
-        diagnostic: safeMuxUploadDiagnostic(error),
       });
       throw new Error("The cloud upload connection could not be started. Retry the upload.");
     }
@@ -887,6 +875,7 @@ export class VideoDownloader extends EventEmitter {
       request.destroy(new Error("Cloud video upload timed out."));
     });
     let uploaded = 0;
+    let sourceEnded = false;
     let lastProgressAt = Number.NEGATIVE_INFINITY;
     let lastProgressBytes = -1;
     const emitUploadProgress = (force = false) => {
@@ -909,6 +898,7 @@ export class VideoDownloader extends EventEmitter {
     });
     return new Promise<void>((resolveUpload, reject) => {
       let settled = false;
+      let cleanupListeners = () => undefined;
       const finish = (
         error?: Error,
         category?: string,
@@ -918,17 +908,14 @@ export class VideoDownloader extends EventEmitter {
         if (settled) return;
         if (record.uploadCancelled) {
           settled = true;
+          cleanupListeners();
           record.uploadRequest = undefined;
           record.uploadStream = undefined;
           reject(new Error("Upload cancelled."));
           return;
         }
-        if (!error && uploaded !== size) {
-          error = new Error("The local video ended before all bytes were sent.");
-          category = "file-read-failed";
-          stage = "file-read";
-        }
         settled = true;
+        cleanupListeners();
         record.uploadRequest = undefined;
         record.uploadStream = undefined;
         if (error) {
@@ -936,10 +923,10 @@ export class VideoDownloader extends EventEmitter {
           console.warn("[VideoDownloader] Mux upload failed", {
             stage,
             category: failureCategory,
+            operation: stage === "file-read" ? "read-upload-source" : "send-upload-request",
             hostname: new URL(validatedUpload.url).hostname,
             ...(statusCode ? { statusCode } : {}),
             code: safeErrorCode(error),
-            diagnostic: safeMuxUploadDiagnostic(error),
           });
           reject(stage === "file-read"
             ? new Error("The local video could not be read. Check that it is available and retry.")
@@ -957,16 +944,36 @@ export class VideoDownloader extends EventEmitter {
         if (uploaded >= size) emitUploadProgress(true);
         resolveUpload();
       };
-      request.once("response", (response) => {
+      const handleResponse = (response: IncomingMessage) => {
         response.resume();
-        if (response.statusCode && response.statusCode >= 200 && response.statusCode < 300) finish();
+        if (response.statusCode && response.statusCode >= 200 && response.statusCode < 300) {
+          if (uploaded < size && !sourceEnded) {
+            finish(new Error("The upload connection ended before the source stream finished."), "transport-failed");
+          } else finish();
+        }
         else finish(new Error(`HTTP ${response.statusCode ?? "unknown"}`), "http-rejected", response.statusCode);
-      });
-      request.once("error", (error) => finish(error, timedOut ? "timeout" : "transport-failed"));
-      uploadStream.once("error", (error) => {
+      };
+      const handleRequestError = (error: Error) => finish(error, timedOut ? "timeout" : "transport-failed");
+      const handleStreamError = (error: Error) => {
         if (settled) return;
         finish(error, "file-read-failed", undefined, "file-read");
-      });
+      };
+      const handleStreamEnd = () => {
+        sourceEnded = true;
+        if (!settled && uploaded < size) {
+          finish(new Error("The local video ended before all bytes were read."), "file-read-failed", undefined, "file-read");
+        }
+      };
+      cleanupListeners = () => {
+        request.removeListener("response", handleResponse);
+        request.removeListener("error", handleRequestError);
+        uploadStream.removeListener("error", handleStreamError);
+        uploadStream.removeListener("end", handleStreamEnd);
+      };
+      request.once("response", handleResponse);
+      request.once("error", handleRequestError);
+      uploadStream.once("error", handleStreamError);
+      uploadStream.once("end", handleStreamEnd);
       uploadStream.pipe(request);
     });
   }

@@ -27,6 +27,7 @@ const PAGE_SIZE = 50;
 
 const requestTone: Record<string, string> = {
   Responded: "font-medium text-emerald-300",
+  "Review conflict": "font-medium text-amber-200",
   "Awaiting response": "text-gray-200",
   "Not requested": "text-gray-400",
   Revoked: "text-rose-300",
@@ -114,6 +115,7 @@ const AvailabilityVolunteersList = ({
     if (status === "Not invited") return row.status === "Not requested";
     if (status === "Delivery failed") return isDeliveryFailed(row);
     if (status === "Uncertain delivery") return isDeliveryUncertain(row);
+    if (status === "Response conflict") return row.responseConflict;
     if (status === "Incomplete responses")
       return row.status === "Responded" && row.hasResponseDetails &&
         summarizeAvailabilityAnswers(
@@ -140,6 +142,7 @@ const AvailabilityVolunteersList = ({
 
   const availabilitySummary = (row: AvailabilityProgressRow) => {
     if (!row.responded) return "—";
+    if (row.responseConflict) return "Conflicting responses";
     if (!row.hasResponseDetails) return "Response recorded";
     if (!occurrences.length) return "Submitted";
     const summary = summarizeAvailabilityAnswers(
@@ -157,6 +160,7 @@ const AvailabilityVolunteersList = ({
   const statusFilterOptions = [
     { value: "", label: "All statuses" },
     { value: "Responded", label: "Responded" },
+    { value: "Response conflict", label: "Response conflict" },
     { value: "Awaiting response", label: "Awaiting response" },
     { value: "Not invited", label: "Not invited" },
     { value: "Revoked", label: "Revoked" },
@@ -169,7 +173,7 @@ const AvailabilityVolunteersList = ({
     setExpandedMemberId((current) => current === memberId ? "" : memberId);
 
   const requestStatusContent = (row: AvailabilityProgressRow) => <>
-    {!historyLoaded && !["Responded", "Revoked"].includes(row.status) ? <span aria-hidden="true" className="inline-block h-3 w-24 animate-pulse rounded bg-white/10 align-middle" /> : <span className={`text-xs ${requestTone[row.status] || "text-gray-300"}`}>{requestStatusLabel(row)}</span>}
+    {!historyLoaded && !["Responded", "Review conflict", "Revoked"].includes(row.status) ? <span aria-hidden="true" className="inline-block h-3 w-24 animate-pulse rounded bg-white/10 align-middle" /> : <span className={`text-xs ${requestTone[row.status] || "text-gray-300"}`}>{requestStatusLabel(row)}</span>}
     {!historyLoaded ? <span aria-hidden="true" className="ml-2 inline-block h-3 w-16 animate-pulse rounded bg-white/10 align-middle" /> : row.delivery !== "—" ? <span className={`ml-2 text-xs ${deliveryTone(row.delivery)}`}>{row.delivery}</span> : null}
   </>;
 

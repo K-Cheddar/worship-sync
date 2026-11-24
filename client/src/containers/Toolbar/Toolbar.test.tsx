@@ -1,4 +1,5 @@
 import { act, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { AriaAttributes, ComponentType, ReactNode, SVGProps } from "react";
 import Toolbar from "./Toolbar";
 import { ControllerInfoContext } from "../../context/controllerInfo";
@@ -55,6 +56,7 @@ jest.mock("../../components/Button/Button", () => ({
     "aria-label": ariaLabel,
     "aria-expanded": ariaExpanded,
     "aria-haspopup": ariaHasPopup,
+    "aria-pressed": ariaPressed,
     title,
     disabled,
     svg,
@@ -65,6 +67,7 @@ jest.mock("../../components/Button/Button", () => ({
     "aria-label"?: string;
     "aria-expanded"?: boolean;
     "aria-haspopup"?: AriaAttributes["aria-haspopup"];
+    "aria-pressed"?: boolean;
     title?: string;
     disabled?: boolean;
     svg?: ComponentType<SVGProps<SVGSVGElement>>;
@@ -76,6 +79,7 @@ jest.mock("../../components/Button/Button", () => ({
       aria-label={ariaLabel}
       aria-expanded={ariaExpanded}
       aria-haspopup={ariaHasPopup}
+      aria-pressed={ariaPressed}
       title={title}
       disabled={disabled}
       data-icon={svg?.displayName ?? svg?.name}
@@ -119,8 +123,12 @@ jest.mock("./ToolbarElements/Outlines", () => ({
 
 jest.mock("./ToolbarElements/SlideEditTools", () => ({
   __esModule: true,
-  default: ({ className }: { className?: string }) =>
-    className?.includes("hidden") ? null : <div>Slide Tools Panel</div>,
+  default: ({ className, applyToAll }: { className?: string; applyToAll?: boolean }) =>
+    className?.includes("hidden") ? null : (
+      <div data-testid="slide-tools-panel" data-apply-to-all={String(applyToAll)}>
+        Slide Tools Panel
+      </div>
+    ),
 }));
 
 jest.mock("./ToolbarElements/ItemEditTools", () => ({
@@ -148,7 +156,11 @@ jest.mock("./ToolbarElements/FormattedTextEditor", () => ({
 
 jest.mock("./ToolbarElements/BoxEditor", () => ({
   __esModule: true,
-  default: () => <div>Box Tools Panel</div>,
+  default: ({ applyToAll }: { applyToAll?: boolean }) => (
+    <div data-testid="box-tools-panel" data-apply-to-all={String(applyToAll)}>
+      Box Tools Panel
+    </div>
+  ),
 }));
 
 jest.mock("./ToolbarElements/MediaSurfaceDiagnostics", () => ({
@@ -346,6 +358,81 @@ describe("Toolbar", () => {
     );
     expect(screen.getByRole("button", { name: "All Tools" })).toHaveAttribute(
       "aria-expanded",
+      "true",
+    );
+  });
+
+  it("shares the saved editing scope between quick controls and All Tools without item writes", async () => {
+    renderToolbar({ access: "full", itemType: "song" });
+    const user = userEvent.setup();
+
+    const scopeButton = screen.getByRole("button", {
+      name: "Formatting scope: All slides",
+    });
+    expect(scopeButton).toHaveTextContent("All slides");
+    expect(screen.getByRole("radio", { name: "All slides" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("slide-tools-panel")).toHaveAttribute(
+      "data-apply-to-all",
+      "true",
+    );
+    expect(screen.getByTestId("box-tools-panel")).toHaveAttribute(
+      "data-apply-to-all",
+      "true",
+    );
+
+    mockDispatch.mockClear();
+    await user.click(screen.getByRole("button", { name: "All Tools" }));
+    await user.click(screen.getByRole("radio", { name: "This slide" }));
+
+    expect(localStorage.getItem("worshipsync_slide_editing_scope")).toBe("selected");
+    expect(screen.getByRole("button", { name: "Formatting scope: This slide" })).toHaveTextContent(
+      "This slide",
+    );
+    expect(screen.getByRole("radio", { name: "This slide" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("slide-tools-panel")).toHaveAttribute(
+      "data-apply-to-all",
+      "false",
+    );
+    expect(screen.getByTestId("box-tools-panel")).toHaveAttribute(
+      "data-apply-to-all",
+      "false",
+    );
+    expect(mockDispatch).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("radio", { name: "All slides" }));
+    expect(screen.getByRole("button", { name: "Formatting scope: All slides" })).toHaveTextContent(
+      "All slides",
+    );
+    expect(screen.getByRole("radio", { name: "All slides" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    expect(screen.getByTestId("slide-tools-panel")).toHaveAttribute(
+      "data-apply-to-all",
+      "true",
+    );
+    expect(mockDispatch).not.toHaveBeenCalled();
+  });
+
+  it("remembers the selected editing scope after the toolbar remounts", async () => {
+    const view = renderToolbar({ access: "full", itemType: "song" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "All Tools" }));
+    await user.click(screen.getByRole("radio", { name: "This slide" }));
+    expect(localStorage.getItem("worshipsync_slide_editing_scope")).toBe("selected");
+
+    view.unmount();
+    renderToolbar({ access: "full", itemType: "song" });
+
+    expect(screen.getByRole("button", { name: "Formatting scope: This slide" })).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "This slide" })).toHaveAttribute(
+      "aria-checked",
       "true",
     );
   });

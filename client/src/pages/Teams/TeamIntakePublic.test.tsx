@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import TeamIntakePublic from "./TeamIntakePublic";
@@ -29,6 +29,32 @@ const preview = {
   ],
   teams: [{ teamId: "team_1", name: "Worship" }],
 };
+
+const availabilityOccurrences = [
+  {
+    occurrenceId: "service_1@2026-09-06T10:00:00.000Z",
+    serviceId: "service_1",
+    name: "Sunday service",
+    startsAt: "2026-09-06T10:00:00.000Z",
+  },
+  {
+    occurrenceId: "service_2@2026-09-13T10:00:00.000Z",
+    serviceId: "service_2",
+    name: "Evening service",
+    startsAt: "2026-09-13T10:00:00.000Z",
+  },
+];
+
+const dedicatedAvailabilityPreview = (overrides = {}) => ({
+  ...preview,
+  form: {
+    ...preview.form,
+    purpose: "team_availability",
+    enabledFields: ["availability"],
+    availabilityOccurrences,
+    ...overrides,
+  },
+});
 
 const renderPage = (path = "/team-intake/tok_123") =>
   render(
@@ -222,10 +248,115 @@ test("personalized non-availability form asks volunteers to complete the form", 
   renderPage("/a/tok_123");
 
   expect(await screen.findByText("Team intake")).toBeInTheDocument();
-  expect(screen.getByText(/hi kevin\. please complete this form/i)).toBeInTheDocument();
+  expect(screen.getByText(/hi kevin/i)).toBeInTheDocument();
+  expect(screen.getByText(/complete the fields requested below/i)).toBeInTheDocument();
   expect(screen.getByRole("group", { name: /blockout dates/i })).toBeInTheDocument();
   expect(screen.getByLabelText("Notes:")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /submit response/i })).toBeInTheDocument();
+});
+
+test("dedicated availability general links show purpose-specific copy and required identity", async () => {
+  mockGetPreview.mockResolvedValue(dedicatedAvailabilityPreview() as never);
+  renderPage();
+
+  expect(await screen.findByText("Fall Volunteers")).toBeInTheDocument();
+  expect(screen.getByText("Please let us know which upcoming services you're available to serve.")).toBeInTheDocument();
+  expect(screen.getByRole("group", { name: /your information/i })).toBeInTheDocument();
+  expect(screen.getByLabelText("First name:")).toBeRequired();
+  expect(screen.getByLabelText("Last name:")).toBeRequired();
+  expect(screen.getByLabelText("Email:")).not.toBeRequired();
+  expect(screen.getByText("Select your available dates.")).toBeInTheDocument();
+  expect(screen.getByText("Check all the dates you can serve. Leave dates you cannot serve unchecked.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Submit availability" })).toBeInTheDocument();
+});
+
+test("dedicated availability requires an explicit answer and submits every shown date", async () => {
+  const user = userEvent.setup();
+  mockGetPreview.mockResolvedValue(dedicatedAvailabilityPreview() as never);
+  mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  await user.type(screen.getByLabelText("First name:"), "  Pat  ");
+  await user.type(screen.getByLabelText("Last name:"), "  Reed  ");
+  await user.click(screen.getByRole("button", { name: "Submit availability" }));
+  expect(mockSubmit).not.toHaveBeenCalled();
+  expect(await screen.findByText("Select at least one service date or indicate that none work.")).toBeInTheDocument();
+
+  await user.click(screen.getByRole("checkbox", { name: /Sunday service/ }));
+  await user.click(screen.getByRole("button", { name: "Submit availability" }));
+  await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+  expect(mockSubmit).toHaveBeenCalledWith(
+    "tok_123",
+    expect.objectContaining({
+      firstName: "Pat",
+      lastName: "Reed",
+      email: "",
+      occurrenceAvailability: {
+        [availabilityOccurrences[0].occurrenceId]: "available",
+        [availabilityOccurrences[1].occurrenceId]: "unavailable",
+      },
+      availabilityOccurrenceIds: availabilityOccurrences.map(({ occurrenceId }) => occurrenceId),
+    }),
+    { personalized: false },
+  );
+  expect(await screen.findByText("Your availability was submitted. You can close this page.")).toBeInTheDocument();
+});
+
+test("date selection and explicit none are mutually exclusive, and select all covers every date", async () => {
+  const user = userEvent.setup();
+  mockGetPreview.mockResolvedValue(dedicatedAvailabilityPreview() as never);
+  mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  const dates = screen.getByRole("group", { name: "Select your available dates." });
+  const none = screen.getByRole("checkbox", { name: /I'm not available for any of these dates/ });
+  await user.click(none);
+  expect(none).toBeChecked();
+  expect(within(dates).getByRole("checkbox", { name: /Sunday service/ })).not.toBeChecked();
+  await user.click(within(dates).getByRole("checkbox", { name: /Sunday service/ }));
+  expect(none).not.toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Select all" }));
+  expect(within(dates).getByRole("checkbox", { name: /Sunday service/ })).toBeChecked();
+  expect(within(dates).getByRole("checkbox", { name: /Evening service/ })).toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Clear all" }));
+  await user.click(none);
+  await user.type(screen.getByLabelText("First name:"), "Pat");
+  await user.type(screen.getByLabelText("Last name:"), "Reed");
+  await user.click(screen.getByRole("button", { name: "Submit availability" }));
+
+  await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+  expect(mockSubmit).toHaveBeenCalledWith(
+    "tok_123",
+    expect.objectContaining({
+      occurrenceAvailability: Object.fromEntries(
+        availabilityOccurrences.map(({ occurrenceId }) => [occurrenceId, "unavailable"]),
+      ),
+    }),
+    { personalized: false },
+  );
+});
+
+test("dedicated availability preserves custom welcome wording and checks an optional email", async () => {
+  const user = userEvent.setup();
+  mockGetPreview.mockResolvedValue(dedicatedAvailabilityPreview({
+    welcomeMessage: "Please help with the October roster.",
+  }) as never);
+  mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
+  renderPage();
+  await screen.findByText("Fall Volunteers");
+
+  expect(screen.getByText("Please help with the October roster.")).toBeInTheDocument();
+  expect(screen.queryByText(/Please let us know which upcoming services/)).not.toBeInTheDocument();
+  await user.type(screen.getByLabelText("First name:"), "Pat");
+  await user.type(screen.getByLabelText("Last name:"), "Reed");
+  await user.type(screen.getByLabelText("Email:"), "not-an-email");
+  await user.click(screen.getByRole("checkbox", { name: /Sunday service/ }));
+  await user.click(screen.getByRole("button", { name: "Submit availability" }));
+
+  expect(mockSubmit).not.toHaveBeenCalled();
+  expect(await screen.findByRole("alert")).toHaveTextContent("Enter a valid email address.");
 });
 
 test("renders only the fields selected by the form owner", async () => {
@@ -234,14 +365,7 @@ test("renders only the fields selected by the form owner", async () => {
     form: {
       ...preview.form,
       enabledFields: ["availability"],
-      availabilityOccurrences: [
-        {
-          occurrenceId: "service_1@2026-09-06T10:00:00.000Z",
-          serviceId: "service_1",
-          name: "Saturday service",
-          startsAt: "2026-09-06T10:00:00.000Z",
-        },
-      ],
+      availabilityOccurrences: [availabilityOccurrences[0]],
     },
   } as never);
   mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
@@ -252,8 +376,19 @@ test("renders only the fields selected by the form owner", async () => {
   expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
   expect(screen.getByText("Service date availability")).toBeInTheDocument();
 
+  await userEvent.click(screen.getByRole("checkbox", { name: /Sunday service/ }));
   await userEvent.click(screen.getByRole("button", { name: /submit form/i }));
   await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+  expect(mockSubmit).toHaveBeenCalledWith(
+    "tok_123",
+    expect.objectContaining({
+      occurrenceAvailability: {
+        [availabilityOccurrences[0].occurrenceId]: "available",
+      },
+      availabilityOccurrenceIds: [availabilityOccurrences[0].occurrenceId],
+    }),
+    { personalized: false },
+  );
 });
 
 test("blank personal values do not block a personalized availability response", async () => {
@@ -265,24 +400,24 @@ test("blank personal values do not block a personalized availability response", 
     },
     form: {
       ...preview.form,
+      purpose: "team_availability",
       enabledFields: ["availability"],
-      availabilityOccurrences: [
-        {
-          occurrenceId: "service_1@2026-09-06T10:00:00.000Z",
-          serviceId: "service_1",
-          name: "Saturday service",
-          startsAt: "2026-09-06T10:00:00.000Z",
-        },
-      ],
+      availabilityOccurrences: [availabilityOccurrences[0]],
     },
   } as never);
   mockSubmit.mockResolvedValue({ success: true, submissionId: "s1" });
   renderPage("/a/tok_123");
   await screen.findByText("Fall Volunteers");
 
+  expect(screen.getByText(/hi avery/i)).toBeInTheDocument();
+  expect(screen.getByText("Please let us know which upcoming services you're available to serve.")).toBeInTheDocument();
+  expect(screen.queryByText(/Please submit your availability/)).not.toBeInTheDocument();
   expect(
     screen.queryByRole("group", { name: /personal information/i }),
   ).not.toBeInTheDocument();
+  await userEvent.click(
+    screen.getByRole("checkbox", { name: /I'm not available for any of these dates/ }),
+  );
   await userEvent.click(
     screen.getByRole("button", { name: /submit availability/i }),
   );
@@ -293,6 +428,17 @@ test("blank personal values do not block a personalized availability response", 
     expect.objectContaining({ firstName: "", lastName: "", email: "" }),
     { personalized: true },
   );
+  expect(mockSubmit).toHaveBeenCalledWith(
+    "tok_123",
+    expect.objectContaining({
+      occurrenceAvailability: {
+        [availabilityOccurrences[0].occurrenceId]: "unavailable",
+      },
+      availabilityOccurrenceIds: [availabilityOccurrences[0].occurrenceId],
+    }),
+    { personalized: true },
+  );
+  expect(await screen.findByText("Your availability was submitted. You can close this page.")).toBeInTheDocument();
 });
 
 test("shows the added profile and scheduling fields when selected", async () => {

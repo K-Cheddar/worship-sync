@@ -826,6 +826,32 @@ describe("DisplayBox", () => {
     expect(onPaintReadyChange).toHaveBeenLastCalledWith(true);
   });
 
+  it("releases transition readiness when an incoming image fails", () => {
+    const onPaintReadyChange = jest.fn();
+    setLocalImageResolution({
+      isLocalImage: true,
+      isOwner: true,
+      status: "ready",
+      url: "blob:incoming-image-that-fails",
+    });
+
+    render(
+      <DisplayBox
+        box={localImageBox}
+        width={100}
+        showBackground
+        index={0}
+        onPaintReadyChange={onPaintReadyChange}
+      />,
+    );
+
+    expect(onPaintReadyChange).toHaveBeenLastCalledWith(false);
+    fireEvent.error(screen.getByAltText("Main"));
+
+    expect(onPaintReadyChange).toHaveBeenLastCalledWith(true);
+    expect(screen.queryByAltText("Main")).not.toBeInTheDocument();
+  });
+
   it("keeps matching text visible while the background crossfades out", () => {
     render(
       <DisplayBox

@@ -54,7 +54,7 @@ export const mockFirebaseDb = {
 export function createMockControllerContext(
   overrides: {
     db?: PouchDB.Database;
-    dbProgress?: number;
+    dbProgress?: number | null;
     [key: string]: unknown;
   } = {},
 ) {
@@ -62,6 +62,13 @@ export function createMockControllerContext(
   return {
     db: overrideDb ?? createMockPouchDB(),
     dbProgress: 100,
+    startupInfo: {
+      stage: "completed" as const,
+      startedAt: Date.now(),
+      lastMeaningfulActivityAt: Date.now(),
+      failure: null,
+    },
+    subscribeToStartupActivity: () => () => {},
     bootstrapReady: true,
     canCreateBootstrapDocuments: () => true,
     isGuestSession: false,
@@ -72,6 +79,7 @@ export function createMockControllerContext(
     isMobile: false,
     isPhone: false,
     bibleDbProgress: 100,
+    bibleStartupFailure: null,
     setIsPhone: jest.fn(),
     logout: jest.fn(),
     login: jest.fn(),

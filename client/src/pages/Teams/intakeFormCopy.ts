@@ -8,12 +8,17 @@
  * the fallback they are replacing.
  */
 export const DEFAULT_INTAKE_FORM_COPY = {
-  welcome:
-    "Share the positions you can serve in, your availability, and any dates you're away.",
+  welcome: "Please complete the fields requested below.",
   positions: "Check the positions you can serve in.",
   availability: "Mark each date you're available to serve.",
   notes: "Anything else we should know?",
 } as const;
+
+export const DEFAULT_TEAM_AVAILABILITY_WELCOME =
+  "Please let us know which upcoming services you're available to serve.";
+
+export const DEFAULT_TEAM_AVAILABILITY_INSTRUCTIONS =
+  "Check all the dates you can serve. Leave dates you cannot serve unchecked.";
 
 /** Resolve an optional per-form override against its default. */
 export const resolveIntakeCopy = (

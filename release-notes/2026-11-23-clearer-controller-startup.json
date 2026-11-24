@@ -1,0 +1,7 @@
+{
+  "id": "clearer-controller-startup-20261123",
+  "date": "2026-11-23",
+  "type": "improved",
+  "title": "Clearer controller startup",
+  "description": "See what WorshipSync is preparing, with a retry option if startup stops reporting activity or cannot continue."
+}

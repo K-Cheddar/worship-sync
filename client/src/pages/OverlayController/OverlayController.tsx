@@ -32,7 +32,7 @@ const OverlayControllerContent = () => {
   const [isRightPanelOpen, setIsRightPanelOpen] = useState(false);
   const rightPanelRef = useRef<HTMLDivElement | null>(null);
 
-  const { dbProgress, connectionStatus } =
+  const { dbProgress, connectionStatus, startupInfo, subscribeToStartupActivity } =
     useContext(ControllerInfoContext) || {};
   const { user, churchName, access } = useContext(GlobalInfoContext) || {};
   const { scrollbarWidth } = useSelector(
@@ -83,6 +83,8 @@ const OverlayControllerContent = () => {
         churchName={churchName}
         dbProgress={dbProgress}
         connectionStatus={connectionStatus}
+        startupInfo={startupInfo}
+        subscribeToStartupActivity={subscribeToStartupActivity}
         scrollbarWidth={scrollbarWidth}
         toolbarVariant="overlay"
         onRootClick={handleElementClick}

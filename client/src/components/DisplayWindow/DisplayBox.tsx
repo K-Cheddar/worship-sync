@@ -33,6 +33,7 @@ import LocalSourceStatus, {
 import type { LocalSourceStatusSize } from "./LocalSourceStatus";
 import { shouldSkipDisplayTextAnimation } from "./utils";
 import { isLocalMediaReferenceUrl } from "../../utils/localMediaReferenceUrl";
+import { recordPresentationDiagnostic } from "../../utils/presentationDiagnostics";
 
 const DISPLAY_IMAGE_CACHE_SWAP_DEFER_MS = 650;
 
@@ -111,6 +112,9 @@ type DisplayBoxProps = {
   isSimpleFont?: boolean;
   /** Reports whether this box's background has decoded pixels ready to reveal. */
   onPaintReadyChange?: (ready: boolean) => void;
+  outputId?: string;
+  itemId?: string;
+  slideIndex?: number;
   /** The parent owns opacity and requires a source that will not swap mid-fade. */
   isTransitionManaged?: boolean;
   /** When false, skip still/box backgrounds (stage already paints them). */
@@ -143,6 +147,9 @@ const DisplayBox = ({
   brightness,
   isSimpleFont,
   onPaintReadyChange,
+  outputId,
+  itemId,
+  slideIndex,
   isTransitionManaged = false,
   paintBackground = true,
   paintForeground = true,
@@ -264,13 +271,19 @@ const DisplayBox = ({
   // local candidates have all been considered so none can cover the fallback.
   if (hideUnavailableVideoStill) displayImage = undefined;
   const [decodedImage, setDecodedImage] = useState<ManagedImage>();
+  const [failedImage, setFailedImage] = useState<ManagedImage>();
   const isImageReadyToPaint = Boolean(
     displayImage &&
       decodedImage?.identity === backgroundTransitionIdentity &&
       decodedImage.url === displayImage,
   );
+  const isCurrentImageFailed = Boolean(
+    displayImage &&
+      failedImage?.identity === backgroundTransitionIdentity &&
+      failedImage.url === displayImage,
+  );
   const isLocalImageReadyToPaint =
-    !localImage.isLocalImage || isImageReadyToPaint;
+    !localImage.isLocalImage || isImageReadyToPaint || isCurrentImageFailed;
   const backgroundImageRef = useRef<HTMLImageElement>(null);
   const displayImageBoxIdRef = useRef(box.id);
   const displayRawImageRef = useRef(rawImage);
@@ -411,7 +424,7 @@ const DisplayBox = ({
     shouldImageBeHidden ||
     localImage.status === "unavailable" ||
     unavailableLocalVideo ||
-    Boolean(displayImage && isImageReadyToPaint);
+    Boolean(displayImage && (isImageReadyToPaint || isCurrentImageFailed));
 
   useEffect(() => {
     onPaintReadyChange?.(backgroundPaintReady);
@@ -656,7 +669,7 @@ const DisplayBox = ({
               scaleFactor={statusScaleFactor}
             />
           ) : null
-        ) : displayImage ? (
+        ) : displayImage && !isCurrentImageFailed ? (
           <img
             ref={backgroundImageRef}
             data-testid={
@@ -673,6 +686,24 @@ const DisplayBox = ({
             alt={box.label || ""}
             onLoad={(event) => {
               markImageDecoded(event.currentTarget, displayImage);
+            }}
+            onError={(event) => {
+              if (
+                backgroundImageRef.current === event.currentTarget &&
+                displayImage
+              ) {
+                setFailedImage({
+                  identity: backgroundTransitionIdentity,
+                  url: displayImage,
+                });
+                recordPresentationDiagnostic({
+                  event: "transition.image_failed",
+                  outputId,
+                  itemId,
+                  slideIndex,
+                  reason: "image_load_error",
+                });
+              }
             }}
             style={{
               // Broken-image alt text inherits parent fontSize; keep it readable, not slide-sized.

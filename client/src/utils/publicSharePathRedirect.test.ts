@@ -6,6 +6,7 @@ describe("isPublicSharePathname", () => {
     expect(isPublicSharePathname("/sms-opt-in")).toBe(true);
     expect(isPublicSharePathname("/sms-opt-in/demo")).toBe(true);
     expect(isPublicSharePathname("/sms-opt-in/church-public-id")).toBe(true);
+    expect(isPublicSharePathname("/support")).toBe(true);
     expect(isPublicSharePathname("/privacy")).toBe(true);
     expect(isPublicSharePathname("/terms")).toBe(true);
     expect(isPublicSharePathname("/services/tok")).toBe(true);
@@ -24,6 +25,7 @@ describe("isPublicSharePathname", () => {
     expect(isPublicSharePathname("/home")).toBe(false);
     expect(isPublicSharePathname("/")).toBe(false);
     expect(isPublicSharePathname("/sms-opt-in/demo/extra")).toBe(false);
+    expect(isPublicSharePathname("/support/contact")).toBe(false);
     expect(isPublicSharePathname("/a")).toBe(false);
     expect(isPublicSharePathname("/a/token/extra")).toBe(false);
   });

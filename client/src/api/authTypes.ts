@@ -764,12 +764,14 @@ export type TeamIntakeRecipient = {
 
 export type TeamAvailabilityResponse = {
   formId: string;
-  recipientId: string;
   memberId: string;
   respondedAt: string;
   submittedAt: string;
   occurrenceAvailability: Record<string, "available" | "unavailable">;
-};
+} & (
+  | { source?: "recipient"; recipientId: string }
+  | { source: "general"; recipientId?: never }
+);
 
 export type TeamAvailabilityManagementData = {
   teams: TeamRecord[];
@@ -1036,6 +1038,7 @@ export type TeamIntakePreview = {
     | "startDate"
     | "endDate"
     | "requireEmail"
+    | "purpose"
     | "enabledFields"
     | "availabilityServices"
     | "availabilityOccurrences"

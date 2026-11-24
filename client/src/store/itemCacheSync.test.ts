@@ -45,6 +45,21 @@ describe("item cache lifecycle", () => {
     stop();
   });
 
+  it("signals sequential startup only after the local snapshot has hydrated", async () => {
+    const load = deferred<unknown>();
+    const { db } = createDatabase(load.promise);
+    const store = configureStore({ reducer: { allDocs } });
+    const onHydrated = jest.fn();
+    startItemCacheSync(db, store.dispatch, { onHydrated });
+
+    expect(onHydrated).not.toHaveBeenCalled();
+    load.resolve({ update_seq: 1, rows: [{ doc: song() }] });
+    await settle();
+
+    expect(store.getState().allDocs.isInitialized).toBe(true);
+    expect(onHydrated).toHaveBeenCalledTimes(1);
+  });
+
   it("hydrates item categories only and replays writes and tombstones from the snapshot sequence", async () => {
     const load = deferred<unknown>();
     const { db, calls, handles } = createDatabase(load.promise);

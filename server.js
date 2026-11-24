@@ -4128,9 +4128,12 @@ app.get("/api/getDbSession", async (req, res) => {
     });
   } catch (error) {
     console.error("Error getting CouchDB session:", error);
+    const isAuthenticationFailure =
+      error?.response?.status === 401 || error?.response?.status === 403;
     res.status(500).json({
       success: false,
       message: "Failed to establish session",
+      failureKind: isAuthenticationFailure ? "authentication" : "server-connection",
     });
   }
 });

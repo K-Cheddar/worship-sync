@@ -7,6 +7,7 @@ describe("LocalVideoInputSlideBadge", () => {
 
     const badge = screen.getByTestId("local-video-input-slide-badge");
     expect(badge).toHaveAttribute("aria-label", "Video input: Booth camera");
+    expect(badge).toHaveAttribute("title", "Video input: Booth camera");
     expect(badge).toHaveTextContent("Video input");
     expect(badge).toHaveTextContent("Booth camera");
   });

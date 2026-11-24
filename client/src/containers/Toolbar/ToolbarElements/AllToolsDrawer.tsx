@@ -1,7 +1,17 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { SlidersHorizontal } from "lucide-react";
+import { ChevronDown, SlidersHorizontal } from "lucide-react";
 import Button from "../../../components/Button/Button";
 import Drawer from "../../../components/Drawer/Drawer";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "../../../components/ui/DropdownMenu";
+import RadioButton, { RadioGroup } from "../../../components/RadioButton/RadioButton";
+import type { SlideEditingScope } from "../../../utils/slideEditingScope";
 
 export type AllToolsTargets = {
   quickFontSize: HTMLElement | null;
@@ -27,6 +37,8 @@ type AllToolsDrawerProps = {
   showBibleMode: boolean;
   showStreamFormatting: boolean;
   showOutputTargets: boolean;
+  editingScope: SlideEditingScope;
+  onEditingScopeChange: (scope: SlideEditingScope) => void;
   children: (targets: AllToolsTargets) => ReactNode;
 };
 
@@ -40,6 +52,8 @@ const AllToolsDrawer = ({
   showBibleMode,
   showStreamFormatting,
   showOutputTargets,
+  editingScope,
+  onEditingScopeChange,
   children,
 }: AllToolsDrawerProps) => {
   const [quickFontSize, setQuickFontSize] = useState<HTMLElement | null>(null);
@@ -82,6 +96,40 @@ const AllToolsDrawer = ({
               className="flex min-w-max items-center gap-0.5 px-1"
               data-testid="quick-editing-toolbar-groups"
             >
+              <div className="flex shrink-0 items-center border-r border-gray-600 px-1">
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="tertiary"
+                      className="h-8 shrink-0 gap-1.5 rounded-md border-gray-500 bg-gray-800/70 px-2 text-xs hover:border-cyan-400 hover:bg-gray-700"
+                      aria-label={`Formatting scope: ${editingScope === "all" ? "All slides" : "This slide"}`}
+                      title="Choose whether text, appearance, and layout changes apply to this slide or all slides"
+                    >
+                      {editingScope === "all" ? "All slides" : "This slide"}
+                      <ChevronDown className="size-3.5 text-gray-300" aria-hidden="true" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" sideOffset={4} className="min-w-40">
+                    <DropdownMenuLabel className="text-xs text-gray-400">
+                      Apply changes to
+                    </DropdownMenuLabel>
+                    <DropdownMenuRadioGroup
+                      value={editingScope}
+                      onValueChange={(value) =>
+                        onEditingScopeChange(value as SlideEditingScope)
+                      }
+                    >
+                      <DropdownMenuRadioItem value="selected">
+                        This slide
+                      </DropdownMenuRadioItem>
+                      <DropdownMenuRadioItem value="all">
+                        All slides
+                      </DropdownMenuRadioItem>
+                    </DropdownMenuRadioGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
               <div
                 ref={setQuickFontSize}
                 data-testid="quick-toolbar-font-size"
@@ -138,6 +186,31 @@ const AllToolsDrawer = ({
         size={isMobile ? "lg" : "md"}
         contentClassName="min-h-0 flex flex-col gap-6 overflow-x-hidden overflow-y-auto"
       >
+        <section className="flex min-w-0 flex-col gap-1 border-b border-gray-600 pb-5">
+          <p className="text-xs font-medium">Apply changes to</p>
+          <RadioGroup
+            value={editingScope}
+            onValueChange={(value) =>
+              onEditingScopeChange(value as SlideEditingScope)
+            }
+            className="flex flex-wrap items-center gap-2"
+            aria-label="Apply changes to"
+            title="Choose whether text, appearance, and layout changes apply to this slide or all slides"
+          >
+            <RadioButton
+              className="w-fit text-xs"
+              optionValue="selected"
+              label="This slide"
+              hideLabelColon
+            />
+            <RadioButton
+              className="w-fit text-xs"
+              optionValue="all"
+              label="All slides"
+              hideLabelColon
+            />
+          </RadioGroup>
+        </section>
         <section className="flex min-w-0 flex-col gap-3 border-b border-gray-600 pb-5">
           <h2 className="text-base font-semibold">Text &amp; Appearance</h2>
           <div

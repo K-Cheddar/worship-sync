@@ -225,7 +225,7 @@ const CanvaImportSheet = ({
     setSelectedPages(new Set(
       sourceMatchesDesign && initialSource.pageNumbers.length
         ? initialSource.pageNumbers
-        : [1],
+        : nextPages.slice(0, 25),
     ));
     setCustomItemName(design.title);
     if (sourceMatchesDesign) {

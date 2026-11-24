@@ -100,7 +100,7 @@ function Review({ conflict, draft, onSave }: Omit<Props, "isOpen" | "onClose">) 
     conflict.baselineItems, draft, conflict.remoteItems,
     entry => choices[entry.key], moves,
   );
-  const pending = Boolean(conflict.resolutionChoice);
+  const pending = Boolean(conflict.resolutionChoice && !conflict.saveError);
   const selected = wholeChoice === "local" ? draft : conflict.remoteItems;
   const canSave = !pending && (replacement ? Boolean(wholeChoice) : result.kind === "merged");
 

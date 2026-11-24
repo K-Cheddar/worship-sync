@@ -4,6 +4,17 @@ import { getPublicServiceFlow } from "../services/serviceFlowApi";
 import type { PublicServiceFlowSnapshot } from "../services/serviceFlowTypes";
 import PublicApp from "./PublicApp";
 
+jest.mock("../context/globalInfo", () => {
+  const React = jest.requireActual("react") as typeof import("react");
+  return {
+    __esModule: true,
+    GlobalInfoContext: React.createContext(null),
+    // Keep route tests independent of the Firebase config required by the real provider.
+    default: ({ children }: { children: import("react").ReactNode }) =>
+      React.createElement(React.Fragment, null, children),
+  };
+});
+
 let mockBoardPending: Promise<void> | null = null;
 jest.mock("../pages/BoardPresent", () => () => {
   if (mockBoardPending) throw mockBoardPending;
@@ -106,6 +117,19 @@ describe("PublicApp SMS opt-in route", () => {
 
     expect(await screen.findByText("Loading…")).toBeInTheDocument();
     expect(onLeaveToOperatorApp).toHaveBeenCalledWith("/");
+  });
+});
+
+describe("PublicApp support route", () => {
+  it("renders support from its public path without leaving to the operator app", async () => {
+    const onLeaveToOperatorApp = jest.fn();
+    window.history.pushState({}, "", "/support");
+
+    render(<PublicApp onLeaveToOperatorApp={onLeaveToOperatorApp} />);
+
+    expect(await screen.findByRole("heading", { name: "Support" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeInTheDocument();
+    expect(onLeaveToOperatorApp).not.toHaveBeenCalled();
   });
 });
 

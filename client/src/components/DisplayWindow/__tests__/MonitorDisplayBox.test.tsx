@@ -2,17 +2,31 @@ import { render, screen } from "@testing-library/react";
 import MonitorDisplayBox from "../MonitorDisplayBox";
 import type { Box } from "../../../types";
 
+const mockTimelines: Array<{
+  clear: jest.Mock;
+  fromTo: jest.Mock;
+  isActive: jest.Mock;
+}> = [];
+
 jest.mock("@gsap/react", () => ({
-  useGSAP: () => { },
+  useGSAP: (callback: () => void) => {
+    const React = require("react");
+    React.useEffect(callback);
+  },
 }));
 
 jest.mock("gsap", () => ({
   __esModule: true,
   default: {
-    timeline: () => ({
-      clear: jest.fn(),
-      fromTo: jest.fn(),
-    }),
+    timeline: () => {
+      const timeline = {
+        clear: jest.fn(),
+        fromTo: jest.fn(),
+        isActive: jest.fn(() => true),
+      };
+      mockTimelines.push(timeline);
+      return timeline;
+    },
     set: jest.fn(),
   },
 }));
@@ -41,6 +55,10 @@ const baseBox: Box = {
 };
 
 describe("MonitorDisplayBox", () => {
+  beforeEach(() => {
+    mockTimelines.length = 0;
+  });
+
   it("renders the box words for next, prev, and jump directions", () => {
     const { rerender } = render(
       <MonitorDisplayBox
@@ -69,5 +87,29 @@ describe("MonitorDisplayBox", () => {
       />,
     );
     expect(screen.getByText("Jump cut")).toBeInTheDocument();
+  });
+
+  it("clears an interrupted band animation before starting the latest slide", () => {
+    const { rerender } = render(
+      <MonitorDisplayBox
+        box={baseBox}
+        shouldAnimate
+        transitionDirection="next"
+      />,
+    );
+    const firstTimeline = mockTimelines[0];
+
+    rerender(
+      <MonitorDisplayBox
+        box={{ ...baseBox, words: "Latest monitor slide" }}
+        shouldAnimate
+        transitionDirection="prev"
+      />,
+    );
+
+    expect(firstTimeline.isActive).toHaveBeenCalled();
+    expect(firstTimeline.clear).toHaveBeenCalledTimes(1);
+    expect(mockTimelines).toHaveLength(2);
+    expect(mockTimelines[1].fromTo).toHaveBeenCalled();
   });
 });

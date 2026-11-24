@@ -66,6 +66,16 @@ Authorization: the current request to simplify concurrent Song V2 and outline ed
 - A successfully committed merge remains usable if cleanup of its already-incorporated leaves fails. The session recognizes only the exact committed winner and reviewed leaves; a changed winner or new meaningful leaf returns to conflict review. Permission revocation still prevents further writes and leaf retirement.
 - Competing slide bodies, structural edits, overlapping lyrics, rich text, or changes that cannot be proven disjoint remain available for explicit review. Durable autosave recovery, owner checks and the stored Song V2 schema remain in effect.
 
+### Unified slide editing scope and song formatting (November 23, 2026)
+
+Authorization: the user's current request to restore song-wide font sizing and unify the slide editing scope.
+
+- The shared formatting scope defaults to **All slides** and is remembered locally as an editor preference. Changing it does not mutate item content or create a database revision.
+- Text formatting, background brightness and box layout controls use the same scope from the quick toolbar and All Tools drawer. Remove Blank Lines and Show On remain independent item-level actions.
+- In All slides scope, a font-size change on a lyric slide applies to lyric pages in the active arrangement, then recalculates pagination at the requested size. Title and blank slide formatting, other arrangements, and stable slide or box identities are preserved where pagination permits.
+- In This slide scope, only the selected existing lyric page's box receives the requested font size. Repagination retains the section occurrence and page identities it can, preserves other existing page styles and repeated occurrences, and keeps the complete lyric text in order. New pages in the edited occurrence inherit the requested size.
+- Mutations continue through the existing owner-aware Song V2 editing and baseline-aware persistence path; no stored schema or writer changes are introduced.
+
 Targeted nonactive slide-cache invalidation and stale conflict-review completion guards are confirmed by the November 5, 2026 code-review remediation request.
 
 ### Song v2 semantic conflict review (October 27, 2026)

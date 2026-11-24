@@ -1,5 +1,7 @@
 import { createPortal } from "react-dom";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import type { ControllerProfile } from "../../../utils/controllerProfiles";
 import { getDefaultControllerProfiles } from "../../../utils/controllerProfiles";
 import type { DisplayOutput } from "../../../utils/displayOutputs";
@@ -7,6 +9,7 @@ import { getDefaultDisplayOutputs } from "../../../utils/displayOutputs";
 import type { ShouldSendTo } from "../../../types";
 import ItemEditTools from "./ItemEditTools";
 import AllToolsDrawer from "./AllToolsDrawer";
+import type { SlideEditingScope } from "../../../utils/slideEditingScope";
 
 type MockToolbarState = {
   undoable: { present: { item: { shouldSendTo: ShouldSendTo } } };
@@ -15,7 +18,13 @@ type MockToolbarState = {
 };
 
 const mockDispatch = jest.fn();
+const mockScopeChange = jest.fn();
 let mockState: MockToolbarState;
+
+const defaultScopeProps = {
+  editingScope: "all" as const,
+  onEditingScopeChange: mockScopeChange,
+};
 
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
@@ -53,9 +62,29 @@ const createMockToolbarState = (): MockToolbarState => {
   };
 };
 
+const ScopeHarness = () => {
+  const [editingScope, setEditingScope] = useState<SlideEditingScope>("all");
+  return (
+    <AllToolsDrawer
+      isOpen={true}
+      onClose={jest.fn()}
+      onToggle={jest.fn()}
+      isMobile={false}
+      showBibleMode={false}
+      showStreamFormatting={false}
+      showOutputTargets={false}
+      editingScope={editingScope}
+      onEditingScopeChange={setEditingScope}
+    >
+      {() => null}
+    </AllToolsDrawer>
+  );
+};
+
 describe("AllToolsDrawer quick toolbar targets", () => {
   beforeEach(() => {
     mockDispatch.mockClear();
+    mockScopeChange.mockClear();
     mockState = createMockToolbarState();
   });
 
@@ -69,6 +98,7 @@ describe("AllToolsDrawer quick toolbar targets", () => {
         showBibleMode={true}
         showStreamFormatting={false}
         showOutputTargets={false}
+        {...defaultScopeProps}
       >
         {(targets) => (
           <>
@@ -93,14 +123,16 @@ describe("AllToolsDrawer quick toolbar targets", () => {
     expect(row).toHaveClass("flex", "min-w-max");
     expect(
       within(scroll).getAllByRole("button").map((button) => button.textContent),
-    ).toEqual(["Font Size", "Layout", "Height", "Brightness", "Bible Mode"]);
+    ).toEqual(["All slides", "Font Size", "Layout", "Height", "Brightness", "Bible Mode"]);
     expect(screen.getByRole("button", { name: "All Tools" })).toBeInTheDocument();
   });
 
   it("shows scrollable quick controls on mobile while retaining All Tools", () => {
     render(
       <AllToolsDrawer isOpen={false} onClose={jest.fn()} onToggle={jest.fn()}
-        isMobile={true} showBibleMode={true} showStreamFormatting={false} showOutputTargets={false}>
+        isMobile={true} showBibleMode={true} showStreamFormatting={false} showOutputTargets={false}
+        {...defaultScopeProps}
+      >
         {(targets) => targets.quickFontSize && createPortal(<button type="button">Font Size</button>, targets.quickFontSize)}
       </AllToolsDrawer>,
     );
@@ -108,6 +140,40 @@ describe("AllToolsDrawer quick toolbar targets", () => {
     expect(screen.getByRole("button", { name: "Font Size" })).toBeVisible();
     expect(screen.getByTestId("quick-editing-toolbar-groups")).toHaveClass("min-w-max");
     expect(screen.getByRole("button", { name: "All Tools" })).toBeVisible();
+  });
+
+  it("keeps the quick scope indicator and drawer radios synchronized without dispatching item changes", async () => {
+    render(<ScopeHarness />);
+
+    const scopeButton = screen.getByRole("button", {
+      name: "Formatting scope: All slides",
+    });
+    expect(scopeButton).toHaveAttribute(
+      "title",
+      "Choose whether text, appearance, and layout changes apply to this slide or all slides",
+    );
+    expect(screen.getByRole("radio", { name: "All slides" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    const user = userEvent.setup();
+    await user.click(scopeButton);
+    await user.click(screen.getByRole("menuitemradio", { name: "This slide" }));
+    expect(screen.getByRole("button", { name: "Formatting scope: This slide" })).toHaveTextContent(
+      "This slide",
+    );
+    expect(screen.getByRole("radio", { name: "This slide" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+
+    await user.click(screen.getByRole("button", { name: "Formatting scope: This slide" }));
+    await user.click(screen.getByRole("menuitemradio", { name: "All slides" }));
+    expect(screen.getByRole("button", { name: "Formatting scope: All slides" })).toHaveTextContent(
+      "All slides",
+    );
+    expect(mockDispatch).not.toHaveBeenCalled();
   });
 
   it("omits the Bible group target for non-Bible items", () => {
@@ -120,6 +186,7 @@ describe("AllToolsDrawer quick toolbar targets", () => {
         showBibleMode={false}
         showStreamFormatting={false}
         showOutputTargets={false}
+        {...defaultScopeProps}
       >
         {() => null}
       </AllToolsDrawer>,
@@ -138,6 +205,7 @@ describe("AllToolsDrawer quick toolbar targets", () => {
         showBibleMode={false}
         showStreamFormatting={true}
         showOutputTargets={true}
+        {...defaultScopeProps}
       >
         {() => null}
       </AllToolsDrawer>,
@@ -163,6 +231,7 @@ describe("AllToolsDrawer quick toolbar targets", () => {
         showBibleMode={false}
         showStreamFormatting={false}
         showOutputTargets={true}
+        {...defaultScopeProps}
       >
         {(targets) => <ItemEditTools drawerTarget={targets.outputTargets} />}
       </AllToolsDrawer>,
@@ -211,6 +280,7 @@ describe("AllToolsDrawer quick toolbar targets", () => {
             showBibleMode={false}
             showStreamFormatting={false}
             showOutputTargets={true}
+            {...defaultScopeProps}
           >
             {(targets) => (
               <ItemEditTools drawerTarget={targets.outputTargets} />

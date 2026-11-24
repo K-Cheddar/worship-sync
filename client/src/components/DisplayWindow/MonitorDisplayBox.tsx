@@ -4,6 +4,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { DEFAULT_FONT_PX } from "../../constants";
 import VerseDisplay from "./VerseDisplay";
+import { recordPresentationDiagnostic } from "../../utils/presentationDiagnostics";
 
 type MonitorDisplayBoxProps = {
   box: Box;
@@ -12,6 +13,9 @@ type MonitorDisplayBoxProps = {
   shouldAnimate?: boolean;
   /** 'next' = slide up, 'prev' = slide down, 'jump' = fade. Defaults to 'next'. */
   transitionDirection?: "next" | "prev" | "jump";
+  outputId?: string;
+  itemId?: string;
+  slideIndex?: number;
 };
 
 const MonitorDisplayBox = ({
@@ -20,9 +24,14 @@ const MonitorDisplayBox = ({
   isPrev,
   shouldAnimate,
   transitionDirection = "next",
+  outputId,
+  itemId,
+  slideIndex,
 }: MonitorDisplayBoxProps) => {
   const boxRef = useRef<HTMLDivElement>(null);
   const boxTimeline = useRef<GSAPTimeline | null>(null);
+  const diagnosticContextRef = useRef({ outputId, itemId, slideIndex });
+  diagnosticContextRef.current = { outputId, itemId, slideIndex };
 
   const fontSizeInPx = box.monitorFontSizePx ?? (box.fontSize ?? DEFAULT_FONT_PX);
   const textStyles = {
@@ -44,12 +53,26 @@ const MonitorDisplayBox = ({
     () => {
       if (!boxRef.current || !shouldAnimate) return;
 
+      if (boxTimeline.current?.isActive?.()) {
+        recordPresentationDiagnostic({
+          event: "transition.interrupted",
+          ...diagnosticContextRef.current,
+          reason: "newer_monitor_band_update",
+        });
+      }
       boxTimeline.current?.clear();
 
       const fadeDuration = 0.35;
       const slideDuration = 0.65;
 
-      boxTimeline.current = gsap.timeline();
+      boxTimeline.current = gsap.timeline({
+        onComplete: () =>
+          recordPresentationDiagnostic({
+            event: "transition.completed",
+            ...diagnosticContextRef.current,
+            reason: "monitor_band_box_animation_complete",
+          }),
+      });
 
       const dir = transitionDirection;
 

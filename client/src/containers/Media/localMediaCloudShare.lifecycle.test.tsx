@@ -9,6 +9,11 @@ const mockDispatch = jest.fn();
 const mockUploadVideo = jest.fn();
 const mockUploadLocalVideo = jest.fn();
 const mockDeleteMuxAsset = jest.fn();
+const mockCancelLocalImageUpload = jest.fn();
+const mockEnqueueLocalImageUpload = jest.fn();
+const mockGetLocalImageUploadJob = jest.fn();
+const mockRetryLocalImageUpload = jest.fn();
+const mockWaitForLocalImageUpload = jest.fn();
 let mockMediaList: MediaType[] = [];
 const mockClaim = { isCurrent: () => true, setCancel: jest.fn(), release: jest.fn(), failCleanup: jest.fn() };
 const mockTransfers = new Map<string, any>();
@@ -44,7 +49,14 @@ jest.mock("./utils/muxUpload", () => ({
 jest.mock("../../api/providerStorage", () => ({
   deleteChurchMuxAsset: (...args: unknown[]) => mockDeleteMuxAsset(...args),
 }));
-jest.mock("../../utils/localImageUploadQueue", () => ({}));
+jest.mock("../../utils/localImageUploadQueue", () => ({
+  cancelLocalImageUpload: (...args: unknown[]) => mockCancelLocalImageUpload(...args),
+  enqueueLocalImageUpload: (...args: unknown[]) => mockEnqueueLocalImageUpload(...args),
+  getLocalImageUploadJob: (...args: unknown[]) => mockGetLocalImageUploadJob(...args),
+  retryLocalImageUpload: (...args: unknown[]) => mockRetryLocalImageUpload(...args),
+  retryLocalImageUploadCancellation: jest.fn(async () => undefined),
+  waitForLocalImageUpload: (...args: unknown[]) => mockWaitForLocalImageUpload(...args),
+}));
 jest.mock("../../utils/mediaOperationClaims", () => ({
   claimMediaUpload: () => mockClaim,
   isMediaUploadClaimed: () => false,
@@ -80,10 +92,33 @@ const media: MediaType = {
   },
 };
 
+const localImage: MediaType = {
+  ...media,
+  id: "shared-media-id",
+  name: "photo.jpg",
+  format: "jpg",
+  type: "image",
+  background: "local-image-file://shared-asset-id",
+  localVideoFile: undefined,
+  localImage: {
+    id: "shared-asset-id",
+    ownerDeviceId: "device-a",
+    ownerLabel: "Booth PC",
+    fileName: "photo.jpg",
+    contentType: "image/jpeg",
+    storagePolicy: "local-only",
+  },
+};
+
 describe("useLocalMediaCloudShare church scope", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockMediaList = [];
+    mockCancelLocalImageUpload.mockReset().mockResolvedValue(undefined);
+    mockEnqueueLocalImageUpload.mockReset().mockResolvedValue(undefined);
+    mockGetLocalImageUploadJob.mockReset().mockResolvedValue({ status: "failed", cancelRequested: false });
+    mockRetryLocalImageUpload.mockReset().mockResolvedValue(undefined);
+    mockWaitForLocalImageUpload.mockReset().mockResolvedValue(undefined);
     mockUploadLocalVideo.mockResolvedValue({
       playbackId: "playback-local",
       assetId: "mux-local",
@@ -337,7 +372,8 @@ describe("useLocalMediaCloudShare church scope", () => {
     activeChurchId = "church-b";
     rerender();
     unmount();
-    expect(mockTransfers.get(transferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    expect(mockTransfers.get(transferId).actions).toEqual([{ key: "cancel", label: "Cancel upload" }]);
+    expect(mockTransferActions.has(`${transferId}:cancel`)).toBe(true);
     await act(async () => {
       resolveUpload({
         playbackId: "playback-a",
@@ -359,9 +395,107 @@ describe("useLocalMediaCloudShare church scope", () => {
     expect(retryCleanup).toBeDefined();
     await act(async () => { await retryCleanup?.(); });
     expect(mockDeleteMuxAsset).toHaveBeenNthCalledWith(2, "church-a", "mux-asset-a");
-    expect(mockTransfers.get(transferId).actions).toEqual([{ key: "dismiss", label: "Dismiss" }]);
+    expect(mockTransfers.get(transferId).actions).toEqual([
+      { key: "retry-failed", label: "Retry failed files" },
+      { key: "dismiss", label: "Dismiss" },
+    ]);
     expect(mockTransfers.get(transferId).files[0].error).toContain("Cleanup succeeded");
     await act(async () => { await mockTransferActions.get(`${transferId}:dismiss`)?.(); });
     expect(mockActions.removeTransfer).toHaveBeenCalledWith(transferId);
+  });
+
+  it("blocks an image retry after a church switch, during preparation, and until returning to its owner", async () => {
+    const imageA = { ...localImage, name: "Church A photo.jpg" };
+    const imageB = { ...localImage, name: "Church B photo.jpg" };
+    mockMediaList = [imageA];
+    mockWaitForLocalImageUpload.mockRejectedValueOnce(new Error("Temporary image upload failure"));
+    let activeDb: PouchDB.Database = { name: "church-a" } as PouchDB.Database;
+    let activeChurchId = "church-a";
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControllerInfoContext.Provider value={{ db: activeDb, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: activeChurchId } as any}>{children}</GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    );
+    const { result, rerender } = renderHook(() => useLocalMediaCloudShare(), { wrapper });
+    await act(async () => { await result.current.uploadOwnedLocalMedia(imageA); });
+    const transferId = [...mockTransfers.keys()][0];
+    const retry = mockTransferActions.get(`${transferId}:retry-failed`);
+    expect(retry).toBeDefined();
+
+    activeDb = { name: "church-b" } as PouchDB.Database;
+    activeChurchId = "church-b";
+    mockMediaList = [imageB];
+    rerender();
+    await act(async () => { await retry?.(); });
+    expect(mockGetLocalImageUploadJob).not.toHaveBeenCalled();
+    expect(mockRetryLocalImageUpload).not.toHaveBeenCalled();
+    expect(mockEnqueueLocalImageUpload).toHaveBeenCalledTimes(1);
+    expect(mockTransfers.get(transferId).files[0].error).toContain("original church");
+
+    activeDb = { name: "church-a" } as PouchDB.Database;
+    activeChurchId = "church-a";
+    mockMediaList = [imageA];
+    rerender();
+    let resolveJob!: (job: { status: string; cancelRequested: boolean }) => void;
+    mockGetLocalImageUploadJob.mockReturnValueOnce(new Promise((resolve) => { resolveJob = resolve; }));
+    let preparing!: void | Promise<void>;
+    act(() => { preparing = retry!(); });
+    await waitFor(() => expect(mockGetLocalImageUploadJob).toHaveBeenCalledTimes(1));
+
+    activeDb = { name: "church-b" } as PouchDB.Database;
+    activeChurchId = "church-b";
+    mockMediaList = [imageB];
+    rerender();
+    await act(async () => {
+      resolveJob({ status: "failed", cancelRequested: false });
+      await preparing;
+    });
+    expect(mockRetryLocalImageUpload).not.toHaveBeenCalled();
+    expect(mockEnqueueLocalImageUpload).toHaveBeenCalledTimes(1);
+
+    activeDb = { name: "church-a" } as PouchDB.Database;
+    activeChurchId = "church-a";
+    mockMediaList = [imageA];
+    rerender();
+    await act(async () => { await retry?.(); });
+    expect(mockRetryLocalImageUpload).toHaveBeenCalledWith("shared-asset-id");
+    expect(mockEnqueueLocalImageUpload).toHaveBeenCalledTimes(2);
+    expect(mockEnqueueLocalImageUpload.mock.calls[0][0]).toMatchObject({ workspaceId: "church-a", mediaId: "shared-media-id" });
+    expect(mockEnqueueLocalImageUpload.mock.calls[1][0]).toMatchObject({ workspaceId: "church-a", mediaId: "shared-media-id" });
+    expect(mockEnqueueLocalImageUpload.mock.calls.map(([value]) => value.workspaceId)).not.toContain("church-b");
+  });
+
+  it("cancels the original church's image upload when scope changes during enqueue", async () => {
+    const imageA = { ...localImage, name: "Church A photo.jpg" };
+    const imageB = { ...localImage, name: "Church B photo.jpg" };
+    mockMediaList = [imageA];
+    let finishEnqueue!: () => void;
+    mockEnqueueLocalImageUpload.mockReturnValueOnce(new Promise<void>((resolve) => { finishEnqueue = resolve; }));
+    let activeDb: PouchDB.Database = { name: "church-a" } as PouchDB.Database;
+    let activeChurchId = "church-a";
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <ControllerInfoContext.Provider value={{ db: activeDb, isGuestSession: false } as any}>
+        <GlobalInfoContext.Provider value={{ churchId: activeChurchId } as any}>{children}</GlobalInfoContext.Provider>
+      </ControllerInfoContext.Provider>
+    );
+    const { result, rerender } = renderHook(() => useLocalMediaCloudShare(), { wrapper });
+    let completion!: Promise<void>;
+    act(() => { completion = result.current.uploadOwnedLocalMedia(imageA); });
+    await waitFor(() => expect(mockEnqueueLocalImageUpload).toHaveBeenCalledTimes(1));
+    expect(mockEnqueueLocalImageUpload.mock.calls[0][0]).toMatchObject({ workspaceId: "church-a" });
+
+    activeDb = { name: "church-b" } as PouchDB.Database;
+    activeChurchId = "church-b";
+    mockMediaList = [imageB];
+    rerender();
+    await act(async () => {
+      finishEnqueue();
+      await completion;
+    });
+
+    expect(mockCancelLocalImageUpload).toHaveBeenCalledWith("shared-asset-id");
+    expect(mockWaitForLocalImageUpload).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockEnqueueLocalImageUpload.mock.calls.map(([value]) => value.workspaceId)).toEqual(["church-a"]);
   });
 });

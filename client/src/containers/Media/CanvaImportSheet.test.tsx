@@ -170,7 +170,6 @@ test("opens a design from a pasted Canva link when the church account can access
     }),
   ).toBeInTheDocument();
 
-  await user.click(screen.getByRole("button", { name: "Select all" }));
   expect(screen.getByText("3 pages selected")).toBeInTheDocument();
   expect(screen.getByRole("button", { name: /Page 1/i })).toHaveAttribute(
     "aria-pressed",
@@ -188,6 +187,8 @@ test("opens a design from a pasted Canva link when the church account can access
     "aria-pressed",
     "false",
   );
+  await user.click(screen.getByRole("button", { name: "Select all" }));
+  expect(screen.getByText("3 pages selected")).toBeInTheDocument();
 });
 
 test("resolves an official Canva short link before loading the design", async () => {
@@ -749,7 +750,6 @@ test("creates a one-slide custom item for an imported Canva video", async () => 
   await user.click(
     await screen.findByRole("button", { name: /Sunday Welcome/ }),
   );
-  await user.click(screen.getByRole("button", { name: /Page 2/i }));
   await user.click(screen.getByRole("tab", { name: /MP4 video/i }));
   await user.click(screen.getByRole("button", { name: "One combined video" }));
   expect(
@@ -855,7 +855,6 @@ test("creates one custom-item slide per imported Canva video page", async () => 
   await user.click(
     await screen.findByRole("button", { name: /Sunday Welcome/ }),
   );
-  await user.click(screen.getByRole("button", { name: /Page 2/i }));
   await user.click(screen.getByRole("tab", { name: /MP4 video/i }));
   expect(
     screen.getByRole("button", { name: "Separate video per page" }),
@@ -973,9 +972,7 @@ test("creates a deck from new, refreshed, and already-current selected pages", a
   await user.click(
     await screen.findByRole("button", { name: /Sunday Welcome/ }),
   );
-  // Page 1 is pre-selected when a design opens; add the rest of the selection.
-  await user.click(screen.getByRole("button", { name: /Page 2/i }));
-  await user.click(screen.getByRole("button", { name: /Page 3/i }));
+  // All design pages are selected when a design opens.
   await user.click(
     screen.getByRole("button", { name: /Import selected|Refresh selected/i }),
   );
@@ -1064,7 +1061,6 @@ test("starts a transfer, closes the import sheet, and finishes after the sheet c
   const user = userEvent.setup();
   const view = render(<Wrapper />);
   await user.click(await screen.findByRole("button", { name: /Progress Deck/ }));
-  await user.click(screen.getByRole("button", { name: /Page 2/i }));
   await user.click(screen.getByRole("button", { name: /Import selected/i }));
   await waitFor(() => expect(importCanvaDesign).toHaveBeenCalled());
   expect(screen.queryByRole("dialog", { name: "Import from Canva" })).not.toBeInTheDocument();
