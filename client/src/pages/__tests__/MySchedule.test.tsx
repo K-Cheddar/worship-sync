@@ -8,7 +8,7 @@ import type { ContextType } from "react";
 import { PAGE_APPEARANCES } from "../pageAppearances";
 import { getLucideIconInnerMarkup } from "../../test/lucideIconTestUtils";
 import MySchedule from "../MySchedule";
-import type { MyScheduleOperations, PersonalScheduleAccess, VolunteerAvailabilityRequestSummary } from "../myScheduleOperations";
+import type { MyScheduleOperations, PersonalScheduleAccess, VolunteerAvailabilityRequest, VolunteerAvailabilityRequestSummary } from "../myScheduleOperations";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import {
   acceptPendingMyAssignments,
@@ -138,7 +138,7 @@ const futureCalendarDate = (daysAhead: number) => {
 
 const CurrentPath = () => {
   const location = useLocation();
-  return <span data-testid="current-location">{location.pathname}</span>;
+  return <span data-testid="current-location">{location.pathname + location.search}</span>;
 };
 
 const calendarDayName = (date: Date) => {
@@ -168,9 +168,9 @@ const selectCalendarDay = async (user: ReturnType<typeof userEvent.setup>, date:
 
 // AppPageShell reads the scrollbar-width preference and renders the app menu,
 // so the page needs the store and a router the way the real app provides them.
-const pageElement = (role = "member", churchId = "church-1") => (
+const pageElement = (role = "member", churchId = "church-1", initialEntry = "/my-schedule") => (
   <Provider store={store}>
-    <MemoryRouter initialEntries={["/my-schedule"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <GlobalInfoContext.Provider
         value={
           {
@@ -401,6 +401,114 @@ describe("MySchedule", () => {
 
     expect(await screen.findByText(/Could not load your schedule/)).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Respond November availability" })).toBeInTheDocument();
+  });
+
+  it("opens availability as a focused URL editor and returns to the full schedule", async () => {
+    const user = userEvent.setup();
+    respond([occurrence()]);
+    const request: VolunteerAvailabilityRequest = {
+      recipientId: "recipient-1",
+      formId: "form-1",
+      name: "November availability",
+      responseDeadline: "2099-11-01",
+      availabilityMessage: "Choose the services you can serve.",
+      respondedAt: "",
+      submissionId: "",
+      editable: true,
+      occurrences: [{
+        occurrenceId: "service-a@2099-11-08",
+        name: "Sunday service 1",
+        startsAt: "2099-11-08T14:00:00.000Z",
+        serviceDate: "2099-11-08",
+      }],
+      availability: {},
+      unansweredOccurrenceIds: ["service-a@2099-11-08"],
+      availabilityRevision: { "service-a@2099-11-08": 0 },
+    };
+    mockGetMyVolunteerAvailability
+      .mockResolvedValueOnce({
+        success: true,
+        requests: [],
+        requestSummaries: [{
+          recipientId: request.recipientId,
+          formId: request.formId,
+          name: request.name,
+          responseDeadline: request.responseDeadline,
+          respondedAt: request.respondedAt,
+          submissionId: request.submissionId,
+          editable: request.editable,
+        }],
+        schedulingPreferences: null,
+      } as never)
+      .mockResolvedValueOnce({
+        success: true,
+        serviceTimeZone: "America/New_York",
+        requests: [request],
+        requestSummaries: [],
+        schedulingPreferences: null,
+      } as never);
+    renderPage();
+
+    const action = await screen.findByRole("button", { name: "Respond November availability" });
+    expect(screen.getByRole("heading", { name: "Scheduling preferences" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
+    const requestCard = screen.getByRole("group", { name: "November availability" });
+    expect(within(requestCard).getAllByRole("button")).toHaveLength(1);
+    await user.click(within(requestCard).getByText("November availability"));
+    expect(screen.getByTestId("current-location")).toHaveTextContent("/my-schedule");
+    expect(screen.queryByRole("heading", { name: "November availability" })).not.toBeInTheDocument();
+
+    await user.click(action);
+    expect(await screen.findByRole("heading", { name: "November availability" })).toBeInTheDocument();
+    expect(screen.getByTestId("current-location")).toHaveTextContent("availabilityRequest=recipient-1");
+    expect(screen.queryByRole("heading", { name: "Scheduling preferences" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Open Sunday Gathering/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("Time off")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Back to My Schedule" }));
+    expect(await screen.findByRole("heading", { name: "Scheduling preferences" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Sunday Gathering/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Respond November availability" })).toBeInTheDocument();
+    expect(screen.getByTestId("current-location")).toHaveTextContent("/my-schedule");
+    expect(mockGetMyTeamAssignments).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a signed-in deep link directly into the focused editor", async () => {
+    const request: VolunteerAvailabilityRequest = {
+      recipientId: "recipient-1",
+      formId: "form-1",
+      name: "November availability",
+      responseDeadline: "2099-11-01",
+      availabilityMessage: "Choose the services you can serve.",
+      respondedAt: "",
+      submissionId: "",
+      editable: true,
+      occurrences: [{
+        occurrenceId: "service-a@2099-11-08",
+        name: "Sunday service 1",
+        startsAt: "2099-11-08T14:00:00.000Z",
+        serviceDate: "2099-11-08",
+      }],
+      availability: {},
+      unansweredOccurrenceIds: ["service-a@2099-11-08"],
+      availabilityRevision: { "service-a@2099-11-08": 0 },
+    };
+    mockGetMyVolunteerAvailability.mockResolvedValue({
+      success: true,
+      serviceTimeZone: "America/New_York",
+      requests: [request],
+      requestSummaries: [],
+      schedulingPreferences: null,
+    } as never);
+    render(pageElement("member", "church-1", "/my-availability?availabilityRequest=recipient-1"));
+
+    expect(await screen.findByRole("heading", { name: "November availability" })).toBeInTheDocument();
+    expect(mockGetMyVolunteerAvailability.mock.calls.map(([, options]) => options)).toEqual([
+      { recipientId: "recipient-1" },
+    ]);
+    expect(mockGetMyTeamAssignments).not.toHaveBeenCalled();
+    expect(screen.queryByRole("heading", { name: "Scheduling preferences" })).not.toBeInTheDocument();
+    expect(screen.queryByText("Time off")).not.toBeInTheDocument();
   });
 
   it.each(["human account", "personal link"])(

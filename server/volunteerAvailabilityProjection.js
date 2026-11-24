@@ -19,8 +19,11 @@ const scheduleRowsForForm = (form, schedules) => {
     ? new Set(form.teamIds.filter((teamId) => typeof teamId === "string" && teamId.trim()))
     : new Set();
   if (!teamIds.size) return [];
+  // Archived schedules remain authoritative historical snapshots for forms
+  // that were already issued. Their archive state affects schedule use, not
+  // the identity recorded in the historical occurrence snapshot.
   return (Array.isArray(schedules) ? schedules : [])
-    .filter((schedule) => teamIds.has(schedule?.teamId) && !schedule?.archivedAt)
+    .filter((schedule) => teamIds.has(schedule?.teamId))
     .flatMap((schedule) => (Array.isArray(schedule.occurrences) ? schedule.occurrences : [])
       .filter(Boolean)
       .map((occurrence) => ({ schedule, occurrence })));

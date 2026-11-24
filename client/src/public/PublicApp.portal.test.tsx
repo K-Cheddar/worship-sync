@@ -96,6 +96,39 @@ it("opens the unified My Schedule from the accountless availability URL", async 
   expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/schedule"))).toBe(true);
 });
 
+it("opens a direct accountless availability link without loading the schedule overview", async () => {
+  availabilityRequest = {
+    recipientId: "personal-recipient",
+    formId: "personal-form",
+    name: "November availability",
+    responseDeadline: "2099-11-30",
+    availabilityMessage: "Choose the services you can serve.",
+    respondedAt: "",
+    submissionId: "",
+    editable: true,
+    occurrences: [{
+      occurrenceId: "service-a@2099-11-08",
+      name: "Sunday 1",
+      startsAt: "2099-11-08T14:00:00.000Z",
+      serviceDate: "2099-11-08",
+    }],
+    availability: {},
+    unansweredOccurrenceIds: ["service-a@2099-11-08"],
+    availabilityRevision: { "service-a@2099-11-08": 0 },
+  };
+  window.history.replaceState({}, "", "/s?view=availability&availabilityRequest=personal-recipient");
+  render(<PublicApp />);
+
+  expect(await screen.findByRole("heading", { name: "November availability" })).toBeInTheDocument();
+  const reads = fetchMock.mock.calls.filter(([path, options]) =>
+    String(path).includes("/availability") && options.method !== "POST",
+  );
+  expect(reads.map(([path]) => new URL(String(path), "http://localhost").searchParams.get("recipientId")))
+    .toEqual(["personal-recipient"]);
+  expect(fetchMock.mock.calls.some(([path]) => String(path).endsWith("/schedule"))).toBe(false);
+  expect(screen.queryByRole("region", { name: "Scheduling preferences" })).not.toBeInTheDocument();
+});
+
 it("submits a confirmed checkbox response through the accountless availability API", async () => {
   const user = userEvent.setup();
   const ids = ["service-a@2099-11-08", "service-b@2099-11-15"];
@@ -122,9 +155,10 @@ it("submits a confirmed checkbox response through the accountless availability A
   render(<PublicApp />);
 
   await user.click(await screen.findByRole("button", { name: "Respond November availability" }));
+  expect(window.location.search).toContain("availabilityRequest=personal-recipient");
   await user.click(screen.getByRole("checkbox", { name: /Sunday 1/ }));
   await user.click(screen.getByRole("button", { name: "Review response" }));
-  expect(screen.getByRole("dialog", { name: "Confirm your availability" }))
+  expect(screen.getByRole("dialog", { name: "Review your response" }))
     .toHaveTextContent("1 available, 1 unavailable");
   await user.click(screen.getByRole("button", { name: "Submit response" }));
 
@@ -139,8 +173,11 @@ it("submits a confirmed checkbox response through the accountless availability A
     occurrenceAvailability: { [ids[0]]: "available", [ids[1]]: "unavailable" },
     availabilityRevision: { [ids[0]]: 0, [ids[1]]: 0 },
   });
-  expect(await screen.findByRole("button", { name: "Change response November availability" }))
+  const responseAction = await screen.findByRole("button", { name: "Change response November availability" });
+  expect(responseAction).toHaveAttribute("data-variant", "presentSecondary");
+  expect(screen.getByRole("group", { name: "November availability" }))
     .toHaveTextContent("Response submitted");
+  expect(fetchMock.mock.calls.filter(([path]) => String(path).endsWith("/schedule"))).toHaveLength(1);
 });
 
 it("opens the same My Schedule through the real public providers, including deferred time off and plan views", async () => {

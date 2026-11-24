@@ -25088,6 +25088,7 @@ test("issued availability forms project proven grouped occurrences and write thr
     serviceDate: date,
   };
   await setDoc(COLLECTIONS.teamSchedules, assigned.scheduleId, {
+    archivedAt: "2026-11-20T18:00:00.000Z",
     occurrences: [
       groupSnapshot,
       { occurrenceId: standaloneOccurrenceId, serviceId, serviceIds: [serviceId], name: "Sabbath Service", startsAt: groupSnapshot.startsAt, serviceDate: date },

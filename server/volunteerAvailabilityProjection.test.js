@@ -50,6 +50,65 @@ test("projects the confirmed grouped/standalone identity pair but retains indepe
   assert.deepEqual(result.unansweredOccurrenceIds, [groupOccurrenceId, independentOccurrenceId]);
 });
 
+test("uses archived historical snapshots to reconcile the reported November dates", () => {
+  const dates = ["2026-11-07", "2026-11-14", "2026-11-21", "2026-11-28"];
+  const occurrences = dates.flatMap((serviceDate) => [
+    {
+      occurrenceId: `group:${groupId}@${serviceDate}`,
+      serviceId: memberServiceId,
+      name: "Sabbath Service & 2nd service",
+      startsAt: `${serviceDate}T14:00:00.000Z`,
+      serviceDate,
+    },
+    {
+      occurrenceId: `${memberServiceId}@${serviceDate}`,
+      serviceId: memberServiceId,
+      name: "Sabbath Service",
+      startsAt: `${serviceDate}T14:00:00.000Z`,
+      serviceDate,
+    },
+  ]);
+  const schedule = {
+    scheduleId: "archived-november-snapshot",
+    teamId: "team-1",
+    archivedAt: "2026-11-20T18:00:00.000Z",
+    occurrences: dates.flatMap((serviceDate) => [
+      {
+        occurrenceId: `group:${groupId}@${serviceDate}`,
+        serviceId: memberServiceId,
+        serviceIds: [memberServiceId, secondServiceId],
+        groupId,
+        startsAt: `${serviceDate}T14:00:00.000Z`,
+        serviceDate,
+      },
+      {
+        occurrenceId: `${memberServiceId}@${serviceDate}`,
+        serviceId: memberServiceId,
+        serviceIds: [memberServiceId],
+        startsAt: `${serviceDate}T14:00:00.000Z`,
+        serviceDate,
+      },
+    ]),
+  };
+  const result = projectVolunteerAvailabilityResponse({
+    form: { ...form, availabilityOccurrences: occurrences },
+    member: {},
+    serviceTimeZone: "America/New_York",
+    services,
+    schedules: [schedule],
+  });
+
+  assert.deepEqual(result.occurrences.map(({ occurrenceId }) => occurrenceId),
+    dates.map((serviceDate) => `group:${groupId}@${serviceDate}`),
+  );
+  assert.deepEqual(result.occurrences.map(({ responseOccurrenceIds }) => responseOccurrenceIds),
+    dates.map((serviceDate) => [
+      `group:${groupId}@${serviceDate}`,
+      `${memberServiceId}@${serviceDate}`,
+    ]),
+  );
+});
+
 test("preserves both raw revisions and projects a single matching saved answer", () => {
   const result = project({
     serviceAvailability: { [memberOccurrenceId]: "unavailable" },

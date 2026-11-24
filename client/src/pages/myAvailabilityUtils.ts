@@ -167,9 +167,15 @@ export const setAvailabilityChoice = (
 export const createAvailabilityCheckboxSubmission = (
   occurrenceIds: string[],
   availability: VolunteerAvailabilityRequest["availability"],
-): VolunteerAvailabilityRequest["availability"] => Object.fromEntries(
-  occurrenceIds.map((id) => [id, availability[id] === "available" ? "available" : "unavailable"]),
-);
+  preserveUnansweredOccurrenceIds: Iterable<string> = [],
+): VolunteerAvailabilityRequest["availability"] => {
+  const preserveUnanswered = new Set(preserveUnansweredOccurrenceIds);
+  return Object.fromEntries(occurrenceIds.flatMap((id) => {
+    const answer = availability[id];
+    if (answer === "available" || answer === "unavailable") return [[id, answer]];
+    return preserveUnanswered.has(id) ? [] : [[id, "unavailable"]];
+  }));
+};
 
 export const formatAvailabilityOccurrence = (
   occurrence: VolunteerAvailabilityRequest["occurrences"][number],

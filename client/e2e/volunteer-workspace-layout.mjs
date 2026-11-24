@@ -248,35 +248,32 @@ try {
       const editorHeading = page.getByRole("heading", { name: "November Availability" });
       await editorHeading.waitFor();
       assert.equal(await editorHeading.evaluate((element) => document.activeElement === element), true, `${mode} ${viewport.label}: opening an availability request focuses its heading`);
+      assert(page.url().includes("availabilityRequest=fixture-recipient"), `${mode} ${viewport.label}: the focused editor is represented in the URL`);
+      await page.getByRole("heading", { name: "Scheduling preferences" }).waitFor({ state: "detached" });
+      assert.equal(await page.getByRole("button", { name: /Open Sabbath Service/ }).count(), 0, "The focused editor hides unrelated assignments");
       assert.deepEqual(availabilityReads[1], { recipientId: "fixture-recipient", history: false, summary: false }, `${mode} ${viewport.label}: opening a card loads only its recipient detail`);
       await inspectLayout(page, viewport, mode, "availability editor");
 
-      const groupedAnswers = page.getByRole("radiogroup", { name: /Sabbath Service & 2nd service/ });
-      const groupedAvailable = groupedAnswers.getByRole("radio", { name: "Available", exact: true });
-      await groupedAvailable.waitFor();
-      const groupedBounds = await groupedAvailable.evaluate((element) => {
+      const groupedAnswer = page.getByRole("checkbox", { name: /Sabbath Service & 2nd service/ });
+      await groupedAnswer.waitFor();
+      const groupedBounds = await groupedAnswer.evaluate((element) => {
         const label = element.closest("label");
         if (!label) return null;
         const rect = label.getBoundingClientRect();
         return { width: rect.width, height: rect.height };
       });
-      assert(groupedBounds && groupedBounds.height >= 44, "Availability answer choices have touch-friendly height");
-      assert.equal(await page.getByRole("radiogroup", { name: /Long Guest Musician and Volunteer Team Name/ }).count(), 1, "Long service names remain readable");
+      assert(groupedBounds && groupedBounds.height >= 44, "Availability checkboxes have touch-friendly height");
+      assert.equal(await page.getByRole("checkbox", { name: /Long Guest Musician and Volunteer Team Name/ }).count(), 1, "Long service names remain readable");
       assert(await page.getByText(/\d+ past/).count() >= 1, `${mode} ${viewport.label}: past availability dates remain identified`);
 
-      const groupedUnavailable = groupedAnswers.getByRole("radio", { name: "Unavailable", exact: true });
-      await groupedUnavailable.focus();
+      await groupedAnswer.focus();
       await page.keyboard.press("Space");
-      assert(await groupedUnavailable.isChecked(), "Availability choices work from the keyboard");
+      assert(!(await groupedAnswer.isChecked()), "Availability checkboxes work from the keyboard");
       if (viewport.width === 1440 || viewport.width === 390) {
         await page.screenshot({ path: resolve(screenshots, `availability-editor-${mode}-${viewport.label}.png`), fullPage: true });
       }
 
-      await page.getByRole("button", { name: "By service" }).click();
-      assert(await page.getByRole("radiogroup", { name: /Sabbath Service & 2nd service/ })
-        .getByRole("radio", { name: "Unavailable", exact: true }).isChecked(), "Organization changes preserve the answer");
-      assert.equal(await page.getByRole("radiogroup").count(), 7, "Historical grouped aliases remain one answer");
-      await page.getByRole("button", { name: "By date" }).click();
+      assert.equal(await page.getByRole("checkbox").count(), 7, "Historical grouped aliases remain one answer");
 
       await page.getByRole("button", { name: "Open menu" }).click();
       const menu = page.getByRole("dialog", { name: "Menu" });
@@ -287,14 +284,28 @@ try {
       await navigationWarning.waitFor({ state: "detached" });
       await menu.getByRole("button", { name: "Close" }).click();
       await menu.waitFor({ state: "detached" });
-      assert(await page.getByRole("radiogroup", { name: /Sabbath Service & 2nd service/ })
-        .getByRole("radio", { name: "Unavailable", exact: true }).isChecked(), "Canceling navigation keeps the response draft");
-      await page.getByRole("button", { name: "Back to requests" }).click();
+      assert(!(await groupedAnswer.isChecked()), "Canceling navigation keeps the response draft");
+      await page.getByRole("button", { name: "Back to My Schedule" }).click();
       const discardWarning = page.getByRole("dialog", { name: "Unsaved changes" });
       await discardWarning.getByRole("button", { name: "Discard changes" }).click();
       await availabilityCard.waitFor();
       await discardWarning.waitFor({ state: "detached" });
+      await page.waitForFunction(() => {
+        const target = document.querySelector('[data-availability-request-key] button[aria-label="Respond November Availability"]');
+        return target instanceof HTMLElement && document.activeElement === target;
+      }, undefined, { timeout: 5000 });
       assert.equal(await availabilityCard.evaluate((element) => document.activeElement === element), true, `${mode} ${viewport.label}: closing an availability request restores focus to its card`);
+
+      await availabilityCard.click();
+      await editorHeading.waitFor();
+      await page.goBack();
+      await availabilityCard.waitFor();
+      assert(!page.url().includes("availabilityRequest=fixture-recipient"), `${mode} ${viewport.label}: browser Back returns to the request list`);
+      await page.goForward();
+      await editorHeading.waitFor();
+      assert(page.url().includes("availabilityRequest=fixture-recipient"), `${mode} ${viewport.label}: browser Forward restores the focused editor`);
+      await page.getByRole("button", { name: "Back to My Schedule" }).click();
+      await availabilityCard.waitFor();
 
       if (viewport.width === 1440) {
         const historyAlias = mode === "accountless" ? "/s?view=availability" : "/my-availability";
@@ -304,7 +315,7 @@ try {
         await page.waitForFunction((path) => window.location.hash === `#${path}`, schedulePath);
         await page.goForward();
         await page.waitForFunction((path) => window.location.hash === `#${path}`, historyAlias);
-        assert.equal(availabilityReads.length, 2, `${mode} ${viewport.label}: Back and Forward do not duplicate the availability summary request`);
+        assert.equal(availabilityReads.filter(({ summary }) => summary).length, 1, `${mode} ${viewport.label}: Back and Forward do not duplicate the availability summary request`);
       }
 
       const legacyAvailabilityPath = mode === "accountless"
@@ -314,6 +325,7 @@ try {
       await page.getByRole("heading", { name: "November Availability" }).waitFor();
       assert(page.url().includes("availabilityRequest=fixture-recipient"), `${mode} ${viewport.label}: legacy availability deep link retains recipient context`);
       assert.deepEqual(aliasReads, [{ recipientId: "fixture-recipient", history: false, summary: false }], `${mode} ${viewport.label}: compatibility deep link loads only the selected request without a duplicate summary read`);
+      assert.equal(await page.getByRole("button", { name: /Open Sabbath Service/ }).count(), 0, `${mode} ${viewport.label}: compatibility route stays focused on availability`);
       await inspectLayout(page, viewport, mode, "availability compatibility route");
 
       if (mode === "accountless" && viewport.width === 1440) {

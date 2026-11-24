@@ -116,6 +116,31 @@ it("only turns unchecked services into unavailable when checkbox intent is final
     .toEqual({});
 });
 
+it("preserves historical unanswered services until the volunteer makes an explicit choice", () => {
+  const occurrenceIds = ["service-a@2026-11-08", "service-b@2026-11-22"];
+  const historicalPartial = { "service-a@2026-11-08": "available" as const };
+  expect(createAvailabilityCheckboxSubmission(
+    occurrenceIds,
+    historicalPartial,
+    ["service-b@2026-11-22"],
+  )).toEqual({ "service-a@2026-11-08": "available" });
+  expect(createAvailabilityCheckboxSubmission(
+    occurrenceIds,
+    { ...historicalPartial, "service-b@2026-11-22": "unavailable" },
+    ["service-b@2026-11-22"],
+  )).toEqual({
+    "service-a@2026-11-08": "available",
+    "service-b@2026-11-22": "unavailable",
+  });
+  expect(createAvailabilityCheckboxSubmission(
+    occurrenceIds,
+    {},
+  )).toEqual({
+    "service-a@2026-11-08": "unavailable",
+    "service-b@2026-11-22": "unavailable",
+  });
+});
+
 it("shows a compact date range from church service dates", () => {
   expect(formatAvailabilityRequestDateRange(makeRequest(), "America/New_York"))
     .toMatch(/November 08, 2026.*November 22, 2026/);

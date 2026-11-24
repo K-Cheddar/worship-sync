@@ -830,6 +830,7 @@ const MyScheduleView = ({
   const [scheduleError, setScheduleError] = useState("");
 
   const mountedRef = useRef(true);
+  const didLoadScheduleRef = useRef(false);
   /** Drops a response that a newer request has already superseded. */
   const requestRef = useRef(0);
   /** Prevents older member reads from replacing a later confirmed/observed snapshot. */
@@ -913,8 +914,10 @@ const MyScheduleView = ({
   );
 
   useEffect(() => {
+    if (availabilityRecipientId || didLoadScheduleRef.current) return;
+    didLoadScheduleRef.current = true;
     load({ showLoading: true });
-  }, [load]);
+  }, [availabilityRecipientId, load]);
 
   /**
    * Catch up on return rather than staying live. Nobody watches this page for
@@ -923,9 +926,9 @@ const MyScheduleView = ({
    * request. Being told about a change is Phase 1/2 dispatch, not reactivity.
    */
   const refreshOnReturn = useCallback(() => {
-    if (timeOffDirtyRef.current) return;
+    if (availabilityRecipientId || timeOffDirtyRef.current) return;
     load({ showLoading: false });
-  }, [load]);
+  }, [availabilityRecipientId, load]);
 
   useSyncOnReconnect(refreshOnReturn);
 
@@ -1422,6 +1425,7 @@ const MyScheduleView = ({
       )}
     >
       <VolunteerWorkspaceFrame>
+        {!availabilityRecipientId ? <>
         {status === "loading" ? (
           <section aria-labelledby="time-off-loading-heading" className="rounded-lg border border-gray-700/80 bg-gray-900/40 p-3">
             <h2 id="time-off-loading-heading" className="text-sm font-semibold text-gray-100">Time off</h2>
@@ -1469,6 +1473,7 @@ const MyScheduleView = ({
             />
           </>
         ) : null}
+        </> : null}
 
         <VolunteerAvailabilitySections
           key={availabilityOwnerKey}
@@ -1483,6 +1488,7 @@ const MyScheduleView = ({
           navigationGuardProvided
         />
 
+        {!availabilityRecipientId ? <>
         {status === "loading" ? <MyScheduleLoadingSkeleton /> : null}
 
         {canShowTimeline && selected ? (
@@ -1676,6 +1682,7 @@ const MyScheduleView = ({
             ) : null}
           </>
         ) : null}
+        </> : null}
       </VolunteerWorkspaceFrame>
     </AppWorkspaceShell>
   );

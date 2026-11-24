@@ -1,11 +1,10 @@
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Clock3 } from "lucide-react";
 import Button from "../components/Button/Button";
 import Checkbox from "../components/Checkbox/Checkbox";
 import Modal from "../components/Modal/Modal";
 import Select from "../components/Select/Select";
-import SegmentedControl from "../components/SegmentedControl/SegmentedControl";
 import { SERVICE_OCCURRENCE_GRID_CLASS_NAME } from "../components/ServiceOccurrenceCard/ServiceOccurrenceCard";
 import { cn } from "../utils/cnHelper";
 import { GlobalInfoContext } from "../context/globalInfo";
@@ -43,16 +42,11 @@ import {
   hasAvailabilityResponseSubmission,
   organizeAvailabilityOccurrences,
   setAvailabilityChoice,
-  type AvailabilityOrganizeMode,
   type AvailabilityChoice,
 } from "./myAvailabilityUtils";
 import { getApiErrorStatus, showApiErrorToast } from "../utils/apiErrorToast";
 
 type AnswerMap = VolunteerAvailabilityRequest["availability"];
-const AVAILABILITY_ORGANIZE_OPTIONS = [
-  { value: "byDate" as const, label: "By date" },
-  { value: "byService" as const, label: "By service" },
-];
 
 const copyAnswers = (answers: AnswerMap): AnswerMap => ({ ...answers });
 
@@ -90,19 +84,15 @@ const requestKey = (request: Pick<VolunteerAvailabilityRequest, "formId" | "reci
   request.formId + ":" + request.recipientId;
 
 const AvailabilitySelectionToolbar = ({
-  organizeMode,
-  onOrganizeChange,
   selectionLabel,
   selectAllDisabled,
   onSelectAll,
 }: {
-  organizeMode: AvailabilityOrganizeMode;
-  onOrganizeChange: (mode: AvailabilityOrganizeMode) => void;
   selectionLabel: string;
   selectAllDisabled?: boolean;
   onSelectAll?: () => void;
 }) => (
-  <div className="grid min-w-0 gap-3 rounded-lg border border-gray-700/80 bg-gray-900/50 p-3 sm:grid-cols-[minmax(0,1fr)_14rem] sm:items-center">
+  <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
     <div className="flex min-w-0 flex-wrap items-center gap-3">
       {onSelectAll ? (
         <Button type="button" variant="secondary" className="min-h-[44px]" disabled={selectAllDisabled} onClick={onSelectAll}>
@@ -112,17 +102,6 @@ const AvailabilitySelectionToolbar = ({
       <span role="status" aria-live="polite" className="text-xs text-gray-300">
         {selectionLabel}
       </span>
-    </div>
-    <div className="flex min-w-0 flex-col gap-1">
-      <span className="px-0.5 text-xs font-semibold text-gray-200">Organize</span>
-      <SegmentedControl
-        ariaLabel="Organize availability services"
-        variant="compact"
-        fullWidth
-        value={organizeMode}
-        onChange={onOrganizeChange}
-        options={AVAILABILITY_ORGANIZE_OPTIONS}
-      />
     </div>
   </div>
 );
@@ -141,13 +120,11 @@ const RequestCard = ({
 
   return (
     <li>
-      <button
-        type="button"
-        className="flex min-h-[44px] w-full flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-lg border border-gray-700/80 bg-gray-900/40 p-3 text-left transition-colors hover:border-gray-600 hover:bg-gray-900/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-teal-300 disabled:cursor-not-allowed disabled:opacity-60 sm:p-4"
+      <div
+        className="flex min-h-[76px] w-full flex-wrap items-center justify-between gap-x-4 gap-y-3 rounded-lg border border-gray-700/80 bg-gray-900/40 p-3 sm:p-4"
+        role="group"
+        aria-label={request.name || "Availability request"}
         data-availability-request-key={requestKey(request)}
-        onClick={onOpen}
-        disabled={disabled}
-        aria-label={`${action} ${request.name || "availability request"}`}
       >
         <span className="min-w-0 flex-1">
           <span className="block truncate font-semibold text-gray-100">{request.name || "Availability request"}</span>
@@ -158,8 +135,17 @@ const RequestCard = ({
             <span>{hasSubmission ? "Response submitted" : "Response needed"}</span>
           </span>
         </span>
-        <span className="shrink-0 text-sm font-semibold text-teal-200">{action}</span>
-      </button>
+        <Button
+          type="button"
+          variant={hasSubmission ? "secondary" : "cta"}
+          className="min-h-[44px] max-md:min-h-[44px]! shrink-0"
+          onClick={onOpen}
+          disabled={disabled}
+          aria-label={`${action} ${request.name || "availability request"}`}
+        >
+          {action}
+        </Button>
+      </div>
     </li>
   );
 };
@@ -191,11 +177,8 @@ const AvailabilityRequestEditor = ({
   const hasSubmission = hasAvailabilityResponseSubmission(request);
   const savedCounts = getAvailabilityCounts(request);
   const hasSavedAnswers = savedCounts.available + savedCounts.unavailable > 0;
-  const startsWithThreeStateData = (savedCounts.unanswered > 0 && hasSavedAnswers) ||
-    (hasSubmission && savedCounts.total > 0 && savedCounts.available + savedCounts.unavailable === 0);
   const [draft, setDraft] = useState<AnswerMap>(() => copyAnswers(request.availability));
-  const [detailedEditing, setDetailedEditing] = useState(startsWithThreeStateData);
-  const [organizeMode, setOrganizeMode] = useState<AvailabilityOrganizeMode>("byDate");
+  const [explicitlyClearedIds, setExplicitlyClearedIds] = useState<string[]>([]);
   const [baseline, setBaseline] = useState(() => ({
     answers: copyAnswers(request.availability),
     revisions: { ...request.availabilityRevision },
@@ -227,23 +210,27 @@ const AvailabilityRequestEditor = ({
   ])], [request.conflictingOccurrenceIds, request.occurrences]);
   const occurrenceGroups = useMemo(() => organizeAvailabilityOccurrences({
     occurrences: request.occurrences,
-    mode: organizeMode,
+    mode: "byDate",
     serviceTimeZone,
-  }), [request.occurrences, organizeMode, serviceTimeZone]);
+  }), [request.occurrences, serviceTimeZone]);
+  const historicalUnansweredIds = useMemo(() => new Set(
+    hasSubmission || hasSavedAnswers || conflictingOccurrenceIds.length
+      ? request.unansweredOccurrenceIds
+      : [],
+  ), [conflictingOccurrenceIds.length, hasSavedAnswers, hasSubmission, request.unansweredOccurrenceIds]);
+  const unansweredIdsForSubmission = useMemo(() => new Set([
+    ...historicalUnansweredIds,
+    ...explicitlyClearedIds,
+  ]), [explicitlyClearedIds, historicalUnansweredIds]);
   const draftForScope = answersForScope(draft, occurrenceIds);
   const baselineAnswersForScope = answersForScope(baseline.answers, occurrenceIds);
   const isDirty = !availabilityMapsMatch(draftForScope, baselineAnswersForScope, occurrenceIds) || resolvedConflictIds.length > 0;
-  const draftAnswerCount = occurrenceIds.filter((id) =>
-    draft[id] === "available" || draft[id] === "unavailable",
-  ).length;
   const draftAvailableCount = occurrenceIds.filter((id) => draft[id] === "available").length;
-  const draftUnansweredCount = occurrenceIds.length - draftAnswerCount;
-  const useThreeStateEditor = detailedEditing ||
-    conflictingOccurrenceIds.length > 0 ||
-    (startsWithThreeStateData && draftUnansweredCount > 0) ||
-    (hasSubmission && occurrenceIds.length > 0 && draftAnswerCount === 0);
-  const checkboxSubmission = createAvailabilityCheckboxSubmission(occurrenceIds, draftForScope);
-  const pendingAnswers = useThreeStateEditor ? draftForScope : checkboxSubmission;
+  const pendingAnswers = createAvailabilityCheckboxSubmission(
+    occurrenceIds,
+    draftForScope,
+    unansweredIdsForSubmission,
+  );
   const pendingCounts = {
     available: occurrenceIds.filter((id) => pendingAnswers[id] === "available").length,
     unavailable: occurrenceIds.filter((id) => pendingAnswers[id] === "unavailable").length,
@@ -255,16 +242,10 @@ const AvailabilityRequestEditor = ({
   const currentRequest = conflictRequest || request;
   const canEdit = serverAllowsEdits && request.editable && currentRequest.editable &&
     !availabilityNeedsRefresh && !recoveryRequired && !requestUnavailable;
-  const canSubmitInitialResponse = hasSubmission || !useThreeStateEditor || draftAnswerCount > 0 ||
-    hasSavedAnswers || resolvedConflictIds.length > 0;
   const unresolvedConflicts = conflictingOccurrenceIds.filter((id) => !resolvedConflictIds.includes(id));
-  const canSave = canEdit && (isDirty || !hasSubmission) && canSubmitInitialResponse &&
+  const canSave = canEdit && (isDirty || !hasSubmission) &&
     unresolvedConflicts.length === 0 && hasRevisionSnapshot && occurrenceIds.length > 0 &&
     !saving && !isSaving && !conflictRequest;
-  const getDraftChoice = (occurrenceId: string) => {
-    if (unresolvedConflicts.includes(occurrenceId) && draft[occurrenceId] === undefined) return undefined;
-    return getAvailabilityChoice(draft, occurrenceId);
-  };
 
   useEffect(() => {
     mountedRef.current = true;
@@ -385,7 +366,7 @@ const AvailabilityRequestEditor = ({
 
   const reviewOrSave = () => {
     if (!canSave) return;
-    if (!hasSubmission) {
+    if (!hasSubmission || (pendingCounts.available === 0 && pendingCounts.unanswered === 0)) {
       setConfirmationOpen(true);
       return;
     }
@@ -399,10 +380,15 @@ const AvailabilityRequestEditor = ({
 
   const chooseAvailability = (occurrenceId: string, choice: AvailabilityChoice) => {
     setDraft((current) => setAvailabilityChoice(current, occurrenceId, choice));
+    setExplicitlyClearedIds((current) => choice === "not-answered"
+      ? current.includes(occurrenceId) ? current : [...current, occurrenceId]
+      : current.filter((id) => id !== occurrenceId));
     if (conflictingOccurrenceIds.includes(occurrenceId)) {
       setResolvedConflictIds((current) => current.includes(occurrenceId) ? current : [...current, occurrenceId]);
     }
   };
+
+  const clearAvailability = (occurrenceId: string) => chooseAvailability(occurrenceId, "not-answered");
 
   const reviewLatest = () => {
     if (!conflictRequest) return;
@@ -455,7 +441,7 @@ const AvailabilityRequestEditor = ({
             <p className="mt-2 whitespace-pre-line text-sm text-gray-300">{request.availabilityMessage}</p>
           ) : null}
         </div>
-        <Button type="button" variant="secondary" className="shrink-0" onClick={onBack}>Back to requests</Button>
+        <Button type="button" variant="secondary" className="min-h-[44px] shrink-0" onClick={onBack}>Back to My Schedule</Button>
       </div>
 
       {requestUnavailable ? (
@@ -519,155 +505,113 @@ const AvailabilityRequestEditor = ({
         <div className="space-y-3">
           <div>
             <h3 className="text-sm font-semibold text-gray-100">Select services you can serve</h3>
-            {useThreeStateEditor ? (
-              <p className="mt-1 text-xs text-gray-400">Not answered stays unanswered when you save.</p>
-            ) : null}
           </div>
-
-          {!useThreeStateEditor ? (
-            <>
-              <AvailabilitySelectionToolbar
-                organizeMode={organizeMode}
-                onOrganizeChange={setOrganizeMode}
-                selectionLabel={`${draftAvailableCount} of ${occurrenceIds.length} selected`}
-                selectAllDisabled={!canEdit || isSaving || saving || confirmationOpen || draftAvailableCount === occurrenceIds.length}
-                onSelectAll={() => setDraft(Object.fromEntries(
-                  occurrenceIds.map((id) => [id, "available" as const]),
-                ))}
-              />
-              <fieldset disabled={!canEdit || isSaving || saving || confirmationOpen} className="min-w-0 space-y-4">
-                <legend className="sr-only">Available services</legend>
-                {occurrenceGroups.map((group) => (
-                  <section key={group.key} aria-label={group.label} className="space-y-2">
-                    <h4 className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-200">
-                      {group.label}
-                      {group.occurrences.filter((occurrence) => isAvailabilityOccurrencePast(occurrence)).length ? (
-                        <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] font-medium text-gray-400">
-                          {group.occurrences.filter((occurrence) => isAvailabilityOccurrencePast(occurrence)).length} past
-                        </span>
-                      ) : null}
-                    </h4>
-                    <ul className={SERVICE_OCCURRENCE_GRID_CLASS_NAME}>
-                      {group.occurrences.map((occurrence) => {
-                        const dateTime = formatAvailabilityOccurrence(occurrence, serviceTimeZone);
-                        const visibleTime = organizeMode === "byDate"
-                          ? formatAvailabilityOccurrenceTime(occurrence, serviceTimeZone)
-                          : dateTime;
-                        const isSelected = draft[occurrence.occurrenceId] === "available";
-                        return (
-                          <li key={occurrence.occurrenceId} className="min-w-0">
-                            <Checkbox
-                              checked={isSelected}
-                              onCheckedChange={(checked) => setDraft((current) => setAvailabilityChoice(current, occurrence.occurrenceId, checked ? "available" : "unavailable"))}
-                              label={<span className="flex min-w-0 flex-col gap-1">
-                                <span className="whitespace-normal break-words font-semibold leading-snug">{occurrence.name || "Service"}</span>
-                                <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-400">
-                                  {visibleTime ? <time dateTime={occurrence.startsAt}>{visibleTime}</time> : null}
-                                </span>
-                              </span>}
-                              aria-label={`${occurrence.name || "Service"} · ${dateTime}`}
-                              className={cn(
-                                "min-h-[76px] max-md:min-h-[76px] w-full items-start rounded-lg border p-3 text-left transition-colors focus-within:ring-2 focus-within:ring-teal-300",
-                                isSelected
-                                  ? "border-teal-400/70 bg-teal-950/45 shadow-sm"
-                                  : "border-gray-700 bg-gray-900/50 hover:border-gray-500 hover:bg-gray-900/80",
-                              )}
-                              labelClassName="py-1"
-                            />
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </section>
-                ))}
-              </fieldset>
-              {hasSubmission || hasSavedAnswers ? (
-                <Button type="button" variant="textLink" disabled={!canEdit || isSaving || saving || confirmationOpen}
-                  onClick={() => setDetailedEditing(true)}>
-                  Edit individual answer states
-                </Button>
-              ) : null}
-            </>
-          ) : (
-            <>
-              {detailedEditing && draftUnansweredCount === 0 && draftAnswerCount === occurrenceIds.length ? (
-                <Button type="button" variant="textLink" disabled={!canEdit || isSaving || saving || confirmationOpen}
-                  onClick={() => setDetailedEditing(false)}>
-                  Use service checkboxes
-                </Button>
-              ) : null}
-              <AvailabilitySelectionToolbar
-                organizeMode={organizeMode}
-                onOrganizeChange={setOrganizeMode}
-                selectionLabel={`${draftAnswerCount} of ${occurrenceIds.length} answered`}
-              />
-              <fieldset disabled={!canEdit || isSaving || saving || confirmationOpen} className="min-w-0 space-y-4">
-                <legend className="sr-only">Availability for each service</legend>
-                {occurrenceGroups.map((group) => (
-                  <section key={group.key} aria-label={group.label} className="space-y-2">
-                    <h4 className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-200">
-                      {group.label}
-                      {group.occurrences.filter((occurrence) => isAvailabilityOccurrencePast(occurrence)).length ? (
-                        <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] font-medium text-gray-400">
-                          {group.occurrences.filter((occurrence) => isAvailabilityOccurrencePast(occurrence)).length} past
-                        </span>
-                      ) : null}
-                    </h4>
-                    <ul className={SERVICE_OCCURRENCE_GRID_CLASS_NAME}>
-                      {group.occurrences.map((occurrence) => {
-                        const dateTime = formatAvailabilityOccurrence(occurrence, serviceTimeZone);
-                        const visibleTime = organizeMode === "byDate"
-                          ? formatAvailabilityOccurrenceTime(occurrence, serviceTimeZone)
-                          : dateTime;
-                        return (
-                          <li key={occurrence.occurrenceId} className="min-w-0">
-                            <fieldset className="min-w-0 rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 sm:p-4">
-                              <legend className="max-w-full px-1 text-sm font-semibold text-gray-100">
-                                <span className="whitespace-normal break-words">{occurrence.name || "Service"}</span>
-                                <span className="block text-xs font-normal text-gray-400">
-                                  {visibleTime ? <time dateTime={occurrence.startsAt}>{visibleTime}</time> : null}
-                                </span>
-                              </legend>
-                              {conflictingOccurrenceIds.includes(occurrence.occurrenceId) ? (
-                                <p className="px-1 text-xs text-amber-200">
-                                  {currentRequest.editable
-                                    ? "Saved answers conflict. Choose an option to reconcile this service."
-                                    : "Saved answers conflict. Ask your team administrator to review this request."}
-                                </p>
+          <AvailabilitySelectionToolbar
+            selectionLabel={draftAvailableCount + " of " + occurrenceIds.length + " selected"}
+            selectAllDisabled={!canEdit || isSaving || saving || confirmationOpen || draftAvailableCount === occurrenceIds.length}
+            onSelectAll={() => setDraft(Object.fromEntries(
+              occurrenceIds.map((id) => [id, "available" as const]),
+            ))}
+          />
+          <fieldset disabled={!canEdit || isSaving || saving || confirmationOpen} className="min-w-0 space-y-4">
+            <legend className="sr-only">Services you can serve</legend>
+            {occurrenceGroups.map((group) => (
+              <section key={group.key} aria-label={group.label} className="space-y-2">
+                <h4 className="flex flex-wrap items-center gap-2 text-sm font-semibold text-gray-200">
+                  {group.label}
+                  {group.occurrences.filter((occurrence) => isAvailabilityOccurrencePast(occurrence)).length ? (
+                    <span className="rounded bg-gray-800 px-1.5 py-0.5 text-[11px] font-medium text-gray-400">
+                      {group.occurrences.filter((occurrence) => isAvailabilityOccurrencePast(occurrence)).length} past
+                    </span>
+                  ) : null}
+                </h4>
+                <ul className={SERVICE_OCCURRENCE_GRID_CLASS_NAME}>
+                  {group.occurrences.map((occurrence) => {
+                    const occurrenceId = occurrence.occurrenceId;
+                    const name = occurrence.name || "Service";
+                    const dateTime = formatAvailabilityOccurrence(occurrence, serviceTimeZone);
+                    const visibleTime = formatAvailabilityOccurrenceTime(occurrence, serviceTimeZone);
+                    const isSelected = draft[occurrenceId] === "available";
+                    const isUnanswered = draft[occurrenceId] === undefined && historicalUnansweredIds.has(occurrenceId);
+                    const hasConflict = unresolvedConflicts.includes(occurrenceId);
+                    const hasResponseData = hasSubmission || hasSavedAnswers || conflictingOccurrenceIds.length > 0;
+                    return (
+                      <li key={occurrenceId} className="min-w-0">
+                        <div
+                          className="min-w-0 rounded-lg border border-gray-700/80 bg-gray-900/35 p-3 sm:p-4"
+                          role="group"
+                          aria-label={"I can serve at " + name + ", " + dateTime}
+                        >
+                          <Checkbox
+                            checked={isSelected}
+                            disabled={!canEdit || isSaving || saving || confirmationOpen}
+                            onCheckedChange={(checked) => chooseAvailability(occurrenceId, checked ? "available" : "unavailable")}
+                            label={<span className="flex min-w-0 flex-col gap-1">
+                              <span className="whitespace-normal break-words font-semibold leading-snug">{name}</span>
+                              <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-gray-400">
+                                {visibleTime ? <time dateTime={occurrence.startsAt}>{visibleTime}</time> : null}
+                              </span>
+                            </span>}
+                            aria-label={"I can serve at " + name + ", " + dateTime}
+                            className={cn(
+                              "min-h-[60px] max-md:min-h-[60px]! w-full items-start rounded-md border p-3 text-left transition-colors focus-within:ring-2 focus-within:ring-teal-300",
+                              isSelected
+                                ? "border-teal-400/70 bg-teal-950/45 shadow-sm"
+                                : "border-gray-700 bg-gray-900/50 hover:border-gray-500 hover:bg-gray-900/80",
+                            )}
+                            labelClassName="py-1"
+                          />
+                          {hasConflict && currentRequest.editable ? (
+                            <div className="mt-3 space-y-2">
+                              <p className="text-xs text-amber-200">Saved answers conflict. Choose how to resolve this service.</p>
+                              <Select
+                                label="Resolve answer"
+                                labelFontSize="text-xs"
+                                size="sm"
+                                value={draft[occurrenceId] || ""}
+                                options={[
+                                  { value: "", label: "Choose an answer" },
+                                  { value: "available", label: "Available" },
+                                  { value: "unavailable", label: "Unavailable" },
+                                  { value: "not-answered", label: "Not answered" },
+                                ]}
+                                disabled={!canEdit || isSaving || saving || confirmationOpen}
+                                aria-label={"Resolve saved answers for " + name + " on " + dateTime}
+                                onChange={(value) => {
+                                  if (value === "available" || value === "unavailable" || value === "not-answered") {
+                                    chooseAvailability(occurrenceId, value);
+                                  }
+                                }}
+                              />
+                            </div>
+                          ) : null}
+                          {isUnanswered && !hasConflict ? (
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+                              <span className="text-xs text-gray-400">Not answered</span>
+                              {currentRequest.editable ? (
+                                <Button type="button" variant="textLink" className="min-h-[44px]" disabled={!canEdit || isSaving || saving || confirmationOpen}
+                                  onClick={() => chooseAvailability(occurrenceId, "unavailable")}>
+                                  Mark unavailable
+                                </Button>
                               ) : null}
-                              <div role="radiogroup" aria-label={"Availability for " + (occurrence.name || "service") + " on " + dateTime}
-                                className="grid gap-2 pt-1 sm:grid-cols-3">
-                                {([
-                                  ["available", "Available"],
-                                  ["unavailable", "Unavailable"],
-                                  ["not-answered", "Not answered"],
-                                ] as const).map(([choice, label]) => (
-                                  <label key={choice} className="flex min-h-[44px] cursor-pointer items-center gap-2 rounded-md border border-gray-700 bg-gray-900/50 px-2.5 py-2 text-sm text-gray-200 has-[:checked]:border-teal-400/60 has-[:checked]:bg-teal-950/50 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-teal-300">
-                                    <input
-                                      type="radio"
-                                      name={"availability-" + request.formId + "-" + occurrence.occurrenceId}
-                                      value={choice}
-                                      checked={getDraftChoice(occurrence.occurrenceId) === choice}
-                                      onChange={() => chooseAvailability(occurrence.occurrenceId, choice)}
-                                      className="size-4 accent-teal-400"
-                                    />
-                                    {label}
-                                  </label>
-                                ))}
-                              </div>
-                            </fieldset>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </section>
-                ))}
-              </fieldset>
-            </>
-          )}
+                            </div>
+                          ) : null}
+                          {hasResponseData && draft[occurrenceId] ? (
+                            <Button type="button" variant="textLink" className="mt-1 min-h-[44px]" disabled={!canEdit || isSaving || saving || confirmationOpen}
+                              onClick={() => clearAvailability(occurrenceId)}>
+                              Clear response
+                            </Button>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+            ))}
+          </fieldset>
         </div>
       )}
-
       {currentRequest.editable && availabilityNeedsRefresh && !recoveryError ? (
         <p className="text-sm text-gray-400">Your draft is kept. Refresh the latest saved answers before trying again.</p>
       ) : null}
@@ -686,7 +630,7 @@ const AvailabilityRequestEditor = ({
         <div className="flex flex-wrap items-center gap-3">
           <Button type="button" variant="cta" disabled={!canSave} isLoading={saving || isSaving}
             aria-busy={saving || isSaving} onClick={reviewOrSave}>
-            {saving || isSaving ? "Saving availability…" : hasSubmission ? "Save response" : "Review response"}
+            {saving || isSaving ? "Saving availability…" : hasSubmission ? "Save changes" : "Review response"}
           </Button>
           {isDirty ? <span className="text-xs text-gray-400">Unsaved changes</span> : null}
           {saving || isSaving ? <span role="status" aria-live="polite" className="sr-only">Saving availability responses…</span> : null}
@@ -696,7 +640,7 @@ const AvailabilityRequestEditor = ({
       <Modal
         isOpen={confirmationOpen}
         onClose={() => setConfirmationOpen(false)}
-        title="Confirm your availability"
+        title="Review your response"
         size="sm"
         contentPadding="px-4 pb-4 pt-0"
       >
@@ -1059,8 +1003,9 @@ const AvailabilityWorkspaceSectionsView = ({
   initialRecipientId,
   focusAvailability,
 }: AvailabilityWorkspaceSectionsProps) => {
-  const { requestDiscardAction, setDirtySource, setSavingSource } = useVolunteerNavigationGuard();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const { requestDiscardAction, requestNavigation, setDirtySource, setSavingSource } = useVolunteerNavigationGuard();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [requestSummaries, setRequestSummaries] = useState<VolunteerAvailabilityRequestSummary[]>([]);
   const [summaryPreferences, setSummaryPreferences] = useState<VolunteerSchedulingPreferences | null>(null);
   const [summaryLoaded, setSummaryLoaded] = useState(false);
@@ -1095,9 +1040,12 @@ const AvailabilityWorkspaceSectionsView = ({
   const preferencesRef = useRef<HTMLDivElement | null>(null);
   const editorRef = useRef<HTMLElement | null>(null);
   const editorReturnFocusKeyRef = useRef<string | null>(null);
+  const pendingEditorReturnFocusKeyRef = useRef<string | null>(null);
   const wasEditorOpenRef = useRef(false);
   const didFocusRef = useRef(false);
-  const activeRequest = editorRequest;
+  const activeRequest = initialRecipientId && editorRequest?.recipientId === initialRecipientId
+    ? editorRequest
+    : null;
   const schedulingPreferences = (() => {
     if (!summaryLoaded) return fallbackPreferences;
     if (!summaryPreferences) return null;
@@ -1197,14 +1145,17 @@ const AvailabilityWorkspaceSectionsView = ({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      setDirtySource("my-availability-response", false);
+      setSavingSource("my-availability-response", false);
     };
-  }, []);
+  }, [setDirtySource, setSavingSource]);
 
   useEffect(() => {
     if (initialLoadOwnerRef.current === ownerKey) return;
+    if (initialRecipientId) return;
     initialLoadOwnerRef.current = ownerKey;
     void loadSummary({ initial: true });
-  }, [loadSummary, ownerKey]);
+  }, [initialRecipientId, loadSummary, ownerKey]);
 
   const refreshAvailability = useCallback(async (recipientId: string) => {
     const sequence = ++detailSequenceRef.current;
@@ -1305,6 +1256,22 @@ const AvailabilityWorkspaceSectionsView = ({
     }
   }, [markSummaryMutation, openingRecipientId, ownerKey, refreshAvailability, updateDirty]);
 
+  const navigateToOverview = useCallback(() => {
+    const routeState = location.state as { availabilityEditorFromOverview?: unknown } | null;
+    if (routeState?.availabilityEditorFromOverview === true) {
+      navigate(-1);
+      return;
+    }
+    const nextSearch = new URLSearchParams(location.search);
+    nextSearch.delete("availabilityRequest");
+    const serializedSearch = nextSearch.toString();
+    navigate({
+      pathname: location.pathname,
+      search: serializedSearch ? "?" + serializedSearch : "",
+      hash: location.hash,
+    }, { replace: true, state: null });
+  }, [location.hash, location.pathname, location.search, location.state, navigate]);
+
   const handleSaved = useCallback((
     _answers: AnswerMap,
     result: VolunteerAvailabilitySaveResult,
@@ -1328,33 +1295,40 @@ const AvailabilityWorkspaceSectionsView = ({
       });
       setSaveRecoveryMessage("Your response was saved. Open the request again to load the latest answers before editing.");
     }
-    setEditorRequest(null);
     updateDirty(false);
     updateSaving(false);
-  }, [editorRequest, markSummaryMutation, updateDirty, updateSaving]);
+    navigateToOverview();
+  }, [editorRequest, markSummaryMutation, navigateToOverview, updateDirty, updateSaving]);
 
   const openRequestAfterGuard = (request: VolunteerAvailabilityRequestSummary) => {
-    requestDiscardAction(() => {
-      editorReturnFocusKeyRef.current = requestKey(request);
-      void openRequest(request);
-    });
+    editorReturnFocusKeyRef.current = requestKey(request);
+    const nextSearch = new URLSearchParams(location.search);
+    nextSearch.set("availabilityRequest", request.recipientId);
+    requestNavigation({
+      pathname: location.pathname,
+      search: "?" + nextSearch.toString(),
+      hash: location.hash,
+    }, { state: { availabilityEditorFromOverview: true } });
   };
 
   const closeEditor = () => requestDiscardAction(() => {
-    setEditorRequest(null);
     setRequestToRetry(null);
     updateDirty(false);
-    if (initialRecipientId && searchParams.has("availabilityRequest")) {
-      const next = new URLSearchParams(searchParams);
-      next.delete("availabilityRequest");
-      setSearchParams(next, { replace: true });
-    }
+    navigateToOverview();
   });
 
   useEffect(() => {
-    if (!initialRecipientId || initialDetailRecipientRef.current === initialRecipientId) return;
+    if (!initialRecipientId) {
+      initialDetailRecipientRef.current = "";
+      openRequestSequenceRef.current += 1;
+      setOpeningRecipientId("");
+      setEditorRequest(null);
+      return;
+    }
+    if (initialDetailRecipientRef.current === initialRecipientId) return;
     initialDetailRecipientRef.current = initialRecipientId;
-    editorReturnFocusKeyRef.current = null;
+    const routeState = location.state as { availabilityEditorFromOverview?: unknown } | null;
+    if (routeState?.availabilityEditorFromOverview !== true) editorReturnFocusKeyRef.current = null;
     const summary = requestSummaries.find((request) => request.recipientId === initialRecipientId) || {
       recipientId: initialRecipientId,
       formId: "",
@@ -1365,30 +1339,54 @@ const AvailabilityWorkspaceSectionsView = ({
       editable: true,
     };
     void openRequest(summary);
-  }, [initialRecipientId, openRequest, requestSummaries]);
+  }, [initialRecipientId, location.state, openRequest, requestSummaries]);
+
+  useEffect(() => {
+    if (!initialRecipientId || activeRequest) return;
+    editorRef.current?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
+  }, [activeRequest, initialRecipientId]);
 
   useEffect(() => {
     const editorOpen = Boolean(activeRequest);
     if (editorOpen && !wasEditorOpenRef.current) {
+      pendingEditorReturnFocusKeyRef.current = null;
       editorRef.current?.scrollIntoView?.({ block: "nearest" });
       editorRef.current?.querySelector<HTMLElement>("h2")?.focus({ preventScroll: true });
-    } else if (!editorOpen && wasEditorOpenRef.current) {
+      wasEditorOpenRef.current = true;
+    } else if (!editorOpen && !initialRecipientId && wasEditorOpenRef.current) {
       const returnKey = editorReturnFocusKeyRef.current;
-      const returnTarget = returnKey
-        ? Array.from(requestsRef.current?.querySelectorAll<HTMLElement>("[data-availability-request-key]") || [])
-          .find((element) => element.dataset.availabilityRequestKey === returnKey) || null
-        : null;
-      if (returnTarget?.isConnected) {
-        returnTarget.focus({ preventScroll: true });
+      wasEditorOpenRef.current = false;
+      editorReturnFocusKeyRef.current = null;
+      if (returnKey) {
+        pendingEditorReturnFocusKeyRef.current = returnKey;
       } else {
         const fallback = requestsRef.current?.querySelector<HTMLElement>("h2") ||
           preferencesRef.current?.querySelector<HTMLElement>("h2");
         fallback?.focus({ preventScroll: true });
       }
-      editorReturnFocusKeyRef.current = null;
     }
-    wasEditorOpenRef.current = editorOpen;
-  }, [activeRequest]);
+
+    const pendingKey = pendingEditorReturnFocusKeyRef.current;
+    if (!editorOpen && !initialRecipientId && pendingKey) {
+      const returnTarget = Array.from(
+        requestsRef.current?.querySelectorAll<HTMLElement>("[data-availability-request-key]") || [],
+      ).find((element) => element.dataset.availabilityRequestKey === pendingKey) || null;
+      if (returnTarget?.isConnected) {
+        pendingEditorReturnFocusKeyRef.current = null;
+        const focusTarget = returnTarget.querySelector<HTMLElement>("button") || returnTarget;
+        const restoreFocus = () => {
+          if (focusTarget.isConnected) focusTarget.focus({ preventScroll: true });
+        };
+        if (typeof window.requestAnimationFrame === "function") window.requestAnimationFrame(restoreFocus);
+        else window.setTimeout(restoreFocus, 0);
+      } else if (summaryLoaded && loadState !== "loading") {
+        pendingEditorReturnFocusKeyRef.current = null;
+        const fallback = requestsRef.current?.querySelector<HTMLElement>("h2") ||
+          preferencesRef.current?.querySelector<HTMLElement>("h2");
+        fallback?.focus({ preventScroll: true });
+      }
+    }
+  }, [activeRequest, initialRecipientId, loadState, requestSummaries, summaryLoaded]);
 
   useEffect(() => {
     if (!focusAvailability || didFocusRef.current || loadState === "loading") return;
@@ -1414,8 +1412,54 @@ const AvailabilityWorkspaceSectionsView = ({
 
   const preferenceLoading = !summaryLoaded && !fallbackPreferences && loadState === "loading";
   const retryOpenRequest = requestToRetry;
+  const renderActiveEditor = (request: VolunteerAvailabilityRequest) => (
+    <section ref={editorRef} className="scroll-mt-4">
+      <AvailabilityRequestEditor
+        key={ownerKey + ":" + requestKey(request)}
+        request={request}
+        serviceTimeZone={serviceTimeZone}
+        saving={saving}
+        availabilityNeedsRefresh={false}
+        saveAvailability={operations.saveAvailability}
+        refreshAvailability={() => refreshAvailability(request.recipientId)}
+        onSavingChange={updateSaving}
+        onDirtyChange={updateDirty}
+        onSaved={handleSaved}
+        onBack={closeEditor}
+      />
+    </section>
+  );
 
-  return (
+  return initialRecipientId ? (
+    <div className="space-y-4">
+      {activeRequest ? renderActiveEditor(activeRequest) : (
+        <section ref={editorRef} className="space-y-3" aria-labelledby="availability-request-loading-title">
+          <Button type="button" variant="secondary" className="min-h-[44px]" onClick={closeEditor}>
+            Back to My Schedule
+          </Button>
+          <h2 id="availability-request-loading-title" tabIndex={-1} className="text-sm font-semibold text-gray-100">
+            {openRequestError ? "Availability request unavailable" : "Loading availability request"}
+          </h2>
+          {openRequestError ? (
+            <div role="alert" className="flex flex-wrap items-center gap-3 text-sm text-amber-200">
+              <p>{openRequestError}</p>
+              {retryOpenRequest ? (
+                <Button type="button" variant="secondary" disabled={Boolean(openingRecipientId)}
+                  isLoading={openingRecipientId === retryOpenRequest.recipientId}
+                  onClick={() => void openRequest(retryOpenRequest)}>
+                  Try again
+                </Button>
+              ) : null}
+            </div>
+          ) : (
+            <p role="status" aria-live="polite" className="text-sm text-gray-400">
+              Loading this authorized request…
+            </p>
+          )}
+        </section>
+      )}
+    </div>
+  ) : (
     <div className="space-y-4">
       <div ref={preferencesRef}>
         <SchedulingPreferencesPanel
@@ -1451,24 +1495,7 @@ const AvailabilityWorkspaceSectionsView = ({
         <p role="status" className="text-sm text-amber-200">{saveRecoveryMessage}</p>
       ) : null}
 
-      {activeRequest ? (
-        <section ref={editorRef} className="scroll-mt-4">
-          <AvailabilityRequestEditor
-            key={ownerKey + ":" + requestKey(activeRequest)}
-            request={activeRequest}
-            serviceTimeZone={serviceTimeZone}
-            saving={saving}
-            availabilityNeedsRefresh={false}
-            saveAvailability={operations.saveAvailability}
-            refreshAvailability={() => refreshAvailability(activeRequest.recipientId)}
-            onSavingChange={updateSaving}
-            onDirtyChange={updateDirty}
-            onSaved={handleSaved}
-            onBack={closeEditor}
-          />
-        </section>
-      ) : (
-        <>
+      <>
           {activeRequests.length ? (
             <section ref={requestsRef} aria-labelledby="availability-requests-heading" className="scroll-mt-4 space-y-2">
               <h2 id="availability-requests-heading" tabIndex={-1} className="text-sm font-semibold text-gray-100">Availability requests</h2>
@@ -1551,7 +1578,7 @@ const AvailabilityWorkspaceSectionsView = ({
                         isLoading={openingRecipientId === request.recipientId}
                         onClick={() => {
                           setPastRequestToRetry(request);
-                          void openRequest(request);
+                          openRequestAfterGuard(request);
                         }}>
                         <span className="min-w-0">
                           <span className="block truncate">{request.name || "Availability request"}</span>
@@ -1572,8 +1599,7 @@ const AvailabilityWorkspaceSectionsView = ({
               </Button>
             </section>
           ) : null}
-        </>
-      )}
+      </>
     </div>
   );
 };

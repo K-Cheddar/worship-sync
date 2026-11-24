@@ -243,12 +243,15 @@ answer through to every original ID and submits every original revision.
 
 When the saved answers agree, or only one ID has an answer, the card displays
 that answer. When the IDs contain different answers, the card does not choose
-one. An editable request offers Available, Unavailable and Not answered and
-requires an explicit choice before saving; a closed request stays read-only and
-asks the volunteer to contact an administrator. Forms with no matching saved
+one. An unresolved conflict in the focused editor offers Available, Unavailable
+and Not answered only for that occurrence and requires an explicit choice
+before saving; a closed request stays read-only and asks the volunteer to
+contact an administrator. Forms with no matching saved
 schedule, missing identity evidence, a changed service group, multiple distinct
 saved group memberships or incomplete schedule evidence keep the original rows
-visible. Independent services on the same date remain separate. The reported
+visible. Archived schedule snapshots can prove an issued form's past identity;
+archiving prevents future scheduling but does not erase that evidence.
+Independent services on the same date remain separate. The reported
 November 7/14/21/28 records are resolved only where these checks pass;
 unresolved pairs stay visible for administrative review. No broad migration,
 form rewrite or response-history deletion occurs.
@@ -342,6 +345,27 @@ edit; a dirty editor keeps its draft and original revision and uses the existing
 explicit conflict review. A rejected mutation is never retried automatically.
 Confirmed by the product-owner request for the Unified My Schedule reliability
 review, 2026-11-23.
+
+## Focused availability response editor (2026-11-23)
+
+**Approval source:** current product-owner request, “WorshipSync — Simplify Availability Editing and Introduce a Focused Subpage,” 2026-11-23.
+
+### Before behavior
+
+Request cards were whole-card buttons. Opening one expanded its editor inline below Time Off and Scheduling Preferences. Volunteers could switch between a checkbox list and three choices for every service, even when a request only needed a routine available/unavailable response.
+
+### After behavior
+
+- Request cards are informational containers. Only the reusable **Respond** or **Change response** button opens a request. The action uses the existing CTA variant when no response is submitted and the secondary variant when a response exists.
+- Opening a request adds its recipient-specific availabilityRequest query value to the existing route. My Schedule keeps its application header and Menu while showing only the selected request, service checklist and necessary review, conflict or recovery UI. **Back to My Schedule**, browser Back and Forward return to the surrounding workspace; the existing navigation guard protects dirty drafts and in-flight saves. Direct recipient links open the same focused view.
+- The routine editor uses one checkbox per logical service, grouped by church date, with a compact selected count and Select all where applicable. A checked service is available. For a new response, Review response confirms the complete available/unavailable counts; selecting no services retains the existing all-unavailable confirmation.
+- Previously saved available services stay checked and unavailable services stay unchecked. Historical unanswered services remain unanswered until the volunteer selects them or uses the contextual **Mark unavailable** action. **Clear response** returns an existing answer to unanswered when supported. Unresolved grouped/standalone answer conflicts still require one explicit choice in the affected service only. A partial response is never silently completed.
+- An accepted save updates the request summary and returns to My Schedule with concise success feedback. An uncertain outcome keeps the editor and draft until an authoritative read reconciles it. Opening a request fetches only its recipient detail; a direct focused link skips overview summaries and assignments until the volunteer returns to the workspace.
+- Historical alias projection remains server-owned. Proven grouped and standalone aliases render once and save to every original occurrence ID and revision. Exact church/team scope, group membership, service identity, timezone date and saved schedule evidence remain required; unknown or conflicting evidence never causes a guessed merge. Archived schedule snapshots remain eligible historical evidence because archiving prevents future scheduling but does not erase the identity of a service already on an issued form.
+
+### Behavior intentionally unchanged
+
+Signed-in and accountless volunteers share this editor and its existing recipient-scoped authorization. The /my-schedule, /my-availability, /s?view=schedule, /s?view=availability, recipient-specific deep links and /a/:token routes remain supported. Availability writes retain the complete scoped map, original occurrence IDs, revision snapshots, HTTP 409 review, uncertain-save reconciliation and no-automatic-retry behavior. Auto-fill continues to treat unanswered availability as neutral. Assignment responses, Time Off, scheduling preferences, request deadlines and historical records remain unchanged; no data migration or deletion is introduced.
 
 
 ## Personal credential foundation: Phase 2 contract (2026-10-21)
