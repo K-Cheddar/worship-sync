@@ -60,6 +60,14 @@ it("reuses unchanged projections and skips sorting when only hidden content chan
   expect(nextLibrary[0]).toBe(initialEntry);
 });
 
+it("treats omitted cache categories as empty lists", () => {
+  const state = {
+    allDocs: { allSongDocs: [{ _id: "song", type: "song", name: "Song" } as DBItem] },
+  } as RootState;
+  expect(selectUnifiedItemLibrary(state).map((entry) => entry._id)).toEqual(["song"]);
+  expect(selectItemEntries(state).map((entry) => entry._id)).toEqual(["song"]);
+});
+
 it.each([
   { type: "image", referenceKey: "localImage", reference: { id: "image", cloudUrl: "https://images.test/current.jpg" }, expected: "https://images.test/current.jpg" },
   { type: "video", referenceKey: "localVideoFile", reference: { id: "video" }, expected: "https://images.test/poster.jpg" },

@@ -8,6 +8,8 @@ import { recordStartupAggregate } from "../utils/startupDiagnostics";
 const itemLibraryNameCollator = new Intl.Collator("en", { numeric: true });
 const itemLibraryTieBreakCollator = new Intl.Collator();
 const projectedEntries = new WeakMap<object, ServiceItem>();
+const emptyItemDocuments: readonly DBItem[] = [];
+const emptyHeadingDocuments: readonly DBHeading[] = [];
 
 const sameEntry = (left: ServiceItem, right: ServiceItem) =>
   left._id === right._id &&
@@ -73,12 +75,12 @@ const createItemEntrySelector = (
   });
 };
 
-const selectSongs = (state: RootState) => state.allDocs.allSongDocs;
-const selectCustomItems = (state: RootState) => state.allDocs.allFreeFormDocs;
-const selectTimers = (state: RootState) => state.allDocs.allTimerDocs;
-const selectBibleItems = (state: RootState) => state.allDocs.allBibleDocs;
-const selectHeadings = (state: RootState) => state.allDocs.allHeadingDocs;
-const selectServiceTimes = (state: RootState) => state.allDocs.allServiceTimeDocs;
+const selectSongs = (state: RootState) => state.allDocs.allSongDocs ?? emptyItemDocuments;
+const selectCustomItems = (state: RootState) => state.allDocs.allFreeFormDocs ?? emptyItemDocuments;
+const selectTimers = (state: RootState) => state.allDocs.allTimerDocs ?? emptyItemDocuments;
+const selectBibleItems = (state: RootState) => state.allDocs.allBibleDocs ?? emptyItemDocuments;
+const selectHeadings = (state: RootState) => state.allDocs.allHeadingDocs ?? emptyHeadingDocuments;
+const selectServiceTimes = (state: RootState) => state.allDocs.allServiceTimeDocs ?? emptyItemDocuments;
 
 export const selectItemDocuments = createSelector(
   [selectSongs, selectCustomItems, selectTimers, selectBibleItems, selectHeadings, selectServiceTimes],

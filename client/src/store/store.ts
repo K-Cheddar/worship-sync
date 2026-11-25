@@ -2441,9 +2441,7 @@ listenerMiddleware.startListening({
       : allDocsSlice.actions.applyItemDocumentChanges.match(action)
         ? action.payload.some((change) => change.id === activeId)
         : false;
-    if (changesMentionActiveItem) {
-      return findCachedItemDocument(current, activeId) !== findCachedItemDocument(previous, activeId);
-    }
+    if (changesMentionActiveItem) return true;
     if (allDocsSlice.actions.updateAllSongDocs.match(action)) {
       return current.undoable.present.item.type === "song" &&
         current.allDocs.allSongDocs !== previous.allDocs.allSongDocs &&

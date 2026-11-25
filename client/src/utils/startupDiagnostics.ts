@@ -243,6 +243,11 @@ const getSnapshot = () => ({
     content: { ...replicationStats.content },
     bible: { ...replicationStats.bible },
   },
+  longTasks: {
+    count: longTaskCount,
+    totalMs: Math.round(longTaskTotalMs),
+    maxMs: Math.round(longTaskMaxMs),
+  },
   recentEvents: snapshotEvents(),
   aggregates: Object.fromEntries(
     [...diagnosticAggregates].map(([subsystem, metrics]) => [subsystem, { ...metrics }]),
@@ -304,15 +309,20 @@ if (isStartupDiagnosticsActive() && typeof window !== "undefined") {
     }
   }
 
-  window.setInterval(() => {
-    const memory = (performance as Performance & {
+  const memory = (performance as Performance & {
+    memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number };
+  }).memory;
+  heapSupported = Boolean(memory);
+
+  if (memory) window.setInterval(() => {
+    const currentMemory = (performance as Performance & {
       memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number };
     }).memory;
     const toMb = (bytes: number) => Math.round((bytes / 1024 / 1024) * 10) / 10;
     heapSampleCount += 1;
-    heapSupported = Boolean(memory);
-    const heapUsedMb = memory ? toMb(memory.usedJSHeapSize) : null;
-    heapLimitMb = memory ? toMb(memory.jsHeapSizeLimit) : null;
+    heapSupported = Boolean(currentMemory);
+    const heapUsedMb = currentMemory ? toMb(currentMemory.usedJSHeapSize) : null;
+    heapLimitMb = currentMemory ? toMb(currentMemory.jsHeapSizeLimit) : null;
     if (heapUsedMb !== null) {
       heapPeakUsedMb = heapPeakUsedMb === null
         ? heapUsedMb
@@ -325,7 +335,7 @@ if (isStartupDiagnosticsActive() && typeof window !== "undefined") {
     recordStartupDiagnostic("runtime", "memory.sample", {
       heapSupported,
       heapUsedMb,
-      heapAllocatedMb: memory ? toMb(memory.totalJSHeapSize) : null,
+      heapAllocatedMb: currentMemory ? toMb(currentMemory.totalJSHeapSize) : null,
       heapLimitMb,
       peakHeapUsedMb: heapPeakUsedMb,
       settledHeapUsedMb: getSettledHeapUsageMb(recentHeapSamples),
