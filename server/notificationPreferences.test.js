@@ -51,7 +51,7 @@ test("an unknown category is muted rather than un-mutable", () => {
 test("a schedule-only volunteer is offered member categories only", () => {
   const visible = visibleNotificationCategories({ teamsPermission: "none" });
 
-  assert.deepEqual(visible, ["scheduleAssignments", "scheduleReminders"]);
+  assert.deepEqual(visible, ["scheduleAssignments", "availabilityRequests", "scheduleReminders"]);
 });
 
 test("an explicit Team Lead sees owner categories too", () => {
@@ -78,12 +78,13 @@ test("member categories are not gated on currently being on a roster", () => {
   // exactly when it matters.
   assert.deepEqual(visibleNotificationCategories({}), [
     "scheduleAssignments",
+    "availabilityRequests",
     "scheduleReminders",
   ]);
 });
 
 test("broad editors without Team Lead assignments see only personal categories", () => {
   for (const access of [{ role: "admin" }, { teamsPermission: "edit" }, { teamScopes: { media: "view" } }]) {
-    assert.deepEqual(visibleNotificationCategories(access), ["scheduleAssignments", "scheduleReminders"]);
+    assert.deepEqual(visibleNotificationCategories(access), ["scheduleAssignments", "availabilityRequests", "scheduleReminders"]);
   }
 });

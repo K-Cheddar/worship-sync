@@ -738,3 +738,51 @@ export function ScheduleResponsesDigestEmail({
     </WorshipSyncEmailLayout>
   );
 }
+
+type AvailabilityRequestEmailProps = {
+  churchName: string;
+  teamName: string;
+  periodLabel: string;
+  responseDeadline: string;
+  memberFirstName: string;
+  availabilityUrl: string;
+};
+
+export function AvailabilityRequestEmail({
+  churchName,
+  teamName,
+  periodLabel,
+  responseDeadline,
+  memberFirstName,
+  availabilityUrl,
+}: AvailabilityRequestEmailProps) {
+  const teamDisplay = teamName.trim() || "your team";
+  const churchDisplay = churchName.trim() || "your church";
+  const greeting = memberFirstName.trim() || "there";
+  return (
+    <WorshipSyncEmailLayout
+      previewText={`Share your ${periodLabel} availability for ${teamDisplay}`}
+      title="Share your availability"
+    >
+      <Text style={bodyText}>Hi {greeting},</Text>
+      <Text style={bodyText}>
+        Please share your availability for <strong style={{ color: worshipSyncEmailBrand.textPrimary }}>{teamDisplay}</strong>
+        {periodLabel ? ` for ${periodLabel}` : ""}. Your response is requested by {responseDeadline}.
+      </Text>
+      <Text style={bodyText}>Thank you for serving with {churchDisplay}.</Text>
+      <Section style={{ margin: "0 0 16px", textAlign: "center" }}>
+        <Button href={availabilityUrl} style={ctaButtonStyle}>
+          Share my availability
+        </Button>
+      </Section>
+      <Text style={finePrint}>
+        If the button does not work, copy and paste this link into your browser:
+      </Text>
+      <Text style={urlText}>
+        <Link href={availabilityUrl} style={{ color: worshipSyncEmailBrand.link }}>
+          {availabilityUrl}
+        </Link>
+      </Text>
+    </WorshipSyncEmailLayout>
+  );
+}

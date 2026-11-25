@@ -2740,6 +2740,18 @@ export const setAvailabilityAutomation = async (
   body: JSON.stringify(body),
 });
 
+export const setAvailabilityEmailDelivery = async (
+  churchId: string,
+  body: { enabled: boolean; revision: number; confirmed: boolean },
+) => apiFetch<{
+  success: boolean;
+  defaults: import("./authTypes").SchedulingSettingsRecord;
+  availabilitySmsDeliveryEnabled: false;
+}>(`api/churches/${encodeURIComponent(churchId)}/scheduling-automation/email-delivery`, {
+  method: "POST",
+  body: JSON.stringify(body),
+});
+
 export const saveTeamSchedulingOverride = async (
   churchId: string,
   teamId: string,

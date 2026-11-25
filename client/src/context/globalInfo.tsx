@@ -497,6 +497,7 @@ type GlobalInfoContextType = {
 /** Every category unset; "default" resolves per category at send time. */
 const emptyNotificationPreferences: MemberNotifications = {
   scheduleAssignments: "default",
+  availabilityRequests: "default",
   scheduleReminders: "default",
   scheduleResponses: "default",
   intakeSubmissions: "default",

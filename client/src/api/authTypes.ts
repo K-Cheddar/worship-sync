@@ -114,6 +114,8 @@ export type NotificationPreference = "on" | "off" | "default";
 export type MemberNotifications = {
   /** Added to, moved on, or removed from a schedule. */
   scheduleAssignments: NotificationPreference;
+  /** Personalized requests to share availability for an upcoming period. */
+  availabilityRequests: NotificationPreference;
   /** A nudge before a service you are on. */
   scheduleReminders: NotificationPreference;
   /** Someone accepted, declined, or blocked out a date they are on. */
@@ -400,8 +402,14 @@ export type SchedulingSettingsRecord = {
   settings: SchedulingAutomationSettings | null;
   availabilityAutomationEnabled?: boolean;
   availabilityFormCreationEnabled?: boolean;
+  availabilityFormCreationActivatedAt?: string | null;
+  availabilityFormCreationDisabledAt?: string | null;
   availabilityAutomationActivatedAt?: string | null;
   availabilityAutomationDisabledAt?: string | null;
+  availabilityEmailDeliveryEnabled?: boolean;
+  availabilityEmailDeliveryActivatedAt?: string | null;
+  availabilityEmailDeliveryDisabledAt?: string | null;
+  availabilitySmsDeliveryEnabled?: boolean;
   notificationDeliveryEnabled?: boolean;
   revision: number;
   createdAt?: string | null;

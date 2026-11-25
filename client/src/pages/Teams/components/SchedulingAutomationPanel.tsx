@@ -9,6 +9,7 @@ import {
   saveChurchSchedulingDefaults,
   saveTeamSchedulingOverride,
   setAvailabilityAutomation,
+  setAvailabilityEmailDelivery,
   type SchedulingAutomationResponse,
 } from "../../../api/auth";
 import type {
@@ -27,6 +28,7 @@ type PlannedCycle = {
 
 const actionTitles: Record<string, string> = {
   availability_request: "Request availability",
+  availability_email_delivery: "Email availability requests",
   availability_follow_up: "Remind nonresponders",
   leader_summary: "Send leaders a response summary",
   availability_response_deadline: "Availability response deadline",
@@ -181,9 +183,32 @@ const Timeline = ({ plan, serviceTimeZone }: { plan: PlannedCycle; serviceTimeZo
           ) : (
             <p className="text-sm text-gray-300">Leader decision; publication is never automatic.</p>
           )}
+          {action.actionType === "availability_email_delivery" && action.result ? (() => {
+            const result = action.result || {};
+            const accepted = Number(result.acceptedCount || 0);
+            const eligible = Number(result.emailEligibleCount || 0);
+            const withoutEmail = Number(result.noEmailContactCount || 0);
+            const details = [
+              ...(eligible || accepted ? [`${accepted} accepted by provider`] : []),
+              ...(Number(result.failedCount || 0) ? [`${Number(result.failedCount)} failed`] : []),
+              ...(Number(result.pendingCount || 0) + Number(result.retryableFailureCount || 0)
+                ? [`${Number(result.pendingCount || 0) + Number(result.retryableFailureCount || 0)} pending or retrying`] : []),
+              ...(Number(result.uncertainCount || 0) ? [`${Number(result.uncertainCount)} need review`] : []),
+              ...(Number(result.suppressedCount || 0) ? [`${Number(result.suppressedCount)} suppressed after recheck`] : []),
+              ...(withoutEmail ? [`${withoutEmail} without eligible email`] : []),
+              ...(Number(result.preferenceSkippedCount || 0)
+                ? [`${Number(result.preferenceSkippedCount)} skipped by preference or account status`] : []),
+            ];
+            if (details.length) return <p className="mt-1 text-xs text-gray-400">{details.join(", ")}</p>;
+            return action.lastError ? <p className="mt-1 text-xs text-amber-200">{action.lastError}</p> : null;
+          })() : null}
         </div>
         <span className="shrink-0 rounded-full bg-gray-800 px-2 py-1 text-xs text-gray-300">
-          {action.state === "manual" ? "Manual" : action.state === "completed" ? "Completed" : action.state === "skipped" ? "Skipped" : action.state === "review_required" ? "Needs attention" : action.state === "retryable_failure" ? "Retry pending" : "Upcoming"}
+          {action.state === "manual" ? "Manual" : action.state === "completed"
+            ? action.actionType === "availability_email_delivery" && Number(action.result?.failedCount || 0) > 0
+              ? "Completed with failures"
+              : "Completed"
+            : action.state === "skipped" ? "Skipped" : action.state === "review_required" ? "Needs attention" : action.state === "retryable_failure" ? "Retry pending" : "Upcoming"}
         </span>
       </li>
     ))}
@@ -219,6 +244,7 @@ export const SchedulingAutomationPanel = ({
   const [cycleLoading, setCycleLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [activationSaving, setActivationSaving] = useState(false);
+  const [emailDeliverySaving, setEmailDeliverySaving] = useState(false);
   const [previewError, setPreviewError] = useState("");
   const [saveError, setSaveError] = useState("");
   const [isOpen, setIsOpen] = useState(false);
@@ -387,7 +413,7 @@ export const SchedulingAutomationPanel = ({
     const enabled = currentData.defaults.availabilityAutomationEnabled !== true;
     if (enabled) {
       const confirmed = window.confirm(
-        `Enable church-wide automatic availability forms? The selected cycle timeline above shows the ${teamName || "team"} actions for ${periodName(periodId)}. This activates future eligible cycles across the church. Forms and personalized recipients may be created. Email and SMS delivery remain disabled. Continue?`,
+        `Enable church-wide availability automation? The selected cycle timeline above shows the ${teamName || "team"} actions for ${periodName(periodId)}. Automatic form creation and email delivery have separate controls. Continue?`,
       );
       if (!confirmed) return;
     }
@@ -397,7 +423,7 @@ export const SchedulingAutomationPanel = ({
     try {
       const result = await setAvailabilityAutomation(churchId, {
         enabled,
-        formCreationEnabled: enabled,
+        formCreationEnabled: currentData.defaults.availabilityFormCreationEnabled === true,
         revision: currentData.defaults.revision,
         teamId,
         periodId,
@@ -414,6 +440,68 @@ export const SchedulingAutomationPanel = ({
       }
     } finally {
       setActivationSaving(false);
+    }
+  };
+
+  const changeFormCreationActivation = async () => {
+    if (!currentData || !canManageDefaults) return;
+    const formCreationEnabled = currentData.defaults.availabilityFormCreationEnabled !== true;
+    const automationEnabled = currentData.defaults.availabilityAutomationEnabled === true;
+    if (formCreationEnabled && automationEnabled && !window.confirm(
+      `Enable automatic availability form creation for future eligible cycles? The selected cycle timeline above shows the ${teamName || "team"} actions for ${periodName(periodId)}. Forms and personalized response links may be created. Email delivery remains separately controlled. Continue?`,
+    )) return;
+    const requestedOwner = ownerKey;
+    setActivationSaving(true);
+    setSaveError("");
+    try {
+      const result = await setAvailabilityAutomation(churchId, {
+        enabled: automationEnabled,
+        formCreationEnabled,
+        revision: currentData.defaults.revision,
+        teamId,
+        periodId,
+        confirmAlreadyStarted: formCreationEnabled,
+      });
+      if (ownerKeyRef.current === requestedOwner) {
+        setData((previous) => previous && dataOwnerKey === requestedOwner
+          ? { ...previous, defaults: result.defaults }
+          : previous);
+      }
+    } catch (error) {
+      if (ownerKeyRef.current === requestedOwner) {
+        setSaveError(error instanceof Error ? error.message : "Could not update automatic form creation.");
+      }
+    } finally {
+      setActivationSaving(false);
+    }
+  };
+
+  const changeEmailDelivery = async () => {
+    if (!currentData || !canManageDefaults) return;
+    const enabled = currentData.defaults.availabilityEmailDeliveryEnabled !== true;
+    if (enabled && !window.confirm(
+      `Enable automatic availability email for eligible volunteers at ${teamName || "this church"}? Emails will contain personalized request links. Provider acceptance will be recorded; inbox delivery cannot be confirmed. Continue?`,
+    )) return;
+    const requestedOwner = ownerKey;
+    setEmailDeliverySaving(true);
+    setSaveError("");
+    try {
+      const result = await setAvailabilityEmailDelivery(churchId, {
+        enabled,
+        revision: currentData.defaults.revision,
+        confirmed: enabled,
+      });
+      if (ownerKeyRef.current === requestedOwner) {
+        setData((previous) => previous && dataOwnerKey === requestedOwner
+          ? { ...previous, defaults: result.defaults }
+          : previous);
+      }
+    } catch (error) {
+      if (ownerKeyRef.current === requestedOwner) {
+        setSaveError(error instanceof Error ? error.message : "Could not update automatic availability email.");
+      }
+    } finally {
+      setEmailDeliverySaving(false);
     }
   };
 
@@ -490,13 +578,13 @@ export const SchedulingAutomationPanel = ({
               <div className="rounded-lg border border-gray-700 bg-gray-950/30 px-3 py-3">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <h3 className="font-semibold text-gray-100">Automatic availability forms</h3>
+                    <h3 className="font-semibold text-gray-100">Church-wide availability automation</h3>
                     <p className="mt-1 text-sm text-gray-300">
                       {currentData.defaults.availabilityAutomationEnabled
-                        ? "Enabled church-wide. Upcoming eligible cycles can create forms and personalized recipients."
+                        ? "Enabled church-wide. Team overrides can narrow this scope, but cannot bypass it."
                         : "Disabled church-wide. Timing settings and previews do not activate processing."}
                     </p>
-                    <p className="mt-1 text-xs text-gray-400">Notification delivery is disabled. Existing SMS registration and provider readiness must be reviewed separately.</p>
+                    <p className="mt-1 text-xs text-gray-400">Form creation and email delivery have separate controls.</p>
                   </div>
                   <Button
                     variant={currentData.defaults.availabilityAutomationEnabled ? "tertiary" : "primary"}
@@ -507,6 +595,61 @@ export const SchedulingAutomationPanel = ({
                     {currentData.defaults.availabilityAutomationEnabled ? "Disable automation" : "Enable automation"}
                   </Button>
                 </div>
+              </div>
+            ) : null}
+
+            {scope === "church" && canManageDefaults ? (
+              <div className="rounded-lg border border-gray-700 bg-gray-950/30 px-3 py-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="font-semibold text-gray-100">Automatic availability form creation</h3>
+                    <p className="mt-1 text-sm text-gray-300">
+                      {currentData.defaults.availabilityFormCreationEnabled
+                        ? "Enabled. With church-wide automation active, eligible cycles can create forms and personalized response links."
+                        : "Disabled. Existing forms remain available, and no new forms are created automatically."}
+                    </p>
+                  </div>
+                  <Button
+                    variant={currentData.defaults.availabilityFormCreationEnabled ? "tertiary" : "primary"}
+                    onClick={() => void changeFormCreationActivation()}
+                    isLoading={activationSaving}
+                    disabled={saving || activationSaving}
+                  >
+                    {currentData.defaults.availabilityFormCreationEnabled ? "Disable form creation" : "Enable form creation"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {scope === "church" && canManageDefaults ? (
+              <div className="rounded-lg border border-gray-700 bg-gray-950/30 px-3 py-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="font-semibold text-gray-100">Automatic availability email</h3>
+                    <p className="mt-1 text-sm text-gray-300">
+                      {currentData.defaults.availabilityEmailDeliveryEnabled
+                        ? "Enabled for eligible volunteers. The processor also requires its server safety gate."
+                        : "Disabled. Forms and personalized links can be prepared without sending email."}
+                    </p>
+                    <p className="mt-1 text-xs text-gray-400">Each volunteer can turn off availability request emails in account notification settings. Automatic SMS is disabled.</p>
+                  </div>
+                  <Button
+                    variant={currentData.defaults.availabilityEmailDeliveryEnabled ? "tertiary" : "primary"}
+                    onClick={() => void changeEmailDelivery()}
+                    isLoading={emailDeliverySaving}
+                    disabled={saving || activationSaving || emailDeliverySaving ||
+                      (!currentData.defaults.availabilityEmailDeliveryEnabled && !currentData.defaults.availabilityAutomationEnabled)}
+                  >
+                    {currentData.defaults.availabilityEmailDeliveryEnabled ? "Disable email delivery" : "Enable email delivery"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {scope === "church" && canManageDefaults ? (
+              <div className="rounded-lg border border-gray-700 bg-gray-950/30 px-3 py-3">
+                <h3 className="font-semibold text-gray-100">Automatic availability SMS</h3>
+                <p className="mt-1 text-sm text-gray-300">Disabled. Existing manual SMS and consent checks are unchanged.</p>
               </div>
             ) : null}
 

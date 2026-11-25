@@ -252,6 +252,7 @@ export const planSchedulingCycle = ({
   const responseDeadlineExpiration = addCalendarDays(responseDeadline, 1);
   const draftActions = [
     { actionType: "availability_request", localDate: requestDate, enabled: false, state: "planned" },
+    { actionType: "availability_email_delivery", localDate: requestDate, enabled: false, state: "planned" },
     { actionType: "availability_follow_up", localDate: followUpDate, enabled: false, state: "planned" },
     { actionType: "leader_summary", localDate: leaderSummaryDate, enabled: false, state: "planned" },
     { actionType: "availability_response_deadline", localDate: responseDeadline, enabled: false, state: "planned" },

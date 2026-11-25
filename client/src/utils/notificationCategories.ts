@@ -30,6 +30,11 @@ export const NOTIFICATION_CATEGORY_COPY: Record<
       "Email me when I am added to a schedule, or my slot changes.",
     ariaLabel: "Email me when I am scheduled",
   },
+  availabilityRequests: {
+    label: "Availability requests",
+    description: "Email me when my team asks for next period's availability.",
+    ariaLabel: "Email me availability requests",
+  },
   scheduleReminders: {
     label: "Reminders before I serve",
     description: "Email me a reminder ahead of a service I am on.",
@@ -54,6 +59,7 @@ export const NOTIFICATION_CATEGORY_COPY: Record<
  */
 const DISPLAY_ORDER: NotificationCategory[] = [
   "scheduleAssignments",
+  "availabilityRequests",
   "scheduleReminders",
   "scheduleResponses",
   "intakeSubmissions",

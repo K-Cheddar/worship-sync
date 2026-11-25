@@ -93,7 +93,7 @@ test("Firestore processor dry run is read-only and concurrent runs create one cy
   try {
     const dryRun = await scopedRun(fixture, processor, "dry-run");
     assert.equal(dryRun.summary.cyclesCreated, 1);
-    assert.equal(dryRun.actions.length, 1);
+    assert.equal(dryRun.actions.length, 2);
     assert.equal((await fixture.db.collection(COLLECTIONS.teamSchedulingCycles).where("churchId", "==", fixture.churchId).get()).size, 0);
     assert.equal((await fixture.db.collection(COLLECTIONS.teamSchedulingActions).where("churchId", "==", fixture.churchId).get()).size, 0);
 
@@ -105,13 +105,18 @@ test("Firestore processor dry run is read-only and concurrent runs create one cy
     const cycles = await fixture.db.collection(COLLECTIONS.teamSchedulingCycles).where("churchId", "==", fixture.churchId).get();
     const actionRows = await fixture.db.collection(COLLECTIONS.teamSchedulingActions).where("churchId", "==", fixture.churchId).get();
     assert.equal(cycles.size, 1);
-    assert.equal(actionRows.size, 6);
+    assert.equal(actionRows.size, 7);
     const request = actionRows.docs.map((doc) => doc.data()).find((action) => action.actionType === "availability_request");
     assert.equal(request.state, "completed");
     assert.equal(request.relatedFormId, "stable-form-id");
     assert.equal(cycles.docs[0].data().availabilityFormIds[0], "stable-form-id");
     assert.equal(first.summary.completed + second.summary.completed, 1);
-    assert.equal(first.summary.reviewRequired + second.summary.reviewRequired, 2);
+    assert.equal(first.summary.waitingForDelivery + second.summary.waitingForDelivery, 2);
+    assert.equal(first.summary.reviewRequired + second.summary.reviewRequired, 0);
+    const waitingActions = actionRows.docs.map((doc) => doc.data()).filter((action) =>
+      ["availability_follow_up", "leader_summary"].includes(action.actionType));
+    assert.equal(waitingActions.length, 2);
+    assert.ok(waitingActions.every((action) => action.state === "pending" && action.enabled === false));
   } finally {
     await fixture.cleanup();
   }
@@ -273,6 +278,83 @@ test("cycle rediscovery preserves retry timing and exhausts repeated transient f
     assert.equal(request.state, "review_required");
     assert.equal(request.attemptCount, 3);
     assert.equal(request.nextAttemptAt, null);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("an expired claim at the attempt limit is disabled for leader review", { skip: !enabled }, async () => {
+  const fixture = await createFixture(randomUUID());
+  const now = fixedNow();
+  const defaults = (await fixture.db.collection(COLLECTIONS.teamSchedulingAutomationSettings)
+    .doc(schedulingSettingsIdFor({ churchId: fixture.churchId })).get()).data();
+  const planned = planSchedulingCycle({ churchId: fixture.churchId, teamId: fixture.teamId,
+    periodId: "2027-02", serviceTimeZone: "America/New_York",
+    effective: resolveEffectiveSchedulingSettings({ defaults, override: { mode: "inherit" } }),
+    createdAt: now.toISOString(), createdBy: null });
+  planned.cycle.automationEnabled = true;
+  planned.cycle.availabilityFormCreationEnabled = true;
+  planned.cycle.activationBoundaryAt = fixture.activationAt;
+  const request = planned.actions.find((action) => action.actionType === "availability_request");
+  Object.assign(request, { enabled: true, state: "claimed", claimToken: "exhausted-owner",
+    claimOwner: "interrupted-run", claimedAt: "2026-12-01T14:00:00.000Z",
+    claimExpiresAt: "2026-12-01T15:00:00.000Z", attemptCount: 5 });
+  await fixture.db.collection(COLLECTIONS.teamSchedulingCycles).doc(planned.cycle.cycleId).set(planned.cycle);
+  await Promise.all(planned.actions.map((action) => fixture.db.collection(COLLECTIONS.teamSchedulingActions)
+    .doc(action.actionId).set(action)));
+  let calls = 0;
+  const processor = processorFor({ db: fixture.db, now: () => now,
+    limits: { churches: 10, teamsPerChurch: 10, maxTeamScopesPerRun: 10, cyclesPerRun: 10,
+      actionsPerRun: 10, claimLeaseMs: 300000, maxAttempts: 5, budgetMs: 480000, lookAheadMonths: 0 },
+    createAvailabilityRequest: async () => { calls += 1; return { formId: "should-not-run" }; } });
+  try {
+    const result = await processor.run({ mode: "execute", churchId: fixture.churchId,
+      teamId: fixture.teamId, periodId: "2027-02", limit: 10 });
+    const saved = (await fixture.db.collection(COLLECTIONS.teamSchedulingActions).doc(request.actionId).get()).data();
+    assert.equal(calls, 0);
+    assert.equal(saved.state, "review_required");
+    assert.equal(saved.enabled, false);
+    assert.equal(saved.attemptCount, 5);
+    assert.equal(result.summary.reviewRequired, 1);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("existing due work is processed before a constrained discovery budget", { skip: !enabled }, async () => {
+  const fixture = await createFixture(randomUUID());
+  const baseTime = fixedNow();
+  let actionStarted = false;
+  const now = () => new Date(baseTime.getTime() + (actionStarted ? 3000 : 0));
+  const defaults = (await fixture.db.collection(COLLECTIONS.teamSchedulingAutomationSettings)
+    .doc(schedulingSettingsIdFor({ churchId: fixture.churchId })).get()).data();
+  const planned = planSchedulingCycle({ churchId: fixture.churchId, teamId: fixture.teamId,
+    periodId: "2027-02", serviceTimeZone: "America/New_York",
+    effective: resolveEffectiveSchedulingSettings({ defaults, override: { mode: "inherit" } }),
+    createdAt: baseTime.toISOString(), createdBy: null });
+  planned.cycle.automationEnabled = true;
+  planned.cycle.availabilityFormCreationEnabled = true;
+  planned.cycle.activationBoundaryAt = fixture.activationAt;
+  const request = planned.actions.find((action) => action.actionType === "availability_request");
+  Object.assign(request, { enabled: true, state: "pending", dueAt: baseTime.toISOString() });
+  await fixture.db.collection(COLLECTIONS.teamSchedulingCycles).doc(planned.cycle.cycleId).set(planned.cycle);
+  await Promise.all(planned.actions.map((action) => fixture.db.collection(COLLECTIONS.teamSchedulingActions)
+    .doc(action.actionId).set(action)));
+  let calls = 0;
+  const processor = processorFor({ db: fixture.db, now,
+    limits: { churches: 10, teamsPerChurch: 10, maxTeamScopesPerRun: 10, cyclesPerRun: 10,
+      actionsPerRun: 10, claimLeaseMs: 300000, maxAttempts: 5, budgetMs: 2000, lookAheadMonths: 0 },
+    createAvailabilityRequest: async () => {
+      calls += 1;
+      actionStarted = true;
+      return { formId: "due-action-form" };
+    } });
+  try {
+    const result = await processor.run({ mode: "execute", churchId: fixture.churchId,
+      teamId: fixture.teamId, periodId: "2027-02", limit: 10 });
+    assert.equal(calls, 1);
+    assert.equal(result.summary.completed, 1);
+    assert.equal(result.summary.discoveryIncomplete, true);
   } finally {
     await fixture.cleanup();
   }

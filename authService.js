@@ -7,6 +7,7 @@ import { FieldPath, FieldValue, Timestamp } from "firebase-admin/firestore";
 import { Resend } from "resend";
 import {
   renderAccountRestoredEmail,
+  renderAvailabilityRequestEmail,
   renderAdminRecoveryRequestEmail,
   renderInviteAcceptedAdminEmail,
   renderInviteEmail,
@@ -199,6 +200,7 @@ export const COLLECTIONS = {
   teamScheduleOccurrenceOwners: "teamScheduleOccurrenceOwners",
   portableImportCreates: "portableImportCreates",
   teamIntakeForms: "teamIntakeForms",
+  teamAvailabilityFormCreationGuards: "teamAvailabilityFormCreationGuards",
   teamIntakeSubmissions: "teamIntakeSubmissions",
   teamIntakeRecipients: "teamIntakeRecipients",
   servicePlans: "servicePlans",
@@ -621,6 +623,7 @@ const memoryState = {
   teamScheduleOccurrenceOwners: new Map(),
   portableImportCreates: new Map(),
   teamIntakeForms: new Map(),
+  teamAvailabilityFormCreationGuards: new Map(),
   teamIntakeSubmissions: new Map(),
   teamIntakeRecipients: new Map(),
   churchServiceTimes: new Map(),
@@ -730,6 +733,7 @@ const collectionMap = {
   [COLLECTIONS.teamScheduleOccurrenceOwners]: memoryState.teamScheduleOccurrenceOwners,
   [COLLECTIONS.portableImportCreates]: memoryState.portableImportCreates,
   [COLLECTIONS.teamIntakeForms]: memoryState.teamIntakeForms,
+  [COLLECTIONS.teamAvailabilityFormCreationGuards]: memoryState.teamAvailabilityFormCreationGuards,
   [COLLECTIONS.teamIntakeSubmissions]: memoryState.teamIntakeSubmissions,
   [COLLECTIONS.teamIntakeRecipients]: memoryState.teamIntakeRecipients,
   [COLLECTIONS.servicePlans]: memoryState.servicePlans,
@@ -1056,7 +1060,11 @@ const sendEmail = async (payload = {}) => {
           : undefined,
       );
       if (response.error) {
-        throw new Error(response.error.message || "Could not send email.");
+        const providerError = new Error(response.error.message || "Could not send email.");
+        providerError.name = response.error.name || "ResendError";
+        if (Number.isInteger(response.error.statusCode)) providerError.statusCode = response.error.statusCode;
+        providerError.code = response.error.name || "resend_error";
+        throw providerError;
       }
       if (requireProviderAcceptance && !response.data?.id) {
         throw new Error("Email provider did not confirm acceptance.");
@@ -3697,9 +3705,9 @@ export const setSendEmailForServerTests = (fn) => {
       "setSendEmailForServerTests requires WORSHIPSYNC_SERVER_TEST_SUPPORT=1",
     );
   }
-  if (authRuntimeInfo.hasFirestore) {
+  if (authRuntimeInfo.hasFirestore && !process.env.FIRESTORE_EMULATOR_HOST) {
     throw new Error(
-      "setSendEmailForServerTests refuses to run while Firestore is configured",
+      "setSendEmailForServerTests refuses to run against production Firestore",
     );
   }
   sendEmailForServerTests = typeof fn === "function" ? fn : null;
@@ -7319,6 +7327,7 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   updateDocMapKeys,
   // Assignment notifications need the same primitives the intake digest uses.
   getUserByUid,
+  getMembershipForUser,
   getChurchById,
   getSmsConsentForChurchPhone: (churchId, phoneNumber) =>
     getDoc(
@@ -7328,7 +7337,9 @@ const teamsAuthHandlers = createTeamsAuthHandlers({
   smsProviderFactory: getSmsProviderForConfig,
   sendEmail,
   servicePlanFromEmail: resendServicePlanFromEmail,
-  emailDeliveryConfigured: Boolean(resendClient),
+  emailDeliveryConfigured: () => Boolean(resendClient || (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" && sendEmailForServerTests)),
+  automaticEmailDeliveryEnabled: process.env.SCHEDULING_AUTOMATION_EMAIL_ENABLED === "true",
+  renderAvailabilityRequestEmail,
   renderScheduleAssignmentEmail,
   renderScheduleResponsesDigestEmail,
   renderServicePlanShareEmail,
@@ -7350,6 +7361,9 @@ export const runSchedulingAutomationProcessor = (options = {}) => {
     firestore,
     collections: COLLECTIONS,
     createAvailabilityRequest: teamsAuthHandlers.createAutomatedAvailabilityRequest,
+    deliverAvailabilityEmails: teamsAuthHandlers.deliverAutomatedAvailabilityEmails,
+    automaticEmailDeliveryEnabled: process.env.SCHEDULING_AUTOMATION_EMAIL_ENABLED === "true",
+    emailDeliveryConfigured: Boolean(resendClient || (process.env.WORSHIPSYNC_SERVER_TEST_SUPPORT === "1" && sendEmailForServerTests)),
     ...options,
   }).run(options);
 };

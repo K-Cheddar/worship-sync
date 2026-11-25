@@ -2,6 +2,7 @@ import { render } from "@react-email/render";
 import React, { type ReactElement } from "react";
 import {
   AccountRestoredEmail,
+  AvailabilityRequestEmail,
   AdminRecoveryRequestEmail,
   InviteAcceptedAdminEmail,
   InviteEmail,
@@ -106,6 +107,17 @@ export async function renderScheduleResponsesDigestEmail(props: {
   }[];
 }) {
   return renderEmailHtmlAndText(<ScheduleResponsesDigestEmail {...props} />);
+}
+
+export async function renderAvailabilityRequestEmail(props: {
+  churchName: string;
+  teamName: string;
+  periodLabel: string;
+  responseDeadline: string;
+  memberFirstName: string;
+  availabilityUrl: string;
+}) {
+  return renderEmailHtmlAndText(<AvailabilityRequestEmail {...props} />);
 }
 
 export async function renderServicePlanShareEmail(props: {

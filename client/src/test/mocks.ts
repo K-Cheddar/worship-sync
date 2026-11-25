@@ -153,12 +153,14 @@ export function createMockGlobalContext(
     updateSelfDisplayName: jest.fn(() => Promise.resolve(true)),
     notificationCategories: [
       "scheduleAssignments",
+      "availabilityRequests",
       "scheduleReminders",
       "scheduleResponses",
       "intakeSubmissions",
     ] as NotificationCategory[],
     notificationPreferences: {
       scheduleAssignments: "default",
+      availabilityRequests: "default",
       scheduleReminders: "default",
       scheduleResponses: "default",
       intakeSubmissions: "default",
@@ -243,12 +245,14 @@ export function createMockGlobalInfo(overrides: Record<string, unknown> = {}) {
     updateSelfDisplayName: jest.fn(() => Promise.resolve(true)),
     notificationCategories: [
       "scheduleAssignments",
+      "availabilityRequests",
       "scheduleReminders",
       "scheduleResponses",
       "intakeSubmissions",
     ] as NotificationCategory[],
     notificationPreferences: {
       scheduleAssignments: "default",
+      availabilityRequests: "default",
       scheduleReminders: "default",
       scheduleResponses: "default",
       intakeSubmissions: "default",

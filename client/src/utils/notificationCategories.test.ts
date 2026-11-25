@@ -11,9 +11,11 @@ describe("orderNotificationCategories", () => {
         "intakeSubmissions",
         "scheduleReminders",
         "scheduleAssignments",
+        "availabilityRequests",
       ]),
     ).toEqual([
       "scheduleAssignments",
+      "availabilityRequests",
       "scheduleReminders",
       "intakeSubmissions",
     ]);
@@ -45,6 +47,7 @@ describe("orderNotificationCategories", () => {
   it("has reader-facing copy for every category it can render", () => {
     const rendered = orderNotificationCategories([
       "scheduleAssignments",
+      "availabilityRequests",
       "scheduleReminders",
       "scheduleResponses",
       "intakeSubmissions",

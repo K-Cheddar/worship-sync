@@ -4,6 +4,7 @@ import { evaluateAvailabilityRequestTiming } from "../shared/schedulingAutomatio
 import {
   planSchedulingCycle,
   resolveEffectiveSchedulingSettings,
+  schedulingActionIdFor,
   schedulingCycleIdFor,
   schedulingSettingsIdFor,
 } from "./schedulingCycles.js";
@@ -58,6 +59,9 @@ export const createSchedulingAutomationProcessor = ({
   firestore,
   collections,
   createAvailabilityRequest,
+  deliverAvailabilityEmails = async () => ({ blocked: true, reason: "Email delivery is unavailable." }),
+  automaticEmailDeliveryEnabled = false,
+  emailDeliveryConfigured = false,
   now = () => new Date(),
   logger = defaultLogger,
   limits = SCHEDULING_PROCESSOR_LIMITS,
@@ -97,7 +101,7 @@ export const createSchedulingAutomationProcessor = ({
     return (await query.limit(limit).get()).docs;
   };
 
-  const ensureCycle = async ({ churchId, team, church, defaults, override, periodId, activationAt }) => {
+  const ensureCycle = async ({ churchId, team, church, defaults, override, periodId, activationAt, mode }) => {
     const effective = resolveEffectiveSchedulingSettings({ defaults, override });
     if (!effective.enabled) return { status: "disabled", cycle: null, actions: [] };
     const planned = planSchedulingCycle({
@@ -123,7 +127,7 @@ export const createSchedulingAutomationProcessor = ({
         const latestDefaults = defaultsSnapshot.exists ? defaultsSnapshot.data() : defaults;
         const latestOverride = overrideSnapshot.exists ? overrideSnapshot.data() : override;
         const latestEffective = resolveEffectiveSchedulingSettings({ defaults: latestDefaults, override: latestOverride });
-        if (!latestDefaults.availabilityAutomationEnabled || !latestDefaults.availabilityFormCreationEnabled ||
+        if (!latestDefaults.availabilityAutomationEnabled ||
             latestDefaults.availabilityAutomationActivatedAt !== activationAt || !latestEffective.enabled) {
           return { status: "disabled", cycle: null, actions: [] };
         }
@@ -139,7 +143,7 @@ export const createSchedulingAutomationProcessor = ({
         const responseDeadline = fresh.cycle.deadlines.availabilityResponse;
         const runnableTypes = new Set(["availability_request", "availability_follow_up", "leader_summary"]);
         fresh.cycle.automationEnabled = true;
-        fresh.cycle.availabilityFormCreationEnabled = true;
+        fresh.cycle.availabilityFormCreationEnabled = latestDefaults.availabilityFormCreationEnabled === true;
         fresh.cycle.activationBoundaryAt = activationAt;
         fresh.cycle.createdByAutomation = true;
         fresh.actions = fresh.actions.map((action) => {
@@ -147,9 +151,13 @@ export const createSchedulingAutomationProcessor = ({
           const timing = action.actionType === "availability_request"
             ? timingForAction({ action, cycle: fresh.cycle, activationAt, now: now() })
             : { eligible: Date.parse(action.dueAt || "") >= Date.parse(activationAt || ""), reason: "The action date predates automation activation; leader review is required." };
-          const state = timing.eligible ? "pending" : "review_required";
+          const formCreationPaused = action.actionType === "availability_request" &&
+            latestDefaults.availabilityFormCreationEnabled !== true;
+          const state = formCreationPaused ? "pending" : timing.eligible ? "pending" : "review_required";
           const reason = timing.eligible ? null : timing.reason;
-          return { ...action, enabled: state === "pending", state, ...(reason ? { lastError: reason } : {}) };
+          return { ...action, enabled: state === "pending" && !formCreationPaused, state,
+            ...(formCreationPaused ? { lastError: "Automatic availability form creation is disabled." } : {}),
+            ...(!formCreationPaused && reason ? { lastError: reason } : {}) };
         });
         transaction.create(cycleRef, fresh.cycle);
         fresh.actions.forEach((action) => transaction.create(
@@ -168,25 +176,99 @@ export const createSchedulingAutomationProcessor = ({
       const currentDefaults = currentDefaultsSnapshot.exists ? currentDefaultsSnapshot.data() : defaults;
       const currentOverride = currentOverrideSnapshot.exists ? currentOverrideSnapshot.data() : override;
       const currentEffective = resolveEffectiveSchedulingSettings({ defaults: currentDefaults, override: currentOverride });
-      if (!currentDefaults.availabilityAutomationEnabled || !currentDefaults.availabilityFormCreationEnabled ||
+      if (!currentDefaults.availabilityAutomationEnabled ||
           currentDefaults.availabilityAutomationActivatedAt !== activationAt || !currentEffective.enabled) {
         return { status: "disabled", cycle, actions: [] };
       }
       const actionSnapshots = await Promise.all(actionRefs.map((ref) => transaction.get(ref)));
       const actions = actionSnapshots.filter((snapshot) => snapshot.exists)
         .map((snapshot) => ({ actionId: snapshot.id, ...snapshot.data() }));
-      const activationEnabled = currentDefaults.availabilityAutomationEnabled && currentDefaults.availabilityFormCreationEnabled && currentEffective.enabled;
+      const missingEmailDelivery = actionSnapshots.find((snapshot, index) =>
+        planned.actions[index]?.actionType === "availability_email_delivery" && !snapshot.exists,
+      );
+      if (missingEmailDelivery) {
+        const plannedDelivery = planned.actions.find((action) => action.actionType === "availability_email_delivery");
+        const requestAction = actions.find((action) => action.actionType === "availability_request");
+        const hasCompletedRequest = requestAction?.state === "completed" && Boolean(requestAction.relatedFormId);
+        const compatibleDelivery = {
+          ...plannedDelivery,
+          state: hasCompletedRequest ? "pending" : "planned",
+          enabled: hasCompletedRequest && mode === "live" && automaticEmailDeliveryEnabled && emailDeliveryConfigured &&
+            currentDefaults.availabilityEmailDeliveryEnabled === true,
+          relatedFormId: hasCompletedRequest ? requestAction.relatedFormId : null,
+          result: hasCompletedRequest ? { lifecycle: "awaiting_email_delivery", compatibilityUpgrade: true } : null,
+          createdAt: cycle.createdAt || now().toISOString(),
+          updatedAt: now().toISOString(),
+        };
+        transaction.create(
+          firestore.collection(collections.teamSchedulingActions).doc(compatibleDelivery.actionId),
+          compatibleDelivery,
+        );
+        actions.push(compatibleDelivery);
+        if (!(cycle.plannedActionIds || []).includes(compatibleDelivery.actionId)) {
+          cycle.plannedActionIds = [...(cycle.plannedActionIds || []), compatibleDelivery.actionId];
+          transaction.set(cycleRef, { plannedActionIds: cycle.plannedActionIds, updatedAt: now().toISOString() }, { merge: true });
+        }
+      }
+      const activationEnabled = currentDefaults.availabilityAutomationEnabled && currentEffective.enabled;
       if (!activationEnabled) return { status: "disabled", cycle, actions };
-      if (!cycle.automationEnabled || cycle.activationBoundaryAt !== activationAt || !cycle.availabilityFormCreationEnabled) {
+      if (!cycle.automationEnabled || cycle.activationBoundaryAt !== activationAt ||
+          cycle.availabilityFormCreationEnabled !== (currentDefaults.availabilityFormCreationEnabled === true)) {
         transaction.set(cycleRef, {
           automationEnabled: true,
-          availabilityFormCreationEnabled: true,
+          availabilityFormCreationEnabled: currentDefaults.availabilityFormCreationEnabled === true,
           activationBoundaryAt: activationAt,
           updatedAt: now().toISOString(),
         }, { merge: true });
       }
       const runnableTypes = new Set(["availability_request", "availability_follow_up", "leader_summary"]);
       const updatedActions = actions.map((action) => {
+        if (action.actionType === "availability_email_delivery") {
+          const shouldEnable = mode === "live" && automaticEmailDeliveryEnabled && emailDeliveryConfigured &&
+            action.state === "pending" && Boolean(action.relatedFormId) &&
+            currentDefaults.availabilityEmailDeliveryEnabled === true;
+          const shouldDisable = currentDefaults.availabilityEmailDeliveryEnabled !== true && action.enabled;
+          if (shouldEnable !== action.enabled || shouldDisable) {
+            transaction.set(firestore.collection(collections.teamSchedulingActions).doc(action.actionId), {
+              enabled: shouldEnable,
+              ...(shouldEnable ? { lastError: null } : {}),
+              updatedAt: now().toISOString(),
+            }, { merge: true });
+            return { ...action, enabled: shouldEnable, ...(shouldEnable ? { lastError: null } : {}) };
+          }
+          return action;
+        }
+        if (action.actionType === "availability_request" && ["pending", "retryable_failure"].includes(action.state)) {
+          if (currentDefaults.availabilityFormCreationEnabled !== true) {
+            if (action.enabled || action.lastError !== "Automatic availability form creation is disabled.") {
+              transaction.set(firestore.collection(collections.teamSchedulingActions).doc(action.actionId), {
+                enabled: false,
+                lastError: "Automatic availability form creation is disabled.",
+                updatedAt: now().toISOString(),
+              }, { merge: true });
+            }
+            return { ...action, enabled: false, lastError: "Automatic availability form creation is disabled." };
+          }
+          const timing = timingForAction({ action, cycle, activationAt, now: now() });
+          if (!timing.eligible) {
+            transaction.set(firestore.collection(collections.teamSchedulingActions).doc(action.actionId), {
+              state: "review_required",
+              enabled: false,
+              lastError: timing.reason,
+              updatedAt: now().toISOString(),
+            }, { merge: true });
+            return { ...action, state: "review_required", enabled: false, lastError: timing.reason };
+          }
+          if (!action.enabled) {
+            transaction.set(firestore.collection(collections.teamSchedulingActions).doc(action.actionId), {
+              enabled: true,
+              lastError: null,
+              updatedAt: now().toISOString(),
+            }, { merge: true });
+            return { ...action, enabled: true, lastError: null };
+          }
+          return action;
+        }
         if (!runnableTypes.has(action.actionType) || ["completed", "skipped", "review_required", "canceled", "permanent_failure"].includes(action.state)) return action;
         const dueAt = Date.parse(action.dueAt || "");
         if (action.state === "retryable_failure" || action.state === "claimed" || action.state === "pending") return action;
@@ -227,6 +309,22 @@ export const createSchedulingAutomationProcessor = ({
       const leaseStillActive = current.state === "claimed" && Date.parse(current.claimExpiresAt || "") > now().getTime();
       if (!current.enabled || !stateIsClaimable || leaseStillActive || Date.parse(current.dueAt || "") > now().getTime() ||
           Date.parse(current.nextAttemptAt || "") > now().getTime()) return null;
+      if (Number(current.attemptCount || 0) >= limits.maxAttempts) {
+        const timestamp = now().toISOString();
+        transaction.set(actionRef, {
+          state: "review_required",
+          enabled: false,
+          claimToken: null,
+          claimOwner: null,
+          claimedAt: null,
+          claimExpiresAt: null,
+          nextAttemptAt: null,
+          lastError: "The maximum number of interrupted or failed attempts was reached. Leader review is required.",
+          lastFailureClassification: "attempts_exhausted",
+          updatedAt: timestamp,
+        }, { merge: true });
+        return { exhausted: true };
+      }
       const claimedAt = now().toISOString();
       const claimExpiresAt = new Date(now().getTime() + limits.claimLeaseMs).toISOString();
       const next = {
@@ -262,7 +360,8 @@ export const createSchedulingAutomationProcessor = ({
     });
   };
 
-  const finalizeAction = async ({ action, claimToken, state, result = null, error = null, retryAt = null, enabledOverride }) => {
+  const finalizeAction = async ({ action, claimToken, state, result = null, error = null, retryAt = null,
+    enabledOverride, releaseAttempt = false, enableEmailDelivery = false }) => {
     const actionRef = firestore.collection(collections.teamSchedulingActions).doc(action.actionId);
     return firestore.runTransaction(async (transaction) => {
       const snapshot = await transaction.get(actionRef);
@@ -275,9 +374,14 @@ export const createSchedulingAutomationProcessor = ({
         ? firestore.collection(collections.teamSchedulingCycles).doc(action.cycleId)
         : null;
       const cycleSnapshot = cycleRef ? await transaction.get(cycleRef) : null;
+      const emailDeliveryRef = action.actionType === "availability_request" && result?.formId
+        ? firestore.collection(collections.teamSchedulingActions).doc(schedulingActionIdFor(action.cycleId, "availability_email_delivery"))
+        : null;
+      const emailDeliverySnapshot = emailDeliveryRef ? await transaction.get(emailDeliveryRef) : null;
       const timestamp = now().toISOString();
       const patch = {
         state,
+        ...(releaseAttempt ? { attemptCount: Math.max(0, Number(current.attemptCount || 0) - 1) } : {}),
         enabled: enabledOverride === undefined ? state === "retryable_failure" : enabledOverride,
         claimToken: null,
         claimOwner: null,
@@ -299,6 +403,17 @@ export const createSchedulingAutomationProcessor = ({
         const formIds = stableUnique([...(cycle.availabilityFormIds || []), result.formId]);
         transaction.set(cycleRef, { availabilityFormIds: formIds, updatedAt: timestamp }, { merge: true });
       }
+      if (emailDeliverySnapshot?.exists) {
+        transaction.set(emailDeliveryRef, {
+          state: "pending",
+          enabled: enableEmailDelivery,
+          relatedFormId: result.formId,
+          dueAt: action.dueAt,
+          result: { lifecycle: "awaiting_email_delivery", ...(enableEmailDelivery ? {} : { reason: "delivery_not_authorized_in_this_run" }) },
+          lastError: enableEmailDelivery ? null : "Email delivery remains disabled until an authorized live run.",
+          updatedAt: timestamp,
+        }, { merge: true });
+      }
       return true;
     });
   };
@@ -311,14 +426,20 @@ export const createSchedulingAutomationProcessor = ({
       getData(collections.teamSchedulingAutomationSettings, settingsId(action.churchId, action.teamId)),
       getData(collections.teamSchedulingCycles, action.cycleId),
     ]);
-    if (!church || church.archivedAt || !defaults?.availabilityAutomationEnabled || !defaults?.availabilityFormCreationEnabled) {
+    if (!church || church.archivedAt || !defaults?.availabilityAutomationEnabled) {
       return { eligible: false, reason: "Church availability automation is disabled." };
     }
     if (!team || team.churchId !== action.churchId || team.archivedAt) return { eligible: false, reason: "Team is archived or unavailable." };
     const effective = resolveEffectiveSchedulingSettings({ defaults, override: override || { mode: "inherit" } });
     if (!effective.enabled) return { eligible: false, reason: "Availability automation is disabled for this team." };
+    if (action.actionType === "availability_email_delivery" && defaults.availabilityEmailDeliveryEnabled !== true) {
+      return { eligible: false, reason: "Automatic availability email is disabled for this church." };
+    }
+    if (action.actionType === "availability_request" && defaults.availabilityFormCreationEnabled !== true) {
+      return { eligible: false, reason: "Automatic availability form creation is disabled for this church." };
+    }
     if (!cycle || cycle.churchId !== action.churchId || cycle.teamId !== action.teamId || !cycle.automationEnabled ||
-        !cycle.availabilityFormCreationEnabled || cycle.activationBoundaryAt !== defaults.availabilityAutomationActivatedAt) {
+        cycle.activationBoundaryAt !== defaults.availabilityAutomationActivatedAt) {
       return { eligible: false, reason: "The saved cycle is not eligible under the current activation." };
     }
     if (action.actionType === "availability_request") {
@@ -351,7 +472,7 @@ export const createSchedulingAutomationProcessor = ({
     return { eligible: true, church, defaults, team, cycle };
   };
 
-  const discoverAndEnsure = async ({ dryRun, churchId, teamId, periodId, requestedCycleId, startedAt, signal }) => {
+  const discoverAndEnsure = async ({ dryRun, churchId, teamId, periodId, requestedCycleId, deadlineAt, signal, mode }) => {
     const scoped = Boolean(churchId || teamId || periodId || requestedCycleId);
     const persistCursors = !dryRun && !scoped;
     const stateId = `${processorStateNamespace}-cycle-discovery`;
@@ -373,7 +494,7 @@ export const createSchedulingAutomationProcessor = ({
     const actions = [];
     let totalTeamScopes = 0;
     for (const defaultsDoc of eligibleDefaultDocs) {
-      if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs ||
+      if (signal?.aborted || now().getTime() >= deadlineAt ||
           summary.cyclesCreated >= limits.cyclesPerRun || totalTeamScopes >= limits.maxTeamScopesPerRun) {
         summary.discoveryIncomplete = true;
         break;
@@ -421,7 +542,7 @@ export const createSchedulingAutomationProcessor = ({
       let lastTeamProcessed = "";
       let churchComplete = true;
       for (const team of teams) {
-        if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs ||
+        if (signal?.aborted || now().getTime() >= deadlineAt ||
             summary.cyclesCreated >= limits.cyclesPerRun || totalTeamScopes >= limits.maxTeamScopesPerRun) {
           churchComplete = false;
           summary.discoveryIncomplete = true;
@@ -448,7 +569,7 @@ export const createSchedulingAutomationProcessor = ({
         const periodIds = periodId ? [periodId] : Array.from({ length: limits.lookAheadMonths }, (_, index) => periodForOffset(localDate, index + 1));
         let teamComplete = true;
         for (const targetPeriodId of periodIds) {
-          if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs ||
+          if (signal?.aborted || now().getTime() >= deadlineAt ||
               summary.cyclesCreated >= limits.cyclesPerRun) {
             teamComplete = false;
             churchComplete = false;
@@ -466,6 +587,15 @@ export const createSchedulingAutomationProcessor = ({
               const timing = timingForAction({ action: requestAction, cycle: planned.cycle,
                 activationAt: defaults.availabilityAutomationActivatedAt, now: now() });
               const projectedState = timing.eligible ? "pending" : "review_required";
+              const availabilityPreview = defaults.availabilityFormCreationEnabled && timing.eligible
+                ? await createAvailabilityRequest({
+                  churchId: currentChurchId,
+                  teamId: team.teamId,
+                  cycle: existing || planned.cycle,
+                  operationId: `scheduling-availability-${planned.cycle.cycleId}`,
+                  dryRun: true,
+                })
+                : null;
               const why = !defaults.availabilityFormCreationEnabled
                 ? "Automatic form creation is disabled."
                 : projectedState === "pending"
@@ -474,13 +604,42 @@ export const createSchedulingAutomationProcessor = ({
               actions.push({ churchId: currentChurchId, teamId: team.teamId, periodId: targetPeriodId,
                 cycleId: planned.cycle.cycleId, actionType: requestAction.actionType,
                 dueAt: requestAction.dueAt, existingCycle: Boolean(existing), wouldBe: existing ? "reuse" : "ensure",
-                projectedState: defaults.availabilityFormCreationEnabled ? projectedState : "disabled", why });
+                projectedState: defaults.availabilityFormCreationEnabled ? projectedState : "disabled", why,
+                availabilityPreview });
+              const emailAction = planned.actions.find((action) => action.actionType === "availability_email_delivery");
+              const savedEmailAction = existing && emailAction
+                ? await getData(collections.teamSchedulingActions, emailAction.actionId)
+                : null;
+              const savedRequestAction = existing
+                ? await getData(collections.teamSchedulingActions, requestAction.actionId)
+                : null;
+              const hasForm = Boolean(savedEmailAction?.relatedFormId || savedRequestAction?.relatedFormId);
+              const emailWhy = savedEmailAction?.state === "completed"
+                ? "Initial availability email processing is complete; it will not replay."
+                : savedEmailAction?.state === "review_required" || savedEmailAction?.result?.uncertainCount
+                  ? "An earlier provider outcome needs review; it will not be resent automatically."
+                  : !automaticEmailDeliveryEnabled
+                    ? "The SCHEDULING_AUTOMATION_EMAIL_ENABLED server gate is off."
+                    : !defaults.availabilityEmailDeliveryEnabled
+                      ? "Automatic availability email is disabled in church settings."
+                      : !emailDeliveryConfigured
+                          ? "Resend is not configured on this server."
+                          : !hasForm
+                            ? "A form and personalized recipients must be prepared first."
+                            : timing.eligible ? "The delivery action is eligible for explicit live execution." : timing.reason;
+              actions.push({ churchId: currentChurchId, teamId: team.teamId, periodId: targetPeriodId,
+                cycleId: planned.cycle.cycleId, actionType: "availability_email_delivery",
+                dueAt: savedEmailAction?.dueAt || emailAction?.dueAt || null,
+                existingCycle: Boolean(existing), wouldBe: savedEmailAction ? "reuse" : existing ? "upgrade" : "ensure",
+                projectedState: savedEmailAction?.state || (automaticEmailDeliveryEnabled && emailDeliveryConfigured &&
+                  defaults.availabilityEmailDeliveryEnabled && hasForm && timing.eligible ? "pending" : "disabled"),
+                why: emailWhy });
               if (existing) summary.cyclesReused += 1;
               else summary.cyclesCreated += 1;
               continue;
             }
             const result = await ensureCycle({ churchId: currentChurchId, team, church, defaults, override,
-              periodId: targetPeriodId, activationAt: defaults.availabilityAutomationActivatedAt });
+              periodId: targetPeriodId, activationAt: defaults.availabilityAutomationActivatedAt, mode });
             if (result.status === "created") summary.cyclesCreated += 1;
             else if (result.status === "existing") summary.cyclesReused += 1;
             result.actions.forEach((action) => {
@@ -525,15 +684,20 @@ export const createSchedulingAutomationProcessor = ({
     return { summary, actions };
   };
 
-  const processDueActions = async ({ candidates, runId, dryRun, maxActions, signal, startedAt }) => {
+  const processDueActions = async ({ candidates, runId, mode, maxActions, signal, startedAt, stopAt = Number.POSITIVE_INFINITY }) => {
     const counts = { claimed: 0, completed: 0, skipped: 0, retryableFailures: 0, reviewRequired: 0, staleClaims: 0, expiredClaimsRecovered: 0, waitingForDelivery: 0 };
-    if (dryRun) return counts;
+    if (mode === "dry-run") return counts;
     for (const candidate of candidates) {
-      if (signal?.aborted || now().getTime() - startedAt >= limits.budgetMs) break;
+      if (signal?.aborted || now().getTime() >= stopAt || now().getTime() - startedAt >= limits.budgetMs) break;
       if (counts.claimed >= maxActions) break;
+      if (candidate.actionType === "availability_email_delivery" && mode !== "live") continue;
       const runClaimToken = randomUUID();
       const action = await claimAction({ candidate, runId, claimToken: runClaimToken, scope: candidate.scope });
       if (!action) continue;
+      if (action.exhausted) {
+        counts.reviewRequired += 1;
+        continue;
+      }
       counts.claimed += 1;
       if (candidate.state === "claimed" && Date.parse(candidate.claimExpiresAt || "") <= now().getTime()) {
         counts.expiredClaimsRecovered += 1;
@@ -558,6 +722,14 @@ export const createSchedulingAutomationProcessor = ({
           continue;
         }
         if (!current.eligible) {
+          if (["availability_email_delivery", "availability_request"].includes(action.actionType) &&
+              /disabled/i.test(current.reason || "")) {
+            const finalized = await finalizeAction({ action, claimToken: runClaimToken, state: "pending", enabledOverride: false,
+              error: current.reason, result: { lifecycle: "email_delivery_blocked", reason: current.reason }, releaseAttempt: true });
+            if (finalized) counts.waitingForDelivery += 1;
+            else counts.staleClaims += 1;
+            continue;
+          }
           const finalized = await finalizeAction({ action, claimToken: runClaimToken, state: "skipped", error: current.reason,
             result: { reason: current.reason } });
           if (finalized) counts.skipped += 1;
@@ -565,6 +737,68 @@ export const createSchedulingAutomationProcessor = ({
           continue;
         }
         if (action.actionType !== "availability_request") {
+          if (action.actionType === "availability_email_delivery") {
+            if (mode !== "live") continue;
+            if (!automaticEmailDeliveryEnabled || !emailDeliveryConfigured) {
+              const finalized = await finalizeAction({ action, claimToken: runClaimToken, state: "pending", enabledOverride: false,
+                error: !automaticEmailDeliveryEnabled ? "The server automatic email gate is disabled." : "Resend email delivery is not configured.",
+                result: { lifecycle: "email_delivery_blocked", reason: !automaticEmailDeliveryEnabled ? "environment_gate_disabled" : "provider_unavailable" },
+                releaseAttempt: true });
+              if (finalized) counts.waitingForDelivery += 1;
+              else counts.staleClaims += 1;
+              continue;
+            }
+            if (!await renewClaim({ action, claimToken: runClaimToken })) {
+              heartbeatLost = true;
+              counts.staleClaims += 1;
+              continue;
+            }
+            const delivery = await deliverAvailabilityEmails({
+              churchId: action.churchId,
+              teamId: action.teamId,
+              cycle: current.cycle,
+              formId: action.relatedFormId,
+              operationId: `scheduling-availability-email-${action.cycleId}`,
+              runId,
+            });
+            if (delivery?.blocked) {
+              const finalized = await finalizeAction({ action, claimToken: runClaimToken, state: "pending", enabledOverride: false,
+                error: delivery.reason || "Automatic email delivery is temporarily blocked.",
+                result: { lifecycle: "email_delivery_blocked", ...delivery }, releaseAttempt: true });
+              if (finalized) counts.waitingForDelivery += 1;
+              else counts.staleClaims += 1;
+              logger.info({ event: "scheduling_processor.availability_email_delivery", runId, operationMode: mode,
+                churchId: action.churchId, teamId: action.teamId, periodId: action.periodId,
+                cycleId: action.cycleId, actionId: action.actionId, lifecycle: "blocked",
+                reason: delivery.reason || "delivery_blocked" });
+              continue;
+            }
+            const completed = Boolean(delivery?.completed);
+            const finalized = await finalizeAction({ action, claimToken: runClaimToken,
+              state: delivery?.reviewRequired ? "review_required" : completed ? "completed" : delivery?.retryAt ? "retryable_failure" : "pending",
+              enabledOverride: delivery?.reviewRequired ? false : !completed,
+              error: delivery?.reason || null,
+              result: { lifecycle: "availability_email_delivery", ...delivery },
+              retryAt: delivery?.retryAt || null,
+              releaseAttempt: Boolean(delivery?.retryAt),
+            });
+            if (finalized && completed) counts.completed += 1;
+            else if (finalized && delivery?.reviewRequired) counts.reviewRequired += 1;
+            else if (finalized) counts.waitingForDelivery += 1;
+            else counts.staleClaims += 1;
+            logger.info({ event: "scheduling_processor.availability_email_delivery", runId, operationMode: mode,
+              churchId: action.churchId, teamId: action.teamId, periodId: action.periodId,
+              cycleId: action.cycleId, actionId: action.actionId,
+              lifecycle: delivery?.lifecycle || (delivery?.reviewRequired ? "review_required" : completed ? "completed" : "pending"),
+              recipientCount: Number(delivery?.recipientCount || 0),
+              emailEligibleCount: Number(delivery?.emailEligibleCount || 0),
+              acceptedCount: Number(delivery?.acceptedCount || 0),
+              noEmailContactCount: Number(delivery?.noEmailContactCount || 0),
+              failedCount: Number(delivery?.failedCount || 0),
+              uncertainCount: Number(delivery?.uncertainCount || 0),
+              pendingCount: Number(delivery?.pendingCount || 0) });
+            continue;
+          }
           const waitingReason = "This action is waiting for availability notification delivery to be enabled.";
           const finalized = await finalizeAction({ action, claimToken: runClaimToken, state: "pending", enabledOverride: false,
             error: waitingReason, result: { reason: "notification_delivery_disabled", waitingForDelivery: true } });
@@ -585,6 +819,8 @@ export const createSchedulingAutomationProcessor = ({
         });
         const finalized = await finalizeAction({ action, claimToken: runClaimToken,
           state: result.skipped ? "skipped" : "completed",
+          enableEmailDelivery: mode === "live" && automaticEmailDeliveryEnabled && emailDeliveryConfigured &&
+            current.defaults?.availabilityEmailDeliveryEnabled === true,
           error: result.skipped ? result.reason : null,
           result: { formId: result.formId, recipientCount: Number(result.recipientCount || 0),
             skippedRecipientCount: Number(result.skippedRecipientCount || 0), reused: Boolean(result.reused),
@@ -702,7 +938,10 @@ export const createSchedulingAutomationProcessor = ({
     periodId = String(periodId || "").trim();
     requestedCycleId = String(requestedCycleId || "").trim();
     validateScope({ churchId, teamId, periodId, requestedCycleId, limit: limit ?? limits.actionsPerRun });
-    if (mode === "live") throw new Error("Live notification delivery is disabled by the server safety switch.");
+    if (mode === "live" && !automaticEmailDeliveryEnabled) {
+      throw new Error("Live email delivery is disabled by the SCHEDULING_AUTOMATION_EMAIL_ENABLED server gate.");
+    }
+    if (mode === "live" && !emailDeliveryConfigured) throw new Error("Live email delivery requires a configured Resend provider.");
     const startedAt = now().getTime();
     const startIso = now().toISOString();
     const safeLimit = Number(limit ?? limits.actionsPerRun);
@@ -720,22 +959,60 @@ export const createSchedulingAutomationProcessor = ({
     } else if (selectedCycleLookupId) {
       selectedCycle = await getData(collections.teamSchedulingCycles, selectedCycleLookupId);
     }
-    const discovery = await discoverAndEnsure({ dryRun: mode === "dry-run", churchId, teamId, periodId,
-      requestedCycleId, startedAt, signal });
+    const scope = { churchId, teamId, periodId, requestedCycleId };
+    const zeroCounts = () => ({ claimed: 0, completed: 0, skipped: 0, retryableFailures: 0,
+      reviewRequired: 0, staleClaims: 0, expiredClaimsRecovered: 0, waitingForDelivery: 0 });
+    const addCounts = (left, right) => Object.fromEntries(Object.keys(left).map((key) => [key, left[key] + right[key]]));
+    let discovery;
     let dueCandidates = [];
-    let executionCounts = { claimed: 0, completed: 0, skipped: 0, retryableFailures: 0, reviewRequired: 0, staleClaims: 0, expiredClaimsRecovered: 0, waitingForDelivery: 0 };
-    if (mode === "execute" || mode === "dry-run") {
+    let executionCounts = zeroCounts();
+    if (mode === "dry-run") {
+      discovery = await discoverAndEnsure({ dryRun: true, churchId, teamId, periodId,
+        requestedCycleId, deadlineAt: startedAt + limits.budgetMs, signal, mode });
       if (selectedCycleLookupId && !selectedCycle) selectedCycle = await getData(collections.teamSchedulingCycles, selectedCycleLookupId);
-      const scope = { churchId, teamId, periodId, requestedCycleId };
       dueCandidates = await discoverDueActions({ scope, limit: safeLimit, selectedCycle });
-      executionCounts = await processDueActions({ candidates: dueCandidates, runId, dryRun: mode === "dry-run",
-        maxActions: safeLimit, signal, startedAt });
+    } else {
+      // Give already-due and expired work the first execution slice. Discovery
+      // then gets an independent bounded slice, followed by one pass over newly
+      // created due actions with any time and action capacity still available.
+      const earlyCandidates = await discoverDueActions({ scope, limit: safeLimit, selectedCycle });
+      const earlyCounts = await processDueActions({ candidates: earlyCandidates, runId, mode,
+        maxActions: safeLimit, signal, startedAt, stopAt: startedAt + Math.floor(limits.budgetMs * 0.4) });
+      executionCounts = addCounts(executionCounts, earlyCounts);
+      discovery = await discoverAndEnsure({ dryRun: false, churchId, teamId, periodId,
+        requestedCycleId, deadlineAt: startedAt + Math.floor(limits.budgetMs * 0.82), signal, mode });
+      if (selectedCycleLookupId) selectedCycle = await getData(collections.teamSchedulingCycles, selectedCycleLookupId);
+      const newlyDue = await discoverDueActions({ scope, limit: safeLimit, selectedCycle });
+      dueCandidates = [...new Map([...earlyCandidates, ...newlyDue].map((action) => [action.actionId, action])).values()];
+      const remainingActions = Math.max(0, safeLimit - executionCounts.claimed);
+      if (remainingActions > 0) {
+        const lateCounts = await processDueActions({ candidates: newlyDue, runId, mode,
+          maxActions: remainingActions, signal, startedAt, stopAt: startedAt + limits.budgetMs });
+        executionCounts = addCounts(executionCounts, lateCounts);
+      }
+      // Form creation can durably add the separate email action while due
+      // actions are being processed. Pick it up in the same bounded live run
+      // when the request action left enough capacity and time.
+      if (mode === "live" && executionCounts.claimed < safeLimit &&
+          !signal?.aborted && now().getTime() < startedAt + limits.budgetMs) {
+        const postCreationDue = await discoverDueActions({ scope, limit: safeLimit, selectedCycle });
+        dueCandidates = [...new Map([...dueCandidates, ...postCreationDue].map((action) => [action.actionId, action])).values()];
+        const postCreationCounts = await processDueActions({ candidates: postCreationDue, runId, mode,
+          maxActions: Math.max(0, safeLimit - executionCounts.claimed), signal,
+          startedAt, stopAt: startedAt + limits.budgetMs });
+        executionCounts = addCounts(executionCounts, postCreationCounts);
+      }
     }
+    const discoveryActionByKey = new Map(discovery.actions.map((action) =>
+      [`${action.cycleId}|${action.actionType}`, action]));
     const dueActionKeys = new Set(dueCandidates.map((action) => `${action.cycleId}|${action.actionType}`));
     const dryRunActions = mode === "dry-run" ? [
       ...dueCandidates.map((action) => ({
         churchId: action.churchId, teamId: action.teamId, periodId: action.periodId,
         cycleId: action.cycleId, actionType: action.actionType, dueAt: action.dueAt,
+        ...(discoveryActionByKey.get(`${action.cycleId}|${action.actionType}`)?.availabilityPreview
+          ? { availabilityPreview: discoveryActionByKey.get(`${action.cycleId}|${action.actionType}`).availabilityPreview }
+          : {}),
         existingCycle: true, wouldBe: "claim",
         projectedState: action.state === "claimed" ? "expired_claim_recovery" : action.state,
         attemptCount: Number(action.attemptCount || 0),
@@ -746,6 +1023,7 @@ export const createSchedulingAutomationProcessor = ({
         churchId: action.churchId, teamId: action.teamId, periodId: action.periodId,
         cycleId: action.cycleId, actionType: action.actionType, dueAt: action.dueAt,
         existingCycle: action.existingCycle, wouldBe: action.wouldBe,
+        ...(action.availabilityPreview ? { availabilityPreview: action.availabilityPreview } : {}),
         projectedState: action.projectedState, why: action.why,
       })),
     ] : [];

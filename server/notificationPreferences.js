@@ -36,6 +36,11 @@ export const NOTIFICATION_CATEGORIES = Object.freeze({
     audience: "member",
     defaultEnabled: true,
   }),
+  /** A personalized request to share next month's availability. */
+  availabilityRequests: Object.freeze({
+    audience: "member",
+    defaultEnabled: true,
+  }),
   /** A nudge before a service you are on. */
   scheduleReminders: Object.freeze({
     audience: "member",

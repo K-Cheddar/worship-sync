@@ -219,6 +219,17 @@
         { "fieldPath": "churchId", "order": "ASCENDING" },
         { "fieldPath": "purpose", "order": "ASCENDING" },
         { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "teamIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "endDate", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "teamIntakeForms",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "churchId", "order": "ASCENDING" },
+        { "fieldPath": "purpose", "order": "ASCENDING" },
+        { "fieldPath": "active", "order": "ASCENDING" },
         { "fieldPath": "responseDeadline", "order": "ASCENDING" }
       ]
     },

@@ -213,6 +213,27 @@ test("scheduling automation settings are scoped, revisioned, preview-only, and c
   assert.equal(activated.payload.activationImpact.churchWide, true);
   assert.equal(activated.payload.activationImpact.selectedPeriodStarted, false);
   assert.ok(activated.payload.activationImpact.upcomingActions.length > 0);
+  const formsPaused = await callHandler(authHandlers.setAvailabilityAutomation, {
+    context: admin,
+    body: { enabled: true, formCreationEnabled: false, revision: 2, teamId, periodId: "2027-02", confirmAlreadyStarted: true },
+  });
+  assert.equal(formsPaused.statusCode, 200, JSON.stringify(formsPaused.payload));
+  assert.equal(formsPaused.payload.defaults.availabilityAutomationEnabled, true);
+  assert.equal(formsPaused.payload.defaults.availabilityFormCreationEnabled, false);
+  const emailEnabledWithoutFormCreation = await callHandler(authHandlers.setAvailabilityEmailDelivery, {
+    context: admin,
+    body: { enabled: true, confirmed: true, revision: 3 },
+  });
+  assert.equal(emailEnabledWithoutFormCreation.statusCode, 200, JSON.stringify(emailEnabledWithoutFormCreation.payload));
+  assert.equal(emailEnabledWithoutFormCreation.payload.defaults.availabilityFormCreationEnabled, false);
+  assert.equal(emailEnabledWithoutFormCreation.payload.defaults.availabilityEmailDeliveryEnabled, true);
+  const masterPaused = await callHandler(authHandlers.setAvailabilityAutomation, {
+    context: admin,
+    body: { enabled: false, formCreationEnabled: false, revision: 4, teamId, periodId: "2027-02", confirmAlreadyStarted: false },
+  });
+  assert.equal(masterPaused.statusCode, 200, JSON.stringify(masterPaused.payload));
+  assert.equal(masterPaused.payload.defaults.availabilityAutomationEnabled, false);
+  assert.equal(masterPaused.payload.defaults.availabilityEmailDeliveryEnabled, true);
   const custom = await callHandler(authHandlers.saveTeamSchedulingOverride, {
     context: manager,
     params: { teamId },
@@ -269,10 +290,10 @@ test("scheduling automation settings are scoped, revisioned, preview-only, and c
   assert.equal(currentCycle.effectiveConfiguration.preparationDay, 24);
   const changedDefaults = await callHandler(authHandlers.saveChurchSchedulingDefaults, {
     context: admin,
-    body: { settings: { ...settings, preparationDay: 22 }, revision: 2 },
+    body: { settings: { ...settings, preparationDay: 22 }, revision: 5 },
   });
   assert.equal(changedDefaults.statusCode, 200);
-  assert.equal(changedDefaults.payload.defaults.availabilityAutomationEnabled, true);
+  assert.equal(changedDefaults.payload.defaults.availabilityAutomationEnabled, false);
   assert.equal(changedDefaults.payload.defaults.notificationDeliveryEnabled, true);
   const oldCycle = await getDoc(COLLECTIONS.teamSchedulingCycles, firstEnsure.payload.cycle.cycleId);
   assert.equal(oldCycle.effectiveConfiguration.preparationDay, 24);

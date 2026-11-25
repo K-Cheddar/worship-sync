@@ -93,6 +93,13 @@ export const createSchedulingCycleHandlers = ({
       availabilityAutomationEnabled: false,
       availabilityFormCreationEnabled: false,
       availabilityAutomationActivatedAt: null,
+      availabilityAutomationDisabledAt: null,
+      availabilityFormCreationActivatedAt: null,
+      availabilityFormCreationDisabledAt: null,
+      availabilityEmailDeliveryEnabled: false,
+      availabilityEmailDeliveryActivatedAt: null,
+      availabilityEmailDeliveryDisabledAt: null,
+      availabilitySmsDeliveryEnabled: false,
       notificationDeliveryEnabled: false,
       notificationDeliveryActivatedAt: null,
       notificationDeliveryDisabledAt: null,
@@ -119,13 +126,13 @@ export const createSchedulingCycleHandlers = ({
     .status(error?.statusCode || 500)
     .json(serializeAuthError(error, { errorMessage: error?.message || fallback }));
 
-  const recordSettingsAudit = async ({ actor, churchId, teamId, revision, type = "" }) => {
+  const recordSettingsAudit = async ({ actor, churchId, teamId, revision, type = "", details = {} }) => {
     try {
       await addSecurityEvent({
         type: type || (teamId ? "team_scheduling_override_updated" : "church_scheduling_defaults_updated"),
         churchId,
         userId: actorUid(actor),
-        details: { teamId: teamId || null, revision },
+        details: { teamId: teamId || null, revision, ...details },
       });
     } catch (error) {
       console.error("Could not record scheduling settings audit event.", error);
@@ -283,8 +290,14 @@ export const createSchedulingCycleHandlers = ({
           settings,
           availabilityAutomationEnabled: current?.availabilityAutomationEnabled === true,
           availabilityFormCreationEnabled: current?.availabilityFormCreationEnabled === true,
+          availabilityFormCreationActivatedAt: current?.availabilityFormCreationActivatedAt || null,
+          availabilityFormCreationDisabledAt: current?.availabilityFormCreationDisabledAt || null,
           availabilityAutomationActivatedAt: current?.availabilityAutomationActivatedAt || null,
           availabilityAutomationDisabledAt: current?.availabilityAutomationDisabledAt || null,
+          availabilityEmailDeliveryEnabled: current?.availabilityEmailDeliveryEnabled === true,
+          availabilityEmailDeliveryActivatedAt: current?.availabilityEmailDeliveryActivatedAt || null,
+          availabilityEmailDeliveryDisabledAt: current?.availabilityEmailDeliveryDisabledAt || null,
+          availabilitySmsDeliveryEnabled: false,
           notificationDeliveryEnabled: current?.notificationDeliveryEnabled === true,
           notificationDeliveryActivatedAt: current?.notificationDeliveryActivatedAt || null,
           notificationDeliveryDisabledAt: current?.notificationDeliveryDisabledAt || null,
@@ -349,8 +362,8 @@ export const createSchedulingCycleHandlers = ({
       const church = await readChurch(churchId);
       const enabled = req.body?.enabled;
       const formCreationEnabled = req.body?.formCreationEnabled;
-      if (typeof enabled !== "boolean" || typeof formCreationEnabled !== "boolean" || (formCreationEnabled && !enabled)) {
-        throw httpError(400, "Choose whether availability automation and automatic form creation are enabled.");
+      if (typeof enabled !== "boolean" || (formCreationEnabled !== undefined && typeof formCreationEnabled !== "boolean")) {
+        throw httpError(400, "Choose whether church availability automation and form creation are enabled.");
       }
       const teamId = String(req.body?.teamId || "").trim();
       const periodId = String(req.body?.periodId || "").trim();
@@ -366,9 +379,6 @@ export const createSchedulingCycleHandlers = ({
         await readTeam(churchId, teamId);
         const localToday = calendarDateInTimeZone(new Date(), church.serviceTimeZone || "UTC");
         selectedPeriodStarted = `${periodId}-01` <= localToday;
-        if (enabled && selectedPeriodStarted && req.body?.confirmAlreadyStarted !== true) {
-          throw httpError(409, "This scheduling period has started. Review its timeline and confirm before enabling automation.");
-        }
         const selectedCycle = await getDoc(COLLECTIONS.teamSchedulingCycles, cycleId(churchId, teamId, periodId));
         if (selectedCycle?.plannedActionIds?.length) {
           selectedCycleActions = (await Promise.all(selectedCycle.plannedActionIds.map((actionId) =>
@@ -395,7 +405,16 @@ export const createSchedulingCycleHandlers = ({
         id,
         churchId,
         expectedRevision,
-        buildNext: (current, revision, updatedAt) => ({
+        buildNext: (current, revision, updatedAt) => {
+          const nextFormCreationEnabled = typeof formCreationEnabled === "boolean"
+            ? formCreationEnabled
+            : current?.availabilityFormCreationEnabled === true;
+          const newlyActivating = enabled && (!current?.availabilityAutomationEnabled ||
+            (nextFormCreationEnabled && !current?.availabilityFormCreationEnabled));
+          if (newlyActivating && selectedPeriodStarted && req.body?.confirmAlreadyStarted !== true) {
+            throw httpError(409, "This scheduling period has started. Review its timeline and confirm before enabling automation.");
+          }
+          return {
           ...(current?.createdAt ? { createdAt: current.createdAt } : { createdAt: updatedAt }),
           settingsId: id,
           churchId,
@@ -403,19 +422,35 @@ export const createSchedulingCycleHandlers = ({
           scopeType: "church_defaults",
           settings: current?.settings || DEFAULT_SCHEDULING_AUTOMATION_SETTINGS,
           availabilityAutomationEnabled: enabled,
-          availabilityFormCreationEnabled: formCreationEnabled,
+          availabilityFormCreationEnabled: nextFormCreationEnabled,
+          availabilityFormCreationActivatedAt: nextFormCreationEnabled
+            ? (current?.availabilityFormCreationEnabled ? current.availabilityFormCreationActivatedAt || updatedAt : updatedAt)
+            : null,
+          availabilityFormCreationDisabledAt: nextFormCreationEnabled ? null : updatedAt,
           availabilityAutomationActivatedAt: enabled ? (current?.availabilityAutomationEnabled ? current.availabilityAutomationActivatedAt || updatedAt : updatedAt) : null,
           availabilityAutomationDisabledAt: enabled ? null : updatedAt,
           // Saving cycle activation cannot change the independent delivery switch.
+          availabilityEmailDeliveryEnabled: current?.availabilityEmailDeliveryEnabled === true,
+          availabilityEmailDeliveryActivatedAt: current?.availabilityEmailDeliveryActivatedAt || null,
+          availabilityEmailDeliveryDisabledAt: current?.availabilityEmailDeliveryDisabledAt || null,
+          availabilitySmsDeliveryEnabled: false,
           notificationDeliveryEnabled: current?.notificationDeliveryEnabled === true,
           notificationDeliveryActivatedAt: current?.notificationDeliveryActivatedAt || null,
           notificationDeliveryDisabledAt: current?.notificationDeliveryDisabledAt || null,
           revision,
           updatedAt,
           audit: { updatedBy: actorUid(actor) },
-        }),
+          };
+        },
       });
-      await recordSettingsAudit({ actor, churchId, revision: saved.revision, type: "church_availability_automation_activation_updated" });
+      await recordSettingsAudit({ actor, churchId, revision: saved.revision,
+        type: "church_availability_automation_activation_updated",
+        details: {
+          availabilityAutomationEnabled: saved.availabilityAutomationEnabled === true,
+          availabilityFormCreationEnabled: saved.availabilityFormCreationEnabled === true,
+          availabilityEmailDeliveryEnabled: saved.availabilityEmailDeliveryEnabled === true,
+          availabilitySmsDeliveryEnabled: false,
+        } });
       return res.json({ success: true, defaults: saved, activationImpact: {
         churchWide: true,
         selectedTeamId: teamId || null,
@@ -426,6 +461,63 @@ export const createSchedulingCycleHandlers = ({
       } });
     } catch (error) {
       return sendError(res, error, "Could not update availability automation.");
+    }
+  };
+
+  const setAvailabilityEmailDelivery = async (req, res) => {
+    try {
+      await assertCsrf(req);
+      const churchId = String(req.params.churchId || "").trim();
+      const actor = await requireAdminSession(req, churchId);
+      await readChurch(churchId);
+      const enabled = req.body?.enabled;
+      if (typeof enabled !== "boolean") throw httpError(400, "Choose whether automatic availability email is enabled.");
+      if (enabled && req.body?.confirmed !== true) {
+        throw httpError(409, "Confirm that automatic availability email should be sent to eligible volunteers.");
+      }
+      const expectedRevision = revisionNumber(req.body?.revision);
+      const id = defaultsId(churchId);
+      const saved = await saveRevisionedSettings({
+        collection: COLLECTIONS.teamSchedulingAutomationSettings,
+        id,
+        churchId,
+        expectedRevision,
+        buildNext: (current, revision, timestamp) => {
+          if (enabled && !current?.availabilityAutomationEnabled) {
+            throw httpError(409, "Enable church availability automation before enabling email delivery.");
+          }
+          return {
+            ...(current?.createdAt ? { createdAt: current.createdAt } : { createdAt: timestamp }),
+            settingsId: id,
+            churchId,
+            teamId: null,
+            scopeType: "church_defaults",
+            settings: current?.settings || DEFAULT_SCHEDULING_AUTOMATION_SETTINGS,
+            availabilityAutomationEnabled: current?.availabilityAutomationEnabled === true,
+            availabilityFormCreationEnabled: current?.availabilityFormCreationEnabled === true,
+            availabilityAutomationActivatedAt: current?.availabilityAutomationActivatedAt || null,
+            availabilityAutomationDisabledAt: current?.availabilityAutomationDisabledAt || null,
+            availabilityEmailDeliveryEnabled: enabled,
+            availabilityEmailDeliveryActivatedAt: enabled
+              ? (current?.availabilityEmailDeliveryEnabled ? current.availabilityEmailDeliveryActivatedAt || timestamp : timestamp)
+              : null,
+            availabilityEmailDeliveryDisabledAt: enabled ? null : timestamp,
+            availabilitySmsDeliveryEnabled: false,
+            notificationDeliveryEnabled: current?.notificationDeliveryEnabled === true,
+            notificationDeliveryActivatedAt: current?.notificationDeliveryActivatedAt || null,
+            notificationDeliveryDisabledAt: current?.notificationDeliveryDisabledAt || null,
+            revision,
+            updatedAt: timestamp,
+            audit: { updatedBy: actorUid(actor) },
+          };
+        },
+      });
+      await recordSettingsAudit({ actor, churchId, revision: saved.revision,
+        type: enabled ? "church_availability_email_delivery_enabled" : "church_availability_email_delivery_disabled",
+        details: { availabilityEmailDeliveryEnabled: enabled, availabilitySmsDeliveryEnabled: false } });
+      return res.json({ success: true, defaults: saved, availabilitySmsDeliveryEnabled: false });
+    } catch (error) {
+      return sendError(res, error, "Could not update automatic availability email.");
     }
   };
 
@@ -513,6 +605,7 @@ export const createSchedulingCycleHandlers = ({
     saveChurchSchedulingDefaults,
     saveTeamSchedulingOverride,
     setAvailabilityAutomation,
+    setAvailabilityEmailDelivery,
     ensureSchedulingCycle,
   };
 };

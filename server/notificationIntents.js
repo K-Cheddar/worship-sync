@@ -784,6 +784,7 @@ export const createNotificationIntentHandlers = ({
       occurrenceId: intent.occurrenceId || "",
       cellKey: intent.cellKey || "",
       status: intent.status,
+      channel: intent.channel || "sms",
       attemptId: intent.attemptId || "",
       createdAt: intent.createdAt,
       updatedAt: intent.updatedAt,
@@ -841,10 +842,10 @@ export const createNotificationIntentHandlers = ({
       let scheduleAccess = scheduleId ? await authorizeScheduleSource(req, churchId, scheduleId) : null;
       if (!formId && !scheduleId) await requireTeamsEdit(req, churchId);
       const filters = formId
-        ? [{ field: "formId", value: formId }]
+        ? [{ field: "formId", value: formId }, { field: "channel", value: "sms" }]
         : scheduleId
-          ? [{ field: "sourceId", value: scheduleId }, { field: "sourceType", value: "team_schedule" }]
-          : [];
+          ? [{ field: "sourceId", value: scheduleId }, { field: "sourceType", value: "team_schedule" }, { field: "channel", value: "sms" }]
+          : [{ field: "channel", value: "sms" }];
       const limit = Math.max(1, Math.min(100, Number.parseInt(req.query?.limit, 10) || 50));
       const cursor = normalize(req.query?.cursor);
       const page = await listIntentPage({ churchId, filters, limit, cursor });
@@ -909,7 +910,7 @@ export const createNotificationIntentHandlers = ({
       const churchId = normalize(req.params.churchId);
       await authorizeMessagingHistory(req, churchId);
       const limit = Math.max(1, Math.min(100, Number.parseInt(req.query?.limit, 10) || 50));
-      const page = await listIntentPage({ churchId, filters: [], limit, cursor: normalize(req.query?.cursor) });
+      const page = await listIntentPage({ churchId, filters: [{ field: "channel", value: "sms" }], limit, cursor: normalize(req.query?.cursor) });
       const authorized = [];
       for (const intent of page.intents || []) {
         try {
@@ -1219,7 +1220,9 @@ export const createNotificationIntentHandlers = ({
       const intentId = normalize(requestedIntentId);
       const currentIntent = await getDoc(COLLECTIONS.notificationIntents, intentId);
       initialIntentState = currentIntent;
-      if (!currentIntent || currentIntent.churchId !== churchId) throw httpError(404, "Message preview not found.");
+      if (!currentIntent || currentIntent.churchId !== churchId || (currentIntent.channel && currentIntent.channel !== "sms")) {
+        throw httpError(404, "Message preview not found.");
+      }
       const readBackgroundApproval = async () => {
         if (!backgroundContext || !isScheduleBulkDispatchReady()) throw httpError(503, SCHEDULE_SMS_NOT_READY_ERROR);
         const batch = await getBatchForChurch(backgroundContext.batchId, churchId);

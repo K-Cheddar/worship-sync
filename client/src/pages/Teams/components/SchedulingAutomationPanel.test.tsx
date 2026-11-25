@@ -6,6 +6,7 @@ import {
   previewSchedulingCycle,
   saveChurchSchedulingDefaults,
   setAvailabilityAutomation,
+  setAvailabilityEmailDelivery,
   type SchedulingAutomationResponse,
 } from "../../../api/auth";
 import type {
@@ -20,6 +21,7 @@ jest.mock("../../../api/auth", () => ({
   previewSchedulingCycle: jest.fn(),
   saveChurchSchedulingDefaults: jest.fn(),
   setAvailabilityAutomation: jest.fn(),
+  setAvailabilityEmailDelivery: jest.fn(),
   saveTeamSchedulingOverride: jest.fn(),
 }));
 
@@ -103,6 +105,9 @@ const response = (savedCycle: SchedulingCycleRecord | null = null): SchedulingAu
   defaults: {
     settingsId: "defaults-1", churchId: "church-1", teamId: null,
     scopeType: "church_defaults", settings, revision: 1,
+    availabilityAutomationEnabled: false,
+    availabilityFormCreationEnabled: false,
+    availabilityEmailDeliveryEnabled: false,
   },
   override: {
     settingsId: "override-1", churchId: "church-1", teamId: "team-1",
@@ -132,6 +137,10 @@ const renderPanel = () => {
       churchWide: true, selectedTeamId: "team-1", selectedPeriodId: "2026-12",
       selectedPeriodStarted: false, upcomingActions: [], notificationDeliveryEnabled: false,
     },
+  });
+  jest.mocked(setAvailabilityEmailDelivery).mockResolvedValue({
+    success: true, defaults: { ...response().defaults, availabilityEmailDeliveryEnabled: true },
+    availabilitySmsDeliveryEnabled: false,
   });
   return render(
     <SchedulingAutomationPanel
@@ -170,10 +179,26 @@ it("previews unsaved church defaults without saving a cycle or triggering schedu
   expect(await timeline.findByText("Request availability")).toBeInTheDocument();
   expect(timeline.getAllByText("Upcoming")).toHaveLength(2);
   expect(timeline.getByText(/Manual.*review and publish/)).toBeInTheDocument();
-  expect(screen.getByText(/Notification delivery is disabled/)).toBeInTheDocument();
+  expect(screen.getByText("Disabled. Existing manual SMS and consent checks are unchanged.")).toBeInTheDocument();
   expect(timeline.getByText(/Respond through November 21, 2026/)).toBeInTheDocument();
   expect(saveChurchSchedulingDefaults).not.toHaveBeenCalled();
   expect(setAvailabilityAutomation).not.toHaveBeenCalled();
+});
+
+it("keeps church automation and automatic form creation as independent controls", async () => {
+  const interaction = userEvent.setup();
+  const confirm = jest.spyOn(window, "confirm").mockReturnValue(true);
+  renderPanel();
+  await interaction.click(await screen.findByRole("button", { name: "Configure and preview" }));
+  await interaction.click(await screen.findByRole("button", { name: "Enable form creation" }));
+
+  await waitFor(() => expect(setAvailabilityAutomation).toHaveBeenCalledWith("church-1", expect.objectContaining({
+    enabled: false,
+    formCreationEnabled: true,
+    revision: 1,
+  })));
+  expect(confirm).not.toHaveBeenCalled();
+  confirm.mockRestore();
 });
 
 it("keeps a settings draft visible when the server rejects a stale save", async () => {
@@ -241,4 +266,25 @@ it("shows a saved cycle separately from the future-settings preview", async () =
   expect(await screen.findByText("Saved cycle timeline")).toBeInTheDocument();
   expect(await screen.findByText("Future settings preview")).toBeInTheDocument();
   expect(screen.getByText("This timeline is saved with its original settings. Changes apply to future cycles.")).toBeInTheDocument();
+});
+
+it("reports provider acceptance and failures separately in the saved timeline", async () => {
+  const interaction = userEvent.setup();
+  jest.mocked(getSchedulingCycle).mockResolvedValueOnce({
+    success: true,
+    savedCycle: cycle,
+    savedActions: [{
+      ...actions[0],
+      actionId: "action-email",
+      id: "availability_email_delivery",
+      actionType: "availability_email_delivery",
+      state: "completed",
+      result: { acceptedCount: 1, emailEligibleCount: 2, failedCount: 1, pendingCount: 0 },
+    }],
+  });
+  renderPanel();
+  await interaction.click(await screen.findByRole("button", { name: "Configure and preview" }));
+
+  expect(await screen.findByText("1 accepted by provider, 1 failed")).toBeInTheDocument();
+  expect(screen.getByText("Completed with failures")).toBeInTheDocument();
 });

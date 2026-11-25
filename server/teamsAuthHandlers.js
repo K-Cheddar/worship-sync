@@ -58,6 +58,7 @@ import {
 } from "./scheduleResponses.js";
 import { createVolunteerOperations } from "./volunteerOperations.js";
 import { createSchedulingCycleHandlers } from "./schedulingCycleHandlers.js";
+import { resolveEffectiveSchedulingSettings, schedulingSettingsIdFor } from "./schedulingCycles.js";
 import { buildTeamSchedulePeriod } from "../client/src/pages/Teams/schedule/teamSchedulePeriod.ts";
 import { omitRedundantGroupedMemberOccurrences } from "../client/src/pages/Teams/intakeAvailabilitySuggestion.ts";
 import { resolveSignedInVolunteerMember } from "./volunteerIdentity.js";
@@ -72,6 +73,10 @@ import {
   newBlockoutConflictEntries,
 } from "./blockoutConflicts.js";
 import { createNotificationLedger, deliveryKey } from "./notificationLedger.js";
+import {
+  availabilityOccurrenceScopesOverlap,
+  canonicalizeAvailabilityOccurrenceScope,
+} from "./teamAvailabilityOccurrenceScope.js";
 import {
   isNotificationEnabled,
   normalizeNotificationPreferences,
@@ -298,7 +303,10 @@ export const createTeamsAuthHandlers = ({
   sendEmail,
   servicePlanFromEmail,
   emailDeliveryConfigured = false,
+  automaticEmailDeliveryEnabled = false,
+  getMembershipForUser = async () => null,
   renderScheduleAssignmentEmail,
+  renderAvailabilityRequestEmail,
   renderServicePlanShareEmail,
   sendRosterMemberInvite,
   linkVolunteerRosterMember,
@@ -5240,11 +5248,11 @@ export const createTeamsAuthHandlers = ({
     if (
       !teamIds.length ||
       !member?.memberId ||
-      (member.churchId && member.churchId !== form.churchId)
+      member.churchId !== form.churchId
     ) {
       return false;
     }
-    const teamById = new Map((teams || []).map((team) => [team.teamId, team]));
+    const teamById = new Map((teams || []).map((team) => [team.teamId || team.id, team]));
     if (teamIds.some((teamId) => {
       const team = teamById.get(teamId);
       return !team || team.churchId !== form.churchId || team.archivedAt;
@@ -5253,11 +5261,44 @@ export const createTeamsAuthHandlers = ({
       .filter((position) => position?.churchId === form.churchId && !position.archivedAt &&
         (member.positionIds || []).includes(position.positionId))
       .map((position) => position.teamId));
-    return teamIds.some((teamId) =>
-      Object.hasOwn(member.teamMemberships || {}, teamId) ||
-      positionTeamIds.has(teamId) ||
-      (Array.isArray(teamById.get(teamId)?.memberIds) && teamById.get(teamId).memberIds.includes(member.memberId)),
-    );
+    return teamIds.some((teamId) => {
+      const membership = member.teamMemberships?.[teamId];
+      const hasMemberSideMembership = Boolean(
+        membership && typeof membership === "object" && !Array.isArray(membership) &&
+        (!membership.teamId || membership.teamId === teamId) &&
+        !["inactive", "removed", "archived", "disabled"].includes(String(membership.status || "").toLowerCase()) &&
+        membership.active !== false && membership.isActive !== false &&
+        !membership.archivedAt && !membership.removedAt,
+      );
+      return hasMemberSideMembership || positionTeamIds.has(teamId) ||
+        (Array.isArray(teamById.get(teamId)?.memberIds) && teamById.get(teamId).memberIds.includes(member.memberId));
+    });
+  };
+
+  const getTeamAvailabilityScopeRecords = async ({ form, members, transaction = null }) => {
+    const memberRows = (Array.isArray(members) ? members : []).filter(Boolean);
+    const teamIds = teamAvailabilityFormTeamIds(form);
+    const positionIds = normalizeIdArray(memberRows.flatMap((member) => member.positionIds || []));
+    if (positionIds.length > 1000) {
+      throw httpError(409, "Availability team membership could not be verified within the safe read limit.");
+    }
+    const db = requireFirestore?.();
+    const read = async (collection, id, key) => {
+      if (transaction && db) {
+        const snapshot = await transaction.get(db.collection(collection).doc(id));
+        return snapshot.exists ? { ...snapshot.data(), [key]: snapshot.id } : null;
+      }
+      const row = await getDoc(collection, id);
+      return row ? { ...row, [key]: row[key] || id } : null;
+    };
+    const [teams, positions] = await Promise.all([
+      Promise.all(teamIds.map((teamId) => read(COLLECTIONS.teams, teamId, "teamId"))),
+      Promise.all(positionIds.map((positionId) => read(COLLECTIONS.teamPositions, positionId, "positionId"))),
+    ]);
+    return {
+      teams: teams.filter(Boolean),
+      positions: positions.filter((position) => position && teamIds.includes(position.teamId)),
+    };
   };
 
   // Drop a member from the given teams' rosters. The mirror of
@@ -8957,6 +8998,37 @@ export const createTeamsAuthHandlers = ({
 
   const TEAM_AVAILABILITY_SCOPE_LOCK_FIELD = "teamAvailabilityScopeLocked";
   const teamAvailabilityFormQueues = new Map();
+  let memoryAvailabilityFormCreationQueue = Promise.resolve();
+  const withMemoryAvailabilityFormCreationLock = async (task) => {
+    const previous = memoryAvailabilityFormCreationQueue;
+    let release;
+    memoryAvailabilityFormCreationQueue = new Promise((resolve) => { release = resolve; });
+    await previous;
+    try { return await task(); } finally { release(); }
+  };
+  const availabilityFormGuardId = (churchId, teamId) =>
+    `availability-form-guard_${hashValue(`${churchId}|${teamId}`).slice(0, 40)}`;
+  const availabilityFormsOverlap = (requested, existing, timeZone = "UTC") => {
+    if (!existing || existing.churchId !== requested.churchId || existing.purpose !== "team_availability" ||
+        existing.active !== true || existing.archivedAt ||
+        String(existing.endDate || "") < String(requested.startDate || "") ||
+        String(existing.startDate || "") > String(requested.endDate || "") ||
+        !normalizeIdArray(existing.teamIds).some((teamId) => normalizeIdArray(requested.teamIds).includes(teamId))) {
+      return false;
+    }
+    const requestedScope = canonicalizeAvailabilityOccurrenceScope(requested.availabilityOccurrences || [], timeZone);
+    const existingScope = canonicalizeAvailabilityOccurrenceScope(existing.availabilityOccurrences || [], timeZone);
+    if (requestedScope.ambiguous || existingScope.ambiguous || !requestedScope.rows.length || !existingScope.rows.length) return true;
+    return availabilityOccurrenceScopesOverlap(requestedScope.rows, existingScope.rows);
+  };
+  const assertAvailabilityFormCreationIsUnambiguous = ({ requested, existingForms, timeZone }) => {
+    const overlaps = (existingForms || []).filter((existing) => availabilityFormsOverlap(requested, existing, timeZone));
+    if (overlaps.length) {
+      const error = httpError(409, "An active availability form overlaps this request. Review it before creating another form.");
+      error.reviewRequired = true;
+      throw error;
+    }
+  };
   const withTeamAvailabilityFormLock = (formId, task) => {
     const previous = teamAvailabilityFormQueues.get(formId) || Promise.resolve();
     const run = previous.then(task, task);
@@ -8979,6 +9051,7 @@ export const createTeamsAuthHandlers = ({
     churchId,
     members = [],
     teams = [],
+    positions = [],
   }) => {
     if (!currentForm || currentForm.churchId !== churchId) {
       throw httpError(404, "Intake form not found.");
@@ -9003,6 +9076,7 @@ export const createTeamsAuthHandlers = ({
           form: currentForm,
           member,
           teams,
+          positions,
         })
       ) {
         throw httpError(
@@ -9033,7 +9107,12 @@ export const createTeamsAuthHandlers = ({
   const ensureTeamIntakeRecipientToken = async (
     recipient,
     updatedByUid,
-    { form: expectedForm = null, member: expectedMember = null, teams: expectedTeams = null } = {},
+    {
+      form: expectedForm = null,
+      member: expectedMember = null,
+      teams: expectedTeams = null,
+      positions: expectedPositions = null,
+    } = {},
   ) => {
     const form = expectedForm || await getDoc(
       COLLECTIONS.teamIntakeForms,
@@ -9044,19 +9123,20 @@ export const createTeamsAuthHandlers = ({
         COLLECTIONS.teamRosterMembers,
         recipient.memberId,
       );
-      const teams = expectedTeams || await listTeamCollectionForChurch(
-        COLLECTIONS.teams,
-        "teamId",
-        form.churchId,
-      );
+      const scopeRecords = expectedTeams && expectedPositions
+        ? { teams: expectedTeams, positions: expectedPositions }
+        : await getTeamAvailabilityScopeRecords({ form, members: [member] });
+      const teams = expectedTeams || scopeRecords.teams;
+      const positions = expectedPositions || scopeRecords.positions;
       const db = requireFirestore?.();
-      const ensureWithCurrentRecords = async (currentForm, currentRecipient, transaction = null, refs = null) => {
+      const ensureWithCurrentRecords = async (currentForm, currentRecipient, currentMember = member, currentTeams = teams, currentPositions = positions, transaction = null, refs = null) => {
         const validatedForm = validateCurrentTeamAvailabilityForm({
           currentForm,
           expectedForm: form,
           churchId: form.churchId,
-          members: [member],
-          teams,
+          members: [currentMember],
+          teams: currentTeams,
+          positions: currentPositions,
         });
         if (
           !currentRecipient ||
@@ -9137,11 +9217,20 @@ export const createTeamsAuthHandlers = ({
         const recipientRef = db
           .collection(COLLECTIONS.teamIntakeRecipients)
           .doc(recipient.recipientId);
+        const memberRef = db.collection(COLLECTIONS.teamRosterMembers).doc(member.memberId);
         return db.runTransaction(async (transaction) => {
-          const [formSnapshot, recipientSnapshot] = await Promise.all([
+          const [formSnapshot, recipientSnapshot, memberSnapshot] = await Promise.all([
             transaction.get(formRef),
             transaction.get(recipientRef),
+            transaction.get(memberRef),
           ]);
+          const currentMember = memberSnapshot.exists
+            ? { memberId: memberSnapshot.id, ...memberSnapshot.data() }
+            : null;
+          if (!currentMember || currentMember.churchId !== form.churchId || currentMember.archivedAt) {
+            throw httpError(409, "This individual intake request is no longer available.");
+          }
+          const currentScope = await getTeamAvailabilityScopeRecords({ form, members: [currentMember], transaction });
           return ensureWithCurrentRecords(
             formSnapshot.exists
               ? { formId: formSnapshot.id, ...formSnapshot.data() }
@@ -9149,6 +9238,9 @@ export const createTeamsAuthHandlers = ({
             recipientSnapshot.exists
               ? { recipientId: recipientSnapshot.id, ...recipientSnapshot.data() }
               : null,
+            currentMember,
+            currentScope.teams,
+            currentScope.positions,
             transaction,
             { form: formRef, recipient: recipientRef },
           );
@@ -9159,7 +9251,12 @@ export const createTeamsAuthHandlers = ({
           getDoc(COLLECTIONS.teamIntakeForms, form.formId),
           getDoc(COLLECTIONS.teamIntakeRecipients, recipient.recipientId),
         ]);
-        return ensureWithCurrentRecords(currentForm, currentRecipient);
+        const currentMember = await getDoc(COLLECTIONS.teamRosterMembers, member.memberId);
+        if (!currentMember || currentMember.churchId !== form.churchId || currentMember.archivedAt) {
+          throw httpError(409, "This individual intake request is no longer available.");
+        }
+        const currentScope = await getTeamAvailabilityScopeRecords({ form, members: [currentMember] });
+        return ensureWithCurrentRecords(currentForm, currentRecipient, currentMember, currentScope.teams, currentScope.positions);
       });
     }
 
@@ -9238,14 +9335,13 @@ export const createTeamsAuthHandlers = ({
     }
     if (!allowClosed) assertTeamIntakeFormIsOpen(form);
     if (form.purpose === "team_availability") {
-      const teamIds = teamAvailabilityFormTeamIds(form);
-      const teams = await Promise.all(
-        teamIds.map(async (teamId) => {
-          const team = await getDoc(COLLECTIONS.teams, teamId);
-          return team ? { ...team, teamId } : null;
-        }),
-      );
-      if (!isMemberWithinTeamAvailabilityScope({ form, member, teams })) {
+      const scopeRecords = await getTeamAvailabilityScopeRecords({ form, members: [member] });
+      if (!isMemberWithinTeamAvailabilityScope({
+        form,
+        member,
+        teams: scopeRecords.teams,
+        positions: scopeRecords.positions,
+      })) {
         throw httpError(404, "This request is no longer available.");
       }
     }
@@ -9560,32 +9656,42 @@ export const createTeamsAuthHandlers = ({
         throw httpError(503, "Availability requests could not be loaded.");
       }
       diagnostics.teamReadCount = teamIds.size;
-      const teamRows = await measure("teamScopeValidationMs", () => mapVolunteerAvailabilityReads(
-        [...teamIds],
-        async (teamId) => {
-          const team = await readDoc(COLLECTIONS.teams, teamId);
-          return team ? { ...team, teamId } : null;
-        },
-      ));
-      const teamsById = new Map([...teamIds].map((teamId, index) => [teamId, teamRows[index]]));
-      const contexts = candidates.flatMap((recipient) => {
+      const contexts = [];
+      const availabilityScopeCache = new Map();
+      for (const recipient of candidates) {
         const formId = String(recipient.formId || "");
         const form = formsById.get(formId);
         const teamIdsForForm = teamIdsByFormId.get(formId) || [];
-        if (!form || !teamIdsForForm.length || !isMemberWithinTeamAvailabilityScope({
+        if (!form || !teamIdsForForm.length) continue;
+        const scopeCacheKey = JSON.stringify([
+          form.churchId,
+          [...teamIdsForForm].sort(),
+          normalizeIdArray(preferencesMember.positionIds).sort(),
+        ]);
+        let scopeRecordsPromise = availabilityScopeCache.get(scopeCacheKey);
+        if (!scopeRecordsPromise) {
+          scopeRecordsPromise = getTeamAvailabilityScopeRecords({ form, members: [preferencesMember] });
+          availabilityScopeCache.set(scopeCacheKey, scopeRecordsPromise);
+          const loadedScope = await scopeRecordsPromise;
+          diagnostics.teamReadCount += loadedScope.teams.length;
+          diagnostics.positionReadCount = (diagnostics.positionReadCount || 0) + loadedScope.positions.length;
+        }
+        const scopeRecords = await scopeRecordsPromise;
+        if (!isMemberWithinTeamAvailabilityScope({
           form,
           member: preferencesMember,
-          teams: teamIdsForForm.map((teamId) => teamsById.get(teamId)),
-        })) return [];
-        return [{
+          teams: scopeRecords.teams,
+          positions: scopeRecords.positions,
+        })) continue;
+        contexts.push({
           form,
           member: preferencesMember,
           current: {
             ...recipient,
             recipientId: String(recipient.recipientId || recipient.id || "").trim(),
           },
-        }];
-      });
+        });
+      }
       diagnostics.scopedRecipientCount = contexts.length;
 
       const hasPossibleHistoricalPair = contexts.some(({ form }) => {
@@ -9765,6 +9871,7 @@ export const createTeamsAuthHandlers = ({
       churchId,
       members,
       teams,
+      positions = [],
     } = availabilityContext;
     const validate = (currentForm, currentRecipients) => {
       const validatedForm = validateCurrentTeamAvailabilityForm({
@@ -9773,6 +9880,7 @@ export const createTeamsAuthHandlers = ({
         churchId,
         members,
         teams,
+        positions,
       });
       const latestById = new Map(
         currentRecipients
@@ -9816,11 +9924,24 @@ export const createTeamsAuthHandlers = ({
         .doc(form.formId);
       return db.runTransaction(async (transaction) => {
         const formSnapshot = await transaction.get(formRef);
-        const recipientSnapshots = await Promise.all(
+        const [recipientSnapshots, memberSnapshots] = await Promise.all([
+          Promise.all(
           writes.map(({ id }) => transaction.get(
             db.collection(COLLECTIONS.teamIntakeRecipients).doc(id),
           )),
-        );
+          ),
+          Promise.all(members.map((member) => transaction.get(
+            db.collection(COLLECTIONS.teamRosterMembers).doc(member.memberId),
+          ))),
+        ]);
+        const currentMembers = memberSnapshots.flatMap((snapshot) => snapshot.exists
+          ? [{ memberId: snapshot.id, ...snapshot.data() }]
+          : []);
+        if (currentMembers.length !== members.length || currentMembers.some((member) =>
+          member.churchId !== churchId || member.archivedAt)) {
+          throw httpError(409, "One or more selected members are no longer available.");
+        }
+        const currentScope = await getTeamAvailabilityScopeRecords({ form, members: currentMembers, transaction });
         const currentForm = formSnapshot.exists
           ? { formId: formSnapshot.id, ...formSnapshot.data() }
           : null;
@@ -9830,6 +9951,14 @@ export const createTeamsAuthHandlers = ({
             : [],
         );
         const result = validate(currentForm, currentRecipients);
+        validateCurrentTeamAvailabilityForm({
+          currentForm,
+          expectedForm: form,
+          churchId,
+          members: currentMembers,
+          teams: currentScope.teams,
+          positions: currentScope.positions,
+        });
         if (result.needsScopeMarker) {
           transaction.set(
             formRef,
@@ -10243,8 +10372,10 @@ export const createTeamsAuthHandlers = ({
       const responseDigest = hashValue(stablePortableJson(body || {}));
 
       const desiredPositionIds = normalizeIdArray(currentPayload.positionIds);
+      const currentPositionIds = normalizeIdArray(member.positionIds || []);
+      const scopePositionIds = normalizeIdArray([...desiredPositionIds, ...currentPositionIds]);
       const positionSnapshots = [];
-      for (const positionId of desiredPositionIds) {
+      for (const positionId of scopePositionIds) {
         positionSnapshots.push(
           await transaction.get(
             db.collection(COLLECTIONS.teamPositions).doc(positionId),
@@ -10253,7 +10384,8 @@ export const createTeamsAuthHandlers = ({
       }
       const formTeamIds = new Set(normalizeIdArray(form.teamIds));
       const positionTeamIds = new Set();
-      for (const positionSnapshot of positionSnapshots) {
+      for (const positionSnapshot of positionSnapshots.filter((snapshot) =>
+        desiredPositionIds.includes(snapshot.id))) {
         if (!positionSnapshot.exists) {
           throw httpError(
             400,
@@ -10286,6 +10418,9 @@ export const createTeamsAuthHandlers = ({
         teams: teamSnapshots
           .filter((snapshot) => snapshot.exists)
           .map((snapshot) => ({ ...snapshot.data(), teamId: snapshot.id })),
+        positions: positionSnapshots
+          .filter((snapshot) => snapshot.exists)
+          .map((snapshot) => ({ ...snapshot.data(), positionId: snapshot.id })),
       })) {
         throw httpError(404, "This request is no longer available.");
       }
@@ -12433,6 +12568,7 @@ export const createTeamsAuthHandlers = ({
     member,
     actorUid,
     teams,
+    positions,
     allowResponded = false,
   }) => {
     const recipientId = createTeamIntakeRecipientId(
@@ -12444,6 +12580,9 @@ export const createTeamsAuthHandlers = ({
     const buildOrReuse = async (
       currentForm,
       existing,
+      currentMember = member,
+      currentTeams = teams,
+      currentPositions = positions,
       transaction = null,
       refs = null,
     ) => {
@@ -12452,8 +12591,9 @@ export const createTeamsAuthHandlers = ({
             currentForm,
             expectedForm: form,
             churchId: form.churchId,
-            members: [member],
-            teams,
+            members: [currentMember],
+            teams: currentTeams,
+            positions: currentPositions,
           })
         : currentForm || form;
       if (availabilityOnly) {
@@ -12561,19 +12701,29 @@ export const createTeamsAuthHandlers = ({
         const formRef = availabilityOnly
           ? db.collection(COLLECTIONS.teamIntakeForms).doc(form.formId)
           : null;
-        const [formSnapshot, recipientSnapshot] = availabilityOnly
+        const [formSnapshot, recipientSnapshot, memberSnapshot] = availabilityOnly
           ? await Promise.all([
               transaction.get(formRef),
               transaction.get(recipientRef),
+              transaction.get(db.collection(COLLECTIONS.teamRosterMembers).doc(member.memberId)),
             ])
-          : [null, await transaction.get(recipientRef)];
+          : [null, await transaction.get(recipientRef), null];
+        const currentMember = availabilityOnly && memberSnapshot?.exists
+          ? { memberId: memberSnapshot.id, ...memberSnapshot.data() }
+          : member;
+        if (availabilityOnly && (!memberSnapshot?.exists || currentMember.churchId !== form.churchId || currentMember.archivedAt)) {
+          throw httpError(409, "This availability request is no longer available.");
+        }
         const currentForm = availabilityOnly && formSnapshot.exists
           ? { formId: formSnapshot.id, ...formSnapshot.data() }
           : form;
         const existing = recipientSnapshot.exists
           ? { recipientId: recipientSnapshot.id, ...recipientSnapshot.data() }
           : null;
-        return buildOrReuse(currentForm, existing, transaction, {
+        const currentScope = availabilityOnly
+          ? await getTeamAvailabilityScopeRecords({ form: currentForm, members: [currentMember], transaction })
+          : { teams, positions };
+        return buildOrReuse(currentForm, existing, currentMember, currentScope.teams, currentScope.positions, transaction, {
           form: formRef,
           recipient: recipientRef,
         });
@@ -12606,11 +12756,16 @@ export const createTeamsAuthHandlers = ({
       });
     }
     return withTeamAvailabilityFormLock(form.formId, async () => {
-      const [currentForm, existing] = await Promise.all([
+      const [currentForm, existing, currentMember] = await Promise.all([
         getDoc(COLLECTIONS.teamIntakeForms, form.formId),
         getDoc(COLLECTIONS.teamIntakeRecipients, recipientId),
+        getDoc(COLLECTIONS.teamRosterMembers, member.memberId),
       ]);
-      return buildOrReuse(currentForm, existing);
+      if (!currentMember || currentMember.churchId !== form.churchId || currentMember.archivedAt) {
+        throw httpError(409, "This availability request is no longer available.");
+      }
+      const currentScope = await getTeamAvailabilityScopeRecords({ form, members: [currentMember] });
+      return buildOrReuse(currentForm, existing, currentMember, currentScope.teams, currentScope.positions);
     });
   };
 
@@ -12621,7 +12776,7 @@ export const createTeamsAuthHandlers = ({
     teams,
   }) => {
     if (form?.purpose === "team_availability") {
-      return isMemberWithinTeamAvailabilityScope({ form, member, teams });
+      return isMemberWithinTeamAvailabilityScope({ form, member, teams, positions });
     }
     const formTeamIds = new Set(normalizeIdArray(form.teamIds));
     if (formTeamIds.size === 0) return true;
@@ -12665,10 +12820,7 @@ export const createTeamsAuthHandlers = ({
       member.churchId !== churchId ||
       member.archivedAt
     ) return false;
-    const [teams, positions] = await Promise.all([
-      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId),
-      queryDocs(COLLECTIONS.teamPositions, [{ field: "churchId", value: churchId }], { limit: 1000 }),
-    ]);
+    const { teams, positions } = await getTeamAvailabilityScopeRecords({ form, members: [member] });
     return assertMemberWithinIntakeFormScope({
       form,
       member,
@@ -12714,22 +12866,26 @@ export const createTeamsAuthHandlers = ({
         "This intake form has no response fields for an existing volunteer.",
       );
     }
-    const [members, positions, teams, church] = scopeData ? [
-      scopeData.members || [], scopeData.positions || [], scopeData.teams || [], scopeData.church || null,
-    ] : await Promise.all([
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamRosterMembers,
-        "memberId",
-        churchId,
-      ),
-      listTeamCollectionForChurch(
-        COLLECTIONS.teamPositions,
-        "positionId",
-        churchId,
-      ),
-      listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", churchId),
-      getChurchById(churchId),
-    ]);
+    let members;
+    let positions;
+    let teams;
+    let church;
+    if (scopeData) {
+      [members, positions, teams, church] = [
+        scopeData.members || [], scopeData.positions || [], scopeData.teams || [], scopeData.church || null,
+      ];
+    } else {
+      members = (await Promise.all(selectedMemberIds.map(async (memberId) => {
+        const member = await getDoc(COLLECTIONS.teamRosterMembers, memberId);
+        return member ? { ...member, memberId: member.memberId || memberId } : null;
+      }))).filter(Boolean);
+      const scopeRecords = await getTeamAvailabilityScopeRecords({ form, members });
+      [positions, teams, church] = [
+        scopeRecords.positions,
+        scopeRecords.teams,
+        await getChurchById(churchId),
+      ];
+    }
     const results = [];
     for (const memberId of selectedMemberIds) {
       const member = members.find((item) => item.memberId === memberId);
@@ -12763,6 +12919,7 @@ export const createTeamsAuthHandlers = ({
           member,
           actorUid,
           teams,
+          positions,
           allowResponded: audienceType === "specific",
         });
         recipient = ensured.recipient;
@@ -12810,7 +12967,7 @@ export const createTeamsAuthHandlers = ({
         const ensured = await ensureTeamIntakeRecipientToken(
           recipient,
           actorUid,
-          { form, member, teams },
+          { form, member, teams, positions },
         );
         recipient = ensured.recipient;
         token = ensured.token;
@@ -12855,6 +13012,412 @@ export const createTeamsAuthHandlers = ({
     return { form: { formId, ...form }, results };
   };
 
+  const deliverAutomatedAvailabilityEmails = async ({ churchId, teamId, cycle, formId, operationId, runId }) => {
+    const db = requireFirestore?.();
+    const blocked = (reason) => ({ blocked: true, completed: false, reason });
+    if (!automaticEmailDeliveryEnabled) return blocked("The server automatic email gate is disabled.");
+    const providerConfigured = typeof emailDeliveryConfigured === "function"
+      ? emailDeliveryConfigured()
+      : emailDeliveryConfigured;
+    if (!providerConfigured || typeof sendEmail !== "function" || typeof renderAvailabilityRequestEmail !== "function") {
+      return blocked("Resend automatic email delivery is not configured.");
+    }
+    if (!db || !cycle?.cycleId || !formId || !operationId) {
+      return { reviewRequired: true, completed: false, reason: "Durable email delivery state is unavailable." };
+    }
+
+    const currentAuthorization = async () => {
+      const [church, defaults, team, override, savedCycle, form] = await Promise.all([
+        getDoc(COLLECTIONS.churches, churchId),
+        getDoc(COLLECTIONS.teamSchedulingAutomationSettings, schedulingSettingsIdFor({ churchId })),
+        getDoc(COLLECTIONS.teams, teamId),
+        getDoc(COLLECTIONS.teamSchedulingAutomationSettings, schedulingSettingsIdFor({ churchId, teamId })),
+        getDoc(COLLECTIONS.teamSchedulingCycles, cycle.cycleId),
+        getDoc(COLLECTIONS.teamIntakeForms, formId),
+      ]);
+      if (!church || church.archivedAt || !defaults?.availabilityAutomationEnabled) {
+        return { eligible: false, reason: "Church availability automation is disabled." };
+      }
+      if (defaults.availabilityEmailDeliveryEnabled !== true) {
+        return { eligible: false, reason: "Automatic availability email is disabled for this church." };
+      }
+      if (!team || team.churchId !== churchId || team.archivedAt) {
+        return { eligible: false, reason: "Team is archived or unavailable." };
+      }
+      const effective = resolveEffectiveSchedulingSettings({ defaults, override: override || { mode: "inherit" } });
+      if (!effective.enabled) return { eligible: false, reason: "Availability automation is disabled for this team." };
+      if (!savedCycle || savedCycle.churchId !== churchId || savedCycle.teamId !== teamId ||
+          savedCycle.activationBoundaryAt !== defaults.availabilityAutomationActivatedAt) {
+        return { eligible: false, reason: "The saved cycle is no longer active." };
+      }
+      if (!form || form.churchId !== churchId || form.purpose !== "team_availability" ||
+          (form.schedulingCycleId && form.schedulingCycleId !== cycle.cycleId) || !form.active || form.archivedAt) {
+        return { eligible: false, reason: "The availability form is closed or unavailable." };
+      }
+      try {
+        assertTeamIntakeFormIsOpen(form);
+        assertTeamIntakeFormResponseDeadline(form, church.serviceTimeZone || "UTC");
+      } catch {
+        return { eligible: false, reason: "The availability response window has expired." };
+      }
+      return { eligible: true, church, defaults, team, form };
+    };
+
+    const initialAuthorization = await currentAuthorization();
+    if (!initialAuthorization.eligible) return blocked(initialAuthorization.reason);
+    const recipientQuery = db.collection(COLLECTIONS.teamIntakeRecipients)
+      .where("churchId", "==", churchId)
+      .where("formId", "==", formId)
+      .limit(501);
+    const recipientSnapshot = await recipientQuery.get();
+    if (recipientSnapshot.size > 500) {
+      return { reviewRequired: true, completed: false,
+        reason: "The form has more than 500 personalized requests; delivery requires a smaller reviewed batch." };
+    }
+    const candidateMemberIds = recipientSnapshot.docs.map((doc) => doc.data().memberId).filter(Boolean);
+    const prepared = await prepareAvailabilityNotificationRecipients({
+      churchId,
+      formId,
+      memberIds: candidateMemberIds,
+      purpose: "availability_request",
+      audienceType: "not_contacted",
+      actorUid: "scheduling-automation",
+    });
+    const preparedByMemberId = new Map((prepared.results || []).map((row) => [row.memberId, row]));
+    const counts = { recipientCount: 0, emailEligibleCount: 0, noEmailContactCount: 0,
+      preferenceSkippedCount: 0, acceptedCount: 0, failedCount: 0, suppressedCount: 0, retryableFailureCount: 0,
+      uncertainCount: 0, pendingCount: 0, intentCount: 0 };
+    const emailCandidates = [];
+    for (const memberId of candidateMemberIds) {
+      const result = preparedByMemberId.get(memberId);
+      if (!result?.recipient || result.recipient.revokedAt || result.recipient.respondedAt || !result.publicUrl || !result.member) continue;
+      counts.recipientCount += 1;
+      const member = result.member;
+      const linkedUser = member.userId ? await getUserByUid(member.userId) : null;
+      const membership = member.userId ? await getMembershipForUser(member.userId, churchId) : null;
+      if (member.userId && (!membership || membership.status !== "active")) {
+        counts.preferenceSkippedCount += 1;
+        continue;
+      }
+      const address = resolveMemberAddress(member, () => ({
+        email: linkedUser?.primaryEmail || linkedUser?.email || "",
+      }));
+      const email = normalizeEmail(address.email || "");
+      if (!address.reachable || !email || email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        counts.noEmailContactCount += 1;
+        continue;
+      }
+      if (membership && !isNotificationEnabled("availabilityRequests",
+        normalizeNotificationPreferences(membership.notifications).availabilityRequests)) {
+        counts.preferenceSkippedCount += 1;
+        continue;
+      }
+      emailCandidates.push({ ...result, email, member, membership });
+    }
+    counts.emailEligibleCount = emailCandidates.length;
+
+    const suppressUnclaimedIntent = async ({ ref, reason }) => db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists || !["ready", "retryable_failure"].includes(snapshot.data().status)) return false;
+      transaction.set(ref, {
+        status: "suppressed",
+        suppressionReason: reason,
+        nextAttemptAt: null,
+        updatedAt: nowIso(),
+      }, { merge: true });
+      return true;
+    });
+
+    const periodDate = new Date(`${cycle.periodId}-01T12:00:00.000Z`);
+    const periodLabel = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(periodDate);
+    const deadlineDate = String(prepared.form?.responseDeadline || "");
+    const responseDeadline = deadlineDate
+      ? new Intl.DateTimeFormat("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" })
+          .format(new Date(`${deadlineDate}T12:00:00.000Z`))
+      : "the requested date";
+    const intentRefs = [];
+    for (const candidate of emailCandidates) {
+      const logicalIdentity = [churchId, cycle.cycleId, formId, candidate.recipient.recipientId,
+        "availability_request", "email"].join("|");
+      const idempotencyKey = hashValue(logicalIdentity);
+      const intentId = hashValue(`${churchId}|notification-intent|${idempotencyKey}`);
+      const providerIdempotencyKey = hashValue(`resend|${logicalIdentity}`);
+      const ref = db.collection(COLLECTIONS.notificationIntents).doc(intentId);
+      const timestamp = nowIso();
+      const created = await db.runTransaction(async (transaction) => {
+        const existing = await transaction.get(ref);
+        if (existing.exists) {
+          const current = existing.data();
+          if (current.channel !== "email" || current.churchId !== churchId || current.formId !== formId ||
+              current.recipientId !== candidate.recipient.recipientId || current.idempotencyKey !== idempotencyKey) {
+            return { reviewRequired: true };
+          }
+          return { created: false, status: current.status };
+        }
+        transaction.create(ref, {
+          intentId,
+          churchId,
+          intentType: "availability_request",
+          sourceType: "scheduling_cycle",
+          sourceId: cycle.cycleId,
+          sourceVersion: formId,
+          memberId: candidate.member.memberId,
+          recipientId: candidate.recipient.recipientId,
+          formId,
+          cycleId: cycle.cycleId,
+          operationId,
+          createdByRunId: runId,
+          channel: "email",
+          idempotencyKey,
+          providerIdempotencyKey,
+          status: "ready",
+          attemptCount: 0,
+          createdByAutomation: true,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+        return { created: true, status: "ready" };
+      });
+      if (created.reviewRequired || ![
+        "ready", "sending", "sent", "failed", "suppressed", "unknown", "review_required", "retryable_failure",
+      ].includes(created.status)) {
+        return { reviewRequired: true, completed: false, reason: "An email intent identity is occupied by unrelated delivery data." };
+      }
+      if (["ready", "sending", "retryable_failure"].includes(created.status)) {
+        intentRefs.push({ ref, intentId, candidate, providerIdempotencyKey });
+      }
+    }
+    counts.intentCount = intentRefs.length;
+
+    const deliverOne = async ({ ref, candidate, providerIdempotencyKey }) => {
+      const freshAuthorization = await currentAuthorization();
+      if (!freshAuthorization.eligible) return { blocked: freshAuthorization.reason };
+      const [fresh] = await prepareAvailabilityNotificationRecipients({
+        churchId,
+        formId,
+        memberIds: [candidate.member.memberId],
+        purpose: "availability_request",
+        audienceType: "not_contacted",
+        actorUid: "scheduling-automation",
+      }).then((value) => value.results || []);
+      if (!fresh?.recipient || fresh.recipient.revokedAt || fresh.recipient.respondedAt || !fresh.publicUrl || !fresh.member) {
+        await suppressUnclaimedIntent({ ref, reason: "recipient_no_longer_eligible" });
+        return { suppressed: true };
+      }
+      const currentUser = fresh.member.userId ? await getUserByUid(fresh.member.userId) : null;
+      const currentMembership = fresh.member.userId ? await getMembershipForUser(fresh.member.userId, churchId) : null;
+      if (fresh.member.userId && (!currentMembership || currentMembership.status !== "active")) {
+        await suppressUnclaimedIntent({ ref, reason: "account_not_active" });
+        return { suppressed: true };
+      }
+      if (currentMembership && !isNotificationEnabled("availabilityRequests",
+        normalizeNotificationPreferences(currentMembership.notifications).availabilityRequests)) {
+        await suppressUnclaimedIntent({ ref, reason: "email_preference_disabled" });
+        return { suppressed: true };
+      }
+      const currentAddress = resolveMemberAddress(fresh.member, () => ({
+        email: currentUser?.primaryEmail || currentUser?.email || "",
+      }));
+      const currentEmail = normalizeEmail(currentAddress.email || "");
+      if (!currentAddress.reachable || !currentEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(currentEmail)) {
+        await suppressUnclaimedIntent({ ref, reason: "email_contact_unavailable" });
+        return { suppressed: true };
+      }
+      const destinationFingerprint = hashValue(currentEmail);
+      const claimToken = crypto.randomUUID();
+      const claimResult = await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists) return { terminal: "missing" };
+        const current = snapshot.data();
+        if (current.status === "sent") return { terminal: "sent" };
+        if (["unknown", "review_required"].includes(current.status)) return { terminal: "review" };
+        if (["failed", "suppressed"].includes(current.status)) return { terminal: current.status };
+        if (current.status === "sending") {
+          if (Date.parse(current.sendLeaseExpiresAt || "") > Date.now()) return { terminal: "in_progress" };
+          transaction.set(ref, { status: "unknown", failureClassification: "interrupted_after_dispatch_claim",
+            reviewReason: "The prior process stopped after the provider call may have begun.", updatedAt: nowIso() }, { merge: true });
+          return { terminal: "review" };
+        }
+        if (current.status === "retryable_failure" && Date.parse(current.nextAttemptAt || "") > Date.now()) {
+          return { terminal: "retry_later", nextAttemptAt: current.nextAttemptAt };
+        }
+        if (current.status === "retryable_failure" && Date.parse(current.safeToRetryUntil || "") <= Date.now()) {
+          transaction.set(ref, { status: "review_required", reviewReason: "The provider idempotency window expired before a safe retry.", updatedAt: nowIso() }, { merge: true });
+          return { terminal: "review" };
+        }
+        if (!(["ready", "retryable_failure"].includes(current.status)) || Number(current.attemptCount || 0) >= 3) {
+          transaction.set(ref, { status: "review_required", reviewReason: "The email intent exceeded its safe retry limit.", updatedAt: nowIso() }, { merge: true });
+          return { terminal: "review" };
+        }
+        if (current.destinationFingerprint && current.destinationFingerprint !== destinationFingerprint) {
+          transaction.set(ref, { status: "review_required", reviewReason: "The recipient address changed after this email was queued.", updatedAt: nowIso() }, { merge: true });
+          return { terminal: "review" };
+        }
+        const timestamp = nowIso();
+        transaction.set(ref, {
+          status: "sending",
+          claimToken,
+          destinationFingerprint,
+          firstAttemptAt: current.firstAttemptAt || timestamp,
+          attemptCount: Number(current.attemptCount || 0) + 1,
+          sendStartedAt: timestamp,
+          sendLeaseExpiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+          lastProcessorRunId: runId,
+          updatedAt: timestamp,
+        }, { merge: true });
+        return { claimed: true };
+      });
+      if (claimResult.terminal) return claimResult;
+      const finalAuthorization = await currentAuthorization();
+      if (!finalAuthorization.eligible) {
+        await db.runTransaction(async (transaction) => {
+          const snapshot = await transaction.get(ref);
+          if (snapshot.exists && snapshot.data().status === "sending" && snapshot.data().claimToken === claimToken) {
+            transaction.set(ref, { status: "ready", claimToken: null, sendLeaseExpiresAt: null,
+              destinationFingerprint: null, attemptCount: Math.max(0, Number(snapshot.data().attemptCount || 1) - 1),
+              updatedAt: nowIso() }, { merge: true });
+          }
+        });
+        return { blocked: finalAuthorization.reason };
+      }
+      let finalFresh;
+      try {
+        [finalFresh] = await prepareAvailabilityNotificationRecipients({
+          churchId,
+          formId,
+          memberIds: [candidate.member.memberId],
+          purpose: "availability_request",
+          audienceType: "not_contacted",
+          actorUid: "scheduling-automation",
+        }).then((value) => value.results || []);
+      } catch (error) {
+        if (![404, 409].includes(Number(error?.statusCode))) throw error;
+        await finalizeIntent({ ref, claimToken, patch: { status: "suppressed",
+          suppressionReason: "recipient_scope_changed_before_dispatch", failureClassification: null } });
+        return { suppressed: true };
+      }
+      if (!finalFresh?.recipient || finalFresh.recipient.revokedAt || finalFresh.recipient.respondedAt ||
+          !finalFresh.publicUrl || !finalFresh.member) {
+        await finalizeIntent({ ref, claimToken, patch: { status: "suppressed",
+          suppressionReason: "recipient_no_longer_eligible", failureClassification: null } });
+        return { suppressed: true };
+      }
+      const finalUser = finalFresh.member.userId ? await getUserByUid(finalFresh.member.userId) : null;
+      const finalMembership = finalFresh.member.userId ? await getMembershipForUser(finalFresh.member.userId, churchId) : null;
+      if (finalFresh.member.userId && (!finalMembership || finalMembership.status !== "active")) {
+        await finalizeIntent({ ref, claimToken, patch: { status: "suppressed",
+          suppressionReason: "account_not_active", failureClassification: null } });
+        return { suppressed: true };
+      }
+      if (finalMembership && !isNotificationEnabled("availabilityRequests",
+        normalizeNotificationPreferences(finalMembership.notifications).availabilityRequests)) {
+        await finalizeIntent({ ref, claimToken, patch: { status: "suppressed",
+          suppressionReason: "email_preference_disabled", failureClassification: null } });
+        return { suppressed: true };
+      }
+      const finalAddress = resolveMemberAddress(finalFresh.member, () => ({
+        email: finalUser?.primaryEmail || finalUser?.email || "",
+      }));
+      const finalEmail = normalizeEmail(finalAddress.email || "");
+      if (!finalAddress.reachable || !finalEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(finalEmail)) {
+        await finalizeIntent({ ref, claimToken, patch: { status: "suppressed",
+          suppressionReason: "email_contact_unavailable", failureClassification: null } });
+        return { suppressed: true };
+      }
+      if (finalEmail !== currentEmail) {
+        await finalizeIntent({ ref, claimToken, patch: { status: "review_required",
+          reviewReason: "The recipient address changed before dispatch; review the current contact before sending.",
+          failureClassification: "destination_changed" } });
+        return { terminal: "review" };
+      }
+      const message = await renderAvailabilityRequestEmail({
+        churchName: finalAuthorization.church.name || "WorshipSync",
+        teamName: finalAuthorization.team.name || "Team",
+        periodLabel,
+        responseDeadline,
+        memberFirstName: String(finalFresh.member.firstName || "").trim(),
+        availabilityUrl: finalFresh.publicUrl,
+      });
+      const subject = `${periodLabel} availability — ${finalAuthorization.team.name || "Team"}`;
+      try {
+        const providerResponse = await sendEmail({
+          to: finalEmail,
+          subject,
+          textBody: message.text,
+          htmlBody: message.html,
+          tags: { category: "availability_request", source: "scheduling_automation" },
+          idempotencyKey: providerIdempotencyKey,
+          requireProviderAcceptance: true,
+          timeoutMs: 25_000,
+        });
+        const providerMessageId = String(providerResponse?.id || "").trim();
+        if (!providerMessageId) {
+          await finalizeIntent({ ref, claimToken, patch: { status: "unknown", failureClassification: "missing_provider_receipt",
+            reviewReason: "The provider response did not include an acceptance receipt." } });
+          return { terminal: "review" };
+        }
+        await finalizeIntent({ ref, claimToken, patch: { status: "sent", providerMessageId,
+          providerAcceptedAt: nowIso(), sentAt: nowIso(), failureClassification: null, reviewReason: null } });
+        return { terminal: "sent" };
+      } catch (error) {
+        const statusCode = Number(error?.statusCode || error?.status || error?.response?.status || 0);
+        if (statusCode === 429) {
+          const timestamp = nowIso();
+          const nextAttemptAt = new Date(Date.now() + 60_000).toISOString();
+          const currentIntent = await ref.get();
+          const firstAttemptAt = currentIntent.exists ? currentIntent.data().firstAttemptAt : timestamp;
+          const safeToRetryUntil = new Date(Date.parse(firstAttemptAt || timestamp) + 23 * 60 * 60 * 1000).toISOString();
+          await finalizeIntent({ ref, claimToken, patch: { status: "retryable_failure", nextAttemptAt, safeToRetryUntil,
+            failureClassification: "provider_rejected_retryable", lastError: "Email provider asked the sender to retry later." } });
+          return { terminal: "retry_later", nextAttemptAt };
+        }
+        const definiteRejection = statusCode >= 400 && statusCode < 500;
+        await finalizeIntent({ ref, claimToken, patch: {
+          status: definiteRejection ? "failed" : "unknown",
+          failureClassification: definiteRejection ? "provider_rejected" : "provider_outcome_uncertain",
+          reviewReason: definiteRejection ? null : "The provider outcome could not be confirmed; automatic resend is held.",
+          lastError: definiteRejection ? "The email provider rejected the request." : "Email outcome could not be confirmed.",
+        } });
+        return { terminal: definiteRejection ? "failed" : "review" };
+      }
+    };
+
+    const finalizeIntent = async ({ ref, claimToken, patch: update }) => db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(ref);
+      if (!snapshot.exists || snapshot.data().status !== "sending" || snapshot.data().claimToken !== claimToken) return false;
+      transaction.set(ref, { ...update, claimToken: null, sendLeaseExpiresAt: null, updatedAt: nowIso() }, { merge: true });
+      return true;
+    });
+
+    const batch = intentRefs.slice(0, 50);
+    const outcomes = await mapWithConcurrency(batch, 4, deliverOne);
+    const blockedOutcome = outcomes.find((outcome) => outcome?.blocked);
+    const allIntentRows = await db.collection(COLLECTIONS.notificationIntents)
+      .where("churchId", "==", churchId).where("formId", "==", formId).limit(501).get();
+    if (allIntentRows.size > 500) {
+      return { reviewRequired: true, completed: false, reason: "Availability email history exceeded its safe review limit.", ...counts };
+    }
+    const rows = allIntentRows.docs.map((doc) => doc.data())
+      .filter((intent) => intent.channel === "email" && intent.sourceType === "scheduling_cycle" && intent.sourceId === cycle.cycleId && intent.intentType === "availability_request");
+    counts.intentCount = rows.length;
+    counts.acceptedCount = rows.filter((intent) => intent.status === "sent").length;
+    counts.failedCount = rows.filter((intent) => intent.status === "failed").length;
+    counts.suppressedCount = rows.filter((intent) => intent.status === "suppressed").length;
+    counts.retryableFailureCount = rows.filter((intent) => intent.status === "retryable_failure").length;
+    counts.uncertainCount = rows.filter((intent) => ["unknown", "review_required"].includes(intent.status)).length;
+    counts.pendingCount = rows.filter((intent) => ["ready", "sending"].includes(intent.status)).length;
+    if (counts.uncertainCount > 0) return { reviewRequired: true, completed: false, ...counts,
+      reason: "At least one email outcome is uncertain and needs review." };
+    if (blockedOutcome) return { blocked: true, completed: false, reason: blockedOutcome.blocked, ...counts };
+    const pendingRows = rows.filter((intent) => ["ready", "sending", "retryable_failure"].includes(intent.status));
+    if (pendingRows.length) {
+      const retryAt = pendingRows.map((intent) => intent.nextAttemptAt || intent.sendLeaseExpiresAt)
+        .filter(Boolean).sort()[0] || new Date(Date.now() + 30_000).toISOString();
+      return { completed: false, retryAt, ...counts, lifecycle: "email_pending" };
+    }
+    return { completed: true, ...counts, lifecycle: "email_complete" };
+  };
+
   const resolveAvailabilityNotificationContext = async (
     intent,
     actorUid = "",
@@ -12877,10 +13440,9 @@ export const createTeamsAuthHandlers = ({
     let teams = [];
     let positions = [];
     if (form.purpose === "team_availability") {
-      [teams, positions] = await Promise.all([
-        listTeamCollectionForChurch(COLLECTIONS.teams, "teamId", intent.churchId),
-        queryDocs(COLLECTIONS.teamPositions, [{ field: "churchId", value: intent.churchId }], { limit: 1000 }),
-      ]);
+      const scopeRecords = await getTeamAvailabilityScopeRecords({ form, members: [member] });
+      teams = scopeRecords.teams;
+      positions = scopeRecords.positions;
       if (!assertMemberWithinIntakeFormScope({ form, member, positions, teams })) {
         throw httpError(409, "The recipient is no longer on a Team in this availability form.");
       }
@@ -12905,7 +13467,7 @@ export const createTeamsAuthHandlers = ({
     const ensured = await ensureTeamIntakeRecipientToken(
       recipient,
       actorUid,
-      { form, member, teams },
+          { form, member, teams, positions },
     );
     return {
       form: ensured.form || form,
@@ -14427,7 +14989,7 @@ export const createTeamsAuthHandlers = ({
     return result.schedule;
   };
 
-  const createAutomatedAvailabilityRequest = async ({ churchId, teamId, cycle, operationId }) => {
+  const createAutomatedAvailabilityRequest = async ({ churchId, teamId, cycle, operationId, dryRun = false }) => {
     const [church, team] = await Promise.all([
       getDoc(COLLECTIONS.churches, churchId),
       getDoc(COLLECTIONS.teams, teamId),
@@ -14563,69 +15125,10 @@ export const createTeamsAuthHandlers = ({
       throw error;
     }
     const sameIds = (left, right) => JSON.stringify([...left].sort()) === JSON.stringify([...right].sort());
-    const serviceGroupById = new Map();
-    const groupServicesById = new Map();
-    for (const service of services.filter((item) => !item.archivedAt)) {
-      const serviceId = String(service.serviceId || "").trim();
-      const groupId = String(service.serviceGroupId || service.groupId || "").trim();
-      if (!serviceId || !groupId) continue;
-      serviceGroupById.set(serviceId, groupId);
-      const members = groupServicesById.get(groupId) || new Set();
-      members.add(serviceId);
-      groupServicesById.set(groupId, members);
-    }
-    const canonicalOccurrenceScope = (occurrences) => {
-      const rows = [];
-      let ambiguous = false;
-      for (const occurrence of occurrences || []) {
-        const identity = resolveOccurrenceIdentity(occurrence, church.serviceTimeZone || "UTC");
-        if (!identity) return { keys: [], rows: [], ambiguous: true };
-        let groupId = identity.groupId;
-        const authoritativeGroupMembers = groupId ? [...(groupServicesById.get(groupId) || [])].sort() : [];
-        const serviceIds = groupId && authoritativeGroupMembers.length
-          ? authoritativeGroupMembers
-          : identity.serviceIds;
-        rows.push({ date: identity.serviceDate, groupId, serviceIds: [...new Set(serviceIds)].sort() });
-      }
-      const byDateGroup = new Map();
-      const standalone = [];
-      rows.forEach((row) => {
-        if (row.groupId) {
-          const key = `${row.date}|${row.groupId}`;
-          if (byDateGroup.has(key)) ambiguous = true;
-          byDateGroup.set(key, row);
-        } else {
-          row.serviceIds.forEach((serviceId) => standalone.push({ date: row.date, serviceId }));
-        }
-      });
-      const standaloneGroups = new Map();
-      standalone.forEach((row) => {
-        const groupId = serviceGroupById.get(row.serviceId);
-        if (!groupId) return;
-        const key = `${row.date}|${groupId}`;
-        const members = standaloneGroups.get(key) || new Set();
-        members.add(row.serviceId);
-        standaloneGroups.set(key, members);
-      });
-      for (const [key, members] of standaloneGroups) {
-        const groupId = key.slice(key.indexOf("|") + 1);
-        const authoritative = groupServicesById.get(groupId) || new Set();
-        if (authoritative.size && authoritative.size === members.size && [...authoritative].every((id) => members.has(id))) {
-          byDateGroup.set(key, { date: key.slice(0, key.indexOf("|")), groupId, serviceIds: [...authoritative].sort() });
-        }
-      }
-      for (const group of byDateGroup.values()) {
-        if (standalone.some((row) => row.date === group.date && group.serviceIds.includes(row.serviceId))) ambiguous = true;
-      }
-      const groupedServiceIds = new Set([...byDateGroup.values()].flatMap((row) => row.serviceIds));
-      const finalRows = [
-        ...byDateGroup.values(),
-        ...standalone.filter((row) => !groupedServiceIds.has(row.serviceId))
-          .map((row) => ({ date: row.date, groupId: "", serviceIds: [row.serviceId] })),
-      ];
-      const keys = finalRows.map((row) => JSON.stringify([row.date, row.groupId, row.serviceIds])).sort();
-      return { keys, rows: finalRows, ambiguous: ambiguous || new Set(keys).size !== keys.length };
-    };
+    const canonicalOccurrenceScope = (occurrences) => canonicalizeAvailabilityOccurrenceScope(
+      occurrences,
+      church.serviceTimeZone || "UTC",
+    );
     const isSameTeamPeriod = (form) =>
       form.churchId === churchId && form.purpose === "team_availability" && !form.archivedAt &&
       form.startDate === cycle.periodStart && form.endDate === cycle.periodEnd &&
@@ -14665,9 +15168,7 @@ export const createTeamsAuthHandlers = ({
       if (String(form.endDate || "") < cycle.periodStart || String(form.startDate || "") > cycle.periodEnd) return false;
       const existingScope = canonicalOccurrenceScope(form.availabilityOccurrences || []);
       if (existingScope.ambiguous || requestedCanonicalScope.ambiguous) return true;
-      return existingScope.rows.some((left) => requestedCanonicalScope.rows.some((right) =>
-        left.date === right.date && left.serviceIds.some((serviceId) => right.serviceIds.includes(serviceId)),
-      ));
+      return availabilityOccurrenceScopesOverlap(existingScope.rows, requestedCanonicalScope.rows);
     });
     if (!operationMatches.length && exactMatches.length === 0 && overlap.length > 0) {
       const error = new Error("An existing availability form overlaps this cycle. Review it before creating another request.");
@@ -14677,6 +15178,7 @@ export const createTeamsAuthHandlers = ({
     }
 
     let form = operationMatches[0] || exactMatches[0] || null;
+    let wouldCreateForm = false;
     let reused = Boolean(form);
     if (form && (!form.active || String(form.responseDeadline || "") < getVolunteerAvailabilityCurrentDate(church.serviceTimeZone || "UTC"))) {
       const error = new Error("The matching availability form is closed or expired and needs leader review.");
@@ -14712,6 +15214,18 @@ export const createTeamsAuthHandlers = ({
           availabilityMessage: churchIntakeDefaults.availabilityMessage ||
             `Please share your availability for ${team.name || "this team"} for ${cycle.periodId}. Respond by ${deadline}.`,
         });
+        if (dryRun) {
+          form = {
+            ...payload,
+            formId,
+            churchId,
+            schedulingCycleId: cycle.cycleId,
+            automationOperationId: operationId,
+            createdByAutomation: true,
+          };
+          reused = false;
+          wouldCreateForm = true;
+        } else {
         const publicLinkToken = createTeamIntakeShortPublicToken();
         const timestamp = nowIso();
         const nextForm = {
@@ -14733,9 +15247,51 @@ export const createTeamsAuthHandlers = ({
         if (db) {
           const formRef = db.collection(COLLECTIONS.teamIntakeForms).doc(formId);
           const created = await db.runTransaction(async (transaction) => {
-            const snapshot = await transaction.get(formRef);
+            const guardRef = db.collection(COLLECTIONS.teamAvailabilityFormCreationGuards)
+              .doc(availabilityFormGuardId(churchId, teamId));
+            const overlapQuery = db.collection(COLLECTIONS.teamIntakeForms)
+              .where("churchId", "==", churchId)
+              .where("purpose", "==", "team_availability")
+              .where("active", "==", true)
+              .where("teamIds", "array-contains", teamId)
+              .where("endDate", ">=", cycle.periodStart)
+              .limit(501);
+            const [snapshot, guardSnapshot, overlapSnapshot] = await Promise.all([
+              transaction.get(formRef),
+              transaction.get(guardRef),
+              transaction.get(overlapQuery),
+            ]);
             if (snapshot.exists) return { form: validateDeterministicWinner({ formId: snapshot.id, ...snapshot.data() }), created: false };
+            if (overlapSnapshot.size > 500) {
+              const error = new Error("The active availability form scope exceeded its safe review limit.");
+              error.safeMessage = error.message;
+              error.reviewRequired = true;
+              throw error;
+            }
+            const currentForms = overlapSnapshot.docs.map((row) => ({ formId: row.id, ...row.data() }));
+            const currentExact = currentForms.filter((candidate) =>
+              isSameTeamPeriod(candidate) && isExactOccurrenceScope(candidate) && !candidate.archivedAt,
+            );
+            const currentOverlaps = currentForms.filter((candidate) => availabilityFormsOverlap(
+              nextForm, candidate, church.serviceTimeZone || "UTC",
+            ));
+            if (currentExact.length === 1 && currentOverlaps.length === 1) {
+              return { form: currentExact[0], created: false };
+            }
+            if (currentExact.length > 0 || currentOverlaps.length > 0) {
+              const error = new Error("A manual or automatic availability form overlaps this cycle. Review the existing request before continuing.");
+              error.safeMessage = error.message;
+              error.reviewRequired = true;
+              throw error;
+            }
             transaction.create(formRef, nextForm);
+            transaction.set(guardRef, {
+              churchId,
+              teamId,
+              revision: Number(guardSnapshot.exists ? guardSnapshot.data().revision || 0 : 0) + 1,
+              lastFormId: formId,
+              updatedAt: timestamp,
+            }, { merge: false });
             return { form: nextForm, created: true };
           });
           form = created.form;
@@ -14751,18 +15307,66 @@ export const createTeamsAuthHandlers = ({
           form = nextForm;
           reused = false;
         }
+        }
       }
     }
 
+    const scopedTeams = [{ ...team, teamId }];
     const memberIds = normalizeIdArray([
       ...normalizeIdArray(team.memberIds),
       ...rosterMembers.filter((member) => !member.archivedAt && member.churchId === churchId &&
-        (Object.hasOwn(member.teamMemberships || {}, teamId) ||
-          (member.positionIds || []).some((positionId) => activeTeamPositionIds.includes(positionId))))
+        isMemberWithinTeamAvailabilityScope({ form, member, teams: scopedTeams, positions }))
         .map((member) => member.memberId),
     ]);
-    const scopedTeams = [{ ...team, teamId }];
     const scopeData = { members: rosterMembers, positions, teams: scopedTeams, church };
+    if (dryRun) {
+      const preview = {
+        formId: form.formId,
+        formAction: wouldCreateForm ? "create" : "reuse",
+        reused: !wouldCreateForm,
+        recipientCount: 0,
+        emailEligibleCount: 0,
+        noEmailContactCount: 0,
+        preferenceSkippedCount: 0,
+        skippedRecipientCount: 0,
+      };
+      for (const memberId of memberIds) {
+        const member = rosterMembers.find((row) => row.memberId === memberId);
+        if (!member || member.archivedAt || member.churchId !== churchId ||
+            !assertMemberWithinIntakeFormScope({ form, member, positions: scopeData.positions, teams: scopeData.teams })) {
+          preview.skippedRecipientCount += 1;
+          continue;
+        }
+        const recipientId = createTeamIntakeRecipientId(form.formId, memberId);
+        const recipient = await getDoc(COLLECTIONS.teamIntakeRecipients, recipientId);
+        if (recipient?.revokedAt || recipient?.respondedAt) {
+          preview.skippedRecipientCount += 1;
+          continue;
+        }
+        preview.recipientCount += 1;
+        const linkedUser = member.userId ? await getUserByUid(member.userId) : null;
+        const membership = member.userId ? await getMembershipForUser(member.userId, churchId) : null;
+        if (member.userId && (!membership || membership.status !== "active")) {
+          preview.preferenceSkippedCount += 1;
+          continue;
+        }
+        const address = resolveMemberAddress(member, () => ({
+          email: linkedUser?.primaryEmail || linkedUser?.email || "",
+        }));
+        const email = normalizeEmail(address.email || "");
+        if (!address.reachable || !email || email.length > 320 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          preview.noEmailContactCount += 1;
+          continue;
+        }
+        if (membership && !isNotificationEnabled("availabilityRequests",
+          normalizeNotificationPreferences(membership.notifications).availabilityRequests)) {
+          preview.preferenceSkippedCount += 1;
+          continue;
+        }
+        preview.emailEligibleCount += 1;
+      }
+      return preview;
+    }
     const preparedResults = [];
     for (let offset = 0; offset < memberIds.length; offset += 500) {
       const prepared = await prepareAvailabilityNotificationRecipients({
@@ -14787,6 +15391,7 @@ export const createTeamsAuthHandlers = ({
 
   return {
     createAutomatedAvailabilityRequest,
+    deliverAutomatedAvailabilityEmails,
     ...createSchedulingCycleHandlers({
       COLLECTIONS,
       assertCsrf,
@@ -19933,9 +20538,57 @@ export const createTeamsAuthHandlers = ({
           updatedAt: now,
           updatedByUid: admin.user.uid,
         };
-        await setDoc(COLLECTIONS.teamIntakeForms, formId, form, {
-          merge: false,
-        });
+        if (payload.purpose === "team_availability") {
+          const teamIds = normalizeIdArray(payload.teamIds).sort();
+          if (!teamIds.length || teamIds.length > 25) {
+            throw httpError(400, "Choose between one and 25 teams for an availability form.");
+          }
+          const church = await getChurchById(req.params.churchId);
+          const timeZone = church?.serviceTimeZone || "UTC";
+          const db = requireFirestore();
+          if (db) {
+            await db.runTransaction(async (transaction) => {
+              const guardRefs = teamIds.map((teamId) => db.collection(COLLECTIONS.teamAvailabilityFormCreationGuards)
+                .doc(availabilityFormGuardId(req.params.churchId, teamId)));
+              const guardSnapshots = await Promise.all(guardRefs.map((ref) => transaction.get(ref)));
+              const formQueries = teamIds.map((teamId) => db.collection(COLLECTIONS.teamIntakeForms)
+                .where("churchId", "==", req.params.churchId)
+                .where("purpose", "==", "team_availability")
+                .where("active", "==", true)
+                .where("teamIds", "array-contains", teamId)
+                .where("endDate", ">=", payload.startDate)
+                .limit(501));
+              const formSnapshots = await Promise.all(formQueries.map((query) => transaction.get(query)));
+              if (formSnapshots.some((snapshot) => snapshot.size > 500)) {
+                throw httpError(409, "The active availability form scope exceeded its safe review limit.");
+              }
+              const existingForms = [...new Map(formSnapshots.flatMap((snapshot) => snapshot.docs)
+                .map((snapshot) => [snapshot.id, { formId: snapshot.id, ...snapshot.data() }])).values()];
+              assertAvailabilityFormCreationIsUnambiguous({ requested: form, existingForms, timeZone });
+              transaction.create(db.collection(COLLECTIONS.teamIntakeForms).doc(formId), form);
+              guardRefs.forEach((ref, index) => transaction.set(ref, {
+                churchId: req.params.churchId,
+                teamId: teamIds[index],
+                revision: Number(guardSnapshots[index].exists ? guardSnapshots[index].data().revision || 0 : 0) + 1,
+                lastFormId: formId,
+                updatedAt: now,
+              }, { merge: false }));
+            });
+          } else {
+            await withMemoryAvailabilityFormCreationLock(async () => {
+              const existingForms = await queryDocs(COLLECTIONS.teamIntakeForms, [
+                { field: "churchId", value: req.params.churchId },
+                { field: "purpose", value: "team_availability" },
+                { field: "active", value: true },
+              ], { limit: 501 });
+              if (existingForms.length > 500) throw httpError(409, "The active availability form scope exceeded its safe review limit.");
+              assertAvailabilityFormCreationIsUnambiguous({ requested: form, existingForms, timeZone });
+              await setDoc(COLLECTIONS.teamIntakeForms, formId, form, { merge: false });
+            });
+          }
+        } else {
+          await setDoc(COLLECTIONS.teamIntakeForms, formId, form, { merge: false });
+        }
         await addSecurityEvent({
           type: "team_intake_form_created",
           churchId: req.params.churchId,
@@ -20367,6 +21020,7 @@ export const createTeamsAuthHandlers = ({
               churchId: req.params.churchId,
               members: selectedMembers,
               teams,
+              positions,
             },
           );
           responseRecipients = committedRecipients.map((recipient) =>
@@ -20415,16 +21069,13 @@ export const createTeamsAuthHandlers = ({
           req.params.churchId,
           form,
         );
-        const teams = form.purpose === "team_availability"
-          ? await listTeamCollectionForChurch(
-              COLLECTIONS.teams,
-              "teamId",
-              req.params.churchId,
-            )
-          : [];
+        const scopeRecords = form.purpose === "team_availability"
+          ? await getTeamAvailabilityScopeRecords({ form, members: [member] })
+          : { teams: [], positions: [] };
+        const { teams, positions } = scopeRecords;
         if (
           form.purpose === "team_availability" &&
-          !assertMemberWithinIntakeFormScope({ form, member, positions: [], teams })
+          !assertMemberWithinIntakeFormScope({ form, member, positions, teams })
         ) {
           throw httpError(404, "Individual request not found.");
         }
@@ -20433,7 +21084,7 @@ export const createTeamsAuthHandlers = ({
         const ensured = await ensureTeamIntakeRecipientToken(
           recipient,
           admin.user.uid,
-          { form, member, teams },
+          { form, member, teams, positions },
         );
         const update = {
           ...(markCopied

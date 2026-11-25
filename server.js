@@ -1736,6 +1736,10 @@ app.post(
   authHandlers.setAvailabilityAutomation,
 );
 app.post(
+  "/api/churches/:churchId/scheduling-automation/email-delivery",
+  authHandlers.setAvailabilityEmailDelivery,
+);
+app.post(
   "/api/churches/:churchId/scheduling-automation/teams/:teamId",
   authHandlers.saveTeamSchedulingOverride,
 );
