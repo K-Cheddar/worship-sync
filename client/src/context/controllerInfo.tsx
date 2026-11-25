@@ -1,4 +1,4 @@
-import { startItemCacheSync } from "../store/itemCacheSync";
+import { flushItemCacheChanges, startItemCacheSync } from "../store/itemCacheSync";
 import { resetItemCache } from "../store/allDocsSlice";
 import {
   createContext,
@@ -15,7 +15,9 @@ import PouchDB from "pouchdb-browser";
 import { Cloudinary } from "@cloudinary/url-gen";
 import { GlobalInfoContext, globalFireDbInfo } from "./globalInfo";
 import { useLocation } from "react-router-dom";
+import { useStore } from "react-redux";
 import { useDispatch, useSelector } from "../hooks";
+import type { RootState } from "../store/store";
 import { backoff } from "../utils/generalUtils";
 import { getApiBasePath } from "../utils/environment";
 import { CLOUDINARY_CLOUD_NAME } from "../utils/cloudinaryConfig";
@@ -43,6 +45,7 @@ import {
   beginStartupReplication,
   getStartupDiagnosticMode,
   isStartupDiagnosticsActive,
+  recordStartupAggregate,
   recordStartupDiagnostic,
   resolveStartupDatabasePlan,
   resolveStartupReplicationOptions,
@@ -239,6 +242,9 @@ export const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = f
     return;
   }
   state.lastStartedAt = Date.now();
+  const maintenanceStartedAt = performance.now();
+  let maintenanceResult: Awaited<ReturnType<typeof import("../utils/songV2Writer").reconcilePendingSongV2Cleanup>> | undefined;
+  let maintenanceFailed = false;
   const abortController = new AbortController();
   state.abortController = abortController;
   state.running = import("../utils/songV2Writer")
@@ -247,6 +253,7 @@ export const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = f
       return reconcilePendingSongV2Cleanup(db, 20, abortController.signal);
     })
     .then((result) => {
+      maintenanceResult = result;
       if (!isActive() || abortController.signal.aborted || result?.cancelled) return;
       if (!result) return;
       if (result.quarantined.length) {
@@ -260,12 +267,21 @@ export const scheduleSongV2CleanupMaintenance = (db: PouchDB.Database, force = f
       else if (result.hasMore) scheduleAfter(250);
     })
     .catch((error) => {
+      maintenanceFailed = true;
       if (!isActive() || abortController.signal.aborted) return;
       state.consecutiveFailures += 1;
       console.error("Could not run song cleanup maintenance:", error);
       scheduleAfter(retryDelay());
     })
     .finally(() => {
+      recordStartupAggregate("post-replication-maintenance", {
+        songV2CleanupRuns: 1,
+        songV2CleanupDurationMs: performance.now() - maintenanceStartedAt,
+        songV2CleanupDeleted: maintenanceResult?.deleted.length ?? 0,
+        songV2CleanupRetired: maintenanceResult?.retired.length ?? 0,
+        songV2CleanupQuarantined: maintenanceResult?.quarantined.length ?? 0,
+        songV2CleanupErrors: maintenanceResult?.cleanupErrors.length ?? (maintenanceFailed ? 1 : 0),
+      });
       if (cleanupMaintenanceRuns.get(db) !== state) return;
       state.running = undefined;
       state.abortController = undefined;
@@ -382,6 +398,7 @@ const ControllerInfoProvider = ({ children }: any) => {
 
   const location = useLocation();
   const dispatch = useDispatch();
+  const reduxStore = useStore<RootState>();
   // A full Redux session reset retires the feed even if the database name is unchanged.
   const cacheSession = useSelector((state) => state.allDocs.session);
 
@@ -616,11 +633,22 @@ const ControllerInfoProvider = ({ children }: any) => {
     const owner = JSON.stringify([databaseSessionKey, db.name]);
     setItemCacheHydratedFor(null);
     return startItemCacheSync(db, dispatch, {
+      getCachedDocuments: () => {
+        const cache = reduxStore.getState().allDocs;
+        return [
+          ...cache.allSongDocs,
+          ...cache.allFreeFormDocs,
+          ...cache.allTimerDocs,
+          ...cache.allBibleDocs,
+          ...cache.allServiceTimeDocs,
+          ...cache.allHeadingDocs,
+        ];
+      },
       ...(isSequentialStartup
         ? { onHydrated: () => setItemCacheHydratedFor(owner) }
         : {}),
     });
-  }, [db, activeDatabaseKey, databaseSessionKey, cacheSession, isGuestSession, isAuthenticatedSession, isSequentialStartup, dispatch]);
+  }, [db, activeDatabaseKey, databaseSessionKey, cacheSession, isGuestSession, isAuthenticatedSession, isSequentialStartup, dispatch, reduxStore]);
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
@@ -1657,6 +1685,11 @@ const ControllerInfoProvider = ({ children }: any) => {
                 // safely wait for another successful initial pull.
                 console.error("Could not save the local content replication checkpoint:", error);
               }
+              const cacheDrainStartedAt = performance.now();
+              await flushItemCacheChanges(localDb);
+              recordStartupDiagnostic("content", "item-cache.pending-batches-drained", {
+                durationMs: Math.round(performance.now() - cacheDrainStartedAt),
+              });
               if (!isCurrentSession()) return;
               contentDatabaseSession.markInitialReplicationComplete();
               if (isSequentialStartup) {

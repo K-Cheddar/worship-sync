@@ -45,6 +45,7 @@ export type StartupReplicationRun = {
 };
 
 const diagnosticEvents: StartupDiagnosticEvent[] = [];
+const diagnosticAggregates = new Map<string, Record<string, { samples: number; total: number; max: number }>>();
 const replicationStats: Record<StartupDatabaseKind, ReplicationStats> = {
   content: { active: 0, batches: 0, documents: 0 },
   bible: { active: 0, batches: 0, documents: 0 },
@@ -140,6 +141,24 @@ export const recordStartupDiagnostic = (
   console.info(`[WorshipSync startup] ${JSON.stringify(entry)}`);
 };
 
+/** Retain lightweight counters and timings without logging every hot-path operation. */
+export const recordStartupAggregate = (
+  subsystem: string,
+  values: Record<string, number>,
+) => {
+  if (!isStartupDiagnosticsActive()) return;
+  const aggregate = diagnosticAggregates.get(subsystem) ?? {};
+  for (const [name, value] of Object.entries(values)) {
+    if (!Number.isFinite(value)) continue;
+    const current = aggregate[name] ?? { samples: 0, total: 0, max: 0 };
+    current.samples += 1;
+    current.total += value;
+    current.max = Math.max(current.max, value);
+    aggregate[name] = current;
+  }
+  diagnosticAggregates.set(subsystem, aggregate);
+};
+
 export const beginStartupReplication = (
   database: StartupDatabaseKind,
   options: { batchSize: number; batchesLimit: number; kind?: string },
@@ -225,6 +244,9 @@ const getSnapshot = () => ({
     bible: { ...replicationStats.bible },
   },
   recentEvents: snapshotEvents(),
+  aggregates: Object.fromEntries(
+    [...diagnosticAggregates].map(([subsystem, metrics]) => [subsystem, { ...metrics }]),
+  ),
 });
 
 export const setStartupDiagnosticMode = (mode: StartupDiagnosticMode) => {

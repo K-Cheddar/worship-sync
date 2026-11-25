@@ -1,4 +1,5 @@
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+import type { Draft } from "immer";
 import isEqual from "lodash/isEqual";
 import type { DBHeading, DBItem } from "../types";
 import type { SongLibraryDiagnostic } from "../utils/songLibraryDiscovery";
@@ -60,6 +61,142 @@ type ItemCacheHydration = Array<DBItem | DBHeading> | {
   songLibraryDiagnostics: SongLibraryDiagnostic[];
 };
 
+type ItemDocumentChange = {
+  id: string;
+  doc?: DBItem | DBHeading;
+  deleted?: boolean;
+};
+
+type ItemCacheKey = (typeof itemKeys)[number] | "allHeadingDocs";
+
+const getDocumentCacheKey = (doc: DBItem | DBHeading): ItemCacheKey | null =>
+  doc.type === "heading" ? "allHeadingDocs" : getDocsKey(doc.type);
+
+const applyItemDocumentChangesToState = (
+  state: Draft<AllDocsState>,
+  changes: readonly ItemDocumentChange[],
+) => {
+  const documentsById = new Map<string, { key: ItemCacheKey; doc: DBItem | DBHeading }>();
+  for (const key of itemKeys) {
+    for (const doc of state[key]) documentsById.set(doc._id, { key, doc });
+  }
+  for (const doc of state.allHeadingDocs) {
+    documentsById.set(doc._id, { key: "allHeadingDocs", doc });
+  }
+
+  const changedKeys = new Set<ItemCacheKey>();
+  const changedDocumentIds = new Set<string>();
+  let appliedDocumentChanges = 0;
+  const clearAllDiagnosticsFor = new Set<string>();
+  const clearReadFailureFor = new Set<string>();
+  const incompleteSongIds = new Set(state.songLibraryDiagnostics
+    .filter((diagnostic) => diagnostic.code === "incomplete-v2")
+    .map((diagnostic) => diagnostic.songId));
+
+  for (const { id, doc: inputDoc, deleted } of changes) {
+    const existing = documentsById.get(id);
+    if (deleted) {
+      if (!existing) continue;
+      documentsById.delete(id);
+      changedKeys.add(existing.key);
+      changedDocumentIds.add(id);
+      appliedDocumentChanges += 1;
+      continue;
+    }
+    if (!isItemDocument(inputDoc)) continue;
+
+    const document = inputDoc;
+    const nextKey = getDocumentCacheKey(document);
+    if (!nextKey) continue;
+    if (document.type === "song" && document.docType !== "song-v2-root" &&
+      (state.activatedSongIds[id] || existing?.doc.docType === "song-v2-root" || incompleteSongIds.has(id))) {
+      continue;
+    }
+
+    if (document.type === "song" && document.docType !== "song-v2-root") {
+      clearReadFailureFor.add(id);
+    }
+    if (document.type === "song" && document.docType === "song-v2-root") {
+      clearAllDiagnosticsFor.add(id);
+      incompleteSongIds.delete(id);
+    }
+
+    if (existing && existing.key === nextKey && document._rev && existing.doc._rev === document._rev) {
+      continue;
+    }
+    const normalized = document.type === "song" ? normalizeLibrarySong(document as DBItem) : document;
+    if (existing && existing.key === nextKey && (
+      (document._rev && existing.doc._rev === document._rev) || isEqual(existing.doc, normalized)
+    )) continue;
+
+    if (existing && existing.key !== nextKey) {
+      documentsById.delete(id);
+      changedKeys.add(existing.key);
+    }
+    documentsById.set(id, { key: nextKey, doc: normalized });
+    changedKeys.add(nextKey);
+    changedDocumentIds.add(id);
+    appliedDocumentChanges += 1;
+  }
+
+  let diagnosticsChanged = false;
+  if (clearAllDiagnosticsFor.size || clearReadFailureFor.size) {
+    const removedDiagnosticSongIds = new Set(state.songLibraryDiagnostics
+      .filter((diagnostic) =>
+        clearAllDiagnosticsFor.has(diagnostic.songId) ||
+        (clearReadFailureFor.has(diagnostic.songId) && diagnostic.code === "read-failed"),
+      )
+      .map((diagnostic) => diagnostic.songId));
+    const nextDiagnostics = state.songLibraryDiagnostics.filter((diagnostic) =>
+      !clearAllDiagnosticsFor.has(diagnostic.songId) &&
+      !(clearReadFailureFor.has(diagnostic.songId) && diagnostic.code === "read-failed"),
+    );
+    diagnosticsChanged = nextDiagnostics.length !== state.songLibraryDiagnostics.length;
+    for (const songId of removedDiagnosticSongIds) {
+      if (!changedDocumentIds.has(songId)) appliedDocumentChanges += 1;
+    }
+    if (diagnosticsChanged) state.songLibraryDiagnostics = nextDiagnostics;
+  }
+
+  const nextDocumentsByKey = new Map<ItemCacheKey, Array<DBItem | DBHeading>>();
+  for (const key of changedKeys) nextDocumentsByKey.set(key, []);
+  for (const entry of documentsById.values()) {
+    nextDocumentsByKey.get(entry.key)?.push(entry.doc);
+  }
+  for (const [key, documents] of nextDocumentsByKey) {
+    state[key] = documents as never;
+  }
+  if (appliedDocumentChanges > 0) state.changeVersion += appliedDocumentChanges;
+};
+
+const activateSongV2RootsInState = (state: Draft<AllDocsState>, songIds: readonly string[]) => {
+  if (songIds.length === 0) return;
+  const ids = new Set(songIds);
+  let changed = false;
+  for (const songId of ids) {
+    const previous = state.allSongDocs.find((item) => item._id === songId);
+    if (!state.activatedSongIds[songId] || (previous && previous.docType !== "song-v2-root")) changed = true;
+    state.activatedSongIds[songId] = true;
+  }
+  const nextSongs = state.allSongDocs.filter((item) => !ids.has(item._id) || item.docType === "song-v2-root");
+  if (nextSongs.length !== state.allSongDocs.length) {
+    state.allSongDocs = nextSongs;
+    changed = true;
+  }
+  const nextDiagnostics = state.songLibraryDiagnostics.filter((diagnostic) => !ids.has(diagnostic.songId));
+  if (nextDiagnostics.length !== state.songLibraryDiagnostics.length) {
+    state.songLibraryDiagnostics = nextDiagnostics;
+    changed = true;
+  }
+  if (changed) state.changeVersion += 1;
+};
+
+const invalidateSongContentsInState = (state: Draft<AllDocsState>, songIds: readonly string[]) => {
+  for (const songId of songIds) {
+    state.songContentVersions[songId] = (state.songContentVersions[songId] ?? 0) + 1;
+  }
+};
+
 const initialState: AllDocsState = {
   session: 0,
   changeVersion: 0,
@@ -86,19 +223,10 @@ export const allDocsSlice = createSlice({
   initialState: () => ({ ...initialState, session: ++nextCacheSession }),
   reducers: {
     activateSongV2Root: (state, action: PayloadAction<string>) => {
-      const songId = action.payload;
-      const previous = state.allSongDocs.find(item => item._id === songId);
-      const hadLegacyProjection = Boolean(previous && previous.docType !== "song-v2-root");
-      const nextSongs = hadLegacyProjection
-        ? state.allSongDocs.filter(item => item._id !== songId)
-        : state.allSongDocs;
-      const nextDiagnostics = state.songLibraryDiagnostics.filter(item => item.songId !== songId);
-      const changed = !state.activatedSongIds[songId] || hadLegacyProjection ||
-        !isEqual(state.songLibraryDiagnostics, nextDiagnostics);
-      state.activatedSongIds[songId] = true;
-      state.allSongDocs = nextSongs;
-      state.songLibraryDiagnostics = nextDiagnostics;
-      if (changed) state.changeVersion += 1;
+      activateSongV2RootsInState(state, [action.payload]);
+    },
+    activateSongV2Roots: (state, action: PayloadAction<string[]>) => {
+      activateSongV2RootsInState(state, action.payload);
     },
     applySongLibraryRefresh: (state, action: PayloadAction<{
       songId: string;
@@ -147,8 +275,10 @@ export const allDocsSlice = createSlice({
       if (changed) state.changeVersion += 1;
     },
     invalidateSongContent: (state, action: PayloadAction<string>) => {
-      const songId = action.payload;
-      state.songContentVersions[songId] = (state.songContentVersions[songId] ?? 0) + 1;
+      invalidateSongContentsInState(state, [action.payload]);
+    },
+    invalidateSongContents: (state, action: PayloadAction<string[]>) => {
+      invalidateSongContentsInState(state, action.payload);
     },
     updateAllSongDocs: (state, action: PayloadAction<DBItem[]>) => {
       state.allSongDocs = action.payload
@@ -258,38 +388,9 @@ export const allDocsSlice = createSlice({
       id: string;
       doc?: DBItem | DBHeading;
       deleted?: boolean;
-    }>) => {
-      const { id, doc: inputDoc, deleted } = action.payload;
-      if (deleted) {
-        const cached = [...itemKeys.map((key) => state[key]), state.allHeadingDocs]
-          .some((docs) => docs.some((item) => item._id === id));
-        if (!cached) return;
-      } else if (!isItemDocument(inputDoc)) return;
-
-      const doc = inputDoc?.type === "song" ? normalizeLibrarySong(inputDoc as DBItem) : inputDoc;
-      if (!deleted && doc?.type === "song" && doc.docType !== "song-v2-root") {
-        const existingSong = state.allSongDocs.find((item) => item._id === id);
-        if (state.activatedSongIds[id] || existingSong?.docType === "song-v2-root" || hasIncompleteSongV2(state, id)) return;
-      }
-      if (!deleted && doc?.type === "song" && doc.docType !== "song-v2-root") {
-        state.songLibraryDiagnostics = state.songLibraryDiagnostics.filter(item => item.songId !== id || item.code !== "read-failed");
-      }
-      state.changeVersion += 1;
-      if (!deleted && doc?.type === "song" && doc.docType === "song-v2-root") {
-        state.songLibraryDiagnostics = state.songLibraryDiagnostics.filter((diagnostic) => diagnostic.songId !== id);
-      }
-      for (const key of itemKeys) {
-        const index = state[key].findIndex((item) => item._id === id);
-        if (!deleted && doc && getDocsKey(doc.type) === key) {
-          if (index < 0) state[key].push(doc as DBItem);
-          else state[key][index] = doc as DBItem;
-        } else if (index >= 0) state[key].splice(index, 1);
-      }
-      const headingIndex = state.allHeadingDocs.findIndex((item) => item._id === id);
-      if (!deleted && doc?.type === "heading") {
-        if (headingIndex < 0) state.allHeadingDocs.push(doc as DBHeading);
-        else state.allHeadingDocs[headingIndex] = doc as DBHeading;
-      } else if (headingIndex >= 0) state.allHeadingDocs.splice(headingIndex, 1);
+    }>) => applyItemDocumentChangesToState(state, [action.payload]),
+    applyItemDocumentChanges: (state, action: PayloadAction<ItemDocumentChange[]>) => {
+      applyItemDocumentChangesToState(state, action.payload);
     },
     setItemCacheError: (state, action: PayloadAction<string | null>) => {
       state.error = action.payload;
@@ -299,9 +400,11 @@ export const allDocsSlice = createSlice({
 
 export const {
   activateSongV2Root,
+  activateSongV2Roots,
   applySongLibraryRefresh,
   replaceSongLibrarySnapshot,
   invalidateSongContent,
+  invalidateSongContents,
   updateAllSongDocs,
   updateAllFreeFormDocs,
   updateAllTimerDocs,
@@ -314,6 +417,7 @@ export const {
   resetItemCache,
   hydrateItemCache,
   applyItemDocumentChange,
+  applyItemDocumentChanges,
   setItemCacheError,
 } = allDocsSlice.actions;
 

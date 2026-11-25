@@ -46,8 +46,6 @@ import {
 import {
   loadItemWithSongHydration,
   loadSongV2Snapshot,
-  loadSongV2LibraryProjection,
-  getSongV2RootDocId,
   saveSong,
   serializeSongToV2Documents,
   songToLibraryProjection,
@@ -168,6 +166,7 @@ import {
 } from "../utils/displayOutputs";
 import { nestSlashPathOutputs } from "../utils/nestSlashPathOutputs";
 import { recordPresentationDiagnostic } from "../utils/presentationDiagnostics";
+import { recordStartupAggregate } from "../utils/startupDiagnostics";
 import {
   ensureCreditsIndexDoc,
   getCreditsByIds,
@@ -2283,10 +2282,18 @@ export type SongV2DocumentChange = {
 export const songV2DocumentsChanged = createAction<SongV2DocumentChange[]>("songV2/documentsChanged");
 type SongRefreshRequest = SongV2DocumentChange & { database: PouchDB.Database; owner: ItemContentOwner | null };
 const songRefreshes = new Map<string, SongRefreshRequest>();
+const inFlightSongSnapshots = new Map<string, Promise<Awaited<ReturnType<typeof loadSongV2Snapshot>>>>();
 listenerMiddleware.startListening({
   actionCreator: songV2DocumentsChanged,
   effect: async (action, api) => {
-    await Promise.all(action.payload.map(async (change) => {
+    const activeItem = (api.getState() as RootState).undoable.present.item;
+    const slideOnlySongIds = [...new Set(action.payload
+      .filter((change) => !change.libraryChanged)
+      .map((change) => change.songId))];
+    if (slideOnlySongIds.length) api.dispatch(allDocsSlice.actions.invalidateSongContents(slideOnlySongIds));
+    if (activeItem.type !== "song" || !activeItem._id) return;
+    const activeChanges = action.payload.filter((change) => change.songId === activeItem._id);
+    await Promise.all(activeChanges.map(async (change) => {
       const database = change.database ?? db;
       if (!database || db !== database) return;
       const ownerWasCaptured = change.owner !== undefined;
@@ -2299,7 +2306,6 @@ listenerMiddleware.startListening({
       const key = JSON.stringify([databaseOwner?.scopeId ?? "unscoped", change.songId]);
       const request: SongRefreshRequest = {
         ...change,
-        libraryChanged: change.libraryChanged || !!songRefreshes.get(key)?.libraryChanged,
         database,
         owner: databaseOwner,
         ...(sessionWasCaptured ? { sessionToken } : {}),
@@ -2321,6 +2327,7 @@ listenerMiddleware.startListening({
       const stillCurrent = () => ownerIsCurrent() && songRefreshes.get(key) === request;
       if (!stillCurrent()) return;
       const itemAtStart = (api.getState() as RootState).undoable.present.item;
+      if (itemAtStart._id !== change.songId || itemAtStart.type !== "song") return;
       const itemOwner = getItemMutationOwner(itemAtStart);
       const churchIdAtStart = globalFireDbInfo.churchId;
       const mutationGuard = createSongV2MutationGuard(
@@ -2336,45 +2343,33 @@ listenerMiddleware.startListening({
         },
       );
       try {
-        const active = itemAtStart._id === change.songId && itemAtStart.type === "song";
-        let snapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>> | undefined;
-        if (active) {
-          snapshot = await loadSongV2Snapshot(database, change.songId, true);
-          if (snapshot.conflicts?.length) {
-            if (globalFireDbInfo.canWriteSongContent) {
-              snapshot = await loadReconciledSongV2Snapshot(
-                database,
-                change.songId,
-                snapshot,
-                mutationGuard,
-              );
-            }
-          }
+        const pendingSnapshot = inFlightSongSnapshots.get(key);
+        if (pendingSnapshot) await pendingSnapshot.catch(() => undefined);
+        if (!stillCurrent()) return;
+        const snapshotPromise = loadSongV2Snapshot(database, change.songId, true);
+        inFlightSongSnapshots.set(key, snapshotPromise);
+        let snapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>>;
+        try {
+          snapshot = await snapshotPromise;
+        } finally {
+          if (inFlightSongSnapshots.get(key) === snapshotPromise) inFlightSongSnapshots.delete(key);
+        }
+        if (snapshot.conflicts?.length && globalFireDbInfo.canWriteSongContent) {
+          snapshot = await loadReconciledSongV2Snapshot(
+            database,
+            change.songId,
+            snapshot,
+            mutationGuard,
+          );
         }
         if (!stillCurrent()) return;
-        if (active) {
-          const current = (api.getState() as RootState).undoable.present.item;
-          if (current.baseItem !== itemAtStart.baseItem) {
-            api.dispatch(songV2DocumentsChanged([{ ...change, libraryChanged: request.libraryChanged }]));
-            return;
-          }
-          if (current._id !== change.songId || !sameItemMutationOwner(itemOwner, getItemMutationOwner(current))) {
-            api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
-            return;
-          }
-        }
-        if (request.libraryChanged) {
-          const projection = snapshot ? songToLibraryProjection(snapshot.hydrated)
-            : await loadSongV2LibraryProjection(database, await database.get(getSongV2RootDocId(change.songId)));
-          if (!stillCurrent()) return;
-          api.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: projection._id, doc: projection }));
-        }
-        if (!request.libraryChanged) api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
-        if (!active) return;
-        if (!snapshot || !stillCurrent()) return;
         const current = (api.getState() as RootState).undoable.present.item;
-        if (!sameItemMutationOwner(itemOwner, getItemMutationOwner(current)) ||
-          current.baseItem !== itemAtStart.baseItem) return;
+        if (current._id !== change.songId || !sameItemMutationOwner(itemOwner, getItemMutationOwner(current))) return;
+        if (current.baseItem !== itemAtStart.baseItem) {
+          api.dispatch(songV2DocumentsChanged([{ ...change, libraryChanged: request.libraryChanged }]));
+          return;
+        }
+        if (!snapshot) return;
         if (snapshot.conflicts?.length) {
           api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
             item: snapshot.hydrated,
@@ -2394,8 +2389,6 @@ listenerMiddleware.startListening({
             api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
               item: error.snapshot.hydrated, conflicts: error.snapshot.conflicts ?? [],
             }));
-          } else if (ownerIsCurrent()) {
-            api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
           }
           return;
         }
@@ -2413,9 +2406,6 @@ listenerMiddleware.startListening({
           }
           return;
         }
-        if (ownerIsCurrent() && (api.getState() as RootState).undoable.present.item._id !== change.songId) {
-          api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
-        }
         console.error("Could not refresh changed v2 song", change.songId, error);
       } finally {
         if (songRefreshes.get(key) === request) songRefreshes.delete(key);
@@ -2426,18 +2416,41 @@ listenerMiddleware.startListening({
 
 // Durable cache events update the editor through the existing draft/conflict checks.
 const listenerAdoptedActiveItemActions = new WeakSet<object>();
+const findCachedItemDocument = (state: RootState, id: string) =>
+  state.allDocs.allSongDocs.find((document) => document._id === id) ??
+  state.allDocs.allFreeFormDocs.find((document) => document._id === id) ??
+  state.allDocs.allTimerDocs.find((document) => document._id === id) ??
+  state.allDocs.allBibleDocs.find((document) => document._id === id) ??
+  state.allDocs.allServiceTimeDocs.find((document) => document._id === id);
+
 listenerMiddleware.startListening({
-  predicate: (action) => {
+  predicate: (action, currentState, previousState) => {
     if (listenerAdoptedActiveItemActions.has(action)) {
       listenerAdoptedActiveItemActions.delete(action);
       return false;
     }
-    return isAnyOf(
-      allDocsSlice.actions.updateAllSongDocs,
-      allDocsSlice.actions.hydrateItemCache,
-      allDocsSlice.actions.applyItemDocumentChange,
-      itemSlice.actions.setActiveItem,
-    )(action);
+    if (itemSlice.actions.setActiveItem.match(action) ||
+      allDocsSlice.actions.hydrateItemCache.match(action)) return true;
+
+    const current = currentState as RootState;
+    const previous = previousState as RootState;
+    const activeId = current.undoable.present.item._id;
+    if (!activeId) return false;
+    const changesMentionActiveItem = allDocsSlice.actions.applyItemDocumentChange.match(action)
+      ? action.payload.id === activeId
+      : allDocsSlice.actions.applyItemDocumentChanges.match(action)
+        ? action.payload.some((change) => change.id === activeId)
+        : false;
+    if (changesMentionActiveItem) {
+      return findCachedItemDocument(current, activeId) !== findCachedItemDocument(previous, activeId);
+    }
+    if (allDocsSlice.actions.updateAllSongDocs.match(action)) {
+      return current.undoable.present.item.type === "song" &&
+        current.allDocs.allSongDocs !== previous.allDocs.allSongDocs &&
+        (findCachedItemDocument(current, activeId)?._id === activeId ||
+          findCachedItemDocument(previous, activeId)?._id === activeId);
+    }
+    return false;
   },
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
@@ -2468,8 +2481,10 @@ listenerMiddleware.startListening({
       previousTimerDocs.find((d) => d._id === activeId) ??
       previousBibleDocs.find((d) => d._id === activeId) ??
       previousServiceTimeDocs.find((d) => d._id === activeId);
-    const cacheChangedActiveItem = allDocsSlice.actions.applyItemDocumentChange.match(action) &&
-      action.payload.id === activeId;
+    const cacheChangedActiveItem = (allDocsSlice.actions.applyItemDocumentChange.match(action) &&
+      action.payload.id === activeId) ||
+      (allDocsSlice.actions.applyItemDocumentChanges.match(action) &&
+        action.payload.some((change) => change.id === activeId));
     const cacheHydrated = allDocsSlice.actions.hydrateItemCache.match(action);
     let songV2Conflicts: Awaited<ReturnType<typeof loadSongV2Snapshot>>["conflicts"];
 
@@ -2923,6 +2938,7 @@ listenerMiddleware.startListening({
     const cacheSession = stateAtStart.allDocs.session;
     const cacheChangeVersion = stateAtStart.allDocs.changeVersion;
     let cleanupWasBlockedByOutlinePersistence = false;
+    const bibleCleanupStartedAt = performance.now();
     const cleanupResult = await deleteUnusedBibleItems({
       db: database,
       bibleItems: stateAtStart.allDocs.allBibleDocs,
@@ -2970,6 +2986,13 @@ listenerMiddleware.startListening({
         );
       },
     });
+    recordStartupAggregate("post-replication-maintenance", {
+      bibleCleanupRuns: 1,
+      bibleCleanupDurationMs: performance.now() - bibleCleanupStartedAt,
+      bibleDocumentsConsidered: stateAtStart.allDocs.allBibleDocs.length,
+      bibleDocumentsDeleted: cleanupResult?.deleted ?? 0,
+      bibleCleanupSafetyBlocked: cleanupResult === null ? 1 : 0,
+    });
 
     if (db !== database || getContentDatabaseSessionToken(database.name) !== sessionToken) {
       return;
@@ -3003,25 +3026,46 @@ listenerMiddleware.startListening({
   },
 });
 
+const isBibleCleanupNonCacheAction = isAnyOf(
+  allDocsSlice.actions.resetItemCache,
+  allDocsSlice.actions.setItemCacheError,
+  itemSlice.actions.setHasPendingUpdate,
+  itemSlice.actions.markItemPersisted,
+  itemListSlice.actions.initiateItemList,
+  itemListSlice.actions.setIsInitialized,
+  itemListSlice.actions.setHasPendingUpdate,
+  itemListsSlice.actions.initiateItemLists,
+  itemListsSlice.actions.setIsInitialized,
+  autosaveIndicatorSlice.actions.endKeyedDebouncedSave,
+  servicePlanningImportSlice.actions.completeServicePlanningSync,
+  servicePlanningImportSlice.actions.failServicePlanningSync,
+  servicePlanningImportSlice.actions.finishServicePlanningSyncCancellation,
+  servicePlanningImportSlice.actions.clearServicePlanningSyncState,
+);
+
 listenerMiddleware.startListening({
-  matcher: isAnyOf(
-    allDocsSlice.actions.hydrateItemCache,
-    allDocsSlice.actions.applyItemDocumentChange,
-    allDocsSlice.actions.resetItemCache,
-    allDocsSlice.actions.setItemCacheError,
-    itemSlice.actions.setHasPendingUpdate,
-    itemSlice.actions.markItemPersisted,
-    itemListSlice.actions.initiateItemList,
-    itemListSlice.actions.setIsInitialized,
-    itemListSlice.actions.setHasPendingUpdate,
-    itemListsSlice.actions.initiateItemLists,
-    itemListsSlice.actions.setIsInitialized,
-    autosaveIndicatorSlice.actions.endKeyedDebouncedSave,
-    servicePlanningImportSlice.actions.completeServicePlanningSync,
-    servicePlanningImportSlice.actions.failServicePlanningSync,
-    servicePlanningImportSlice.actions.finishServicePlanningSyncCancellation,
-    servicePlanningImportSlice.actions.clearServicePlanningSyncState,
-  ),
+  predicate: (action, currentState, previousState) => {
+    if (isBibleCleanupNonCacheAction(action)) return true;
+    if (allDocsSlice.actions.hydrateItemCache.match(action)) return true;
+
+    const hasBibleEntry = (state: RootState, id: string) =>
+      state.allDocs.allBibleDocs.some((document) => document._id === id);
+    const current = currentState as RootState;
+    const previous = previousState as RootState;
+    if (allDocsSlice.actions.applyItemDocumentChange.match(action)) {
+      return action.payload.doc?.type === "bible" ||
+        hasBibleEntry(previous, action.payload.id) || hasBibleEntry(current, action.payload.id);
+    }
+    if (allDocsSlice.actions.applyItemDocumentChanges.match(action)) {
+      if (action.payload.some((change) => change.doc?.type === "bible")) return true;
+      const bibleIds = new Set([
+        ...previous.allDocs.allBibleDocs.map((document) => document._id),
+        ...current.allDocs.allBibleDocs.map((document) => document._id),
+      ]);
+      return action.payload.some((change) => bibleIds.has(change.id));
+    }
+    return false;
+  },
   effect: (_action, listenerApi) => {
     listenerApi.dispatch(bibleCleanupOpportunity({}));
   },
