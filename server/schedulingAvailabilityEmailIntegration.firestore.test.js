@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { generateKeyPairSync, randomUUID } from "node:crypto";
+import { schedulingSettingsIdFor } from "./schedulingCycles.js";
 
 const enabled = Boolean(process.env.FIRESTORE_EMULATOR_HOST);
 
@@ -19,7 +20,9 @@ test("live scheduling creates the availability request, emails once, and recover
     privateKeyEncoding: { type: "pkcs8", format: "pem" },
     publicKeyEncoding: { type: "spki", format: "pem" },
   }).privateKey;
-  delete process.env.FIREBASE_DATABASE_URL;
+  // Keep dotenv from supplying a live Realtime Database to this Firestore-only fixture.
+  process.env.FIREBASE_DATABASE_URL = "";
+  process.env.VITE_FIREBASE_DATABASE_URL = "";
 
   const { authHandlers, authRuntimeInfo, COLLECTIONS, runSchedulingAutomationProcessor,
     seedChurchServiceTimesForServerTests, setSendEmailForServerTests } = await import("../authService.js");
@@ -33,7 +36,7 @@ test("live scheduling creates the availability request, emails once, and recover
   const positionedMemberId = `scheduling-email-positioned-${suffix}`;
   const noEmailMemberId = `scheduling-email-no-contact-${suffix}`;
   const directEmailMemberIds = Array.from({ length: 51 }, (_, index) => `scheduling-email-direct-${suffix}-${index}`);
-  const settingsId = `church-defaults-${churchId}`;
+  const settingsId = schedulingSettingsIdFor({ churchId });
   const namespace = `scheduling-email-${suffix}`;
   const collectionNames = [
     COLLECTIONS.notificationIntents,
