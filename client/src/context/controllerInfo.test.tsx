@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Provider, useSelector } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import store from "../store/store";
+import { flushItemCacheChanges } from "../store/itemCacheSync";
 import ControllerInfoProvider, {
   canRetrySync413,
   cancelSongV2CleanupMaintenance,
@@ -231,7 +232,10 @@ describe("ControllerInfoProvider", () => {
     const localDb = mockPouchInstances.find((instance) => instance.name === "worship-sync-offline-church")!;
     expect(localDb.allDocs).toHaveBeenCalledTimes(1);
     const feed = localDb.changes.mock.results[0].value;
-    act(() => feed.emit("change", { seq: 1, id: "song", doc: { _id: "song", type: "song", name: "Local edit" } }));
+    await act(async () => {
+      feed.emit("change", { seq: 1, id: "song", doc: { _id: "song", type: "song", name: "Local edit" } });
+      await flushItemCacheChanges(localDb as never);
+    });
     expect(screen.getByTestId("cache-name")).toHaveTextContent("Local edit");
     mockLocalItemDocs = [{ _id: "song", type: "song", name: "New session" }];
     act(() => { store.dispatch({ type: "RESET" }); });

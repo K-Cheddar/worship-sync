@@ -5,6 +5,7 @@ import allDocsReducer, {
   upsertItemsInAllDocs,
   applySongLibraryRefresh,
   activateSongV2Root,
+  applyItemDocumentChanges,
   invalidateSongContent,
 } from "./allDocsSlice";
 import { hydrateItemCache, applyItemDocumentChange } from "./allDocsSlice";
@@ -165,6 +166,38 @@ describe("allDocsSlice", () => {
         expect.objectContaining({ _id: "song-2" }),
       ]);
     });
+  });
+
+  it("applies batched insertions, updates, deletions, type changes, and same-revision no-ops equivalently", () => {
+    const initial = allDocsReducer(undefined, hydrateItemCache([
+      { ...makeDoc("song", "song"), _rev: "1-a" },
+      { ...makeDoc("custom", "free"), _rev: "1-a" },
+      { ...makeDoc("bible", "bible"), _rev: "1-a" },
+      { ...makeDoc("heading", "heading"), _rev: "1-a" },
+    ]));
+    const changes = [
+      { id: "song", doc: { ...makeDoc("song", "song"), name: "Song updated", _rev: "2-b" } },
+      { id: "song", doc: { ...makeDoc("song", "song"), name: "Wrong same-revision echo", _rev: "2-b" } },
+      { id: "custom", doc: { ...makeDoc("custom", "timer"), name: "Moved to timer", _rev: "2-b" } },
+      { id: "bible", deleted: true },
+      { id: "new-custom", doc: { ...makeDoc("new-custom", "free"), _rev: "1-a" } },
+      { id: "new-custom", deleted: true },
+    ];
+    const individuallyApplied = changes.reduce(
+      (state, change) => allDocsReducer(state, applyItemDocumentChange(change)),
+      initial,
+    );
+    const batchApplied = allDocsReducer(initial, applyItemDocumentChanges(changes));
+
+    expect(batchApplied).toMatchObject({
+      allSongDocs: individuallyApplied.allSongDocs,
+      allFreeFormDocs: individuallyApplied.allFreeFormDocs,
+      allTimerDocs: individuallyApplied.allTimerDocs,
+      allBibleDocs: individuallyApplied.allBibleDocs,
+      allHeadingDocs: individuallyApplied.allHeadingDocs,
+      changeVersion: individuallyApplied.changeVersion,
+    });
+    expect(batchApplied.changeVersion).toBe(5);
   });
 });
 describe("allDocsSlice song normalization boundary", () => {

@@ -45,6 +45,7 @@ export type StartupReplicationRun = {
 };
 
 const diagnosticEvents: StartupDiagnosticEvent[] = [];
+const diagnosticAggregates = new Map<string, Record<string, { samples: number; total: number; max: number }>>();
 const replicationStats: Record<StartupDatabaseKind, ReplicationStats> = {
   content: { active: 0, batches: 0, documents: 0 },
   bible: { active: 0, batches: 0, documents: 0 },
@@ -140,6 +141,24 @@ export const recordStartupDiagnostic = (
   console.info(`[WorshipSync startup] ${JSON.stringify(entry)}`);
 };
 
+/** Retain lightweight counters and timings without logging every hot-path operation. */
+export const recordStartupAggregate = (
+  subsystem: string,
+  values: Record<string, number>,
+) => {
+  if (!isStartupDiagnosticsActive()) return;
+  const aggregate = diagnosticAggregates.get(subsystem) ?? {};
+  for (const [name, value] of Object.entries(values)) {
+    if (!Number.isFinite(value)) continue;
+    const current = aggregate[name] ?? { samples: 0, total: 0, max: 0 };
+    current.samples += 1;
+    current.total += value;
+    current.max = Math.max(current.max, value);
+    aggregate[name] = current;
+  }
+  diagnosticAggregates.set(subsystem, aggregate);
+};
+
 export const beginStartupReplication = (
   database: StartupDatabaseKind,
   options: { batchSize: number; batchesLimit: number; kind?: string },
@@ -224,7 +243,15 @@ const getSnapshot = () => ({
     content: { ...replicationStats.content },
     bible: { ...replicationStats.bible },
   },
+  longTasks: {
+    count: longTaskCount,
+    totalMs: Math.round(longTaskTotalMs),
+    maxMs: Math.round(longTaskMaxMs),
+  },
   recentEvents: snapshotEvents(),
+  aggregates: Object.fromEntries(
+    [...diagnosticAggregates].map(([subsystem, metrics]) => [subsystem, { ...metrics }]),
+  ),
 });
 
 export const setStartupDiagnosticMode = (mode: StartupDiagnosticMode) => {
@@ -282,15 +309,20 @@ if (isStartupDiagnosticsActive() && typeof window !== "undefined") {
     }
   }
 
-  window.setInterval(() => {
-    const memory = (performance as Performance & {
+  const memory = (performance as Performance & {
+    memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number };
+  }).memory;
+  heapSupported = Boolean(memory);
+
+  if (memory) window.setInterval(() => {
+    const currentMemory = (performance as Performance & {
       memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number };
     }).memory;
     const toMb = (bytes: number) => Math.round((bytes / 1024 / 1024) * 10) / 10;
     heapSampleCount += 1;
-    heapSupported = Boolean(memory);
-    const heapUsedMb = memory ? toMb(memory.usedJSHeapSize) : null;
-    heapLimitMb = memory ? toMb(memory.jsHeapSizeLimit) : null;
+    heapSupported = Boolean(currentMemory);
+    const heapUsedMb = currentMemory ? toMb(currentMemory.usedJSHeapSize) : null;
+    heapLimitMb = currentMemory ? toMb(currentMemory.jsHeapSizeLimit) : null;
     if (heapUsedMb !== null) {
       heapPeakUsedMb = heapPeakUsedMb === null
         ? heapUsedMb
@@ -303,7 +335,7 @@ if (isStartupDiagnosticsActive() && typeof window !== "undefined") {
     recordStartupDiagnostic("runtime", "memory.sample", {
       heapSupported,
       heapUsedMb,
-      heapAllocatedMb: memory ? toMb(memory.totalJSHeapSize) : null,
+      heapAllocatedMb: currentMemory ? toMb(currentMemory.totalJSHeapSize) : null,
       heapLimitMb,
       peakHeapUsedMb: heapPeakUsedMb,
       settledHeapUsedMb: getSettledHeapUsageMb(recentHeapSamples),
