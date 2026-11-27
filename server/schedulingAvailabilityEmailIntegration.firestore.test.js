@@ -238,6 +238,13 @@ test("live scheduling creates the availability request, emails once, and recover
     assert.equal(deliveryAction.result.noEmailContactCount, 1);
     assert.equal(deliveryAction.result.uncertainCount, 0);
 
+    // Simulate a previously queued intent whose member no longer has email.
+    // It must not disappear from reconciliation merely because current audience
+    // discovery excludes that member.
+    const queued = intents.docs.find((doc) => doc.data().status === "ready").data();
+    const obsoleteRef = db.collection(COLLECTIONS.notificationIntents).doc(`obsolete-${suffix}`);
+    await obsoleteRef.set({ ...queued, intentId: obsoleteRef.id, memberId: noEmailMemberId,
+      recipientId: byMember.get(noEmailMemberId).recipientId, idempotencyKey: `obsolete-${suffix}` });
     const continued = await run();
     assert.equal(continued.summary.claimed, 1);
     assert.equal(continued.summary.completed, 1);
@@ -248,6 +255,9 @@ test("live scheduling creates the availability request, emails once, and recover
       .find((action) => action.actionType === "availability_email_delivery");
     assert.equal(completedDelivery.state, "completed");
     assert.equal(completedDelivery.result.acceptedCount, 52);
+    assert.equal((await obsoleteRef.get()).data().status, "suppressed");
+    assert.equal(completedDelivery.result.suppressedCount, 1);
+    await obsoleteRef.delete();
 
     const repeated = await run();
     assert.equal(repeated.summary.claimed, 0);

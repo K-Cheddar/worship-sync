@@ -12837,6 +12837,7 @@ export const createTeamsAuthHandlers = ({
     audienceType = "",
     actorUid,
     scopeData = null,
+    channel = "sms",
   }) => {
     const form = await getDoc(COLLECTIONS.teamIntakeForms, formId);
     if (!form || form.churchId !== churchId || form.archivedAt) {
@@ -12972,19 +12973,19 @@ export const createTeamsAuthHandlers = ({
         recipient = ensured.recipient;
         token = ensured.token;
       }
-      const preliminary = resolveSmsMemberEligibility({
+      const preliminary = channel === "sms" ? resolveSmsMemberEligibility({
         member,
         churchId,
         consent: null,
-      });
-      const consent = preliminary.phoneNumber
+      }) : null;
+      const consent = preliminary?.phoneNumber
         ? await getSmsConsentForChurchPhone(churchId, preliminary.phoneNumber)
         : null;
-      const eligibility = resolveSmsMemberEligibility({
+      const eligibility = channel === "sms" ? resolveSmsMemberEligibility({
         member,
         churchId,
         consent,
-      });
+      }) : { eligible: true, status: "not_applicable", phoneNumber: "" };
       const publicUrl = token ? buildTeamIntakeRecipientPublicUrl(token) : "";
       results.push({
         memberId,
@@ -13082,6 +13083,7 @@ export const createTeamsAuthHandlers = ({
       purpose: "availability_request",
       audienceType: "not_contacted",
       actorUid: "scheduling-automation",
+      channel: "email",
     });
     const preparedByMemberId = new Map((prepared.results || []).map((row) => [row.memberId, row]));
     const counts = { recipientCount: 0, emailEligibleCount: 0, noEmailContactCount: 0,
@@ -13189,6 +13191,34 @@ export const createTeamsAuthHandlers = ({
     }
     counts.intentCount = intentRefs.length;
 
+    // Candidates describe current eligibility, not the durable work already
+    // queued. Reconcile orphaned intents independently before counting them.
+    const existingIntents = await db.collection(COLLECTIONS.notificationIntents)
+      .where("churchId", "==", churchId).where("formId", "==", formId).limit(501).get();
+    if (existingIntents.size > 500) {
+      return { reviewRequired: true, completed: false, reason: "Availability email history exceeded its safe review limit.", ...counts };
+    }
+    const eligibleMembers = new Set(emailCandidates.map((candidate) => candidate.member.memberId));
+    await mapWithConcurrency(existingIntents.docs, 4, async (doc) => {
+      const intent = doc.data();
+      if (intent.channel !== "email" || intent.sourceType !== "scheduling_cycle" ||
+          intent.sourceId !== cycle.cycleId || intent.intentType !== "availability_request" ||
+          eligibleMembers.has(intent.memberId)) return;
+      await db.runTransaction(async (transaction) => {
+        const snapshot = await transaction.get(doc.ref);
+        if (!snapshot.exists) return;
+        const current = snapshot.data();
+        if (["ready", "retryable_failure"].includes(current.status)) {
+          transaction.set(doc.ref, { status: "suppressed", suppressionReason: "recipient_no_longer_eligible",
+            nextAttemptAt: null, updatedAt: nowIso() }, { merge: true });
+        } else if (current.status === "sending" &&
+            !(Date.parse(current.sendLeaseExpiresAt || "") > Date.now())) {
+          transaction.set(doc.ref, { status: "unknown", failureClassification: "interrupted_after_dispatch_claim",
+            reviewReason: "The prior process stopped after the provider call may have begun.", updatedAt: nowIso() }, { merge: true });
+        }
+      });
+    });
+
     const deliverOne = async ({ ref, candidate, providerIdempotencyKey }) => {
       const freshAuthorization = await currentAuthorization();
       if (!freshAuthorization.eligible) return { blocked: freshAuthorization.reason };
@@ -13199,6 +13229,7 @@ export const createTeamsAuthHandlers = ({
         purpose: "availability_request",
         audienceType: "not_contacted",
         actorUid: "scheduling-automation",
+        channel: "email",
       }).then((value) => value.results || []);
       if (!fresh?.recipient || fresh.recipient.revokedAt || fresh.recipient.respondedAt || !fresh.publicUrl || !fresh.member) {
         await suppressUnclaimedIntent({ ref, reason: "recipient_no_longer_eligible" });
@@ -13289,6 +13320,7 @@ export const createTeamsAuthHandlers = ({
           purpose: "availability_request",
           audienceType: "not_contacted",
           actorUid: "scheduling-automation",
+          channel: "email",
         }).then((value) => value.results || []);
       } catch (error) {
         if (![404, 409].includes(Number(error?.statusCode))) throw error;
@@ -13371,7 +13403,8 @@ export const createTeamsAuthHandlers = ({
             failureClassification: "provider_rejected_retryable", lastError: "Email provider asked the sender to retry later." } });
           return { terminal: "retry_later", nextAttemptAt };
         }
-        const definiteRejection = statusCode >= 400 && statusCode < 500;
+        // An idempotency conflict can mean an equivalent request was accepted.
+        const definiteRejection = statusCode >= 400 && statusCode < 500 && statusCode !== 409;
         await finalizeIntent({ ref, claimToken, patch: {
           status: definiteRejection ? "failed" : "unknown",
           failureClassification: definiteRejection ? "provider_rejected" : "provider_outcome_uncertain",

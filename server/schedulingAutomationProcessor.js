@@ -224,17 +224,21 @@ export const createSchedulingAutomationProcessor = ({
       const runnableTypes = new Set(["availability_request", "availability_follow_up", "leader_summary"]);
       const updatedActions = actions.map((action) => {
         if (action.actionType === "availability_email_delivery") {
-          const shouldEnable = mode === "live" && automaticEmailDeliveryEnabled && emailDeliveryConfigured &&
-            action.state === "pending" && Boolean(action.relatedFormId) &&
-            currentDefaults.availabilityEmailDeliveryEnabled === true;
-          const shouldDisable = currentDefaults.availabilityEmailDeliveryEnabled !== true && action.enabled;
-          if (shouldEnable !== action.enabled || shouldDisable) {
+          const eligibleState = ["pending", "retryable_failure", "claimed"].includes(action.state);
+          // A non-delivery run must not revoke an authorization made by a live run.
+          // Claims and retry metadata belong to the action and are never reset here.
+          const shouldEnable = currentDefaults.availabilityEmailDeliveryEnabled !== true
+            ? false
+            : mode === "live" && automaticEmailDeliveryEnabled && emailDeliveryConfigured &&
+                eligibleState && Boolean(action.relatedFormId)
+              ? true
+              : action.enabled;
+          if (shouldEnable !== action.enabled) {
             transaction.set(firestore.collection(collections.teamSchedulingActions).doc(action.actionId), {
               enabled: shouldEnable,
-              ...(shouldEnable ? { lastError: null } : {}),
               updatedAt: now().toISOString(),
             }, { merge: true });
-            return { ...action, enabled: shouldEnable, ...(shouldEnable ? { lastError: null } : {}) };
+            return { ...action, enabled: shouldEnable };
           }
           return action;
         }

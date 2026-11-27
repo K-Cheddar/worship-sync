@@ -283,6 +283,58 @@ test("cycle rediscovery preserves retry timing and exhausts repeated transient f
   }
 });
 
+test("email rediscovery preserves a future retry and an active claim across live and non-delivery runs", { skip: !enabled }, async () => {
+  const fixture = await createFixture(randomUUID());
+  const defaultsRef = fixture.db.collection(COLLECTIONS.teamSchedulingAutomationSettings)
+    .doc(schedulingSettingsIdFor({ churchId: fixture.churchId }));
+  await defaultsRef.set({ availabilityEmailDeliveryEnabled: true }, { merge: true });
+  const defaults = (await defaultsRef.get()).data();
+  const planned = planSchedulingCycle({ churchId: fixture.churchId, teamId: fixture.teamId,
+    periodId: "2027-02", serviceTimeZone: "America/New_York",
+    effective: resolveEffectiveSchedulingSettings({ defaults, override: { mode: "inherit" } }),
+    createdAt: fixedNow().toISOString(), createdBy: null });
+  Object.assign(planned.cycle, { automationEnabled: true, availabilityFormCreationEnabled: true,
+    activationBoundaryAt: fixture.activationAt });
+  const request = planned.actions.find((action) => action.actionType === "availability_request");
+  Object.assign(request, { state: "completed", enabled: false, relatedFormId: "existing-form" });
+  const email = planned.actions.find((action) => action.actionType === "availability_email_delivery");
+  Object.assign(email, { state: "retryable_failure", enabled: true, relatedFormId: "existing-form",
+    nextAttemptAt: "2026-12-01T17:00:00.000Z", attemptCount: 2, lastError: "provider retry" });
+  await fixture.db.collection(COLLECTIONS.teamSchedulingCycles).doc(planned.cycle.cycleId).set(planned.cycle);
+  await Promise.all(planned.actions.map((action) => fixture.db.collection(COLLECTIONS.teamSchedulingActions)
+    .doc(action.actionId).set(action)));
+  let sends = 0;
+  const processor = createSchedulingAutomationProcessor({ firestore: fixture.db, collections: COLLECTIONS,
+    createAvailabilityRequest: async () => { throw new Error("must not recreate form"); },
+    deliverAvailabilityEmails: async () => { sends += 1; return { completed: true }; },
+    automaticEmailDeliveryEnabled: true, emailDeliveryConfigured: true, now: fixedNow,
+    processorStateNamespace: fixture.namespace, logger: { info() {}, error() {} } });
+  const ref = fixture.db.collection(COLLECTIONS.teamSchedulingActions).doc(email.actionId);
+  try {
+    await scopedRun(fixture, processor, "live");
+    let saved = (await ref.get()).data();
+    assert.equal(saved.enabled, true);
+    assert.equal(saved.nextAttemptAt, email.nextAttemptAt);
+    assert.equal(saved.attemptCount, 2);
+    assert.equal(saved.lastError, "provider retry");
+    await scopedRun(fixture, processor, "execute");
+    saved = (await ref.get()).data();
+    assert.equal(saved.enabled, true);
+    assert.equal(saved.nextAttemptAt, email.nextAttemptAt);
+    await ref.set({ state: "claimed", claimToken: "owner-token", claimOwner: "owner",
+      claimExpiresAt: "2026-12-01T17:00:00.000Z" }, { merge: true });
+    await scopedRun(fixture, processor, "live");
+    saved = (await ref.get()).data();
+    assert.equal(saved.enabled, true);
+    assert.equal(saved.state, "claimed");
+    assert.equal(saved.claimToken, "owner-token");
+    assert.equal(saved.claimExpiresAt, "2026-12-01T17:00:00.000Z");
+    assert.equal(sends, 0);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("an expired claim at the attempt limit is disabled for leader review", { skip: !enabled }, async () => {
   const fixture = await createFixture(randomUUID());
   const now = fixedNow();
