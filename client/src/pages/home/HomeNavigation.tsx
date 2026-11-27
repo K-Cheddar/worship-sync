@@ -99,7 +99,7 @@ export const HomeNavigationLink = ({
       </span>
       {showDescriptions && description ? (
         <span className="min-w-0 flex-1">
-          <span className="block break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
+          <span className="block break-words text-[0.9375rem] font-semibold leading-snug tracking-[-0.01em] sm:text-[1.0625rem]">
             {title}
           </span>
           <span className="mt-[5px] block break-words text-xs font-normal leading-snug text-gray-400 sm:mt-0.5">
@@ -107,7 +107,7 @@ export const HomeNavigationLink = ({
           </span>
         </span>
       ) : (
-        <span className="min-w-0 flex-1 break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
+        <span className="min-w-0 flex-1 break-words text-[0.9375rem] font-semibold leading-snug tracking-[-0.01em] sm:text-[1.0625rem]">
           {title}
         </span>
       )}
@@ -283,7 +283,7 @@ export const HomeOutputLinkCard = ({
       >
         <Icon svg={icon} size="xl" className={iconColorClass} svgClassName={iconColorClass} />
       </span>
-      <span className="min-w-0 flex-1 break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] sm:text-[17px]">
+      <span className="min-w-0 flex-1 break-words text-[0.9375rem] font-semibold leading-snug tracking-[-0.01em] sm:text-[1.0625rem]">
         {title}
       </span>
     </>

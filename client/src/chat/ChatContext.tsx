@@ -32,6 +32,7 @@ import ChatMessageNotification from "./ChatMessageNotification";
 import ChatReactionNotification, {
   type ChatReactionNotice,
 } from "./ChatReactionNotification";
+import { recordStartupDiagnostic } from "../utils/startupDiagnostics";
 
 type ChatConnectionStatus = "idle" | "connecting" | "connected" | "retrying";
 
@@ -184,6 +185,13 @@ export const ChatProvider = ({ children }: { children: React.ReactNode }) => {
   useEffect(() => {
     isOpenRef.current = isOpen;
   }, [isOpen]);
+
+  useEffect(() => {
+    recordStartupDiagnostic("chat", "manager.session", {
+      active: eligible,
+      sessionKind: globalInfo?.sessionKind ?? "none",
+    });
+  }, [eligible, globalInfo?.sessionKind]);
 
   useEffect(() => {
     pendingSendRef.current = null;

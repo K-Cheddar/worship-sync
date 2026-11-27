@@ -113,6 +113,34 @@ describe("itemListSlice", () => {
       expect(store.getState().itemList.list).toEqual(draft);
     });
 
+    it("invalidates a revision selection when the CouchDB graph changes even if its rows do not", () => {
+      const store = createStore();
+      const base = [createServiceItem({ _id: "a", listId: "row", name: "Base" })];
+      const draft = [{ ...base[0], name: "My edit" }];
+      const remote = [{ ...base[0], name: "Saved edit" }];
+      const revision = {
+        graph: { winningRevision: "2-a", conflictRevisions: ["2-b"], histories: {} },
+        versions: [{ revision: "2-a", items: remote }, { revision: "2-b", items: draft }],
+      };
+      store.dispatch(initiateItemList({ outlineId: "a", items: base }));
+      store.dispatch(updateItemList(draft));
+      store.dispatch(updateItemListFromRemote({ outlineId: "a", items: remote }));
+      store.dispatch(resolveOutlineConflict({ outlineId: "a", choice: "keep-local", draftItems: draft,
+        reviewedRevisionConflict: revision, reviewedItems: remote, revisionSelection: { kind: "whole", revision: "2-a" },
+      }));
+
+      store.dispatch(updateItemListFromRemote({
+        outlineId: "a",
+        items: remote,
+        revisionToken: JSON.stringify(["3-new-winner", ["3-new-leaf"]]),
+      }));
+
+      expect(store.getState().itemList.pendingRevisionResolutions.a).toBeUndefined();
+      expect(store.getState().itemList.remoteConflicts.a.resolutionChoice).toBeUndefined();
+      expect(store.getState().itemList.list).toEqual(draft);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
+    });
+
     it.each([
       ["matches the local draft", "Local", false],
       ["returns to the shared baseline", "Base", true],
@@ -134,7 +162,7 @@ describe("itemListSlice", () => {
       expect(store.getState().itemList.hasPendingUpdate).toBe(pending);
     });
 
-    it("rechecks a retained conflict against the winner when the outline is reloaded", () => {
+    it("clears a conflict when the reloaded winner matches the local draft", () => {
       const store = createStore();
       const base = createServiceItem({ name: "Base", _id: "a", listId: "row" });
       const local = { ...base, name: "Local" };
@@ -233,6 +261,55 @@ describe("itemListSlice", () => {
       expect(state.insertPointIndex).toBe(1);
     });
 
+    it("keeps remote deletions distinct from local additions across repeated conflict refreshes", () => {
+      const base = [
+        createServiceItem({ name: "Base A", _id: "a", listId: "a" }),
+        createServiceItem({ name: "Base B", _id: "b", listId: "b" }),
+      ];
+      const localEdit = { ...base[0], name: "Local A" };
+      const remoteEdit = { ...base[0], name: "Remote A" };
+      const localAddition = createServiceItem({ name: "Local addition", _id: "local", listId: "local" });
+      const remoteAddition = createServiceItem({ name: "Remote addition", _id: "remote", listId: "remote" });
+      const store = createStore();
+      store.dispatch(initiateItemList({ outlineId: "outline", items: base }));
+      store.dispatch(updateItemList([localEdit, base[1], localAddition]));
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: [remoteEdit, base[1], remoteAddition] }));
+
+      const first = store.getState().itemList.remoteConflicts.outline;
+      expect(first.localItems.map((item) => item.listId)).toEqual(["a", "b", "remote", "local"]);
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: [remoteEdit, base[1]] }));
+
+      const afterDelete = store.getState().itemList.remoteConflicts.outline;
+      expect(afterDelete.localItems.map((item) => item.listId)).toEqual(["a", "b", "local"]);
+      expect(afterDelete.localItems.find((item) => item.listId === "a")?.name).toBe("Local A");
+      expect(afterDelete.remoteItems.map((item) => item.listId)).toEqual(["a", "b"]);
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: [remoteEdit, base[1]] }));
+      expect(store.getState().itemList.remoteConflicts.outline.localItems.map((item) => item.listId)).toEqual(["a", "b", "local"]);
+    });
+
+    it("keeps a delete-versus-edit conflict for a remote row edited locally", () => {
+      const base = [createServiceItem({ name: "Base A", _id: "a", listId: "a" })];
+      const localEdit = { ...base[0], name: "Local A" };
+      const remoteEdit = { ...base[0], name: "Remote A" };
+      const remoteAddition = createServiceItem({ name: "Remote addition", _id: "remote", listId: "remote" });
+      const store = createStore();
+      store.dispatch(initiateItemList({ outlineId: "outline", items: base }));
+      store.dispatch(updateItemList([localEdit]));
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: [remoteEdit, remoteAddition] }));
+      const firstCandidate = store.getState().itemList.remoteConflicts.outline.localItems;
+      const localEditOfRemoteRow = firstCandidate.map((item) => item.listId === "remote"
+        ? { ...item, name: "Edited remote addition" }
+        : item);
+      store.dispatch(updateItemList(localEditOfRemoteRow));
+
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: [remoteEdit] }));
+
+      expect(store.getState().itemList.remoteConflicts.outline.localItems).toEqual(expect.arrayContaining([
+        expect.objectContaining({ listId: "remote", name: "Edited remote addition" }),
+      ]));
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
+    });
+
     it("retains both drafts when the same row changes concurrently and resolves explicitly", () => {
       const baseline = [createServiceItem({ name: "Base", _id: "a", listId: "l1" })];
       const local = createServiceItem({ name: "Local draft", _id: "a", listId: "l1" });
@@ -328,13 +405,20 @@ describe("itemListSlice", () => {
       store.dispatch(resolveOutlineConflict({ outlineId: "outline", choice: "keep-local", draftItems: draft,
         reviewedRevisionConflict: revision, reviewedItems: remote, revisionSelection: { kind: "whole", revision: "2-a" },
       }));
+      store.dispatch(updateItemListFromRemote({ outlineId: "outline", items: remote }));
+      expect(store.getState().itemList.pendingRevisionResolutions.outline.items).toEqual(remote);
+      expect(store.getState().itemList.hasPendingUpdate).toBe(true);
       expect(store.getState().itemList.list).toEqual(draft);
       expect(store.getState().itemList.pendingRevisionResolutions.outline.items).toEqual(remote);
       store.dispatch(failOutlineResolution("outline"));
       expect(store.getState().itemList.list).toEqual(draft);
       expect(store.getState().itemList.remoteConflicts.outline.localItems).toEqual(draft);
       expect(store.getState().itemList.remoteConflicts.outline.saveError).toBe(true);
-      expect(store.getState().itemList.pendingRevisionResolutions).toEqual({});
+      expect(store.getState().itemList.pendingRevisionResolutions.outline).toMatchObject({
+        choice: "keep-local",
+        items: remote,
+        selection: { kind: "whole", revision: "2-a" },
+      });
     });
 
     it("keeps edits made after the conflict banner appeared", () => {

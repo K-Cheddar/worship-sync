@@ -52,6 +52,11 @@ import { isViewOnlyAccess } from "../../utils/accessTiers";
 import { useControllerBasePath } from "../../context/activeController";
 import { usePresentationControllerMode } from "../../context/presentationControllerMode";
 import MediaSurfaceDiagnostics from "./ToolbarElements/MediaSurfaceDiagnostics";
+import {
+  readSlideEditingScope,
+  saveSlideEditingScope,
+  type SlideEditingScope,
+} from "../../utils/slideEditingScope";
 
 type sections =
   | "configurations"
@@ -113,11 +118,19 @@ const Toolbar = ({
   );
   const [section, setSection] = useState<sections>("configurations");
   const [allToolsOpen, setAllToolsOpen] = useState(false);
+  const [editingScope, setEditingScope] = useState<SlideEditingScope>(
+    readSlideEditingScope,
+  );
   const openAtRoutingControlsRef = useRef(false);
   const { isMobile = false } = useContext(ControllerInfoContext) || {};
   const { access } = useContext(GlobalInfoContext) || {};
   const dispatch = useDispatch();
   const { mode, setMode } = usePresentationControllerMode();
+
+  const updateEditingScope = useCallback((scope: SlideEditingScope) => {
+    setEditingScope(scope);
+    saveSlideEditingScope(scope);
+  }, []);
 
   useEffect(() => {
     if (variant === "overlay" && mode === "present") {
@@ -331,6 +344,8 @@ const Toolbar = ({
             access === "full" && showStreamFormat && itemType === "free"
           }
           showOutputTargets={access === "full"}
+          editingScope={editingScope}
+          onEditingScopeChange={updateEditingScope}
         >
           {(targets) =>
             mode === "edit" || allToolsOpen ? (
@@ -340,12 +355,14 @@ const Toolbar = ({
                 quickBrightnessTarget={targets.quickBrightness}
                 quickBibleModeTarget={targets.quickBibleMode}
                 drawerTarget={targets.slideFormatting}
+                applyToAll={editingScope === "all"}
               />
               <BoxEditor
                 updateItem={updateItem}
                 quickBoxLayoutTarget={targets.quickBoxLayout}
                 quickBoxHeightTarget={targets.quickBoxHeight}
                 drawerTarget={targets.boxLayout}
+                applyToAll={editingScope === "all"}
               />
               {access === "full" && showStreamFormat && itemType === "free" && (
                 <FormattedTextEditor drawerTarget={targets.streamFormatting} />

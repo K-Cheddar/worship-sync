@@ -26,7 +26,12 @@ import {
   boardPublicPageClassName,
 } from "./teamsStyles";
 import { formatPlainDateRangeLabel, formatShortOccurrenceDate } from "./teamsUtils";
-import { DEFAULT_INTAKE_FORM_COPY, resolveIntakeCopy } from "./intakeFormCopy";
+import {
+  DEFAULT_INTAKE_FORM_COPY,
+  DEFAULT_TEAM_AVAILABILITY_INSTRUCTIONS,
+  DEFAULT_TEAM_AVAILABILITY_WELCOME,
+  resolveIntakeCopy,
+} from "./intakeFormCopy";
 import { resolveIntakeFormFields } from "./intakeFormFields";
 import BirthDateField from "./components/BirthDateField";
 import {
@@ -78,6 +83,7 @@ const TeamIntakePublic = () => {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<MemberDetailErrors>({});
+  const [availabilityChoice, setAvailabilityChoice] = useState<"dates" | "none" | null>(null);
 
   const clearFieldError = (field: MemberDetailField) => {
     setFieldErrors((current) => {
@@ -91,6 +97,11 @@ const TeamIntakePublic = () => {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setPayload(emptyPayload());
+    setAvailabilityChoice(null);
+    setSubmitted(false);
+    setError("");
+    setFieldErrors({});
     getTeamIntakePreview(token, { personalized: personalizedRoute })
       .then((response) => {
         if (!cancelled) setPreview(response);
@@ -111,47 +122,70 @@ const TeamIntakePublic = () => {
   /** Render only form-enabled fields, and only missing fields on recipient links. */
   const enabledFields = preview ? resolveIntakeFormFields(preview.form) : [];
   const isPersonalized = Boolean(preview?.recipient);
+  const isDedicatedAvailabilityForm = preview?.form.purpose === "team_availability";
+  const isGeneralDedicatedAvailabilityForm = isDedicatedAvailabilityForm && !isPersonalized;
+  const collectsAvailability = Boolean(
+    enabledFields.includes("availability") &&
+      preview?.form.availabilityOccurrences?.length,
+  );
   const missingPersonalFields = new Set(preview?.recipient?.missingFields || []);
   const personalInformationFields = PERSONAL_INFORMATION_FIELDS.filter(
     (field) =>
-      enabledFields.includes(field) &&
-      (!isPersonalized || missingPersonalFields.has(field)),
+      (isGeneralDedicatedAvailabilityForm &&
+        ["firstName", "lastName", "email"].includes(field)) ||
+      (enabledFields.includes(field) &&
+        (!isPersonalized || missingPersonalFields.has(field))),
   );
   const shouldCollectPersonalField = (field: MemberDetailField) =>
     personalInformationFields.includes(field);
+  const isRequiredPersonalField = (field: MemberDetailField) =>
+    shouldCollectPersonalField(field) &&
+    !(isDedicatedAvailabilityForm && field === "email");
+
+  const churchLogoUrl = preview?.churchLogoUrl?.trim() || "";
 
   const submit = async () => {
+    const currentPreview = preview;
+    if (!currentPreview) return;
     const nextFieldErrors: MemberDetailErrors = {};
-    if (shouldCollectPersonalField("title") && !payload.title?.trim()) {
+    if (isRequiredPersonalField("title") && !payload.title?.trim()) {
       nextFieldErrors.title = "Enter your title.";
     }
-    if (shouldCollectPersonalField("firstName") && !payload.firstName.trim()) {
+    if (isRequiredPersonalField("firstName") && !payload.firstName.trim()) {
       nextFieldErrors.firstName = "Enter your first name.";
     }
-    if (shouldCollectPersonalField("lastName") && !payload.lastName.trim()) {
+    if (isRequiredPersonalField("lastName") && !payload.lastName.trim()) {
       nextFieldErrors.lastName = "Enter your last name.";
     }
-    if (shouldCollectPersonalField("birthDate") && !payload.birthDate) {
+    if (isRequiredPersonalField("birthDate") && !payload.birthDate) {
       nextFieldErrors.birthDate = "Enter your birthday.";
     }
-    if (shouldCollectPersonalField("email") && !payload.email?.trim()) {
+    if (isRequiredPersonalField("email") && !payload.email?.trim()) {
       nextFieldErrors.email = "Enter your email.";
+    }
+    const normalizedEmail = payload.email?.trim().toLowerCase() || "";
+    if (
+      shouldCollectPersonalField("email") &&
+      normalizedEmail &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+    ) {
+      nextFieldErrors.email = "Enter a valid email address.";
     }
 
     const missingMemberDetailFields = [
-      shouldCollectPersonalField("title") && !payload.title?.trim()
+      isRequiredPersonalField("title") && !payload.title?.trim()
         ? "title"
         : "",
-      shouldCollectPersonalField("firstName") && !payload.firstName.trim()
+      isRequiredPersonalField("firstName") && !payload.firstName.trim()
         ? "first name"
         : "",
-      shouldCollectPersonalField("lastName") && !payload.lastName.trim()
+      isRequiredPersonalField("lastName") && !payload.lastName.trim()
         ? "last name"
         : "",
-      shouldCollectPersonalField("birthDate") && !payload.birthDate
+      isRequiredPersonalField("birthDate") && !payload.birthDate
         ? "birthday"
         : "",
-      shouldCollectPersonalField("email") && !payload.email?.trim()
+      isRequiredPersonalField("email") && !payload.email?.trim()
         ? "email"
         : "",
     ].filter(Boolean);
@@ -183,10 +217,48 @@ const TeamIntakePublic = () => {
       showToast(birthdayError, "neutral");
       return;
     }
+    if (nextFieldErrors.email) {
+      setFieldErrors(nextFieldErrors);
+      showToast(nextFieldErrors.email, "neutral");
+      return;
+    }
+    if (collectsAvailability && !availabilityChoice) {
+      showToast(
+        "Select at least one service date or indicate that none work.",
+        "neutral",
+      );
+      return;
+    }
     setFieldErrors({});
     setSubmitting(true);
     try {
-      await submitTeamIntake(token, payload, { personalized: isPersonalized });
+      const occurrenceIds = collectsAvailability
+        ? currentPreview.form.availabilityOccurrences.map(({ occurrenceId }) => occurrenceId)
+        : [];
+      const occurrenceAvailability = collectsAvailability
+        ? Object.fromEntries(
+            occurrenceIds.map((occurrenceId) => [
+              occurrenceId,
+              availableOccurrenceIds.includes(occurrenceId)
+                ? "available"
+                : "unavailable",
+            ]),
+          ) as Record<string, "available" | "unavailable">
+        : payload.occurrenceAvailability;
+      await submitTeamIntake(
+        token,
+        {
+          ...payload,
+          firstName: payload.firstName.trim(),
+          lastName: payload.lastName.trim(),
+          email: normalizedEmail,
+          occurrenceAvailability,
+          ...(collectsAvailability
+            ? { availabilityOccurrenceIds: occurrenceIds }
+            : {}),
+        },
+        { personalized: isPersonalized },
+      );
       setSubmitted(true);
     } catch (submitError) {
       showApiErrorToast(showToast, submitError, "Could not submit this form.");
@@ -195,9 +267,11 @@ const TeamIntakePublic = () => {
     }
   };
 
-  const churchLogoUrl = preview?.churchLogoUrl?.trim() || "";
-  const collectsAvailability = enabledFields.includes("availability") && Boolean(preview?.form.availabilityOccurrences?.length);
-  const personalizedSubmitLabel = collectsAvailability ? "Submit availability" : "Submit response";
+  const submitLabel = isDedicatedAvailabilityForm
+    ? "Submit availability"
+    : isPersonalized
+      ? "Submit response"
+      : "Submit form";
 
   // Group positions under their team so submitters can skip teams that aren't
   // theirs. The server already scopes which teams appear.
@@ -288,7 +362,9 @@ const TeamIntakePublic = () => {
               </h1>
             </div>
             <p className="mt-3 max-w-2xl text-sm leading-relaxed text-stone-300 sm:text-base">
-              Your response was submitted. You can close this page.
+              {isDedicatedAvailabilityForm
+                ? "Your availability was submitted. You can close this page."
+                : "Your response was submitted. You can close this page."}
             </p>
           </header>
         </div>
@@ -315,14 +391,17 @@ const TeamIntakePublic = () => {
             {preview.churchName} ·{" "}
             {formatPlainDateRangeLabel(preview.form.startDate, preview.form.endDate)}
           </p>
+          {isPersonalized ? (
+            <p className="mt-2 max-w-2xl text-sm leading-relaxed text-stone-300">
+              Hi {preview.recipient?.firstName || "there"}!
+            </p>
+          ) : null}
           <p className="mt-2 max-w-2xl whitespace-pre-line text-sm leading-relaxed text-stone-400">
-            {isPersonalized
-              ? `Hi ${preview.recipient?.firstName || "there"}. ${collectsAvailability ? "Please submit your availability for this form." : "Please complete this form."}`
-              : null}
-            {isPersonalized ? "\n\n" : ""}
             {resolveIntakeCopy(
               preview.form.welcomeMessage,
-              collectsAvailability ? DEFAULT_INTAKE_FORM_COPY.welcome : "Complete the fields requested below.",
+              isDedicatedAvailabilityForm
+                ? DEFAULT_TEAM_AVAILABILITY_WELCOME
+                : DEFAULT_INTAKE_FORM_COPY.welcome,
             )}
           </p>
         </header>
@@ -330,7 +409,11 @@ const TeamIntakePublic = () => {
         <section className={cn(boardIntakeFormSectionClassName, "mt-4 space-y-6")}>
           {personalInformationFields.length > 0 ? (
             <fieldset
-              aria-label="Personal information"
+              aria-label={
+                isGeneralDedicatedAvailabilityForm
+                  ? "Your information"
+                  : "Personal information"
+              }
               className="grid grid-cols-12 gap-3 rounded-md border border-stone-700 bg-stone-950/20 p-4"
             >
               {shouldCollectPersonalField("title") ? (
@@ -342,7 +425,7 @@ const TeamIntakePublic = () => {
                   labelClassName={boardFieldLabelClassName}
                   inputClassName={boardDarkFieldClassName}
                   className="col-span-12 sm:col-span-2"
-                  required
+                  required={isRequiredPersonalField("title")}
                   onChange={(title) => {
                     clearFieldError("title");
                     setPayload((current) => ({ ...current, title: String(title) }));
@@ -360,7 +443,7 @@ const TeamIntakePublic = () => {
                     "col-span-6",
                     shouldCollectPersonalField("title") ? "sm:col-span-5" : "sm:col-span-6",
                   )}
-                  required
+                  required={isRequiredPersonalField("firstName")}
                   onChange={(firstName) => {
                     clearFieldError("firstName");
                     setPayload((current) => ({ ...current, firstName: String(firstName) }));
@@ -378,7 +461,7 @@ const TeamIntakePublic = () => {
                     "col-span-6",
                     shouldCollectPersonalField("title") ? "sm:col-span-5" : "sm:col-span-6",
                   )}
-                  required
+                  required={isRequiredPersonalField("lastName")}
                   onChange={(lastName) => {
                     clearFieldError("lastName");
                     setPayload((current) => ({ ...current, lastName: String(lastName) }));
@@ -394,7 +477,7 @@ const TeamIntakePublic = () => {
               inputClassName={boardDarkFieldClassName}
               className="col-span-12 sm:col-span-6"
               errorText={fieldErrors.birthDate}
-              required
+              required={isRequiredPersonalField("birthDate")}
               onChange={(birthDate) => {
                 clearFieldError("birthDate");
                 setPayload((current) => ({
@@ -419,7 +502,7 @@ const TeamIntakePublic = () => {
               labelClassName={boardFieldLabelClassName}
               inputClassName={boardDarkFieldClassName}
               className="col-span-12 sm:col-span-6"
-              required
+              required={isRequiredPersonalField("email")}
               onChange={(email) => {
                 clearFieldError("email");
                 setPayload((current) => ({ ...current, email: String(email) }));
@@ -449,34 +532,59 @@ const TeamIntakePublic = () => {
 
           {enabledFields.includes("availability") &&
           preview.form.availabilityOccurrences.length > 0 ? (
-            <EntityMultiSelect
-              label="Service date availability"
-              description={resolveIntakeCopy(
-                preview.form.availabilityMessage,
-                DEFAULT_INTAKE_FORM_COPY.availability,
-              )}
-              variant="board-attendee"
-              emphasizeSublabel
-              options={preview.form.availabilityOccurrences.map((occurrence) => ({
-                id: occurrence.occurrenceId,
-                label: occurrence.name,
-                sublabel: formatShortOccurrenceDate(occurrence.startsAt, preview.serviceTimeZone || "UTC"),
-              }))}
-              value={availableOccurrenceIds}
-              onChange={(occurrenceIds) =>
-                setPayload((current) => {
-                  const nextAvailability = { ...current.occurrenceAvailability };
-                  preview.form.availabilityOccurrences.forEach((occurrence) => {
-                    nextAvailability[occurrence.occurrenceId] = occurrenceIds.includes(
-                      occurrence.occurrenceId,
-                    )
-                      ? "available"
-                      : "unavailable";
+            <>
+              <EntityMultiSelect
+                label={isDedicatedAvailabilityForm
+                  ? "Select your available dates."
+                  : "Service date availability"}
+                description={resolveIntakeCopy(
+                  preview.form.availabilityMessage,
+                  isDedicatedAvailabilityForm
+                    ? DEFAULT_TEAM_AVAILABILITY_INSTRUCTIONS
+                    : DEFAULT_INTAKE_FORM_COPY.availability,
+                )}
+                variant="board-attendee"
+                emphasizeSublabel
+                options={preview.form.availabilityOccurrences.map((occurrence) => ({
+                  id: occurrence.occurrenceId,
+                  label: occurrence.name,
+                  sublabel: formatShortOccurrenceDate(occurrence.startsAt, preview.serviceTimeZone || "UTC"),
+                }))}
+                value={availableOccurrenceIds}
+                onChange={(occurrenceIds) => {
+                  setAvailabilityChoice(occurrenceIds.length ? "dates" : null);
+                  setPayload((current) => {
+                    const nextAvailability = { ...current.occurrenceAvailability };
+                    preview.form.availabilityOccurrences.forEach((occurrence) => {
+                      nextAvailability[occurrence.occurrenceId] = occurrenceIds.includes(
+                        occurrence.occurrenceId,
+                      )
+                        ? "available"
+                        : "unavailable";
+                    });
+                    return { ...current, occurrenceAvailability: nextAvailability };
                   });
-                  return { ...current, occurrenceAvailability: nextAvailability };
-                })
-              }
-            />
+                }}
+              />
+              <Checkbox
+                className="mt-2"
+                label="I'm not available for any of these dates."
+                checked={availabilityChoice === "none"}
+                onCheckedChange={(checked) => {
+                  setAvailabilityChoice(checked ? "none" : null);
+                  if (!checked) return;
+                  setPayload((current) => ({
+                    ...current,
+                    occurrenceAvailability: Object.fromEntries(
+                      preview.form.availabilityOccurrences.map(({ occurrenceId }) => [
+                        occurrenceId,
+                        "unavailable",
+                      ]),
+                    ),
+                  }));
+                }}
+              />
+            </>
           ) : null}
 
           {enabledFields.includes("schedulingFrequency") ? (
@@ -603,7 +711,7 @@ const TeamIntakePublic = () => {
               className="w-full justify-center gap-2 py-2 sm:w-48"
               onClick={() => void submit()}
             >
-              {isPersonalized ? personalizedSubmitLabel : "Submit form"}
+              {submitLabel}
             </Button>
           </div>
         </section>

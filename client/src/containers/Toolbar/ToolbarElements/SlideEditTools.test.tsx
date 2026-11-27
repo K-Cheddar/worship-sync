@@ -63,8 +63,16 @@ jest.mock("../../../utils/itemNewlineCleanup", () => ({
 
 jest.mock("../../../components/PopOver/PopoverPanel", () => ({
   __esModule: true,
-  default: ({ TriggeringButton }: { TriggeringButton: ReactNode }) => (
-    <>{TriggeringButton}</>
+  default: ({ TriggeringButton, children }: { TriggeringButton: ReactNode; children?: ReactNode }) => (
+    <>{TriggeringButton}{children}</>
+  ),
+}));
+
+jest.mock("../../../components/ColorField/ColorField", () => ({
+  BrandAwareColorPicker: ({ onChange }: { onChange: (color: string) => void }) => (
+    <button type="button" onClick={() => onChange("#ff00ff")}>
+      Choose test font color
+    </button>
   ),
 }));
 
@@ -122,6 +130,7 @@ describe("SlideEditTools", () => {
     drawerTarget: HTMLElement | null = document.body,
     quickBrightnessTarget: HTMLElement | null = null,
     quickBibleModeTarget: HTMLElement | null = null,
+    applyToAll = true,
   ) =>
     render(
       <SlideEditTools
@@ -129,6 +138,7 @@ describe("SlideEditTools", () => {
         quickBrightnessTarget={quickBrightnessTarget}
         quickBibleModeTarget={quickBibleModeTarget}
         drawerTarget={drawerTarget}
+        applyToAll={applyToAll}
       />,
     );
 
@@ -245,6 +255,7 @@ describe("SlideEditTools", () => {
           kind: "boxProperties",
           properties: { fontSize: 48 },
           formatItem: true,
+          applyToAll: true,
         }),
       }),
     );
@@ -252,7 +263,7 @@ describe("SlideEditTools", () => {
     drawerTarget.remove();
   });
 
-  it("keeps brightness applying to the background across the item", () => {
+  it("applies brightness to the background using the shared all-slides scope", () => {
     const secondSlide = {
       ...mockState.undoable.present.item.slides[0],
       id: "slide-2",
@@ -268,18 +279,244 @@ describe("SlideEditTools", () => {
     fireEvent.change(screen.getByRole("spinbutton", { name: /Brightness/ }), {
       target: { value: "45" },
     });
+    act(() => jest.runAllTimers());
 
-    expect(mockUpdateSlides).toHaveBeenCalledWith(
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
       expect.objectContaining({
-        slides: expect.arrayContaining([
-          expect.objectContaining({ boxes: expect.arrayContaining([expect.objectContaining({ brightness: 45 })]) }),
-        ]),
+        mutation: expect.objectContaining({
+          kind: "boxProperties",
+          properties: { brightness: 45 },
+          applyToAll: true,
+          updateBackgroundOnly: true,
+          skipTitleSlide: false,
+        }),
       }),
     );
-    const updatedSlides = mockUpdateSlides.mock.calls.at(-1)?.[0] as {
-      slides: Array<{ boxes: Array<{ brightness?: number }> }>;
+    expect(mockUpdateSlides).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Choose test font color", { fontColor: "#ff00ff" }, true],
+    ["Bold", { isBold: true }, true],
+    ["Italic", { isItalic: true }, true],
+    ["Align right", { align: "right" }, true],
+    ["Choose test font color", { fontColor: "#ff00ff" }, false],
+    ["Bold", { isBold: true }, false],
+    ["Italic", { isItalic: true }, false],
+    ["Align right", { align: "right" }, false],
+  ])("applies %s formatting changes with applyToAll=%s", (control, property, applyToAll) => {
+    renderTools(null, document.body, null, null, applyToAll);
+
+    fireEvent.click(screen.getByRole("button", { name: control }));
+    act(() => jest.runAllTimers());
+
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          kind: "boxProperties",
+          properties: property,
+          applyToAll,
+        }),
+      }),
+    );
+  });
+
+  it("uses the selected-slide scope for background brightness", () => {
+    renderTools(null, document.body, null, null, false);
+
+    fireEvent.change(screen.getByRole("spinbutton", { name: /Brightness/ }), {
+      target: { value: "45" },
+    });
+    act(() => jest.runAllTimers());
+
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          properties: { brightness: 45 },
+          applyToAll: false,
+          updateBackgroundOnly: true,
+        }),
+      }),
+    );
+
+  });
+
+  it.each([true, false])(
+    "applies Keep Aspect Ratio using applyToAll=%s",
+    (applyToAll) => {
+      renderTools(null, document.body, null, null, applyToAll);
+
+      fireEvent.click(screen.getByRole("switch", { name: /Keep Aspect Ratio/ }));
+      act(() => jest.runAllTimers());
+
+      expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          mutation: expect.objectContaining({
+            kind: "boxProperties",
+            properties: { shouldKeepAspectRatio: true },
+            applyToAll,
+            updateBackgroundOnly: true,
+          }),
+        }),
+      );
+    },
+  );
+
+  it("captures the font-size scope when a typed change is queued", () => {
+    const view = renderTools();
+    fireEvent.change(screen.getByRole("textbox", { name: /Font Size/ }), {
+      target: { value: "48" },
+    });
+
+    view.rerender(
+      <SlideEditTools
+        quickFontSizeTarget={null}
+        quickBrightnessTarget={null}
+        quickBibleModeTarget={null}
+        drawerTarget={document.body}
+        applyToAll={false}
+      />,
+    );
+    act(() => jest.runAllTimers());
+
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          properties: { fontSize: 48 },
+          applyToAll: true,
+        }),
+      }),
+    );
+  });
+
+  it("captures the font-color scope when a delayed color change is queued", () => {
+    const view = renderTools(null, document.body, null, null, true);
+    fireEvent.click(screen.getByRole("button", { name: "Choose test font color" }));
+
+    view.rerender(
+      <SlideEditTools
+        quickFontSizeTarget={null}
+        quickBrightnessTarget={null}
+        quickBibleModeTarget={null}
+        drawerTarget={document.body}
+        applyToAll={false}
+      />,
+    );
+    act(() => jest.runAllTimers());
+
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        owner: expect.objectContaining({ itemId: "free-item-1" }),
+        mutation: expect.objectContaining({
+          slideId: "slide-1",
+          targetBoxId: "text",
+          properties: { fontColor: "#ff00ff" },
+          applyToAll: true,
+        }),
+      }),
+    );
+  });
+
+  it("uses selected-slide scope for typed and incremented font sizes", () => {
+    renderTools(null, document.body, null, null, false);
+
+    fireEvent.change(screen.getByRole("textbox", { name: /Font Size/ }), {
+      target: { value: "48" },
+    });
+    act(() => jest.runAllTimers());
+    expect(mockApplyOwnedContentMutation).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          properties: { fontSize: 48 },
+          applyToAll: false,
+        }),
+      }),
+    );
+
+    mockApplyOwnedContentMutation.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Increase font size" }));
+    act(() => jest.runAllTimers());
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          properties: { fontSize: 49 },
+          applyToAll: false,
+        }),
+      }),
+    );
+
+    mockApplyOwnedContentMutation.mockClear();
+    fireEvent.click(screen.getByRole("button", { name: "Decrease font size" }));
+    act(() => jest.runAllTimers());
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          properties: { fontSize: 48 },
+          applyToAll: false,
+        }),
+      }),
+    );
+  });
+
+  it("uses selected-slide scope for font-size presets", () => {
+    renderTools(null, document.body, null, null, false);
+
+    const presetButton = screen.getByRole("button", { name: "Font size presets" });
+    fireEvent.keyDown(presetButton, { key: "Enter", code: "Enter" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "60" }));
+    act(() => jest.runAllTimers());
+
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          properties: { fontSize: 60 },
+          applyToAll: false,
+        }),
+      }),
+    );
+  });
+
+  it("keeps a debounced font-size change on its original slide after navigation", () => {
+    const view = renderTools();
+    fireEvent.change(screen.getByRole("textbox", { name: /Font Size/ }), {
+      target: { value: "48" },
+    });
+    mockState.undoable.present.item = {
+      ...mockState.undoable.present.item,
+      selectedSlide: 1,
+      slides: [
+        ...mockState.undoable.present.item.slides,
+        {
+          ...mockState.undoable.present.item.slides[0],
+          id: "slide-2",
+          boxes: mockState.undoable.present.item.slides[0].boxes.map((box) => ({
+            ...box,
+            id: `${box.id}-2`,
+          })),
+        },
+      ],
     };
-    expect(updatedSlides.slides.every((slide) => slide.boxes[0].brightness === 45)).toBe(true);
+    view.rerender(
+      <SlideEditTools
+        quickFontSizeTarget={null}
+        quickBrightnessTarget={null}
+        quickBibleModeTarget={null}
+        drawerTarget={document.body}
+        applyToAll={false}
+      />,
+    );
+    act(() => jest.runAllTimers());
+
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          slideId: "slide-1",
+          targetBoxId: "text",
+          properties: { fontSize: 48 },
+          applyToAll: true,
+        }),
+      }),
+    );
   });
 
   it("uses the sun icon and accessible label for quick background brightness", () => {

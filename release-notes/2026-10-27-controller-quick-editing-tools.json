@@ -2,6 +2,6 @@
   "id": "controller-quick-editing-tools-20261027",
   "date": "2026-10-27",
   "type": "improved",
-  "title": "Quick access to slide editing tools",
-  "description": "Edit slide text and boxes, with quick formatting controls available on mobile and desktop."
+  "title": "Consistent slide editing scope",
+  "description": "Choose whether formatting and layout changes apply to one slide or all slides, with song-wide font sizing as the default."
 }

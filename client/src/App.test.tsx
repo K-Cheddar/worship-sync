@@ -3,6 +3,7 @@ import { Provider } from "react-redux";
 import { StrictMode } from "react";
 import { configureStore } from "@reduxjs/toolkit";
 import App, { AppRoutes } from "./App";
+import * as startupDiagnostics from "./utils/startupDiagnostics";
 import { GlobalInfoContext } from "./context/globalInfo";
 import { createMockGlobalContext } from "./test/mocks";
 import {
@@ -26,6 +27,15 @@ import { creditsSlice } from "./store/creditsSlice";
 let mockBoardPending: Promise<void> | null = null;
 const mockControllerWrapperLifecycle = { mount: jest.fn(), unmount: jest.fn() };
 let mockBoardControllerPending: Promise<void> | null = null;
+
+jest.mock("./utils/startupDiagnostics", () => {
+  const actual = jest.requireActual("./utils/startupDiagnostics");
+  return {
+    ...actual,
+    getStartupDiagnosticMode: jest.fn(() => "normal"),
+    recordStartupDiagnostic: jest.fn(),
+  };
+});
 
 // controllerInfo/env use import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
 
@@ -71,6 +81,10 @@ const createMockStore = () => {
     },
   });
 };
+
+afterEach(() => {
+  jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("normal");
+});
 
 // Mock GSAP and its plugins
 jest.mock("gsap", () => ({
@@ -198,13 +212,13 @@ jest.mock("./context/globalInfo", () => {
 jest.mock("./ControllerContextWrapper", () => {
   const React = require("react");
   const { Outlet, useNavigate } = require("react-router-dom");
-  const MockControllerContextWrapper = () => {
+  const MockControllerContextWrapper = ({ children }: { children?: React.ReactNode }) => {
     const navigate = useNavigate();
     React.useEffect(() => {
       mockControllerWrapperLifecycle.mount();
       return () => mockControllerWrapperLifecycle.unmount();
     }, []);
-    return <><button type="button" data-testid="go-to-board-controller" onClick={() => navigate("/boards/controller")}>Open board controller</button><Outlet /></>;
+    return <><button type="button" data-testid="go-to-board-controller" onClick={() => navigate("/boards/controller")}>Open board controller</button>{children ?? <Outlet />}</>;
   };
   return { __esModule: true, default: MockControllerContextWrapper };
 });
@@ -259,6 +273,53 @@ describe("App Component", () => {
     expect(screen.getByText("Getting WorshipSync ready")).toBeInTheDocument();
     expect(screen.getByText("Preparing your workspace…")).toBeInTheDocument();
     expect(document.body.style.backgroundColor).toBe("rgb(43, 53, 68)");
+  });
+
+  it("shows regular application routes in normal diagnostic mode", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("normal");
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "ready" })}>
+        <MemoryRouter initialEntries={["/home"]}><AppRoutes /></MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+    expect(await screen.findByTestId("home-page")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Startup diagnostics" })).not.toBeInTheDocument();
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "route",
+      "changed",
+      { route: "home" },
+    );
+  });
+
+  it("locks operator routes in replication-only mode and explains its isolation scope", () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("replication-only");
+    expect(startupDiagnostics.getStartupDiagnosticMode()).toBe("replication-only");
+    expect(startupDiagnostics.shouldShowStartupDiagnosticsPanel("replication-only", "/controller")).toBe(true);
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "ready" })}>
+        <MemoryRouter initialEntries={["/controller"]}><AppRoutes /></MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Startup diagnostics" })).toBeInTheDocument();
+    expect(screen.getByText(/without the item-cache subscriber, Bible database, or app managers/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Test mode")).toHaveValue("replication-only");
+    expect(screen.queryByLabelText(/Estimate document payload sizes/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
+    expect(screen.queryByTestId("controller-page")).not.toBeInTheDocument();
+  });
+
+  it("locks isolated display routes without painting an opaque stream background", () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("content-only");
+    const { container } = render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "ready" })}>
+        <MemoryRouter initialEntries={["/stream"]}><AppRoutes /></MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+    expect(screen.getByTestId("startup-diagnostics-display-lock")).toHaveClass("bg-transparent");
+    expect(screen.queryByTestId("stream-page")).not.toBeInTheDocument();
+    expect(container).not.toHaveTextContent("Startup diagnostics");
+    expect(document.body.style.backgroundColor).toBe("transparent");
   });
 
   it("keeps the shared startup screen visible while the initial lazy route loads", async () => {
@@ -378,6 +439,30 @@ describe("App Component", () => {
 
   test("renders without crashing", () => {
     renderApp();
+  });
+
+  test("skips application-wide consumers in replication-only diagnostic mode", () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("replication-only");
+    jest.mocked(startupDiagnostics.recordStartupDiagnostic).mockClear();
+    renderApp();
+
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "manager",
+      "app-global-managers.skipped",
+      expect.objectContaining({
+        chat: false,
+        routePersistence: false,
+        displayOutputsSync: false,
+        controllerProfilesSync: false,
+        timerManager: false,
+        rehearsalPlaybackProvider: false,
+      }),
+    );
+    expect(startupDiagnostics.recordStartupDiagnostic).not.toHaveBeenCalledWith(
+      "manager",
+      "app-global-managers.mounted",
+      expect.anything(),
+    );
   });
 
   test("renders app entry page by default", () => {

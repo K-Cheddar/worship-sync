@@ -144,6 +144,81 @@ describe("presentationSlice", () => {
       expect(projector.name).toBe("Next song");
     });
 
+    it("keeps local built-in output timestamps increasing when server time moves backward", () => {
+      const now = jest.spyOn(Date, "now").mockReturnValue(100);
+      const store = createStore({
+        presentation: {
+          isProjectorTransmitting: true,
+          isMonitorTransmitting: true,
+          isStreamTransmitting: true,
+          projectorInfo: createPresentation({
+            displayType: "projector",
+            time: 1_000,
+          }),
+          monitorInfo: createPresentation({
+            displayType: "monitor",
+            time: 2_000,
+          }),
+          streamInfo: createPresentation({
+            displayType: "stream",
+            time: 3_000,
+          }),
+        },
+      });
+      const send = (name: string) => {
+        store.dispatch(
+          presentationSlice.actions.updateProjector(
+            createPresentation({
+              type: "song",
+              name,
+              slide: { id: name, type: "Verse", name, boxes: [] },
+              displayType: "projector",
+            }),
+          ),
+        );
+        store.dispatch(
+          presentationSlice.actions.updateMonitor(
+            createPresentation({
+              type: "song",
+              name,
+              slide: { id: name, type: "Verse", name, boxes: [] },
+              displayType: "monitor",
+            }),
+          ),
+        );
+        store.dispatch(
+          presentationSlice.actions.updateStream(
+            createPresentation({
+              type: "song",
+              name,
+              slide: { id: name, type: "Verse", name, boxes: [] },
+              displayType: "stream",
+            }),
+          ),
+        );
+      };
+
+      try {
+        setServerTimeOffset(0);
+        send("First send");
+        expect(legacy(store.getState().presentation)).toMatchObject({
+          projectorInfo: { time: 1_001 },
+          monitorInfo: { time: 2_001 },
+          streamInfo: { time: 3_001 },
+        });
+
+        setServerTimeOffset(-10_000);
+        send("Second send");
+        expect(legacy(store.getState().presentation)).toMatchObject({
+          projectorInfo: { time: 1_002 },
+          monitorInfo: { time: 2_002 },
+          streamInfo: { time: 3_002 },
+        });
+      } finally {
+        now.mockRestore();
+      }
+    });
+
     it.each([
       [
         "monitor",

@@ -12,6 +12,7 @@ import { getWorkstationToken } from "../utils/authStorage";
 import { updateWorkstationOperator } from "../api/auth";
 import { getAuthRedirectToFromState } from "../utils/authRedirectPath";
 import { getAllowedRouteOrDefault } from "../utils/sessionRouteAccess";
+import { recordStartupDiagnostic } from "../utils/startupDiagnostics";
 
 const WorkstationOperator = () => {
   const navigate = useNavigate();
@@ -75,6 +76,7 @@ const WorkstationOperator = () => {
         operatorName.trim(),
         token
       );
+      recordStartupDiagnostic("auth", "operator.selected");
       context?.setOperatorName(operatorName.trim());
       const routeContext = {
         loginState: context.loginState,

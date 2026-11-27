@@ -74,7 +74,7 @@ describe("ItemSlide media insertion zones", () => {
     mockUseDroppable.mockClear();
   });
 
-  it("marks the source unavailable while keeping its name and owner accessible", () => {
+  it("does not add a second unavailable capture badge outside the shared thumbnail", () => {
     render(
       <ul>
         <ItemSlide
@@ -105,13 +105,10 @@ describe("ItemSlide media insertion zones", () => {
       </ul>,
     );
 
-    const badge = screen.getByTestId("local-video-input-slide-badge");
-    expect(badge).toHaveTextContent("Unavailable · Video input · Main camera");
-    expect(badge).toHaveAttribute(
-      "aria-label",
-      "Video input: Main camera · Unavailable on this device · Available on Booth PC",
-    );
-    expect(badge).toHaveClass("!z-40");
+    expect(
+      screen.queryByTestId("local-video-input-slide-badge"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("listitem")).toHaveClass("isolate");
   });
 
   it.each([false, true])(
@@ -229,8 +226,8 @@ describe("ItemSlide media insertion zones", () => {
     expect(first.boxes[0].background).toBe("");
     expect(second.boxes[0].background).toBe("");
     expect(
-      screen.getAllByText("Unavailable · Video input · Main camera"),
-    ).toHaveLength(2);
+      screen.queryByTestId("local-video-input-slide-badge"),
+    ).not.toBeInTheDocument();
   });
 
   it.each([
@@ -238,7 +235,7 @@ describe("ItemSlide media insertion zones", () => {
     { status: "Staged", isLive: false, isStaged: true, hasThumbnail: true },
     { status: "Live", isLive: true, isStaged: false, hasThumbnail: false },
     { status: "Staged", isLive: false, isStaged: true, hasThumbnail: false },
-  ])("keeps $status status readable beside the local input marker", ({ status, isLive, isStaged, hasThumbnail }) => {
+  ])("keeps $status status without adding a duplicate capture badge", ({ status, isLive, isStaged, hasThumbnail }) => {
     const localInputSlide: ItemSlideType = {
       ...slide,
       mediaSource: {
@@ -271,12 +268,40 @@ describe("ItemSlide media insertion zones", () => {
     );
 
     expect(screen.getByText(status, { exact: true })).toBeVisible();
-    const inputBadge = screen.getByTestId("local-video-input-slide-badge");
-    expect(inputBadge).toBeVisible();
-    expect(inputBadge).toHaveTextContent(
-      "Unavailable · Video input · Main camera",
+    expect(
+      screen.queryByTestId("local-video-input-slide-badge"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the fixed section rename window outside the slide-tile stacking context", () => {
+    render(
+      <ul>
+        <ItemSlide
+          slide={{ ...slide, name: "Section 1" }}
+          index={0}
+          selectSlide={jest.fn()}
+          isSelected={false}
+          size={3}
+          itemType="free"
+          isMobile={false}
+          draggedSection={null}
+          isLive={false}
+          previewMode="projector"
+          getBibleInfo={() => ({ title: "", text: "" })}
+          borderWidth="1px"
+          hSize="text-sm"
+          onSlideGridClick={jest.fn()}
+          onRenameSection={jest.fn()}
+        />
+      </ul>,
     );
-    expect(inputBadge).toHaveClass("!left-2", "!right-auto");
+
+    const tile = screen.getByRole("listitem");
+    expect(tile).toHaveClass("isolate");
+    fireEvent.click(screen.getByRole("button", { name: "Rename section" }));
+
+    expect(screen.getByTestId("floating-window")).toBeInTheDocument();
+    expect(tile).not.toHaveClass("isolate");
   });
 
   it("keeps auxiliary insertion targets positioned inside the existing slide grid item", () => {

@@ -46,8 +46,6 @@ import {
 import {
   loadItemWithSongHydration,
   loadSongV2Snapshot,
-  loadSongV2LibraryProjection,
-  getSongV2RootDocId,
   saveSong,
   serializeSongToV2Documents,
   songToLibraryProjection,
@@ -80,9 +78,6 @@ import {
   DBItemLists,
   DBOverlay,
   DBOverlayTemplates,
-  DBPreferences,
-  DBQuickLinksDoc,
-  DBMonitorSettingsDoc,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   QUICK_LINKS_POUCH_ID,
@@ -99,6 +94,7 @@ import {
 } from "../types";
 import { allDocsSlice } from "./allDocsSlice";
 import { selectSongLibrary } from "./songLibrarySelectors";
+import { saveCreditOrder } from "../utils/saveCreditOrder";
 import { creditsSlice } from "./creditsSlice";
 import {
   timersSlice,
@@ -167,6 +163,8 @@ import {
   supportsBoardTakeover,
 } from "../utils/displayOutputs";
 import { nestSlashPathOutputs } from "../utils/nestSlashPathOutputs";
+import { recordPresentationDiagnostic } from "../utils/presentationDiagnostics";
+import { recordStartupAggregate } from "../utils/startupDiagnostics";
 import {
   ensureCreditsIndexDoc,
   getCreditsByIds,
@@ -641,10 +639,26 @@ const onlyChangedSincePublish = (
   for (const [key, value] of Object.entries(payload)) {
     const serialized = JSON.stringify(value ?? null);
     if (seen.get(key) === serialized) continue;
-    seen.set(key, serialized);
     changed[key] = value;
   }
   return changed;
+};
+
+const markPresentationPublished = (
+  scope: string,
+  payload: Record<string, unknown>,
+  churchId: string,
+) => {
+  if (globalFireDbInfo.churchId !== churchId) return;
+  if (lastPublishedChurchId !== churchId) {
+    lastPublished.clear();
+    lastPublishedChurchId = churchId;
+  }
+  const seen = lastPublished.get(scope) ?? new Map<string, string>();
+  lastPublished.set(scope, seen);
+  for (const [key, value] of Object.entries(payload)) {
+    seen.set(key, JSON.stringify(value ?? null));
+  }
 };
 
 /** Forget what we published, so the next write republishes in full. */
@@ -694,72 +708,218 @@ const createPresentationUpdate = (state: RootState) => {
 };
 
 type PresentationUpdate = ReturnType<typeof createPresentationUpdate>;
+type PresentationUpdatePatch = Partial<Omit<PresentationUpdate, "outputs">> & {
+  outputs?: Record<string, unknown>;
+};
+
+/**
+ * Presentation reducers use Immer, so unchanged nested slides and media keep
+ * stable references. Compare only two object levels to avoid serializing large
+ * slide payloads on the operator's synchronous dispatch path.
+ */
+const presentationValuesMatch = (
+  left: unknown,
+  right: unknown,
+  depth = 2,
+): boolean => {
+  if (Object.is(left, right)) return true;
+  if (
+    depth === 0 ||
+    !left ||
+    !right ||
+    typeof left !== "object" ||
+    typeof right !== "object" ||
+    Array.isArray(left) ||
+    Array.isArray(right)
+  ) {
+    return false;
+  }
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const keys = Object.keys(leftRecord);
+  return (
+    keys.length === Object.keys(rightRecord).length &&
+    keys.every(
+      (key) =>
+        Object.prototype.hasOwnProperty.call(rightRecord, key) &&
+        (Object.is(leftRecord[key], rightRecord[key]) ||
+          presentationValuesMatch(
+            leftRecord[key],
+            rightRecord[key],
+            depth - 1,
+          )),
+    )
+  );
+};
+
+const createPresentationUpdateDelta = (
+  previousState: RootState,
+  currentState: RootState,
+): PresentationUpdatePatch => {
+  const previous = createPresentationUpdate(previousState);
+  const current = createPresentationUpdate(currentState);
+  const delta: PresentationUpdatePatch = {};
+  const previousValues = previous as Record<string, unknown>;
+  const currentValues = current as Record<string, unknown>;
+
+  for (const [key, value] of Object.entries(currentValues)) {
+    if (key === "outputs") continue;
+    if (!presentationValuesMatch(previousValues[key], value)) {
+      (delta as Record<string, unknown>)[key] = value;
+    }
+  }
+
+  const previousOutputs = previous.outputs;
+  const currentOutputs = current.outputs;
+  const changedOutputs: Record<string, unknown> = {};
+  for (const key of new Set([
+    ...Object.keys(previousOutputs),
+    ...Object.keys(currentOutputs),
+  ])) {
+    if (!presentationValuesMatch(previousOutputs[key], currentOutputs[key])) {
+      changedOutputs[key] = currentOutputs[key] ?? null;
+    }
+  }
+  if (Object.keys(changedOutputs).length > 0) delta.outputs = changedOutputs;
+  return delta;
+};
+
+const hasPresentationUpdateDelta = (delta: PresentationUpdatePatch) =>
+  Object.keys(delta).some((key) =>
+    key === "outputs"
+      ? Object.keys(delta.outputs ?? {}).length > 0
+      : true,
+  );
+
+const refreshPresentationUpdateDelta = (
+  delta: PresentationUpdatePatch,
+  current: PresentationUpdate,
+): PresentationUpdatePatch => {
+  const refreshed = Object.fromEntries(
+    Object.keys(delta)
+      .filter((key) => key !== "outputs")
+      .map((key) => [key, current[key as keyof PresentationUpdate]]),
+  ) as PresentationUpdatePatch;
+  if (delta.outputs) {
+    refreshed.outputs = Object.fromEntries(
+      Object.keys(delta.outputs).map((outputId) => [
+        outputId,
+        current.outputs[outputId] ?? null,
+      ]),
+    );
+  }
+  return refreshed;
+};
+
+let pendingPresentationPublication:
+  | {
+      churchId: string | undefined;
+      delta: PresentationUpdatePatch;
+      triggerAction: string;
+    }
+  | undefined;
+
+const queuePresentationPublication = (
+  delta: PresentationUpdatePatch,
+  triggerAction: string,
+) => {
+  if (!hasPresentationUpdateDelta(delta)) return false;
+  const churchId = globalFireDbInfo.churchId;
+  const previous = pendingPresentationPublication;
+  const merged: PresentationUpdatePatch = {
+    ...(previous?.churchId === churchId ? previous.delta : {}),
+    ...delta,
+  };
+  if (previous?.churchId === churchId) {
+    merged.outputs = {
+      ...(previous.delta.outputs ?? {}),
+      ...(delta.outputs ?? {}),
+    };
+    if (Object.keys(merged.outputs).length === 0) delete merged.outputs;
+  }
+  pendingPresentationPublication = {
+    churchId,
+    delta: merged,
+    triggerAction,
+  };
+  return true;
+};
+
 const persistPresentationUpdateLocally = (
   state: RootState,
   presentationUpdate: PresentationUpdate,
+  delta?: PresentationUpdatePatch,
 ) => {
   const { streamInfo } = toLegacyPresentationShape(state.presentation);
+  const writeLocal = (
+    key: keyof PresentationUpdate,
+    storageKey: string,
+    value: unknown,
+  ) => {
+    if (!delta || key in delta) {
+      localStorage.setItem(storageKey, JSON.stringify(value));
+    }
+  };
 
-  localStorage.setItem(
-    "projectorInfo",
-    JSON.stringify(presentationUpdate.projectorInfo),
-  );
-  localStorage.setItem(
-    "monitorInfo",
-    JSON.stringify(presentationUpdate.monitorInfo),
-  );
-  localStorage.setItem(
+  writeLocal("projectorInfo", "projectorInfo", presentationUpdate.projectorInfo);
+  writeLocal("monitorInfo", "monitorInfo", presentationUpdate.monitorInfo);
+  writeLocal(
     "monitorBoardAliasId",
-    JSON.stringify(presentationUpdate.monitorBoardAliasId),
+    "monitorBoardAliasId",
+    presentationUpdate.monitorBoardAliasId,
   );
-  localStorage.setItem(
+  writeLocal(
     "projectorBoardAliasId",
-    JSON.stringify(presentationUpdate.projectorBoardAliasId),
+    "projectorBoardAliasId",
+    presentationUpdate.projectorBoardAliasId,
   );
-  localStorage.setItem("streamInfo", JSON.stringify(streamInfo));
-  localStorage.setItem(
-    "stream_bibleInfo",
-    JSON.stringify(streamInfo.bibleDisplayInfo),
-  );
-  localStorage.setItem(
+  writeLocal("streamInfo", "streamInfo", streamInfo);
+  writeLocal("stream_bibleInfo", "stream_bibleInfo", streamInfo.bibleDisplayInfo);
+  writeLocal(
     "stream_participantOverlayInfo",
-    JSON.stringify(streamInfo.participantOverlayInfo),
+    "stream_participantOverlayInfo",
+    streamInfo.participantOverlayInfo,
   );
-  localStorage.setItem(
-    "stream_stbOverlayInfo",
-    JSON.stringify(streamInfo.stbOverlayInfo),
-  );
-  localStorage.setItem(
-    "stream_qrCodeOverlayInfo",
-    JSON.stringify(streamInfo.qrCodeOverlayInfo),
-  );
-  localStorage.setItem(
-    "stream_imageOverlayInfo",
-    JSON.stringify(streamInfo.imageOverlayInfo),
-  );
-  localStorage.setItem(
+  writeLocal("stream_stbOverlayInfo", "stream_stbOverlayInfo", streamInfo.stbOverlayInfo);
+  writeLocal("stream_qrCodeOverlayInfo", "stream_qrCodeOverlayInfo", streamInfo.qrCodeOverlayInfo);
+  writeLocal("stream_imageOverlayInfo", "stream_imageOverlayInfo", streamInfo.imageOverlayInfo);
+  writeLocal(
     "stream_formattedTextDisplayInfo",
-    JSON.stringify(streamInfo.formattedTextDisplayInfo),
+    "stream_formattedTextDisplayInfo",
+    streamInfo.formattedTextDisplayInfo,
   );
-  localStorage.setItem(
-    "stream_boardPostStreamInfo",
-    JSON.stringify(streamInfo.boardPostStreamInfo),
-  );
-  localStorage.setItem(
+  writeLocal("stream_boardPostStreamInfo", "stream_boardPostStreamInfo", streamInfo.boardPostStreamInfo);
+  writeLocal(
     "stream_itemContentBlocked",
-    JSON.stringify(presentationUpdate.stream_itemContentBlocked),
+    "stream_itemContentBlocked",
+    presentationUpdate.stream_itemContentBlocked,
   );
-  // Nest slash-path keys so same-machine display windows can apply named
-  // outputs from the storage event without waiting on Firebase.
-  localStorage.setItem(
-    "outputs",
-    JSON.stringify(nestSlashPathOutputs(presentationUpdate.outputs)),
-  );
+
+  if (!delta || delta.outputs) {
+    const incomingOutputs = nestSlashPathOutputs(
+      delta?.outputs ?? presentationUpdate.outputs,
+    );
+    let currentOutputs: Record<string, Record<string, unknown>> = {};
+    try {
+      currentOutputs = JSON.parse(localStorage.getItem("outputs") || "{}");
+    } catch {
+      currentOutputs = {};
+    }
+    const mergedOutputs = { ...currentOutputs };
+    for (const [outputId, output] of Object.entries(incomingOutputs)) {
+      mergedOutputs[outputId] = {
+        ...(currentOutputs[outputId] ?? {}),
+        ...(output as Record<string, unknown>),
+      };
+    }
+    localStorage.setItem("outputs", JSON.stringify(mergedOutputs));
+  }
 };
 
 type PresentationWrite = {
   churchId: string;
   presentationUpdate: PresentationUpdate;
+  delta?: PresentationUpdatePatch;
   triggerAction?: string;
   streamTransmitting: boolean;
   activeOverlayLanes: string[];
@@ -784,7 +944,17 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
   if (globalFireDbInfo.churchId !== write.churchId) return false;
 
   const presentationPath = getChurchDataPath(write.churchId, "presentation");
-  const { outputs: remoteOutputs, ...legacyUpdate } = write.presentationUpdate;
+  const { outputs: fullRemoteOutputs, ...fullLegacyUpdate } =
+    write.presentationUpdate;
+  const delta = write.delta;
+  const legacyUpdate = delta
+    ? Object.fromEntries(
+        Object.entries(delta).filter(([key]) => key !== "outputs"),
+      )
+    : fullLegacyUpdate;
+  const remoteOutputs = delta
+    ? (delta.outputs ?? {})
+    : fullRemoteOutputs;
   try {
     const changedLegacy = onlyChangedSincePublish(
       "legacy",
@@ -794,6 +964,7 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
       await Promise.resolve(
         update(ref(firebaseDb, presentationPath), changedLegacy),
       );
+      markPresentationPublished("legacy", changedLegacy, write.churchId);
     }
 
     const changedOutputs = onlyChangedSincePublish(
@@ -810,6 +981,7 @@ const commitPresentationUpdate = async (write: PresentationWrite) => {
           changedOutputs,
         ),
       );
+      markPresentationPublished("outputs", changedOutputs, write.churchId);
     }
   } catch (error) {
     const permissionDenied = isFirebasePermissionDenied(error);
@@ -848,9 +1020,10 @@ export const clearRemoteOutputState = async (outputId: string) => {
 export const writePresentationSnapshotToFirebase = async (
   state: RootState,
   triggerAction?: string,
+  delta?: PresentationUpdatePatch,
 ) => {
   const presentationUpdate = createPresentationUpdate(state);
-  persistPresentationUpdateLocally(state, presentationUpdate);
+  persistPresentationUpdateLocally(state, presentationUpdate, delta);
   const activeOverlayLanes = getActiveOverlayLanes(state);
   const { isStreamTransmitting } = toLegacyPresentationShape(
     state.presentation,
@@ -883,6 +1056,7 @@ export const writePresentationSnapshotToFirebase = async (
   return commitPresentationUpdate({
     churchId,
     presentationUpdate,
+    delta,
     triggerAction,
     streamTransmitting: isStreamTransmitting,
     activeOverlayLanes,
@@ -924,11 +1098,13 @@ const reportPresentationDeliveryFailure = (triggerAction: string) => {
 const syncPresentationSnapshot = async (
   state: RootState,
   triggerAction: string,
+  delta?: PresentationUpdatePatch,
 ) => {
   try {
     const delivered = await writePresentationSnapshotToFirebase(
       state,
       triggerAction,
+      delta,
     );
     if (!delivered) reportPresentationDeliveryFailure(triggerAction);
   } catch {
@@ -2124,10 +2300,18 @@ export type SongV2DocumentChange = {
 export const songV2DocumentsChanged = createAction<SongV2DocumentChange[]>("songV2/documentsChanged");
 type SongRefreshRequest = SongV2DocumentChange & { database: PouchDB.Database; owner: ItemContentOwner | null };
 const songRefreshes = new Map<string, SongRefreshRequest>();
+const inFlightSongSnapshots = new Map<string, Promise<Awaited<ReturnType<typeof loadSongV2Snapshot>>>>();
 listenerMiddleware.startListening({
   actionCreator: songV2DocumentsChanged,
   effect: async (action, api) => {
-    await Promise.all(action.payload.map(async (change) => {
+    const activeItem = (api.getState() as RootState).undoable.present.item;
+    const slideOnlySongIds = [...new Set(action.payload
+      .filter((change) => !change.libraryChanged)
+      .map((change) => change.songId))];
+    if (slideOnlySongIds.length) api.dispatch(allDocsSlice.actions.invalidateSongContents(slideOnlySongIds));
+    if (activeItem.type !== "song" || !activeItem._id) return;
+    const activeChanges = action.payload.filter((change) => change.songId === activeItem._id);
+    await Promise.all(activeChanges.map(async (change) => {
       const database = change.database ?? db;
       if (!database || db !== database) return;
       const ownerWasCaptured = change.owner !== undefined;
@@ -2140,7 +2324,6 @@ listenerMiddleware.startListening({
       const key = JSON.stringify([databaseOwner?.scopeId ?? "unscoped", change.songId]);
       const request: SongRefreshRequest = {
         ...change,
-        libraryChanged: change.libraryChanged || !!songRefreshes.get(key)?.libraryChanged,
         database,
         owner: databaseOwner,
         ...(sessionWasCaptured ? { sessionToken } : {}),
@@ -2162,6 +2345,7 @@ listenerMiddleware.startListening({
       const stillCurrent = () => ownerIsCurrent() && songRefreshes.get(key) === request;
       if (!stillCurrent()) return;
       const itemAtStart = (api.getState() as RootState).undoable.present.item;
+      if (itemAtStart._id !== change.songId || itemAtStart.type !== "song") return;
       const itemOwner = getItemMutationOwner(itemAtStart);
       const churchIdAtStart = globalFireDbInfo.churchId;
       const mutationGuard = createSongV2MutationGuard(
@@ -2177,45 +2361,33 @@ listenerMiddleware.startListening({
         },
       );
       try {
-        const active = itemAtStart._id === change.songId && itemAtStart.type === "song";
-        let snapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>> | undefined;
-        if (active) {
-          snapshot = await loadSongV2Snapshot(database, change.songId, true);
-          if (snapshot.conflicts?.length) {
-            if (globalFireDbInfo.canWriteSongContent) {
-              snapshot = await loadReconciledSongV2Snapshot(
-                database,
-                change.songId,
-                snapshot,
-                mutationGuard,
-              );
-            }
-          }
+        const pendingSnapshot = inFlightSongSnapshots.get(key);
+        if (pendingSnapshot) await pendingSnapshot.catch(() => undefined);
+        if (!stillCurrent()) return;
+        const snapshotPromise = loadSongV2Snapshot(database, change.songId, true);
+        inFlightSongSnapshots.set(key, snapshotPromise);
+        let snapshot: Awaited<ReturnType<typeof loadSongV2Snapshot>>;
+        try {
+          snapshot = await snapshotPromise;
+        } finally {
+          if (inFlightSongSnapshots.get(key) === snapshotPromise) inFlightSongSnapshots.delete(key);
+        }
+        if (snapshot.conflicts?.length && globalFireDbInfo.canWriteSongContent) {
+          snapshot = await loadReconciledSongV2Snapshot(
+            database,
+            change.songId,
+            snapshot,
+            mutationGuard,
+          );
         }
         if (!stillCurrent()) return;
-        if (active) {
-          const current = (api.getState() as RootState).undoable.present.item;
-          if (current.baseItem !== itemAtStart.baseItem) {
-            api.dispatch(songV2DocumentsChanged([{ ...change, libraryChanged: request.libraryChanged }]));
-            return;
-          }
-          if (current._id !== change.songId || !sameItemMutationOwner(itemOwner, getItemMutationOwner(current))) {
-            api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
-            return;
-          }
-        }
-        if (request.libraryChanged) {
-          const projection = snapshot ? songToLibraryProjection(snapshot.hydrated)
-            : await loadSongV2LibraryProjection(database, await database.get(getSongV2RootDocId(change.songId)));
-          if (!stillCurrent()) return;
-          api.dispatch(allDocsSlice.actions.applyItemDocumentChange({ id: projection._id, doc: projection }));
-        }
-        if (!request.libraryChanged) api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
-        if (!active) return;
-        if (!snapshot || !stillCurrent()) return;
         const current = (api.getState() as RootState).undoable.present.item;
-        if (!sameItemMutationOwner(itemOwner, getItemMutationOwner(current)) ||
-          current.baseItem !== itemAtStart.baseItem) return;
+        if (current._id !== change.songId || !sameItemMutationOwner(itemOwner, getItemMutationOwner(current))) return;
+        if (current.baseItem !== itemAtStart.baseItem) {
+          api.dispatch(songV2DocumentsChanged([{ ...change, libraryChanged: request.libraryChanged }]));
+          return;
+        }
+        if (!snapshot) return;
         if (snapshot.conflicts?.length) {
           api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
             item: snapshot.hydrated,
@@ -2235,8 +2407,6 @@ listenerMiddleware.startListening({
             api.dispatch(itemSlice.actions.bufferSongV2RevisionConflict({
               item: error.snapshot.hydrated, conflicts: error.snapshot.conflicts ?? [],
             }));
-          } else if (ownerIsCurrent()) {
-            api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
           }
           return;
         }
@@ -2254,9 +2424,6 @@ listenerMiddleware.startListening({
           }
           return;
         }
-        if (ownerIsCurrent() && (api.getState() as RootState).undoable.present.item._id !== change.songId) {
-          api.dispatch(allDocsSlice.actions.invalidateSongContent(change.songId));
-        }
         console.error("Could not refresh changed v2 song", change.songId, error);
       } finally {
         if (songRefreshes.get(key) === request) songRefreshes.delete(key);
@@ -2267,18 +2434,39 @@ listenerMiddleware.startListening({
 
 // Durable cache events update the editor through the existing draft/conflict checks.
 const listenerAdoptedActiveItemActions = new WeakSet<object>();
+const findCachedItemDocument = (state: RootState, id: string) =>
+  state.allDocs.allSongDocs.find((document) => document._id === id) ??
+  state.allDocs.allFreeFormDocs.find((document) => document._id === id) ??
+  state.allDocs.allTimerDocs.find((document) => document._id === id) ??
+  state.allDocs.allBibleDocs.find((document) => document._id === id) ??
+  state.allDocs.allServiceTimeDocs.find((document) => document._id === id);
+
 listenerMiddleware.startListening({
-  predicate: (action) => {
+  predicate: (action, currentState, previousState) => {
     if (listenerAdoptedActiveItemActions.has(action)) {
       listenerAdoptedActiveItemActions.delete(action);
       return false;
     }
-    return isAnyOf(
-      allDocsSlice.actions.updateAllSongDocs,
-      allDocsSlice.actions.hydrateItemCache,
-      allDocsSlice.actions.applyItemDocumentChange,
-      itemSlice.actions.setActiveItem,
-    )(action);
+    if (itemSlice.actions.setActiveItem.match(action) ||
+      allDocsSlice.actions.hydrateItemCache.match(action)) return true;
+
+    const current = currentState as RootState;
+    const previous = previousState as RootState;
+    const activeId = current.undoable.present.item._id;
+    if (!activeId) return false;
+    const changesMentionActiveItem = allDocsSlice.actions.applyItemDocumentChange.match(action)
+      ? action.payload.id === activeId
+      : allDocsSlice.actions.applyItemDocumentChanges.match(action)
+        ? action.payload.some((change) => change.id === activeId)
+        : false;
+    if (changesMentionActiveItem) return true;
+    if (allDocsSlice.actions.updateAllSongDocs.match(action)) {
+      return current.undoable.present.item.type === "song" &&
+        current.allDocs.allSongDocs !== previous.allDocs.allSongDocs &&
+        (findCachedItemDocument(current, activeId)?._id === activeId ||
+          findCachedItemDocument(previous, activeId)?._id === activeId);
+    }
+    return false;
   },
   effect: async (action, listenerApi) => {
     const state = listenerApi.getState() as RootState;
@@ -2309,8 +2497,10 @@ listenerMiddleware.startListening({
       previousTimerDocs.find((d) => d._id === activeId) ??
       previousBibleDocs.find((d) => d._id === activeId) ??
       previousServiceTimeDocs.find((d) => d._id === activeId);
-    const cacheChangedActiveItem = allDocsSlice.actions.applyItemDocumentChange.match(action) &&
-      action.payload.id === activeId;
+    const cacheChangedActiveItem = (allDocsSlice.actions.applyItemDocumentChange.match(action) &&
+      action.payload.id === activeId) ||
+      (allDocsSlice.actions.applyItemDocumentChanges.match(action) &&
+        action.payload.some((change) => change.id === activeId));
     const cacheHydrated = allDocsSlice.actions.hydrateItemCache.match(action);
     let songV2Conflicts: Awaited<ReturnType<typeof loadSongV2Snapshot>>["conflicts"];
 
@@ -2764,6 +2954,7 @@ listenerMiddleware.startListening({
     const cacheSession = stateAtStart.allDocs.session;
     const cacheChangeVersion = stateAtStart.allDocs.changeVersion;
     let cleanupWasBlockedByOutlinePersistence = false;
+    const bibleCleanupStartedAt = performance.now();
     const cleanupResult = await deleteUnusedBibleItems({
       db: database,
       bibleItems: stateAtStart.allDocs.allBibleDocs,
@@ -2811,6 +3002,13 @@ listenerMiddleware.startListening({
         );
       },
     });
+    recordStartupAggregate("post-replication-maintenance", {
+      bibleCleanupRuns: 1,
+      bibleCleanupDurationMs: performance.now() - bibleCleanupStartedAt,
+      bibleDocumentsConsidered: stateAtStart.allDocs.allBibleDocs.length,
+      bibleDocumentsDeleted: cleanupResult?.deleted ?? 0,
+      bibleCleanupSafetyBlocked: cleanupResult === null ? 1 : 0,
+    });
 
     if (db !== database || getContentDatabaseSessionToken(database.name) !== sessionToken) {
       return;
@@ -2844,25 +3042,46 @@ listenerMiddleware.startListening({
   },
 });
 
+const isBibleCleanupNonCacheAction = isAnyOf(
+  allDocsSlice.actions.resetItemCache,
+  allDocsSlice.actions.setItemCacheError,
+  itemSlice.actions.setHasPendingUpdate,
+  itemSlice.actions.markItemPersisted,
+  itemListSlice.actions.initiateItemList,
+  itemListSlice.actions.setIsInitialized,
+  itemListSlice.actions.setHasPendingUpdate,
+  itemListsSlice.actions.initiateItemLists,
+  itemListsSlice.actions.setIsInitialized,
+  autosaveIndicatorSlice.actions.endKeyedDebouncedSave,
+  servicePlanningImportSlice.actions.completeServicePlanningSync,
+  servicePlanningImportSlice.actions.failServicePlanningSync,
+  servicePlanningImportSlice.actions.finishServicePlanningSyncCancellation,
+  servicePlanningImportSlice.actions.clearServicePlanningSyncState,
+);
+
 listenerMiddleware.startListening({
-  matcher: isAnyOf(
-    allDocsSlice.actions.hydrateItemCache,
-    allDocsSlice.actions.applyItemDocumentChange,
-    allDocsSlice.actions.resetItemCache,
-    allDocsSlice.actions.setItemCacheError,
-    itemSlice.actions.setHasPendingUpdate,
-    itemSlice.actions.markItemPersisted,
-    itemListSlice.actions.initiateItemList,
-    itemListSlice.actions.setIsInitialized,
-    itemListSlice.actions.setHasPendingUpdate,
-    itemListsSlice.actions.initiateItemLists,
-    itemListsSlice.actions.setIsInitialized,
-    autosaveIndicatorSlice.actions.endKeyedDebouncedSave,
-    servicePlanningImportSlice.actions.completeServicePlanningSync,
-    servicePlanningImportSlice.actions.failServicePlanningSync,
-    servicePlanningImportSlice.actions.finishServicePlanningSyncCancellation,
-    servicePlanningImportSlice.actions.clearServicePlanningSyncState,
-  ),
+  predicate: (action, currentState, previousState) => {
+    if (isBibleCleanupNonCacheAction(action)) return true;
+    if (allDocsSlice.actions.hydrateItemCache.match(action)) return true;
+
+    const hasBibleEntry = (state: RootState, id: string) =>
+      state.allDocs.allBibleDocs.some((document) => document._id === id);
+    const current = currentState as RootState;
+    const previous = previousState as RootState;
+    if (allDocsSlice.actions.applyItemDocumentChange.match(action)) {
+      return action.payload.doc?.type === "bible" ||
+        hasBibleEntry(previous, action.payload.id) || hasBibleEntry(current, action.payload.id);
+    }
+    if (allDocsSlice.actions.applyItemDocumentChanges.match(action)) {
+      if (action.payload.some((change) => change.doc?.type === "bible")) return true;
+      const bibleIds = new Set([
+        ...previous.allDocs.allBibleDocs.map((document) => document._id),
+        ...current.allDocs.allBibleDocs.map((document) => document._id),
+      ]);
+      return action.payload.some((change) => bibleIds.has(change.id));
+    }
+    return false;
+  },
   effect: (_action, listenerApi) => {
     listenerApi.dispatch(bibleCleanupOpportunity({}));
   },
@@ -2906,6 +3125,12 @@ listenerMiddleware.startListening({
     const restoringResolution = itemListSlice.actions.initiateItemList.match(action) &&
       Boolean(selectedId && state.remoteConflicts?.[selectedId]?.resolutionChoice);
     const restoringDraft = itemListSlice.actions.initiateItemList.match(action) && state.hasPendingUpdate;
+    const refreshingPendingRevision = (
+      itemListSlice.actions.initiateItemList.match(action) ||
+      itemListSlice.actions.updateItemListFromRemote.match(action)
+    ) && Boolean(
+      selectedId && state.hasPendingUpdate && state.pendingRevisionResolutions?.[selectedId],
+    );
     const resolvingConflict = itemListSlice.actions.resolveOutlineConflict.match(action) &&
       action.payload.outlineId === selectedId &&
       state.hasPendingUpdate &&
@@ -2945,8 +3170,8 @@ listenerMiddleware.startListening({
       );
     }
     return (
-      ((itemListChanged || itemListSlice.actions.forceUpdate.match(action) || restoringSavedIntent || resolvingConflict) &&
-      (!excluded(action) || restoringResolution || restoringDraft || restoringSavedIntent) &&
+      ((itemListChanged || itemListSlice.actions.forceUpdate.match(action) || restoringSavedIntent || resolvingConflict || refreshingPendingRevision) &&
+      (!excluded(action) || restoringResolution || restoringDraft || restoringSavedIntent || refreshingPendingRevision) &&
       !!(currentState as RootState).undoable.present.itemList
         .hasPendingUpdate &&
       !hasOutlineConflict &&
@@ -3710,6 +3935,7 @@ listenerMiddleware.startListening({
     const dbAtStart = db;
     if (!snapshotCredits.isInitialized) return;
     if (!dbAtStart) return;
+    const contentSessionAtStart = getContentDatabaseSessionToken(dbAtStart.name);
     const fireDbAtStart = globalFireDbInfo.db;
     const fireChurchIdAtStart = globalFireDbInfo.churchId;
 
@@ -3717,6 +3943,27 @@ listenerMiddleware.startListening({
       preDelay.undoable.present.itemLists.selectedList?._id ??
       preDelay.undoable.present.itemLists.activeList?._id;
     if (!snapshotOutlineId) return;
+
+    const owner = snapshotCredits.indexOwner;
+    if (owner && (owner.database !== dbAtStart.name || owner.outlineId !== snapshotOutlineId)) return;
+    const before = (listenerApi.getOriginalState() as RootState).undoable.present.credits;
+    const beforeIds = before.list.map(credit => credit.id);
+    const intendedIds = snapshotCredits.list.map(credit => credit.id);
+
+    // The Firebase debounce may be superseded by any outline. An accepted order edit
+    // belongs to this index and must finish even if another outline is selected.
+    const indexSave = !_.isEqual(beforeIds, intendedIds)
+      ? saveCreditOrder(dbAtStart, snapshotOutlineId, beforeIds, intendedIds)
+          .then(saved => {
+            if (saved &&
+                db === dbAtStart &&
+                globalFireDbInfo.churchId === fireChurchIdAtStart &&
+                getContentDatabaseSessionToken(dbAtStart.name) === contentSessionAtStart) {
+              broadcastCreditsUpdate([saved]);
+            }
+          })
+          .catch(error => console.error("credits index save failed", error))
+      : undefined;
 
     listenerApi.dispatch(
       autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
@@ -3741,8 +3988,6 @@ listenerMiddleware.startListening({
         afterDelayCredits.isInitialized
           ? afterDelayCredits
           : snapshotCredits;
-
-      const { list } = creditsForPersist;
 
       const fireDb = fireDbAtStart;
       const fireChurchId = fireChurchIdAtStart;
@@ -3798,33 +4043,8 @@ listenerMiddleware.startListening({
           scheduleName,
         );
       }
-
-      const now = new Date().toISOString();
-      const creditIds = list.map((c) => c.id);
-      const docsToBroadcast: DBCredits[] = [];
-
-      try {
-        await ensureCreditsIndexDoc(dbAtStart, snapshotOutlineId);
-        const db_credits: DBCredits = await dbAtStart.get(
-          getCreditsDocId(snapshotOutlineId),
-        );
-        db_credits.creditIds = creditIds;
-        db_credits.updatedAt = now;
-        await dbAtStart.put(db_credits);
-        docsToBroadcast.push(db_credits);
-      } catch (e) {
-        console.error("credits index save failed", e);
-      }
-
-      if (db !== dbAtStart || globalFireDbInfo.churchId !== fireChurchIdAtStart) return;
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: docsToBroadcast,
-          hostId: globalHostId,
-        },
-      });
     } finally {
+      await indexSave;
       listenerApi.dispatch(
         autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
           AUTOSAVE_DEBOUNCE_KEYS.credits,
@@ -4340,102 +4560,31 @@ listenerMiddleware.startListening({
         );
       }
 
-      const pouchDb = dbAtStart;
-      const now = new Date().toISOString();
-
-      const getDoc = async (id: string) => {
-        try {
-          return await pouchDb.get(id);
-        } catch (e) {
-          if ((e as { status?: number }).status === 404) return null;
-          throw e;
-        }
-      };
-
+      const updates = [
+        { _id: PREFERENCES_POUCH_ID, docType: "preferences", preferences },
+        { _id: QUICK_LINKS_POUCH_ID, docType: "quickLinks", quickLinks },
+        { _id: MONITOR_SETTINGS_POUCH_ID, docType: "monitorSettings", monitorSettings },
+      ] as const;
+      const saved = [];
       try {
-        const p0 = (await getDoc(PREFERENCES_POUCH_ID)) as DBPreferences | null;
-        const prefsToPut = (
-          p0
-            ? {
-                ...p0,
-                preferences,
-                updatedAt: now,
-                docType: "preferences" as const,
-              }
-            : {
-                _id: PREFERENCES_POUCH_ID,
-                preferences,
-                createdAt: now,
-                updatedAt: now,
-                docType: "preferences" as const,
-              }
-        ) as DBPreferences;
-        const prefsRes = await pouchDb.put(prefsToPut);
-        const prefsOut = {
-          ...prefsToPut,
-          _rev: (prefsRes as { rev: string }).rev,
-        } as DBPreferences;
-
-        const ql0 = (await getDoc(
-          QUICK_LINKS_POUCH_ID,
-        )) as DBQuickLinksDoc | null;
-        const qlToPut = (
-          ql0
-            ? {
-                ...ql0,
-                quickLinks,
-                updatedAt: now,
-                docType: "quickLinks" as const,
-              }
-            : {
-                _id: QUICK_LINKS_POUCH_ID,
-                quickLinks,
-                createdAt: now,
-                updatedAt: now,
-                docType: "quickLinks" as const,
-              }
-        ) as DBQuickLinksDoc;
-        const qlRes = await pouchDb.put(qlToPut);
-        const qlOut = {
-          ...qlToPut,
-          _rev: (qlRes as { rev: string }).rev,
-        } as DBQuickLinksDoc;
-
-        const m0 = (await getDoc(
-          MONITOR_SETTINGS_POUCH_ID,
-        )) as DBMonitorSettingsDoc | null;
-        const monToPut = (
-          m0
-            ? {
-                ...m0,
-                monitorSettings,
-                updatedAt: now,
-                docType: "monitorSettings" as const,
-              }
-            : {
-                _id: MONITOR_SETTINGS_POUCH_ID,
-                monitorSettings,
-                createdAt: now,
-                updatedAt: now,
-                docType: "monitorSettings" as const,
-              }
-        ) as DBMonitorSettingsDoc;
-        const monRes = await pouchDb.put(monToPut);
-        const monOut = {
-          ...monToPut,
-          _rev: (monRes as { rev: string }).rev,
-        } as DBMonitorSettingsDoc;
-
-        if (db !== dbAtStart) return;
-        safePostMessage({
-          type: "update",
-          data: {
-            docs: [prefsOut, qlOut, monOut],
-            hostId: globalHostId,
-          },
-        });
+        for (const fields of updates) {
+          let existing;
+          try {
+            existing = await dbAtStart.get<Record<string, unknown>>(fields._id);
+          } catch (error) {
+            if ((error as { status?: number }).status !== 404) throw error;
+          }
+          if (existing && Object.entries(fields).every(([key, value]) => _.isEqual(existing[key], value))) continue;
+          const now = new Date().toISOString();
+          const doc = { ...(existing ?? { createdAt: now }), ...fields, updatedAt: now };
+          const result = await dbAtStart.put(doc);
+          saved.push({ ...doc, _rev: result.rev });
+        }
       } catch (error) {
         console.error(error);
+      }
+      if (saved.length && db === dbAtStart && globalFireDbInfo.churchId === fireChurchIdAtStart) {
+        safePostMessage({ type: "update", data: { docs: saved, hostId: globalHostId } });
       }
     } finally {
       listenerApi.dispatch(
@@ -4535,6 +4684,8 @@ listenerMiddleware.startListening({
     try {
       const db_templates: DBOverlayTemplates =
         await dbAtStart.get("overlay-templates");
+      if (_.isEqual(db_templates.templatesByType, templatesByType) &&
+          _.isEqual(db_templates.defaultTemplateIdsByType, defaultTemplateIdsByType)) return;
       db_templates.templatesByType = templatesByType;
       db_templates.defaultTemplateIdsByType = defaultTemplateIdsByType;
       db_templates.updatedAt = new Date().toISOString();
@@ -4823,6 +4974,7 @@ listenerMiddleware.startListening({
       if (dbAtStart) {
         try {
           const db_services: DBServices = await dbAtStart.get("services");
+          if (_.isEqual(db_services.list, list)) return;
           db_services.list = list;
           db_services.updatedAt = new Date().toISOString();
           await dbAtStart.put(db_services);
@@ -4892,12 +5044,17 @@ listenerMiddleware.startListening({
       // Transport-only remote apply — the originating controller already wrote.
       presentationSlice.actions.applyRemoteVideoPlayback,
     );
-    return (
+    const changed =
       (currentState as RootState).presentation !==
         (previousState as RootState).presentation &&
       !excluded(action) &&
-      !isStoreResetAction(action)
+      !isStoreResetAction(action);
+    if (!changed) return false;
+    const delta = createPresentationUpdateDelta(
+      previousState as RootState,
+      currentState as RootState,
     );
+    return queuePresentationPublication(delta, action.type);
   },
 
   effect: async (action, listenerApi) => {
@@ -4906,7 +5063,18 @@ listenerMiddleware.startListening({
     await listenerApi.delay(10);
 
     if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-    await syncPresentationSnapshot(listenerApi.getState() as RootState, action.type);
+    const publication = pendingPresentationPublication;
+    if (!publication || publication.churchId !== churchIdAtStart) return;
+    pendingPresentationPublication = undefined;
+    const state = listenerApi.getState() as RootState;
+    await syncPresentationSnapshot(
+      state,
+      publication.triggerAction || action.type,
+      refreshPresentationUpdateDelta(
+        publication.delta,
+        createPresentationUpdate(state),
+      ),
+    );
   },
 });
 
@@ -4928,10 +5096,10 @@ listenerMiddleware.startListening({
     const churchIdAtStart = globalFireDbInfo.churchId;
     await listenerApi.delay(15);
     if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-    await syncPresentationSnapshot(
-      listenerApi.getState() as RootState,
-      action.type,
-    );
+    const state = listenerApi.getState() as RootState;
+    await syncPresentationSnapshot(state, action.type, {
+      streamInfo: createPresentationUpdate(state).streamInfo,
+    });
   },
 });
 
@@ -4950,10 +5118,10 @@ listenerMiddleware.startListening({
     const churchIdAtStart = globalFireDbInfo.churchId;
     await listenerApi.delay(15);
     if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-    await syncPresentationSnapshot(
-      listenerApi.getState() as RootState,
-      action.type,
-    );
+    const state = listenerApi.getState() as RootState;
+    await syncPresentationSnapshot(state, action.type, {
+      streamInfo: createPresentationUpdate(state).streamInfo,
+    });
   },
 });
 
@@ -4975,120 +5143,249 @@ const isNewerVideoPlaybackCue = (
   (incoming?.videoPlayback?.generation ?? 0) >
   (current?.videoPlayback?.generation ?? 0);
 
+type BuiltInPresentationOutput = "projector" | "monitor" | "stream";
+type PendingBuiltInPresentation = {
+  churchId: string | undefined;
+  slide?: Presentation;
+  videoPlayback?: Presentation["videoPlayback"];
+  videoPlaybackInfo?: Presentation;
+};
+
+/**
+ * Debounced remote events can arrive before Redux commits the first event. Keep
+ * the newest slide and transport cue independently so an older slide cannot
+ * cancel a newer pending slide (and a newer cue cannot discard that slide).
+ */
+const pendingBuiltInPresentations = new Map<
+  BuiltInPresentationOutput,
+  PendingBuiltInPresentation
+>();
+
+const getBuiltInPresentation = (
+  state: RootState,
+  outputType: BuiltInPresentationOutput,
+) => toLegacyPresentationShape(state.presentation)[`${outputType}Info`];
+
+const queueIncomingBuiltInPresentation = (
+  outputType: BuiltInPresentationOutput,
+  incoming: Presentation,
+  state: RootState,
+) => {
+  const current = getBuiltInPresentation(state, outputType);
+  const existing = pendingBuiltInPresentations.get(outputType);
+  if (existing && existing.churchId !== globalFireDbInfo.churchId) {
+    recordPresentationDiagnostic({
+      event: "incoming.cancelled",
+      outputId: outputType,
+      itemId: existing.slide?.itemId,
+      slideIndex: existing.slide?.slideIndex,
+      reason: "church_scope_changed",
+    });
+    pendingBuiltInPresentations.delete(outputType);
+  }
+  const pending: PendingBuiltInPresentation =
+    existing?.churchId === globalFireDbInfo.churchId
+      ? existing
+      : { churchId: globalFireDbInfo.churchId };
+
+  const newestSlideTime = Math.max(
+    current.time ?? 0,
+    pending.slide?.time ?? 0,
+  );
+  const newestCue =
+    pending.videoPlayback === undefined
+      ? current
+      : { ...current, videoPlayback: pending.videoPlayback };
+  let accepted = false;
+
+  if (isNewerPresentationTime(incoming.time, newestSlideTime)) {
+    if (pending.slide) {
+      recordPresentationDiagnostic({
+        event: "incoming.superseded",
+        outputId: outputType,
+        itemId: pending.slide.itemId,
+        slideIndex: pending.slide.slideIndex,
+        reason: "newer_pending_slide",
+      });
+    }
+    pending.slide = incoming;
+    accepted = true;
+  }
+  if (isNewerVideoPlaybackCue(incoming, newestCue)) {
+    if (pending.videoPlaybackInfo) {
+      recordPresentationDiagnostic({
+        event: "incoming.superseded",
+        outputId: outputType,
+        itemId: pending.videoPlaybackInfo.itemId,
+        slideIndex: pending.videoPlaybackInfo.slideIndex,
+        reason: "newer_pending_video_cue",
+      });
+    }
+    pending.videoPlayback = incoming.videoPlayback;
+    pending.videoPlaybackInfo = incoming;
+    accepted = true;
+  }
+
+  if (accepted) {
+    pendingBuiltInPresentations.set(outputType, pending);
+    recordPresentationDiagnostic({
+      event: "incoming.queued",
+      outputId: outputType,
+      itemId: incoming.itemId,
+      slideIndex: incoming.slideIndex,
+      reason:
+        isNewerPresentationTime(incoming.time, newestSlideTime)
+          ? "newer_slide"
+          : "newer_video_cue",
+    });
+  } else {
+    recordPresentationDiagnostic({
+      event: "incoming.rejected",
+      outputId: outputType,
+      itemId: incoming.itemId,
+      slideIndex: incoming.slideIndex,
+      reason: "not_newer_than_committed_or_pending",
+    });
+  }
+  return accepted;
+};
+
+const applyPendingBuiltInPresentation = async (
+  outputType: BuiltInPresentationOutput,
+  listenerApi: Parameters<
+    Parameters<typeof listenerMiddleware.startListening>[0]["effect"]
+  >[1],
+) => {
+  const churchIdAtStart = globalFireDbInfo.churchId;
+  listenerApi.cancelActiveListeners();
+  await listenerApi.delay(10);
+  const pending = pendingBuiltInPresentations.get(outputType);
+  if (!pending) return;
+  if (
+    globalFireDbInfo.churchId !== churchIdAtStart ||
+    pending.churchId !== churchIdAtStart
+  ) {
+    recordPresentationDiagnostic({
+      event: "incoming.cancelled",
+      outputId: outputType,
+      itemId: pending.slide?.itemId,
+      slideIndex: pending.slide?.slideIndex,
+      reason: "church_scope_changed_before_apply",
+    });
+    if (pendingBuiltInPresentations.get(outputType) === pending) {
+      pendingBuiltInPresentations.delete(outputType);
+    }
+    return;
+  }
+
+  const current = getBuiltInPresentation(
+    listenerApi.getState() as RootState,
+    outputType,
+  );
+  if (pending.slide && isNewerPresentationTime(pending.slide.time, current.time)) {
+    if (outputType === "projector") {
+      listenerApi.dispatch(updateProjectorFromRemote(pending.slide));
+    } else if (outputType === "monitor") {
+      listenerApi.dispatch(updateMonitorFromRemote(pending.slide));
+    } else {
+      listenerApi.dispatch(updateStreamFromRemote(pending.slide));
+    }
+    recordPresentationDiagnostic({
+      event: "incoming.accepted",
+      outputId: outputType,
+      itemId: pending.slide.itemId,
+      slideIndex: pending.slide.slideIndex,
+      reason: "newer_slide_applied",
+    });
+  } else if (pending.slide) {
+    recordPresentationDiagnostic({
+      event: "incoming.rejected",
+      outputId: outputType,
+      itemId: pending.slide.itemId,
+      slideIndex: pending.slide.slideIndex,
+      reason: "local_state_advanced_before_apply",
+    });
+  }
+
+  const afterSlide = getBuiltInPresentation(
+    listenerApi.getState() as RootState,
+    outputType,
+  );
+  if (
+    pending.videoPlayback &&
+    (pending.videoPlayback.generation ?? 0) >
+      (afterSlide.videoPlayback?.generation ?? 0)
+  ) {
+    listenerApi.dispatch(
+      applyRemoteVideoPlayback({
+        outputType,
+        videoPlayback: pending.videoPlayback,
+      }),
+    );
+    recordPresentationDiagnostic({
+      event: "incoming.accepted",
+      outputId: outputType,
+      itemId: pending.videoPlaybackInfo?.itemId,
+      slideIndex: pending.videoPlaybackInfo?.slideIndex,
+      reason: "newer_video_cue_applied",
+    });
+  } else if (pending.videoPlayback) {
+    recordPresentationDiagnostic({
+      event: "incoming.rejected",
+      outputId: outputType,
+      itemId: pending.videoPlaybackInfo?.itemId,
+      slideIndex: pending.videoPlaybackInfo?.slideIndex,
+      reason: "video_cue_no_longer_newer",
+    });
+  }
+
+  if (pendingBuiltInPresentations.get(outputType) === pending) {
+    pendingBuiltInPresentations.delete(outputType);
+  }
+};
+
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateProjector") return false;
-    const state = toLegacyPresentationShape(
-      (previousState as RootState).presentation,
-    );
-    const info = action.payload as Presentation;
-    return (
-      isNewerPresentationTime(info.time, state.projectorInfo.time) ||
-      isNewerVideoPlaybackCue(info, state.projectorInfo)
+    return queueIncomingBuiltInPresentation(
+      "projector",
+      action.payload as Presentation,
+      previousState as RootState,
     );
   },
 
-  effect: async (action, listenerApi) => {
-    const churchIdAtStart = globalFireDbInfo.churchId;
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
-    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-
-    const info = action.payload as Presentation;
-    const current = toLegacyPresentationShape(
-      (listenerApi.getState() as RootState).presentation,
-    ).projectorInfo;
-    if (isNewerPresentationTime(info.time, current.time)) {
-      listenerApi.dispatch(updateProjectorFromRemote(info));
-      return;
-    }
-    if (isNewerVideoPlaybackCue(info, current)) {
-      listenerApi.dispatch(
-        applyRemoteVideoPlayback({
-          outputType: "projector",
-          videoPlayback: info.videoPlayback,
-        }),
-      );
-    }
-  },
+  effect: async (_action, listenerApi) =>
+    applyPendingBuiltInPresentation("projector", listenerApi),
 });
 
 // handle updating from remote monitor
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateMonitor") return false;
-    const state = toLegacyPresentationShape(
-      (previousState as RootState).presentation,
-    );
-    const info = action.payload as Presentation;
-    return (
-      isNewerPresentationTime(info.time, state.monitorInfo.time) ||
-      isNewerVideoPlaybackCue(info, state.monitorInfo)
+    return queueIncomingBuiltInPresentation(
+      "monitor",
+      action.payload as Presentation,
+      previousState as RootState,
     );
   },
 
-  effect: async (action, listenerApi) => {
-    const churchIdAtStart = globalFireDbInfo.churchId;
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
-    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-
-    const info = action.payload as Presentation;
-    const current = toLegacyPresentationShape(
-      (listenerApi.getState() as RootState).presentation,
-    ).monitorInfo;
-    if (isNewerPresentationTime(info.time, current.time)) {
-      listenerApi.dispatch(updateMonitorFromRemote(info));
-      return;
-    }
-    if (isNewerVideoPlaybackCue(info, current)) {
-      listenerApi.dispatch(
-        applyRemoteVideoPlayback({
-          outputType: "monitor",
-          videoPlayback: info.videoPlayback,
-        }),
-      );
-    }
-  },
+  effect: async (_action, listenerApi) =>
+    applyPendingBuiltInPresentation("monitor", listenerApi),
 });
 
 // handle updating from remote stream (strict > so we skip our own Firebase echo and avoid prev/current both having current slide)
 listenerMiddleware.startListening({
   predicate: (action, currentState, previousState) => {
     if (action.type !== "debouncedUpdateStream") return false;
-    const state = toLegacyPresentationShape(
-      (previousState as RootState).presentation,
-    );
-    const info = action.payload as Presentation;
-    return (
-      isNewerPresentationTime(info.time, state.streamInfo.time) ||
-      isNewerVideoPlaybackCue(info, state.streamInfo)
+    return queueIncomingBuiltInPresentation(
+      "stream",
+      action.payload as Presentation,
+      previousState as RootState,
     );
   },
 
-  effect: async (action, listenerApi) => {
-    const churchIdAtStart = globalFireDbInfo.churchId;
-    listenerApi.cancelActiveListeners();
-    await listenerApi.delay(10);
-    if (globalFireDbInfo.churchId !== churchIdAtStart) return;
-
-    const info = action.payload as Presentation;
-    const current = toLegacyPresentationShape(
-      (listenerApi.getState() as RootState).presentation,
-    ).streamInfo;
-    if (isNewerPresentationTime(info.time, current.time)) {
-      listenerApi.dispatch(updateStreamFromRemote(info));
-      return;
-    }
-    if (isNewerVideoPlaybackCue(info, current)) {
-      listenerApi.dispatch(
-        applyRemoteVideoPlayback({
-          outputType: "stream",
-          videoPlayback: info.videoPlayback,
-        }),
-      );
-    }
-  },
+  effect: async (_action, listenerApi) =>
+    applyPendingBuiltInPresentation("stream", listenerApi),
 });
 
 // handle updating outputs created after the display registry. Freshness is

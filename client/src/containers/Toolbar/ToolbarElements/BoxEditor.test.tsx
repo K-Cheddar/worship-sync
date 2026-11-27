@@ -103,6 +103,7 @@ describe("BoxEditor", () => {
     quickBoxLayoutTarget: HTMLElement | null = null,
     quickBoxHeightTarget: HTMLElement | null = null,
     drawerTarget: HTMLElement | null = document.body,
+    applyToAll = true,
   ) =>
     render(
       <BoxEditor
@@ -110,6 +111,7 @@ describe("BoxEditor", () => {
         quickBoxLayoutTarget={quickBoxLayoutTarget}
         quickBoxHeightTarget={quickBoxHeightTarget}
         drawerTarget={drawerTarget}
+        applyToAll={applyToAll}
       />,
     );
 
@@ -433,7 +435,8 @@ describe("BoxEditor", () => {
   });
 
   it("keeps the ten existing presets in All Tools and disables Match for This slide scope", () => {
-    renderEditor(jest.fn());
+    const updateItem = jest.fn();
+    const view = renderEditor(updateItem);
 
     for (const label of [
       "Full",
@@ -477,23 +480,20 @@ describe("BoxEditor", () => {
       "Apply Upper Third box preset",
       "Apply Match box preset",
     ]);
-    expect(
-      screen.getByRole("radiogroup", { name: "Apply changes to" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("radio", { name: "All slides" })).toHaveAttribute(
-      "aria-checked",
-      "true",
+    view.rerender(
+      <BoxEditor
+        updateItem={updateItem}
+        quickBoxLayoutTarget={null}
+        quickBoxHeightTarget={null}
+        drawerTarget={document.body}
+        applyToAll={false}
+      />,
     );
-    expect(screen.queryByText(/Geometry applies to/)).not.toBeInTheDocument();
-    act(() => screen.getByRole("radio", { name: "This slide" }).click());
-    expect(match).toBeDisabled();
-    expect(screen.getByRole("radio", { name: "This slide" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
+    expect(screen.getByRole("button", { name: "Apply Match box preset" })).toBeDisabled();
+    expect(screen.queryByRole("radiogroup", { name: "Apply changes to" })).not.toBeInTheDocument();
   });
 
-  it("keeps custom items scoped to This slide by default", () => {
+  it("uses the shared all-slides scope for custom items", () => {
     mockState.undoable.present.item = makeItem({
       type: "free",
       arrangements: [],
@@ -501,13 +501,15 @@ describe("BoxEditor", () => {
 
     renderEditor(jest.fn());
 
-    expect(screen.getByRole("radio", { name: "This slide" })).toHaveAttribute(
-      "aria-checked",
-      "true",
-    );
-    expect(screen.getByRole("radio", { name: "All slides" })).toHaveAttribute(
-      "aria-checked",
-      "false",
+    fireEvent.click(screen.getByRole("button", { name: "Apply Full box preset" }));
+    act(() => jest.runAllTimers());
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          kind: "boxProperties",
+          applyToAll: true,
+        }),
+      }),
     );
   });
 
@@ -528,18 +530,12 @@ describe("BoxEditor", () => {
     drawerTarget.remove();
   });
 
-  it("shares geometry scope and height drafts between the quick row and drawer", () => {
+  it("uses the shared selected-slide scope for quick and drawer geometry controls", () => {
     const quickLayoutTarget = document.createElement("div");
     const quickHeightTarget = document.createElement("div");
     const drawerTarget = document.createElement("div");
     document.body.append(quickLayoutTarget, quickHeightTarget, drawerTarget);
-    const view = renderEditor(jest.fn(), quickLayoutTarget, quickHeightTarget, drawerTarget);
-
-    act(() => {
-      within(drawerTarget)
-        .getByRole("radio", { name: "This slide" })
-        .click();
-    });
+    const view = renderEditor(jest.fn(), quickLayoutTarget, quickHeightTarget, drawerTarget, false);
     expect(
       within(quickLayoutTarget).getByRole("button", { name: "Apply Match box preset" }),
     ).toBeDisabled();
@@ -564,6 +560,34 @@ describe("BoxEditor", () => {
     quickLayoutTarget.remove();
     quickHeightTarget.remove();
     drawerTarget.remove();
+  });
+
+  it("captures geometry scope before a delayed edit runs", () => {
+    const updateItem = jest.fn();
+    const view = renderEditor(updateItem, null, null, document.body, true);
+
+    fireEvent.change(screen.getByRole("spinbutton", { name: /height/i }), {
+      target: { value: "62" },
+    });
+    view.rerender(
+      <BoxEditor
+        updateItem={updateItem}
+        quickBoxLayoutTarget={null}
+        quickBoxHeightTarget={null}
+        drawerTarget={document.body}
+        applyToAll={false}
+      />,
+    );
+
+    act(() => jest.runAllTimers());
+    expect(mockApplyOwnedContentMutation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mutation: expect.objectContaining({
+          properties: expect.objectContaining({ height: 62 }),
+          applyToAll: true,
+        }),
+      }),
+    );
   });
 
   it("keeps a pending height edit when the All Tools target closes", () => {

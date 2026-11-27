@@ -17,11 +17,7 @@ import {
   createMockGlobalContext,
   createMockPouchDB,
 } from "../../../test/mocks";
-import { STUCK_DB_PROGRESS_MS } from "../../../constants";
-import {
-  mockWindowLocationReload,
-  restoreWindowLocation,
-} from "../../../test/windowLocationTestMock";
+import { SLOW_STARTUP_MESSAGE_DELAY_MS } from "../../../constants";
 
 // controllerInfo uses import.meta – replaced by jest.config.cjs moduleNameMapper (__mocks__)
 // ResizeObserver – setupTests.ts
@@ -242,23 +238,30 @@ describe("CreditsEditor", () => {
     );
 
     // Check for the loading overlay (dbProgress may be undefined if context is mocked globally)
-    const loadingOverlay = screen.getByTestId("loading-overlay");
+    const loadingOverlay = screen.getByTestId("controller-loading-overlay");
     expect(loadingOverlay).toBeInTheDocument();
-    expect(loadingOverlay).toHaveClass("bg-homepage-canvas");
+    expect(loadingOverlay).toHaveClass(
+      "bg-homepage-canvas/85",
+      "backdrop-blur-[2px]",
+    );
     expect(screen.getByRole("img", { name: "WorshipSync" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Getting WorshipSync ready" }))
       .toBeInTheDocument();
     expect(loadingOverlay).toHaveTextContent("Database sync: 50%");
   });
 
-  it("shows stuck recovery on loading overlay when dbProgress is unchanged for 15s", async () => {
+  it("offers retry during a slow Credits Editor startup", () => {
     jest.useFakeTimers();
-    const reloadMock = jest.fn();
-    mockWindowLocationReload(reloadMock);
     try {
       const contextWithLoading = {
         ...mockControllerContext,
         dbProgress: 7,
+        startupInfo: {
+          stage: "connecting-to-server" as const,
+          startedAt: Date.now(),
+          lastMeaningfulActivityAt: Date.now(),
+          failure: null,
+        },
         connectionStatus: { status: "connecting" as const, retryCount: 0 },
       };
 
@@ -281,19 +284,15 @@ describe("CreditsEditor", () => {
       );
 
       act(() => {
-        jest.advanceTimersByTime(STUCK_DB_PROGRESS_MS);
+        jest.advanceTimersByTime(SLOW_STARTUP_MESSAGE_DELAY_MS);
       });
 
-      expect(
-        await screen.findByText(/Startup is taking longer than expected/),
-      ).toBeInTheDocument();
+      expect(screen.getByText(/reported progress for a while/)).toBeInTheDocument();
       expect(screen.getByRole("img", { name: "WorshipSync" })).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Try Again" }),
-      ).toBeInTheDocument();
+      expect(screen.getByText("Database sync: 7%")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Retry startup" })).toBeInTheDocument();
     } finally {
       jest.useRealTimers();
-      restoreWindowLocation();
     }
   });
 

@@ -3,6 +3,7 @@ import type { ItemSlideType, MediaType } from "../../types";
 import DisplayBox from "../../components/DisplayWindow/DisplayBox";
 import StaticSlideThumbnail from "./StaticSlideThumbnail";
 import { resolveDisplaySettings } from "../../utils/displaySettings";
+import { bindLocalVideoInput } from "../../utils/localVideoInput";
 
 const queryRenderedVideo = () => {
   // A native <video> has no implicit testing-library role.
@@ -82,7 +83,7 @@ const makeSlide = (overrides: Partial<ItemSlideType> = {}) =>
 
 describe("StaticSlideThumbnail", () => {
   it.each(["projector", "monitor", "stream"] as const)(
-    "renders a local video still in %s static previews without video playback",
+    "uses the correct background preview behavior for %s without video playback",
     (previewMode) => {
       const slide = makeSlide();
       slide.boxes[0].shouldKeepAspectRatio = true;
@@ -111,13 +112,23 @@ describe("StaticSlideThumbnail", () => {
         />,
       );
 
-      const thumbnail = screen.getByTestId(
-        previewMode === "stream"
-          ? "static-local-video-thumbnail"
-          : "display-box-local-video-thumbnail",
+      const backgroundThumbnails = [
+        screen.queryByTestId("display-box-local-video-thumbnail"),
+        screen.queryByTestId("static-local-video-thumbnail"),
+      ].filter((thumbnail): thumbnail is HTMLElement => thumbnail !== null);
+      expect(backgroundThumbnails).toHaveLength(
+        previewMode === "stream" ? 0 : 1,
       );
-      expect(thumbnail).toHaveAttribute("src", "blob:local-video-thumbnail");
-      expect(thumbnail).toHaveClass("object-contain");
+      expect(
+        backgroundThumbnails.map((thumbnail) => thumbnail.getAttribute("src")),
+      ).toEqual(
+        previewMode === "stream" ? [] : ["blob:local-video-thumbnail"],
+      );
+      expect(
+        backgroundThumbnails.map((thumbnail) =>
+          thumbnail.classList.contains("object-contain"),
+        ),
+      ).toEqual(previewMode === "stream" ? [] : [true]);
       expect(queryRenderedVideo()).toBeNull();
     },
   );
@@ -188,41 +199,43 @@ describe("StaticSlideThumbnail", () => {
     },
   );
 
-  it("keeps a capture still while marking a remote live source unavailable", () => {
-    render(
-      <StaticSlideThumbnail
-        slide={makeSlide({
-          mediaSource: {
-            kind: "local-video-input",
-            sourceId: "remote-camera-with-still",
-            label: "Main camera",
-            ownerDeviceId: "source-device",
-            ownerLabel: "Booth PC",
-          },
-        })}
-        itemType="song"
-        previewMode="projector"
-        localVideoInputThumbnailUrl="blob:camera-thumbnail"
-      />,
-    );
+  it.each(["projector", "monitor", "stream"] as const)(
+    "keeps a capture still and one compact unavailable marker in saved-thumbnail %s previews",
+    (previewMode) => {
+      render(
+        <StaticSlideThumbnail
+          slide={makeSlide({
+            mediaSource: {
+              kind: "local-video-input",
+              sourceId: "remote-camera-with-still",
+              label: "Main camera",
+              ownerDeviceId: "source-device",
+              ownerLabel: "Booth PC",
+            },
+          })}
+          itemType="song"
+          previewMode={previewMode}
+          localVideoInputThumbnailUrl="blob:camera-thumbnail"
+        />,
+      );
 
-    expect(screen.getByTestId("static-video-input-thumbnail")).toHaveAttribute(
-      "src",
-      "blob:camera-thumbnail",
-    );
-    expect(screen.getByRole("status")).toHaveAttribute(
-      "data-local-source-status-size",
-      "indicator",
-    );
-    expect(screen.getByRole("status")).toHaveAttribute(
-      "aria-label",
-      "Local source on another device · Video input · Main camera · Available on Booth PC",
-    );
-    expect(screen.getByRole("status")).toHaveAttribute(
-      "data-local-source-status-size",
-      "indicator",
-    );
-  });
+      expect(
+        screen.getByTestId("static-video-input-thumbnail"),
+      ).toHaveAttribute("src", "blob:camera-thumbnail");
+      const status = screen.getByRole("status");
+      expect(status).toHaveAttribute(
+        "data-local-source-status-size",
+        "indicator",
+      );
+      expect(status).toHaveAttribute(
+        "aria-label",
+        "Local source on another device · Video input · Main camera · Available on Booth PC",
+      );
+      expect(
+        screen.queryByTestId("local-video-input-slide-badge"),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it("renders text and remote image stills without mounting DisplayWindow machinery", () => {
     render(
@@ -266,6 +279,7 @@ describe("StaticSlideThumbnail", () => {
           slide={slide}
           itemType="song"
           previewMode={previewMode}
+          scaleFactor={0.2}
         />,
       );
 
@@ -276,9 +290,82 @@ describe("StaticSlideThumbnail", () => {
         "data-local-source-status-size",
         "thumbnail",
       );
+      expect(
+        screen.getByText("Local source on another device"),
+      ).toHaveStyle({ fontSize: "80px" });
+      expect(screen.getByTestId("static-slide-reference-canvas")).toHaveStyle({
+        transform: "translate(-50%, -50%) scale(0.2)",
+      });
+      expect(
+        within(screen.getByTestId("static-slide-reference-canvas")).getByRole(
+          "status",
+        ),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("local-video-input-slide-badge"),
+      ).not.toBeInTheDocument();
       expect(queryRenderedVideo()).toBeNull();
     },
   );
+
+  it("shows one compact unavailable marker for a saved capture still", () => {
+    render(
+      <StaticSlideThumbnail
+        slide={makeSlide({
+          mediaSource: {
+            kind: "local-video-input",
+            sourceId: "remote-camera-with-still",
+            label: "Main camera",
+            ownerDeviceId: "source-device",
+            ownerLabel: "Booth PC",
+          },
+        })}
+        itemType="song"
+        previewMode="projector"
+        localVideoInputThumbnailUrl="blob:camera-thumbnail"
+      />,
+    );
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveAttribute(
+      "data-local-source-status-size",
+      "indicator",
+    );
+    expect(status).toHaveAttribute(
+      "aria-label",
+      "Local source on another device · Video input · Main camera · Available on Booth PC",
+    );
+    expect(status).toHaveTextContent("Unavailable");
+    expect(
+      screen.queryByTestId("local-video-input-slide-badge"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("static-video-input-thumbnail")).toHaveAttribute(
+      "src",
+      "blob:camera-thumbnail",
+    );
+  });
+
+  it("identifies an available capture without an unavailable warning", () => {
+    bindLocalVideoInput("available-camera", "device-1", "Main camera");
+    render(
+      <StaticSlideThumbnail
+        slide={makeSlide({
+          mediaSource: {
+            kind: "local-video-input",
+            sourceId: "available-camera",
+            label: "Main camera",
+          },
+        })}
+        itemType="song"
+        previewMode="projector"
+      />,
+    );
+
+    const badge = screen.getByTestId("local-video-input-slide-badge");
+    expect(badge).toHaveAttribute("aria-label", "Video input: Main camera");
+    expect(badge).toHaveClass("top-0");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
 
   it.each([
     [false, "monitor-preview-single-slide-layout"],
@@ -355,51 +442,50 @@ describe("StaticSlideThumbnail", () => {
     },
   );
 
-  it("uses a video poster or still and keeps stream free text lightweight", () => {
+  it("matches display mode for video posters and keeps stream free text lightweight", () => {
+    const videoSlide = makeSlide({
+      boxes: [
+        {
+          id: "video",
+          width: 100,
+          height: 100,
+          mediaInfo: {
+            type: "video",
+            path: "video.mp4",
+            createdAt: "",
+            updatedAt: "",
+            format: "mp4",
+            height: 1080,
+            width: 1920,
+            name: "video",
+            publicId: "video",
+            id: "video",
+            thumbnail: "poster.jpg",
+            background: "video.mp4",
+            placeholderImage: "poster.jpg",
+          } satisfies MediaType,
+          words: "",
+        },
+      ],
+    });
     const { rerender } = render(
       <StaticSlideThumbnail
-        slide={makeSlide({
-          boxes: [
-            {
-              id: "video",
-              width: 100,
-              height: 100,
-              mediaInfo: {
-                type: "video",
-                path: "video.mp4",
-                createdAt: "",
-                updatedAt: "",
-                format: "mp4",
-                height: 1080,
-                width: 1920,
-                name: "video",
-                publicId: "video",
-                id: "video",
-                thumbnail: "poster.jpg",
-                background: "video.mp4",
-                placeholderImage: "poster.jpg",
-              } satisfies MediaType,
-              words: "",
-            },
-          ],
-          formattedTextDisplayInfo: {
-            text: "Welcome",
-            backgroundColor: "#123456",
-            textColor: "#ffffff",
-            fontSize: 1.5,
-            paddingX: 2,
-            paddingY: 1,
-            isBold: false,
-            isItalic: false,
-            align: "left",
-          },
-        })}
+        slide={videoSlide}
         itemType="song"
         previewMode="projector"
       />,
     );
 
     expect(screen.getByAltText("")).toHaveAttribute("src", "poster.jpg");
+    rerender(
+      <StaticSlideThumbnail
+        slide={videoSlide}
+        itemType="song"
+        previewMode="stream"
+      />,
+    );
+    expect(screen.queryByAltText("")).not.toBeInTheDocument();
+
     rerender(
       <StaticSlideThumbnail
         slide={makeSlide({

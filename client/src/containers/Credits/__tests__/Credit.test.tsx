@@ -1,9 +1,12 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Credit from "../Credit";
 import { putCreditDoc } from "../../../utils/dbUtils";
 import { resetAppliedCreditVersions } from "../../../utils/creditVersions";
+import { ControllerInfoContext } from "../../../context/controllerInfo";
+import { broadcastCreditsUpdate } from "../../../store/store";
+import { getCreditsDocId } from "../../../types";
 
 jest.mock("../../../store/store", () => ({
   __esModule: true,
@@ -20,6 +23,7 @@ jest.mock("../../../utils/creditsHistoryFlush", () => ({
 }));
 
 const mockDispatch = jest.fn();
+let mockGlobalDb: PouchDB.Database | undefined;
 jest.mock("../../../hooks", () => ({
   useDispatch: () => mockDispatch,
 }));
@@ -28,6 +32,7 @@ jest.mock("../../../context/controllerInfo", () => ({
   ControllerInfoContext: React.createContext<unknown>({
     db: { get: jest.fn(), put: jest.fn() },
   }),
+  get globalDb() { return mockGlobalDb; },
 }));
 
 jest.mock("@gsap/react", () => ({ useGSAP: jest.fn() }));
@@ -117,6 +122,7 @@ const renderCredit = (overrides: Partial<React.ComponentProps<typeof Credit>> = 
 describe("Credit row sync guards", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGlobalDb = undefined;
     resetAppliedCreditVersions();
     (putCreditDoc as jest.Mock).mockResolvedValue({
       _id: "credits-outline-1-credit-credit-1",
@@ -219,5 +225,32 @@ describe("Credit row sync guards", () => {
     await waitFor(() => expect(putCreditDoc).toHaveBeenCalled());
     const [, , payload] = (putCreditDoc as jest.Mock).mock.calls.at(-1);
     expect(payload).toEqual({ id: "credit-1", heading: "Updated heading" });
+  });
+
+  it("broadcasts a committed same-db delete after unmount but suppresses its late component commit", async () => {
+    const db = {
+      name: "church-A",
+      get: jest.fn().mockResolvedValue({
+        _id: "credits-outline-1",
+        _rev: "1-current",
+        creditIds: ["credit-1"],
+      }),
+      put: jest.fn().mockResolvedValue({ rev: "2-saved" }),
+    };
+    mockGlobalDb = db as unknown as PouchDB.Database;
+    const view = render(
+      <ControllerInfoContext.Provider value={{ db } as never}>
+        <Credit {...baseProps} heading="Band" text="Original" />
+      </ControllerInfoContext.Provider>,
+    );
+
+    fireEvent.click(screen.getAllByRole("button").at(-1)!);
+    view.unmount();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 600)); });
+
+    expect(db.get).toHaveBeenCalledWith(getCreditsDocId("outline-1"));
+    expect(db.put).toHaveBeenCalledWith(expect.objectContaining({ creditIds: [] }));
+    expect(mockDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: "credits/deleteCredit" }));
+    expect(broadcastCreditsUpdate).toHaveBeenCalledWith([expect.objectContaining({ creditIds: [] })]);
   });
 });

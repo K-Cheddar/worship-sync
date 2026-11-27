@@ -1639,12 +1639,17 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
     if (isPresentMode) {
       if (selectedSlideMediaSource) {
         return (
-          <LocalVideoInputDetails
-            className="w-full"
-            source={selectedSlideMediaSource}
-            canEdit={canRelinkVideoInputInPresentMode}
-            onEdit={openVideoInputRelink}
-          />
+          <>
+            <LocalVideoInputDetails
+              className="w-full"
+              source={selectedSlideMediaSource}
+              canEdit={canRelinkVideoInputInPresentMode}
+              onEdit={openVideoInputRelink}
+            />
+            {type === "bible" && item.bibleInfo ? (
+              <BibleItemActions item={item} />
+            ) : null}
+          </>
         );
       }
       if (type === "timer") {
@@ -1656,6 +1661,9 @@ const SlideEditor = ({ access, presentationMode = "edit" }: { access?: AccessTyp
             className="w-full"
           />
         );
+      }
+      if (type === "bible" && item.bibleInfo) {
+        return <BibleItemActions item={item} />;
       }
       return null;
     }

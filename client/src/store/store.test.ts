@@ -8303,6 +8303,90 @@ describe("store module", () => {
     );
   });
 
+  it("persists a local slide before a Firebase write fails", async () => {
+    const { store, presentationSlice, writePresentationSnapshotToFirebase, updateMock } =
+      loadStoreWithPresentationSync();
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    let rejectFirebaseWrite!: (error: Error) => void;
+    updateMock.mockReturnValueOnce(
+      new Promise<void>((_resolve, reject) => {
+        rejectFirebaseWrite = reject;
+      }),
+    );
+    store.dispatch(
+      presentationSlice.actions.updateMonitorFromRemote(
+        createScreenPresentation("monitor", 111, {
+          name: "Local monitor slide",
+        }),
+      ),
+    );
+
+    const write = writePresentationSnapshotToFirebase(store.getState()).catch(
+      () => false,
+    );
+
+    expect(JSON.parse(localStorage.getItem("monitorInfo") || "{}")).toMatchObject({
+      name: "Local monitor slide",
+    });
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    rejectFirebaseWrite(new Error("temporary Firebase failure"));
+    await expect(write).resolves.toBe(false);
+  });
+
+  it("publishes only the changed built-in output when another output is stale", async () => {
+    const { store, presentationSlice, updateMock } =
+      loadStoreWithPresentationSync();
+    const staleMonitor = createScreenPresentation("monitor", 500, {
+      name: "Monitor controlled elsewhere",
+    });
+    localStorage.setItem("monitorInfo", JSON.stringify(staleMonitor));
+    store.dispatch(
+      presentationSlice.actions.updateMonitorFromRemote(staleMonitor),
+    );
+    store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
+    updateMock.mockClear();
+
+    store.dispatch(
+      presentationSlice.actions.updateProjector(
+        createScreenPresentation("projector", 600, {
+          name: "Projector only update",
+        }),
+      ),
+    );
+    await waitForListenerDelay();
+
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(updateMock).toHaveBeenCalledWith(
+      "churches/church-main/data/presentation",
+      {
+        projectorInfo: expect.objectContaining({
+          name: "Projector only update",
+        }),
+      },
+    );
+    expect(localStorage.getItem("monitorInfo")).toBe(
+      JSON.stringify(staleMonitor),
+    );
+  });
+
+  it("does not mark a rejected Firebase presentation write as published", async () => {
+    const { store, writePresentationSnapshotToFirebase, updateMock } =
+      loadStoreWithPresentationSync();
+    jest.spyOn(console, "error").mockImplementation(() => undefined);
+    updateMock
+      .mockRejectedValueOnce(new Error("temporary Firebase failure"))
+      .mockResolvedValueOnce(undefined);
+
+    await expect(
+      writePresentationSnapshotToFirebase(store.getState()),
+    ).rejects.toThrow("temporary Firebase failure");
+    await expect(
+      writePresentationSnapshotToFirebase(store.getState()),
+    ).resolves.toBe(true);
+
+    expect(updateMock).toHaveBeenCalledTimes(2);
+  });
+
   it("pushes the current stream snapshot when stream transmission turns on", async () => {
     const { store, presentationSlice, updateMock } =
       loadStoreWithPresentationSync();
@@ -8452,6 +8536,49 @@ describe("store module", () => {
     await writePresentationSnapshotToFirebase(store.getState());
 
     expect(updateMock).not.toHaveBeenCalled();
+  });
+
+  it("refreshes a queued presentation delta after a newer remote slide applies", async () => {
+    jest.useFakeTimers();
+    const { store, presentationSlice, updateMock } = loadStoreWithPresentationSync();
+    const remotePresentation = createScreenPresentation(
+      "projector",
+      Date.now() + 60_000,
+      { name: "Newer remote slide" },
+    );
+
+    store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
+    store.dispatch({
+      type: "debouncedUpdateProjector",
+      payload: remotePresentation,
+    });
+    await flushListenerEffects();
+    await jest.advanceTimersByTimeAsync(5);
+
+    store.dispatch(
+      presentationSlice.actions.updateProjector(
+        createScreenPresentation("projector", Date.now(), {
+          name: "Older local slide",
+        }),
+      ),
+    );
+    await flushListenerEffects();
+    await jest.advanceTimersByTimeAsync(5);
+    await flushListenerEffects();
+
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).projectorInfo,
+    ).toMatchObject({ name: "Newer remote slide" });
+
+    await jest.advanceTimersByTimeAsync(5);
+    await flushListenerEffects();
+
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        projectorInfo: expect.objectContaining({ name: "Newer remote slide" }),
+      }),
+    );
   });
 
   it("applies only newer remote projector updates", async () => {
@@ -8634,6 +8761,117 @@ describe("store module", () => {
         .nextSlide,
     ).toEqual(createScreenSlide("monitor-next-new", "next-new"));
   });
+
+  it.each([
+    ["projector", "updateProjectorFromRemote", "debouncedUpdateProjector", "projectorInfo"],
+    ["monitor", "updateMonitorFromRemote", "debouncedUpdateMonitor", "monitorInfo"],
+    ["stream", "updateStreamFromRemote", "debouncedUpdateStream", "streamInfo"],
+  ] as const)(
+    "does not let an older pending %s event cancel the newest slide",
+    async (outputType, remoteAction, debouncedAction, infoKey) => {
+      const { store, presentationSlice } = loadStoreWithPresentationSync();
+      store.dispatch(
+        presentationSlice.actions[remoteAction](
+          createScreenPresentation(outputType, 100, { name: "Committed A" }),
+        ),
+      );
+
+      store.dispatch({
+        type: debouncedAction,
+        payload: createScreenPresentation(outputType, 120, {
+          name: "Pending B",
+        }),
+      });
+      store.dispatch({
+        type: debouncedAction,
+        payload: createScreenPresentation(outputType, 110, {
+          name: "Older update",
+        }),
+      });
+
+      await waitForListenerDelay();
+
+      expect(
+        toLegacyPresentationShape(store.getState().presentation)[infoKey],
+      ).toMatchObject({ name: "Pending B", time: 120 });
+    },
+  );
+
+  it.each([
+    ["projector", "updateProjectorFromRemote", "debouncedUpdateProjector", "projectorInfo"],
+    ["monitor", "updateMonitorFromRemote", "debouncedUpdateMonitor", "monitorInfo"],
+    ["stream", "updateStreamFromRemote", "debouncedUpdateStream", "streamInfo"],
+  ] as const)(
+    "does not let an equal-time duplicate %s event replace the pending slide",
+    async (outputType, remoteAction, debouncedAction, infoKey) => {
+      const { store, presentationSlice } = loadStoreWithPresentationSync();
+      store.dispatch(
+        presentationSlice.actions[remoteAction](
+          createScreenPresentation(outputType, 100, { name: "Committed A" }),
+        ),
+      );
+      store.dispatch({
+        type: debouncedAction,
+        payload: createScreenPresentation(outputType, 120, {
+          name: "Pending B",
+        }),
+      });
+      store.dispatch({
+        type: debouncedAction,
+        payload: createScreenPresentation(outputType, 120, {
+          name: "Duplicate at the same time",
+        }),
+      });
+
+      await waitForListenerDelay();
+
+      expect(
+        toLegacyPresentationShape(store.getState().presentation)[infoKey],
+      ).toMatchObject({ name: "Pending B", time: 120 });
+    },
+  );
+
+  it.each([
+    ["projector", "toggleProjectorTransmitting", "updateProjector", "debouncedUpdateProjector", "projectorInfo"],
+    ["monitor", "toggleMonitorTransmitting", "updateMonitor", "debouncedUpdateMonitor", "monitorInfo"],
+    ["stream", "toggleStreamTransmitting", "updateStream", "debouncedUpdateStream", "streamInfo"],
+  ] as const)(
+    "ignores a delayed %s event after a newer local selection",
+    async (
+      outputType,
+      toggleAction,
+      localAction,
+      remoteAction,
+      infoKey,
+    ) => {
+      const { store, presentationSlice } = loadStoreWithPresentationSync();
+      store.dispatch(presentationSlice.actions[toggleAction]());
+      store.dispatch(
+        presentationSlice.actions[localAction](
+          createScreenPresentation(outputType, 100, {
+            name: "New local selection",
+          }),
+        ),
+      );
+      const localTime = toLegacyPresentationShape(
+        store.getState().presentation,
+      )[infoKey].time;
+      store.dispatch({
+        type: remoteAction,
+        payload: createScreenPresentation(
+          outputType,
+          (localTime ?? 1) - 1,
+          { name: "Delayed Firebase event" },
+        ),
+      });
+
+      await waitForListenerDelay();
+
+      expect(
+        toLegacyPresentationShape(store.getState().presentation)[infoKey],
+      ).toMatchObject({ name: "New local selection", time: localTime });
+    },
+  );
 
   it("applies only newer remote stream updates", async () => {
     const { store, presentationSlice } = loadStoreWithPresentationSync();
@@ -9635,6 +9873,10 @@ describe("item list outline persistence", () => {
       revisionSelection: { kind: "rows", review, choices: { '["a","name"]': "remote" } },
       reviewedRevisionConflict: env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"].revisionConflict,
     }));
+    // An identical winner refresh must not retire the explicit leaf choice or
+    // turn its persistence into an ordinary row save.
+    env.store.dispatch(env.itemListSlice.actions.updateItemListFromRemote({ outlineId: "outline-a", items: first }));
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"]).toBeDefined();
     // Editing during debounce must not change the previewed commit or prevent
     // the subsequent ordinary autosave of newer work.
     if (stage === "write") await jest.advanceTimersByTimeAsync(1500);
@@ -9650,6 +9892,73 @@ describe("item list outline persistence", () => {
     expect({ stage: "after autosave", items: current.items, pending: env.store.getState().undoable.present.itemList.hasPendingUpdate }).toEqual({ stage: "after autosave", items: [...second, later], pending: false });
     expect(env.store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
     expect(env.store.getState().undoable.present.itemList.remoteConflicts).toEqual({});
+    jest.useRealTimers();
+  });
+
+  it("retains a failed explicit revision choice and retries that same operation", async () => {
+    jest.useFakeTimers();
+    const env = loadStoreWithItemListPersistence();
+    const base = [createServiceItem({ _id: "welcome", listId: "a", name: "Welcome" })];
+    const winnerItems = [{ ...base[0], name: "Welcome winner" }];
+    const losingItems = [{ ...base[0], name: "Welcome other" }];
+    const common = { _id: "outline-a", name: "Sunday", overlays: ["overlay"] };
+    const winner = { ...common, items: winnerItems, _rev: "2-winner", _revisions: { start: 2, ids: ["winner", "base"] } };
+    const loser = { ...common, items: losingItems, _rev: "2-loser", _revisions: { start: 2, ids: ["loser", "base"] } };
+    let current: Record<string, any> = winner;
+    let conflicts = ["2-loser"];
+    env.db.get.mockImplementation(async (_id: string, options?: { rev?: string }) => {
+      if (options?.rev === "1-base") return { ...common, items: base, _rev: "1-base" };
+      if (options?.rev === "2-loser") return loser;
+      return { ...current, _conflicts: conflicts };
+    });
+    let putCount = 0;
+    env.db.put.mockImplementation(async (doc: Record<string, any>) => {
+      putCount += 1;
+      if (putCount === 1) throw new Error("offline");
+      current = { ...doc, _rev: "3-resolved", _revisions: { start: 3, ids: ["resolved", "winner", "base"] } };
+      return { rev: "3-resolved" };
+    });
+    const remove = jest.fn(async () => { conflicts = []; });
+    Object.assign(env.db, { remove });
+    hydrateOutline(env.store, env.itemListSlice, env.itemListsSlice);
+    env.store.dispatch(env.itemListSlice.actions.initiateItemList({ outlineId: "outline-a", items: winnerItems }));
+    const revisionConflict = {
+      graph: {
+        winningRevision: "2-winner",
+        conflictRevisions: ["2-loser"],
+        histories: { "2-winner": ["2-winner", "1-base"], "2-loser": ["2-loser", "1-base"] },
+      },
+      versions: [
+        { revision: "2-winner", items: winnerItems },
+        { revision: "2-loser", items: losingItems },
+      ],
+    };
+    env.store.dispatch(env.itemListSlice.actions.recordOutlineConflict({
+      outlineId: "outline-a", baselineItems: base, localItems: winnerItems,
+      remoteItems: winnerItems, revisionConflict,
+    }));
+    env.store.dispatch(env.itemListSlice.actions.resolveOutlineConflict({
+      outlineId: "outline-a", choice: "keep-local", draftItems: winnerItems,
+      reviewedItems: winnerItems, revisionSelection: { kind: "whole", revision: "2-winner" },
+      reviewedRevisionConflict: revisionConflict,
+    }));
+
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(1);
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"].saveError).toBe(true);
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"]).toMatchObject({
+      items: winnerItems,
+      selection: { kind: "whole", revision: "2-winner" },
+    });
+
+    env.store.dispatch(env.itemListSlice.actions.forceUpdate());
+    await jest.advanceTimersByTimeAsync(1500);
+    await flushListenerEffects();
+    expect(env.db.put).toHaveBeenCalledTimes(2);
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(env.store.getState().undoable.present.itemList.pendingRevisionResolutions["outline-a"]).toBeUndefined();
+    expect(env.store.getState().undoable.present.itemList.remoteConflicts["outline-a"]).toBeUndefined();
     jest.useRealTimers();
   });
 

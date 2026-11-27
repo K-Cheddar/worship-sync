@@ -172,8 +172,10 @@ const Bible = () => {
     db,
     bibleDb,
     bibleDbProgress,
+    bibleStartupFailure,
     isMobile = false,
   } = useContext(ControllerInfoContext) || {};
+  const bibleProgressValue = bibleDbProgress ?? null;
   const { access, loginState } = useContext(GlobalInfoContext) || {};
   const canAddBibleToOutline = !isViewOnlyAccess(access);
   const isOfflineGuest = loginState === "guest";
@@ -914,20 +916,45 @@ const Bible = () => {
 
   return (
     <ErrorBoundary>
-      {bibleDbProgress !== 100 && (
+      {bibleProgressValue !== 100 && (
         <div
           data-testid="loading-overlay"
           className="absolute top-0 left-0 z-5 w-full h-full bg-homepage-canvas/90 flex justify-center items-center flex-col text-white text-2xl gap-8"
         >
-          <p>
-            Setting up <span className="font-bold">Bible</span>
-          </p>
-          <Spinner />
-          {bibleDbProgress !== 0 && (
-            <p>
-              Progress:{" "}
-              <span className="text-orange-500">{bibleDbProgress}%</span>
-            </p>
+          {bibleStartupFailure ? (
+            <div className="flex max-w-lg flex-col items-center gap-4 px-4 text-center">
+              <div role="alert" className="space-y-2">
+                <p className="font-semibold">Bible setup couldn't finish</p>
+                <p className="text-base text-gray-300">
+                  {bibleStartupFailure.message}
+                </p>
+                {bibleStartupFailure.diagnostic && (
+                  <p className="text-sm text-gray-400">
+                    Details: {bibleStartupFailure.diagnostic}
+                  </p>
+                )}
+              </div>
+              <Button
+                variant="cta"
+                padding="px-4 py-2"
+                onClick={() => window.location.reload()}
+              >
+                Reload WorshipSync
+              </Button>
+            </div>
+          ) : (
+            <>
+              <p>
+                Setting up <span className="font-bold">Bible</span>
+              </p>
+              <Spinner />
+              {bibleProgressValue !== null && (
+                <p>
+                  Progress:{" "}
+                  <span className="text-orange-500">{bibleProgressValue}%</span>
+                </p>
+              )}
+            </>
           )}
         </div>
       )}

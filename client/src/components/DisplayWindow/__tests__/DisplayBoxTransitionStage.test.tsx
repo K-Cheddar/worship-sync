@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, useState, type ReactElement } from "react";
 import DisplayBox from "../DisplayBox";
 import DisplayBoxTransitionStage, {
@@ -1339,6 +1339,69 @@ describe("DisplayBoxTransitionStage", () => {
       "data-transition-phase",
       "idle",
     );
+  });
+
+  it("keeps outgoing content until an incoming image fails, then completes the transition", () => {
+    const renderImageLane = (
+      snapshot: DisplayBoxTransitionSnapshot,
+      isPrevious: boolean,
+      reportPaintReady: (index: number, ready: boolean) => void,
+      laneMedia: LaneRenderMediaOptions,
+    ) => (
+      <div data-testid={`content-${snapshot.boxes[0].words}`}>
+        {renderDisplayBoxLane(
+          snapshot,
+          isPrevious,
+          reportPaintReady,
+          laneMedia,
+        )}
+      </div>
+    );
+    const incomingImage: DisplayBoxTransitionSnapshot = {
+      key: "incoming-image::4000",
+      boxes: [
+        {
+          ...priorContentBox,
+          id: "incoming-image-box",
+          words: "Incoming image slide",
+          background: "https://cdn.example.com/unavailable-slide.png",
+          label: "Incoming background",
+        },
+      ],
+      backgroundMedia: NONE_LANE_BACKGROUND_MEDIA,
+    };
+    const { rerender } = render(
+      <DisplayBoxTransitionStage
+        snapshot={oldSnapshot}
+        shouldAnimate
+        renderLane={renderImageLane}
+      />,
+    );
+
+    rerender(
+      <DisplayBoxTransitionStage
+        snapshot={incomingImage}
+        shouldAnimate
+        renderLane={renderImageLane}
+      />,
+    );
+
+    expect(screen.getByTestId("content-Old")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "preparing",
+    );
+    fireEvent.error(screen.getByAltText("Incoming background"));
+
+    expect(screen.getByTestId("content-Old")).toBeInTheDocument();
+    expect(screen.getByTestId("display-box-transition-stage")).toHaveAttribute(
+      "data-transition-phase",
+      "animating",
+    );
+    expect(mockTimelineComplete).toBeDefined();
+    act(() => mockTimelineComplete?.());
+    expect(screen.getByTestId("content-Incoming image slide")).toBeInTheDocument();
+    expect(screen.queryByTestId("content-Old")).not.toBeInTheDocument();
   });
 
   it("performs an atomic ready swap without starting an animation when disabled", () => {

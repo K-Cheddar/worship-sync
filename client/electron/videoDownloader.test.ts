@@ -14,6 +14,7 @@ type FakeChild = ChildProcess & { stdout: PassThrough; stderr: PassThrough };
 class FakeMuxRequest extends Writable {
   readonly chunks: Buffer[] = [];
   timeoutCallback?: () => void;
+  resetOnDestroyWithoutError = false;
   readonly setTimeout = jest.fn((_milliseconds: number, callback: () => void) => {
     this.timeoutCallback = callback;
     return this;
@@ -31,6 +32,13 @@ class FakeMuxRequest extends Writable {
   _final(callback: (error?: Error | null) => void) {
     callback();
     if (this.autoRespond) setTimeout(() => this.respond(), 0);
+  }
+
+  override destroy(error?: Error | null) {
+    if (!error && this.resetOnDestroyWithoutError && !this.destroyed) {
+      this.emit("error", Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }));
+    }
+    return super.destroy(error);
   }
 
   respond() {
@@ -121,9 +129,12 @@ describe("VideoDownloader job lifecycle", () => {
   let downloadOutputChunks: { stdout: string[]; stderr: string[] } | undefined;
   let muxResponseStatus: number;
   let muxAutoRespond: boolean;
+  let muxResetOnDestroyWithoutError: boolean;
   let muxRequests: FakeMuxRequest[];
   let muxRequestUrls: string[];
   let muxRequestOptions: Array<{ headers?: Record<string, string>; lookup?: (...args: any[]) => void }>;
+  let beforeMuxRequest: (() => void) | undefined;
+  let muxRequestFailure: Error | undefined;
   let nativeTools: { ytDlpPath: string; denoPath: string; ffmpegPath: string; ffprobePath: string };
 
   beforeEach(() => {
@@ -154,9 +165,12 @@ describe("VideoDownloader job lifecycle", () => {
     downloadOutputChunks = undefined;
     muxResponseStatus = 200;
     muxAutoRespond = true;
+    muxResetOnDestroyWithoutError = false;
     muxRequests = [];
     muxRequestUrls = [];
     muxRequestOptions = [];
+    beforeMuxRequest = undefined;
+    muxRequestFailure = undefined;
     uploadLookup = async () => [{ address: "8.8.8.8", family: 4 }];
     const spawnProcess = ((binary: string, args: string[], options: { shell?: boolean }) => {
       processOptions.push(options);
@@ -213,6 +227,14 @@ describe("VideoDownloader job lifecycle", () => {
       spawnProcess,
       requestMux: ((url: string, options: { headers?: Record<string, string>; lookup?: (...args: any[]) => void }) => {
         const request = new FakeMuxRequest(muxResponseStatus, muxAutoRespond);
+        request.resetOnDestroyWithoutError = muxResetOnDestroyWithoutError;
+        if (muxRequestFailure) {
+          const failure = muxRequestFailure;
+          muxRequestFailure = undefined;
+          process.nextTick(() => request.destroy(failure));
+        }
+        beforeMuxRequest?.();
+        beforeMuxRequest = undefined;
         muxRequestUrls.push(url);
         muxRequestOptions.push(options);
         muxRequests.push(request);
@@ -509,6 +531,31 @@ describe("VideoDownloader job lifecycle", () => {
     expect(events.some((event) => event.stage === "uploading" && event.progress === 99 && event.totalBytes === 8)).toBe(true);
   });
 
+  it("fails promptly when the local source shrinks after its declared size is read", async () => {
+    const jobId = "59345678-1234-4123-8123-123456789abc";
+    const { path } = await downloadFixture(jobId);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    beforeMuxRequest = () => writeFileSync(path, "x");
+    muxAutoRespond = false;
+    muxResetOnDestroyWithoutError = true;
+
+    try {
+      await expect(downloader.uploadToMux(jobId, "https://upload.mux.com/truncated"))
+        .rejects.toThrow("The local video could not be read");
+      expect(muxRequests[0].destroyed).toBe(true);
+      expect(warn.mock.calls).toContainEqual([
+        "[VideoDownloader] Mux upload failed",
+        expect.objectContaining({
+          stage: "file-read",
+          category: "file-read-failed",
+          operation: "read-upload-source",
+        }),
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("rejects a deceptive Mux hostname before opening an HTTP request and logs only safe diagnostics", async () => {
     const jobId = "62345678-1234-4123-8123-123456789abc";
     await downloadFixture(jobId);
@@ -571,6 +618,65 @@ describe("VideoDownloader job lifecycle", () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain("do-not-expose");
     expect(JSON.stringify(warn.mock.calls)).toContain("ECONNRESET");
     warn.mockRestore();
+  });
+
+  it("treats an early HTTP request failure as transport failure, not source truncation", async () => {
+    const jobId = "88345678-1234-4123-8123-123456789abc";
+    await downloadFixture(jobId);
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    muxRequestFailure = Object.assign(new Error("connection closed before response"), { code: "ECONNRESET" });
+    muxAutoRespond = false;
+
+    try {
+      await expect(downloader.uploadToMux(jobId, "https://upload.mux.com/early-close"))
+        .rejects.toThrow("upload connection failed");
+      expect(warn.mock.calls).toContainEqual([
+        "[VideoDownloader] Mux upload failed",
+        expect.objectContaining({ stage: "http-transport", category: "transport-failed" }),
+      ]);
+      expect(warn.mock.calls).not.toContainEqual([
+        "[VideoDownloader] Mux upload failed",
+        expect.objectContaining({ stage: "file-read", category: "file-read-failed" }),
+      ]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("logs structured file-read errors without paths, signed URLs, or credentials", async () => {
+    const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
+    const signedUrl = "https://upload.mux.com/upload?token=secret-signature";
+    const failure = Object.assign(new Error(
+      `Unexpected read failure at C:\\Users\\Alice\\Sermon.mp4 /Users/alice/Sermon.mp4 /home/alice/Sermon.mp4 ${signedUrl} authorization=private-key`,
+    ), { code: "EIO" });
+    const fakeHandle = {
+      createReadStream: () => {
+        const source = new PassThrough();
+        setTimeout(() => source.emit("error", failure), 0);
+        return source as unknown as import("node:fs").ReadStream;
+      },
+      close: jest.fn(async () => undefined),
+    };
+
+    try {
+      await expect(downloader.uploadLocalAssetToMux(
+        "a3345678-1234-4123-8123-123456789abc",
+        fakeHandle as unknown as Awaited<ReturnType<typeof open>>,
+        8,
+        signedUrl,
+      )).rejects.toThrow("The local video could not be read");
+      const payload = JSON.stringify(warn.mock.calls);
+      expect(payload).toContain('"operation":"read-upload-source"');
+      expect(payload).toContain('"code":"EIO"');
+      expect(payload).not.toContain("C:\\\\Users\\\\Alice");
+      expect(payload).not.toContain("/Users/alice");
+      expect(payload).not.toContain("/home/alice");
+      expect(payload).not.toContain("secret-signature");
+      expect(payload).not.toContain("private-key");
+      expect(payload).not.toContain("Unexpected read failure");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("cancels the native HTTP upload and closes its stream", async () => {

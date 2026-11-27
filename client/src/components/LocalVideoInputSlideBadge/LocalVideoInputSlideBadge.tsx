@@ -61,6 +61,7 @@ const LocalVideoInputSlideBadge = ({
         )}
         data-testid="local-video-input-slide-badge"
         aria-label={ariaLabel}
+        title={ariaLabel}
       >
         <Icon
           className={cn("shrink-0", isMd ? "size-5" : "size-4")}
@@ -112,6 +113,7 @@ const LocalVideoInputSlideBadge = ({
       )}
       data-testid="local-video-input-slide-badge"
       aria-label={ariaLabel}
+      title={ariaLabel}
     >
       <Icon
         className={cn("shrink-0", isMd ? "size-10" : "size-6")}

@@ -51,7 +51,7 @@ const Controller = () => {
   const { layoutRef } = useControllerPageLifecycle();
   useServicePlanningSyncRunner();
 
-  const { dbProgress, connectionStatus } =
+  const { dbProgress, connectionStatus, startupInfo, subscribeToStartupActivity } =
     useContext(ControllerInfoContext) || {};
 
   const { user, churchName } = useContext(GlobalInfoContext) || {};
@@ -127,6 +127,8 @@ const Controller = () => {
       churchName={churchName}
       dbProgress={dbProgress}
       connectionStatus={connectionStatus}
+      startupInfo={startupInfo}
+      subscribeToStartupActivity={subscribeToStartupActivity}
       scrollbarWidth={scrollbarWidth}
       onRootClick={handleElementClick}
       layoutRef={layoutRef}

@@ -24,9 +24,9 @@ type LocalSourceStatusProps = {
   detail?: string;
   transparentBackground?: boolean;
   state?: "loading" | "unavailable";
-  /** `canvas` and `thumbnail` compensate for the fixed surface's parent scale. */
+  /** `canvas` compensates for a fixed preview surface. `thumbnail` uses reference-space sizing. */
   size?: LocalSourceStatusSize;
-  variant?: "overlay" | "indicator" | "thumbnail";
+  variant?: "overlay" | "indicator" | "thumbnail" | "icon";
   indicatorLabel?: string;
   scaleFactor?: number;
   className?: string;
@@ -35,9 +35,9 @@ type LocalSourceStatusProps = {
 
 const BASE_SIZES = {
   compact: { gap: 5, padding: 8, icon: 18, heading: 14, source: 12, detail: 11 },
-  // This version is rendered within the scaled 1920x1080 thumbnail canvas.
-  // Its content is scaled back up, but remains short enough to fit a tile.
-  thumbnail: { gap: 3, padding: 5, icon: 18, heading: 14, source: 11, detail: 10 },
+  // Thumbnail statuses render within the scaled 1920x1080 reference canvas.
+  // Larger reference values keep the message legible at normal tile sizes.
+  thumbnail: { gap: 24, padding: 48, icon: 72, heading: 80, source: 48, detail: 40 },
   preview: { gap: 10, padding: 20, icon: 28, heading: 22, source: 15, detail: 14 },
   canvas: { gap: 10, padding: 20, icon: 44, heading: 38, source: 22, detail: 18 },
 } as const;
@@ -58,10 +58,7 @@ const LocalSourceStatus = ({
   testId,
 }: LocalSourceStatusProps) => {
   const sizing = BASE_SIZES[size];
-  const scale =
-    size === "canvas" || size === "thumbnail"
-      ? Math.max(scaleFactor, 0.02)
-      : 1;
+  const scale = size === "canvas" ? Math.max(scaleFactor, 0.02) : 1;
   const StatusIcon = state === "loading" ? LoaderCircle : CircleAlert;
   const sourceParts = sourceLabel.split(" · ");
   const sourceName = sourceParts[sourceParts.length - 1];
@@ -73,17 +70,39 @@ const LocalSourceStatus = ({
   const resolvedHeading = heading ?? (
     state === "loading" ? "Loading local preview" : "Local source on another device"
   );
+  const accessibleLabel = [
+    resolvedHeading,
+    safeSourceLabel,
+    ownerLabel && `Available on ${ownerLabel}`,
+    detail,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  if (variant === "icon") {
+    return (
+      <div
+        className={`pointer-events-none absolute inset-0 z-30 flex items-center justify-center overflow-hidden rounded bg-black/85 text-white shadow ${className}`}
+        role="status"
+        aria-label={accessibleLabel}
+        title={accessibleLabel}
+        data-local-source-status-size="icon"
+      >
+        <StatusIcon
+          aria-hidden
+          className={`size-4 shrink-0 text-neutral-200 ${state === "loading" ? "animate-spin" : ""}`}
+        />
+      </div>
+    );
+  }
 
   if (variant === "indicator") {
-    const label = [resolvedHeading, safeSourceLabel, ownerLabel && `Available on ${ownerLabel}`, detail]
-      .filter(Boolean)
-      .join(" · ");
     return (
       <div
         className={`pointer-events-none absolute right-1.5 top-1.5 z-30 inline-flex max-w-[calc(100%-0.75rem)] items-center gap-1 rounded bg-black/85 px-1.5 py-1 text-white shadow ${className}`}
         role="status"
-        aria-label={label}
-        title={label}
+        aria-label={accessibleLabel}
+        title={accessibleLabel}
         data-local-source-status-size="indicator"
       >
         <StatusIcon
@@ -98,15 +117,12 @@ const LocalSourceStatus = ({
   }
 
   if (variant === "thumbnail") {
-    const label = [resolvedHeading, safeSourceLabel, ownerLabel && `Available on ${ownerLabel}`, detail]
-      .filter(Boolean)
-      .join(" · ");
     return (
       <div
         className={`pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center gap-0.5 overflow-hidden rounded bg-black/85 px-1 text-white shadow ${className}`}
         role="status"
-        aria-label={label}
-        title={label}
+        aria-label={accessibleLabel}
+        title={accessibleLabel}
         data-local-source-status-size="thumbnail-indicator"
       >
         <StatusIcon
@@ -124,6 +140,8 @@ const LocalSourceStatus = ({
     <div
       className={`pointer-events-none absolute inset-0 z-30 flex flex-col items-center justify-center text-center text-white ${transparentBackground ? "bg-transparent" : "bg-black/90"} ${className}`}
       role="status"
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
       data-local-source-status-size={size}
       data-local-source-status-state={state}
       data-testid={testId}

@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { Box, TimerInfo } from "../../types";
 import DisplayBox from "./DisplayBox";
 import MonitorDisplayBox from "./MonitorDisplayBox";
@@ -23,6 +23,7 @@ import {
   NONE_LANE_BACKGROUND_MEDIA,
   type LaneBackgroundMedia,
 } from "./laneBackgroundMedia";
+import { recordPresentationDiagnostic } from "../../utils/presentationDiagnostics";
 
 function renderBand(
   bandHeightPx: number,
@@ -63,6 +64,9 @@ type MonitorViewProps = {
   transitionDurationMs?: number;
   effectiveWidth: number;
   time?: number;
+  outputId?: string;
+  itemId?: string;
+  slideIndex?: number;
   timerInfo?: TimerInfo;
   prevTimerInfo?: TimerInfo;
   scaleFactor: number;
@@ -92,6 +96,9 @@ const MonitorView = ({
   transitionDurationMs,
   effectiveWidth,
   time,
+  outputId,
+  itemId,
+  slideIndex,
   timerInfo,
   scaleFactor,
   effectiveShowClock,
@@ -105,16 +112,37 @@ const MonitorView = ({
   showLocalSourceStatus = false,
 }: MonitorViewProps) => {
   const useNextSlideLayout = showNextSlide && nextBoxes.length > 0;
+  const previousLayoutRef = useRef(useNextSlideLayout);
+  const previousTimeRef = useRef(time);
+  useEffect(() => {
+    const layoutChanged = previousLayoutRef.current !== useNextSlideLayout;
+    const slideChanged = previousTimeRef.current !== time;
+    previousLayoutRef.current = useNextSlideLayout;
+    previousTimeRef.current = time;
+    if (!useNextSlideLayout || (!layoutChanged && !slideChanged)) return;
+    recordPresentationDiagnostic({
+      event: "transition.requested",
+      outputId,
+      itemId,
+      slideIndex,
+      reason: layoutChanged
+        ? "monitor_next_slide_layout_change"
+        : "monitor_band_slide_update",
+    });
+  }, [itemId, outputId, slideIndex, time, useNextSlideLayout]);
+
   const singleSlideSnapshot = useMemo<DisplayBoxTransitionSnapshot>(() => {
     const mediaKey = getLaneBackgroundMediaKey(backgroundMedia);
     return {
       key: `${getDisplayBoxesLayerKey(boxes)}::${mediaKey}::${time ?? ""}`,
       boxes,
       time,
+      itemId,
+      slideIndex,
       timerInfo,
       backgroundMedia,
     };
-  }, [backgroundMedia, boxes, time, timerInfo]);
+  }, [backgroundMedia, boxes, itemId, slideIndex, time, timerInfo]);
 
   const renderCurrentBand = () => (
     <>
@@ -126,6 +154,9 @@ const MonitorView = ({
           shouldAnimate={shouldAnimate}
           isPrev
           transitionDirection={transitionDirection}
+          outputId={outputId}
+          itemId={itemId}
+          slideIndex={slideIndex == null ? undefined : slideIndex - 1}
         />
       ))}
       {boxes.map((box, i) => (
@@ -135,6 +166,9 @@ const MonitorView = ({
           prevBox={prevBoxes[i]}
           shouldAnimate={shouldAnimate}
           transitionDirection={transitionDirection}
+          outputId={outputId}
+          itemId={itemId}
+          slideIndex={slideIndex}
         />
       ))}
     </>
@@ -150,6 +184,9 @@ const MonitorView = ({
           shouldAnimate={shouldAnimate}
           isPrev
           transitionDirection={transitionDirection}
+          outputId={outputId}
+          itemId={itemId}
+          slideIndex={slideIndex == null ? undefined : slideIndex}
         />
       ))}
       {nextBoxes.map((box, i) => (
@@ -159,6 +196,9 @@ const MonitorView = ({
           prevBox={prevNextBoxes[i]}
           shouldAnimate={shouldAnimate}
           transitionDirection={transitionDirection}
+          outputId={outputId}
+          itemId={itemId}
+          slideIndex={slideIndex == null ? undefined : slideIndex + 1}
         />
       ))}
     </>
@@ -311,6 +351,9 @@ const MonitorView = ({
                   referenceWidth={REFERENCE_WIDTH}
                   referenceHeight={REFERENCE_HEIGHT}
                   scaleFactor={scaleFactor}
+                  outputId={outputId}
+                  itemId={laneSnapshot.itemId}
+                  slideIndex={laneSnapshot.slideIndex}
                   onPaintReadyChange={(ready) =>
                     reportPaintReady(index, ready)
                   }

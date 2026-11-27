@@ -2,7 +2,11 @@ import { CSSProperties, MouseEventHandler, ReactNode, Ref } from "react";
 import Toolbar, {
   ToolbarVariant,
 } from "../../containers/Toolbar/Toolbar";
-import { ConnectionStatus } from "../../context/controllerInfo";
+import {
+  ConnectionStatus,
+  ControllerStartupInfo,
+  StartupActivitySubscription,
+} from "../../context/controllerInfo";
 import ControllerLoadingOverlay from "./ControllerLoadingOverlay";
 import { ThumbnailPreviewModeProvider } from "../../context/thumbnailPreviewMode";
 
@@ -10,8 +14,10 @@ type ControllerPageShellProps = {
   children: ReactNode;
   user?: string;
   churchName?: string;
-  dbProgress?: number;
+  dbProgress?: number | null;
   connectionStatus?: ConnectionStatus;
+  startupInfo?: ControllerStartupInfo;
+  subscribeToStartupActivity?: StartupActivitySubscription;
   scrollbarWidth?: string | number;
   toolbarVariant?: ToolbarVariant;
   onRootClick?: MouseEventHandler<HTMLDivElement>;
@@ -25,6 +31,8 @@ const ControllerPageShell = ({
   churchName,
   dbProgress,
   connectionStatus,
+  startupInfo,
+  subscribeToStartupActivity,
   scrollbarWidth,
   toolbarVariant = "default",
   onRootClick,
@@ -47,6 +55,8 @@ const ControllerPageShell = ({
         <ControllerLoadingOverlay
           dbProgress={dbProgress}
           connectionStatus={connectionStatus}
+          startupInfo={startupInfo}
+          subscribeToStartupActivity={subscribeToStartupActivity}
           user={user}
           churchName={churchName}
         />

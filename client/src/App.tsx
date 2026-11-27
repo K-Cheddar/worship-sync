@@ -45,6 +45,12 @@ import ChatWindowHost from "./chat/ChatWindowHost";
 import { useDocumentPageTitle } from "./hooks/useDocumentPageTitle";
 import WebUpdateCoordinator from "./components/WebUpdateCoordinator/WebUpdateCoordinator";
 import { RehearsalPlaybackProvider } from "./components/RehearsalPlayer/RehearsalPlaybackContext";
+import StartupDiagnosticsPanel from "./components/StartupDiagnosticsPanel";
+import {
+  getStartupDiagnosticMode,
+  recordStartupDiagnostic,
+  shouldShowStartupDiagnosticsPanel,
+} from "./utils/startupDiagnostics";
 import RehearsalPlayerHost from "./components/RehearsalPlayer/RehearsalPlayerHost";
 
 /**
@@ -182,6 +188,18 @@ const isBootstrapSplashRoute = (pathname: string) => {
 
 const HOMEPAGE_CANVAS_COLOR = "#2b3544";
 
+const getStartupDiagnosticRoute = (pathname: string) => {
+  const [section, subsection] = pathname.split("/").filter(Boolean);
+  if (section === "home") return "home";
+  if (section === "controller") return "presentation-controller";
+  if (section === "current-service") {
+    return subsection === "view" ? "current-service-viewer" : "current-service";
+  }
+  if (section === "workstation" && subsection === "pair") return "workstation-pairing";
+  if (section === "workstation" && subsection === "operator") return "operator-selection";
+  return "other";
+};
+
 /** Compat redirect: the admin shell used to live at "/teams" (renamed to
  * "/teams-and-services" since it covers both roster/scheduling and service
  * planning now) — old bookmarks/links still land on the right page. Public
@@ -277,6 +295,12 @@ export const AppRoutes = () => {
 
   useDocumentPageTitle();
 
+  useEffect(() => {
+    recordStartupDiagnostic("route", "changed", {
+      route: getStartupDiagnosticRoute(location.pathname),
+    });
+  }, [location.pathname]);
+
   useLayoutEffect(() => {
     const routeNeedsTransparentCanvas = isTransparentDisplayRoute(location.pathname);
     const canvasColor = routeNeedsTransparentCanvas
@@ -317,6 +341,28 @@ export const AppRoutes = () => {
       onInitialRouteReady={markInitialRouteReady}
     />
   );
+
+  if (shouldShowStartupDiagnosticsPanel(
+    getStartupDiagnosticMode(),
+    location.pathname,
+  )) {
+    if (isTransparentDisplayRoute(location.pathname)) {
+      return (
+        <div
+          aria-hidden="true"
+          className="min-h-dvh w-full bg-transparent"
+          data-testid="startup-diagnostics-display-lock"
+        />
+      );
+    }
+    return (
+      <ErrorBoundary>
+        <ControllerContextWrapper>
+          <StartupDiagnosticsPanel />
+        </ControllerContextWrapper>
+      </ErrorBoundary>
+    );
+  }
 
   return (
     <>
@@ -582,6 +628,33 @@ export const AppRoutes = () => {
 };
 
 const App: React.FC = () => {
+  const isReplicationOnlyDiagnosticMode =
+    getStartupDiagnosticMode() === "replication-only";
+  const isElectronCaptureHost =
+    Boolean(window.__ELECTRON__) &&
+    window.location.hash.startsWith("#/local-video-capture-host");
+  const skipGlobalManagers =
+    isReplicationOnlyDiagnosticMode && !isElectronCaptureHost;
+
+  useEffect(() => {
+    recordStartupDiagnostic(
+      "manager",
+      skipGlobalManagers
+        ? "app-global-managers.skipped"
+        : "app-global-managers.mounted",
+      {
+        chat: !skipGlobalManagers,
+        chatWindowHost: !skipGlobalManagers,
+        routePersistence: !skipGlobalManagers,
+        displayOutputsSync: !skipGlobalManagers,
+        controllerProfilesSync: !skipGlobalManagers,
+        timerManager: !skipGlobalManagers,
+        rehearsalPlaybackProvider: !skipGlobalManagers,
+        rehearsalPlayerHost: !skipGlobalManagers,
+      },
+    );
+  }, [skipGlobalManagers]);
+
   useEffect(() => {
     const url = new URL(window.location.href);
     delay(1000);
@@ -594,9 +667,22 @@ const App: React.FC = () => {
       window.history.replaceState({}, document.title, url.toString());
     }
   }, []);
-  const isElectronCaptureHost =
-    Boolean(window.__ELECTRON__) &&
-    window.location.hash.startsWith("#/local-video-capture-host");
+  if (skipGlobalManagers) {
+    return (
+      <Provider store={store}>
+        <Router>
+          <GlobalInfoProvider>
+            <FloatingWindowZIndexProvider>
+              <ToastProvider>
+                <AppRoutes />
+              </ToastProvider>
+            </FloatingWindowZIndexProvider>
+          </GlobalInfoProvider>
+        </Router>
+      </Provider>
+    );
+  }
+
   return (
     <Provider store={store}>
       <Router>

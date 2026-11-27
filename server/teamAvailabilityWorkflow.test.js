@@ -796,3 +796,235 @@ test("selected-Team availability creation, read, SMS, and response application s
   });
   assert.equal(crossChurchHistory.statusCode, 404);
 });
+
+test("general availability responses collect identity, require scoped review, and preserve response conflicts", async (t) => {
+  if (!canSeedHumanBearerAuthForServerTests()) {
+    t.skip("Team availability API tests use in-memory human auth only.");
+    return;
+  }
+
+  const owner = await createHumanContext("general_availability_owner");
+  const worship = await seedTeam(owner, {
+    name: "Worship",
+    members: [
+      { firstName: "Rae", lastName: "Kim" },
+      { firstName: "Kai", lastName: "Hart" },
+    ],
+  });
+  const media = await seedTeam(owner, {
+    name: "Media",
+    members: [{ firstName: "Rae", lastName: "Kim" }],
+  });
+  const scopedEditor = await createHumanContext("general_availability_editor", {
+    churchId: owner.churchId,
+    role: "member",
+    permissions: { teams: "none", teamScopes: { [worship.teamId]: "edit" } },
+  });
+  const raeId = worship.memberIds.Rae;
+  const kaiId = worship.memberIds.Kai;
+  const outsideRaeId = media.memberIds.Rae;
+  const formPayload = makeAvailabilityForm([worship.teamId], "Scoped availability");
+  const firstOccurrence = formPayload.availabilityOccurrences[0];
+  const secondDate = dateFromToday(21);
+  const secondOccurrence = {
+    occurrenceId: `service-saturday@${secondDate}T15:00:00.000Z`,
+    serviceId: "service-saturday",
+    name: "Saturday service",
+    serviceDate: secondDate,
+    startsAt: `${secondDate}T15:00:00.000Z`,
+  };
+  formPayload.endDate = secondDate;
+  formPayload.responseDeadline = secondDate;
+  formPayload.availabilityOccurrences = [firstOccurrence, secondOccurrence];
+  formPayload.welcomeMessage = "Initial public wording.";
+  const createdForm = await callHandler(authHandlers.createTeamIntakeForm, {
+    context: owner,
+    body: formPayload,
+  });
+  assert.equal(createdForm.statusCode, 200, JSON.stringify(createdForm.payload));
+  const formId = createdForm.payload.form.formId;
+
+  const savedWording = await callHandler(authHandlers.updateTeamIntakeForm, {
+    context: scopedEditor,
+    params: { formId },
+    body: { welcomeMessage: "Updated availability wording." },
+  });
+  assert.equal(savedWording.statusCode, 200, JSON.stringify(savedWording.payload));
+  assert.equal(savedWording.payload.form.welcomeMessage, "Updated availability wording.");
+  const scopedGeneralLink = await callHandler(authHandlers.getTeamIntakeFormLink, {
+    context: scopedEditor,
+    params: { formId },
+  });
+  assert.equal(scopedGeneralLink.statusCode, 403);
+
+  const generalPreview = createRes();
+  await authHandlers.getTeamIntakePreview(createReq({
+    query: { token: createdForm.payload.publicToken },
+  }), generalPreview);
+  assert.equal(generalPreview.statusCode, 200, JSON.stringify(generalPreview.payload));
+  assert.equal(generalPreview.payload.form.purpose, "team_availability");
+  assert.equal(generalPreview.payload.form.welcomeMessage, "Updated availability wording.");
+  assert.equal(JSON.stringify(generalPreview.payload).includes("Rae Kim"), false);
+  assert.equal(JSON.stringify(generalPreview.payload).includes("private-rae@example.org"), false);
+
+  const recipients = await callHandler(authHandlers.createTeamIntakeRecipients, {
+    context: owner,
+    params: { formId },
+    body: { memberIds: [raeId, kaiId] },
+  });
+  assert.equal(recipients.statusCode, 200, JSON.stringify(recipients.payload));
+  const tokens = {};
+  for (const recipient of recipients.payload.recipients) {
+    const linked = await callHandler(authHandlers.getTeamIntakeRecipientLink, {
+      context: owner,
+      params: { recipientId: recipient.recipientId },
+    });
+    assert.equal(linked.statusCode, 200, JSON.stringify(linked.payload));
+    tokens[recipient.memberId] = linked.payload.publicUrl.split("/a/")[1];
+  }
+  const personalPreview = createRes();
+  await authHandlers.getTeamIntakePreview(createReq({
+    query: { token: tokens[raeId], recipientOnly: "true" },
+  }), personalPreview);
+  assert.equal(personalPreview.statusCode, 200);
+  assert.equal(personalPreview.payload.form.welcomeMessage, "Updated availability wording.");
+  assert.equal(personalPreview.payload.recipient.firstName, "Rae");
+  assert.equal(personalPreview.payload.members, undefined);
+
+  const submitGeneral = async (body) => {
+    const result = createRes();
+    await authHandlers.submitTeamIntake(createReq({
+      query: { token: createdForm.payload.publicToken },
+      body,
+    }), result);
+    return result;
+  };
+  const occurrenceIds = formPayload.availabilityOccurrences.map(({ occurrenceId }) => occurrenceId);
+  for (const [body, expectedStatus] of [
+    [{ email: "rae@example.org", occurrenceAvailability: {} }, 400],
+    [{ firstName: "Rae", lastName: "Kim", email: "not-an-email", occurrenceAvailability: {} }, 400],
+    [{ firstName: "Rae", lastName: "Kim", occurrenceAvailability: {} }, 400],
+    [{ firstName: "Rae", lastName: "Kim", occurrenceAvailability: { [occurrenceIds[0]]: "maybe" } }, 400],
+    [{ firstName: "Rae", lastName: "Kim", occurrenceAvailability: { outside: "available" } }, 409],
+    [{ firstName: "Rae", lastName: "Kim", occurrenceAvailability: { [occurrenceIds[0]]: "available" }, availabilityOccurrenceIds: [occurrenceIds[0]] }, 409],
+    [{ firstName: "Rae", lastName: "Kim", occurrenceAvailability: { [occurrenceIds[0]]: "available" }, availabilityOccurrenceIds: occurrenceIds }, 400],
+  ]) {
+    const invalid = await submitGeneral(body);
+    assert.equal(invalid.statusCode, expectedStatus, JSON.stringify(invalid.payload));
+  }
+  assert.equal((await queryDocs(COLLECTIONS.teamIntakeSubmissions, [
+    { field: "formId", value: formId },
+  ])).length, 0);
+
+  await setDoc(COLLECTIONS.teamRosterMembers, raeId, {
+    email: "private-rae@example.org",
+    serviceAvailability: {
+      [occurrenceIds[1]]: "available",
+      "other-service@2099-01-01T10:00:00.000Z": "unavailable",
+    },
+  }, { merge: true });
+  await setDoc(COLLECTIONS.teamRosterMembers, kaiId, {
+    serviceAvailability: { [occurrenceIds[1]]: "available" },
+  }, { merge: true });
+  const initialRaeAvailability = (await getDoc(COLLECTIONS.teamRosterMembers, raeId)).serviceAvailability;
+  const restrictedBeforeApply = await callHandler(authHandlers.getTeamAvailabilityManagementData, {
+    context: scopedEditor,
+  });
+  assert.equal(restrictedBeforeApply.statusCode, 200);
+  assert.equal(restrictedBeforeApply.payload.forms.find((item) => item.formId === formId).welcomeMessage, "Updated availability wording.");
+  assert.equal(restrictedBeforeApply.payload.availabilityResponses.some((item) => item.formId === formId && item.source === "general"), false);
+
+  const generalRae = await submitGeneral({
+    firstName: " Rae ",
+    lastName: " Kim ",
+    email: " RAE.Public@Example.org ",
+    occurrenceAvailability: { [occurrenceIds[0]]: "available" },
+  });
+  assert.equal(generalRae.statusCode, 200, JSON.stringify(generalRae.payload));
+  const generalRaeRecord = await getDoc(COLLECTIONS.teamIntakeSubmissions, generalRae.payload.submissionId);
+  assert.equal(generalRaeRecord.firstName, "Rae");
+  assert.equal(generalRaeRecord.lastName, "Kim");
+  assert.equal(generalRaeRecord.email, "rae.public@example.org");
+  assert.equal(generalRaeRecord.status, "new");
+  assert.equal(generalRaeRecord.appliedMemberId, undefined);
+  assert.deepEqual((await getDoc(COLLECTIONS.teamRosterMembers, raeId)).serviceAvailability, initialRaeAvailability);
+
+  const rejectedOutOfScope = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context: owner,
+    params: { submissionId: generalRae.payload.submissionId },
+    body: { action: "applied", memberId: outsideRaeId },
+  });
+  assert.equal(rejectedOutOfScope.statusCode, 409);
+  const rejectedCreate = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context: owner,
+    params: { submissionId: generalRae.payload.submissionId },
+    body: { action: "applied", memberId: raeId, createMember: true },
+  });
+  assert.equal(rejectedCreate.statusCode, 400);
+
+  const appliedRae = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context: owner,
+    params: { submissionId: generalRae.payload.submissionId },
+    body: { action: "applied", memberId: raeId },
+  });
+  assert.equal(appliedRae.statusCode, 200, JSON.stringify(appliedRae.payload));
+  assert.equal(appliedRae.payload.submission.availabilityResponseSource, "general");
+  const raeAfterApply = await getDoc(COLLECTIONS.teamRosterMembers, raeId);
+  assert.deepEqual(raeAfterApply.serviceAvailability, {
+    ...initialRaeAvailability,
+    [occurrenceIds[0]]: "available",
+  });
+  assert.equal(raeAfterApply.email, "private-rae@example.org");
+  const duplicateRae = await submitGeneral({
+    firstName: "Rae",
+    lastName: "Kim",
+    email: "rae.public@example.org",
+    occurrenceAvailability: { [occurrenceIds[0]]: "unavailable" },
+  });
+  assert.equal(duplicateRae.statusCode, 200);
+  const rejectedDuplicateApply = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context: owner,
+    params: { submissionId: duplicateRae.payload.submissionId },
+    body: { action: "applied", memberId: raeId },
+  });
+  assert.equal(rejectedDuplicateApply.statusCode, 409);
+  assert.equal((await getDoc(COLLECTIONS.teamRosterMembers, raeId)).serviceAvailability[occurrenceIds[0]], "available");
+
+  const rejectedPersonalAfterGeneral = createRes();
+  await authHandlers.submitTeamIntake(createReq({
+    query: { token: tokens[raeId], recipientOnly: "true" },
+    body: { occurrenceAvailability: { [occurrenceIds[0]]: "unavailable" } },
+  }), rejectedPersonalAfterGeneral);
+  assert.equal(rejectedPersonalAfterGeneral.statusCode, 409);
+
+  const generalKai = await submitGeneral({
+    firstName: "Kai",
+    lastName: "Hart",
+    occurrenceAvailability: { [occurrenceIds[0]]: "available" },
+  });
+  assert.equal(generalKai.statusCode, 200);
+  const personalKai = createRes();
+  await authHandlers.submitTeamIntake(createReq({
+    query: { token: tokens[kaiId], recipientOnly: "true" },
+    body: { occurrenceAvailability: { [occurrenceIds[0]]: "unavailable" } },
+  }), personalKai);
+  assert.equal(personalKai.statusCode, 200, JSON.stringify(personalKai.payload));
+  const rejectedGeneralAfterPersonal = await callHandler(authHandlers.updateTeamIntakeSubmission, {
+    context: owner,
+    params: { submissionId: generalKai.payload.submissionId },
+    body: { action: "applied", memberId: kaiId },
+  });
+  assert.equal(rejectedGeneralAfterPersonal.statusCode, 409);
+
+  const restrictedAfterApply = await callHandler(authHandlers.getTeamAvailabilityManagementData, {
+    context: scopedEditor,
+  });
+  assert.equal(restrictedAfterApply.statusCode, 200);
+  const projectedGeneral = restrictedAfterApply.payload.availabilityResponses.find(
+    (item) => item.formId === formId && item.source === "general" && item.memberId === raeId,
+  );
+  assert.equal(projectedGeneral.occurrenceAvailability[occurrenceIds[0]], "available");
+  assert.equal(projectedGeneral.recipientId, undefined);
+  assert.equal(projectedGeneral.submissionId, undefined);
+  assert.equal(JSON.stringify(projectedGeneral).includes("rae.public@example.org"), false);
+});

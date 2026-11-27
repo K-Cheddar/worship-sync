@@ -108,10 +108,21 @@ const canonicalBackground = (value: unknown) => {
     if (url.protocol !== "https:" || url.hostname !== "res.cloudinary.com" ||
       url.port || url.username || url.password || url.hash ||
       segments[0] !== CLOUDINARY_CLOUD_NAME ||
-      segments.length < 5 || segments[1] !== "image" || segments[2] !== "upload" ||
-      segments[3] !== "v1" || queryKeys.length !== 1 || queryKeys[0] !== "_a" ||
-      !url.searchParams.get("_a")) return value;
-    return segments.slice(4).map((segment) => decodeURIComponent(segment)).join("/");
+      segments[1] !== "image" || segments[2] !== "upload" ||
+      queryKeys.length !== 1 || queryKeys[0] !== "_a" || !url.searchParams.get("_a")) return value;
+
+    // URLGen emits /upload/v1/folder/id for foldered public IDs, but omits
+    // v1 for a single-segment ID such as "thumbnail". The latter is accepted
+    // only as exactly one path segment, so transformation segments remain
+    // distinguishable and are never mistaken for a stored ID.
+    const publicIdSegments = segments[3] === "v1"
+      ? segments.slice(4)
+      : segments.length === 4 ? [segments[3]] : [];
+    const decodedSegments = publicIdSegments.map((segment) => decodeURIComponent(segment));
+    if (!decodedSegments.length || decodedSegments.some((segment) => segment.includes("/") || segment.includes("\\"))) {
+      return value;
+    }
+    return decodedSegments.join("/");
   } catch {
     return value;
   }
@@ -204,6 +215,7 @@ const insertAddedRows = (
   order: string[],
   sourceRows: ServiceItem[],
   addedIds: Set<string>,
+  trailingAddedIds: Set<string> = new Set(),
 ) => {
   sourceRows.forEach((row, sourceIndex) => {
     if (!addedIds.has(row.listId) || order.includes(row.listId)) return;
@@ -219,7 +231,11 @@ const insertAddedRows = (
       .reverse()
       .find((candidate) => order.includes(candidate.listId));
     if (previousAnchor) {
-      order.splice(order.indexOf(previousAnchor.listId) + 1, 0, row.listId);
+      let insertionIndex = order.indexOf(previousAnchor.listId) + 1;
+      while (insertionIndex < order.length && trailingAddedIds.has(order[insertionIndex])) {
+        insertionIndex += 1;
+      }
+      order.splice(insertionIndex, 0, row.listId);
       return;
     }
     order.push(row.listId);
@@ -439,6 +455,7 @@ export const reconcileOutlineItems = (
   remoteItems: ServiceItem[],
   choose?: ChooseConflict,
   moveIntents: OutlineMoveIntent[] = [],
+  retainedConflictBaseline?: ServiceItem[],
 ): OutlineMergeResult => {
   const knownRows = [...baseline, ...localItems];
   const base = stableRows(baseline, knownRows);
@@ -455,9 +472,14 @@ export const reconcileOutlineItems = (
   const remoteRemovedIds = new Set(base.filter((row) => !remoteById.has(row.listId)).map((row) => row.listId));
   const localBaseOrder = orderedBaseIds(local, baseIds);
   const remoteBaseOrder = orderedBaseIds(remote, baseIds);
-  const overlappingReplacements = [...localRemovedIds].some((id) =>
-    remoteRemovedIds.has(id),
-  ) && localAddedIds.size > 0 && remoteAddedIds.size > 0;
+  const sharedBaseRows = base.some((row) => localById.has(row.listId) && remoteById.has(row.listId));
+  const overlappingReplacements = base.some((row) =>
+    localRemovedIds.has(row.listId) &&
+    remoteRemovedIds.has(row.listId) &&
+    local.some((candidate) => localAddedIds.has(candidate.listId) && candidate._id === row._id) &&
+    remote.some((candidate) => remoteAddedIds.has(candidate.listId) && candidate._id === row._id),
+  ) || (!sharedBaseRows && localRemovedIds.size > 0 && remoteRemovedIds.size > 0 &&
+    localAddedIds.size > 0 && remoteAddedIds.size > 0);
   const baseOrder = base.map(row => row.listId);
   const exactLocalOrder = orderedBaseIds(normalizedLocal, baseIds);
   const localPresentBaseOrder = baseOrder.filter(id => localById.has(id));
@@ -577,12 +599,12 @@ export const reconcileOutlineItems = (
     : preferredRows.map((row) => row.listId).filter(id => finalBaseIds.includes(id));
   const order = preferredOrder.filter((id) => !deletedIds.has(id) && rowsById.has(id));
   // Even when a field conflicts, keep unrelated remote insertions in the
-  // candidate, including when the operator chooses an order. Ambiguous
-  // replacements still need an explicit whole-version review.
+  // candidate, including when the operator chooses an order. A same-document
+  // replacement on both sides still needs an explicit whole-version review.
   if (!overlappingReplacements) {
     insertAddedRows(order, remote, remoteAddedIds);
   }
-  insertAddedRows(order, local, localAddedIds);
+  insertAddedRows(order, local, localAddedIds, remoteAddedIds);
   rowsById.forEach((_row, id) => {
     if (
       !deletedIds.has(id) &&
@@ -594,7 +616,9 @@ export const reconcileOutlineItems = (
   const items = order
     .map((id) => rowsById.get(id))
     .filter((row): row is ServiceItem => Boolean(row));
-  return conflict
+  const retainedConflict = Boolean(retainedConflictBaseline &&
+    reconcileOutlineItems(retainedConflictBaseline, normalizedLocal, remote, undefined, moveIntents).kind === "conflict");
+  return conflict || retainedConflict
     ? { kind: "conflict", items, remoteItems: remote }
     : { kind: "merged", items, remoteItems: remote };
 };

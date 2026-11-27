@@ -243,8 +243,10 @@ export class DesktopVideoDownloadManager {
           downloadedBytes: event.downloadedBytes ?? previous?.downloadedBytes,
           totalBytes: event.totalBytes ?? previous?.totalBytes,
           progress: streamProgress,
-          speedBytesPerSecond: event.speedBytesPerSecond ?? previous?.speedBytesPerSecond,
-          etaSeconds: event.etaSeconds ?? previous?.etaSeconds,
+          // Speed and ETA describe the current event only; retaining either
+          // value makes an idle stream look active after yt-dlp switches streams.
+          speedBytesPerSecond: event.speedBytesPerSecond,
+          etaSeconds: event.etaSeconds,
         },
       };
       runtime.progress = Object.keys(runtime.downloadStreams).length > 1
@@ -342,17 +344,21 @@ export class DesktopVideoDownloadManager {
     const eta = runtime.lastBytes?.etaSeconds !== undefined && runtime.lastBytes.etaSeconds >= 0
       ? `About ${formatEta(runtime.lastBytes.etaSeconds)} remaining`
       : undefined;
-    const streams = Object.values(runtime.downloadStreams ?? {});
+    const streamEntries = Object.entries(runtime.downloadStreams ?? {});
+    const streams = streamEntries.map(([streamId, stream]) => ({
+      ...stream,
+      isCurrent: streamId === runtime.currentDownloadStreamId,
+    }));
     const streamBytes = streams.length > 1
       ? streams.slice(0, 3).map((stream) => {
           const percent = stream.progress === null ? "" : ` ${stream.progress}%`;
           const amount = stream.downloadedBytes === undefined
             ? ""
             : ` (${friendlyBytes(stream.downloadedBytes)}${stream.totalBytes === undefined ? "" : ` of ${friendlyBytes(stream.totalBytes)}`})`;
-          const streamSpeed = stream.speedBytesPerSecond && stream.speedBytesPerSecond > 0
+          const streamSpeed = stream.isCurrent && stream.speedBytesPerSecond && stream.speedBytesPerSecond > 0
             ? `${friendlyBytes(stream.speedBytesPerSecond)}/s`
             : undefined;
-          const streamEta = stream.etaSeconds !== undefined && stream.etaSeconds >= 0
+          const streamEta = stream.isCurrent && stream.etaSeconds !== undefined && stream.etaSeconds >= 0
             ? `About ${formatEta(stream.etaSeconds)} remaining`
             : undefined;
           const streamMetrics = [streamSpeed, streamEta].filter(Boolean).join(" · ");

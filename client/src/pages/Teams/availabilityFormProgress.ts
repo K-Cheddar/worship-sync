@@ -11,30 +11,63 @@ export const getAvailabilityFormProgress = (
 ) =>
   getAvailabilityRecipientRows(input).map((row) => {
     const { recipient, previousDeliveryStatus } = row;
-    const response = recipient?.revokedAt ? undefined : responses.find(
+    const personalResponse = recipient?.revokedAt ? undefined : responses.find(
       (item) =>
         item.formId === input.form?.formId &&
+        item.source !== "general" &&
         item.recipientId === recipient?.recipientId &&
         item.memberId === row.member.memberId &&
         Boolean(recipient?.respondedAt) &&
         item.respondedAt === recipient?.respondedAt,
     );
-    const submission = !recipient?.revokedAt && recipient?.submissionId
+    const personalSubmission = !recipient?.revokedAt && recipient?.submissionId
       ? submissions.find(
           (item) =>
             item.formId === input.form?.formId &&
             item.submissionId === recipient.submissionId,
         )
       : undefined;
+    const generalResponses = responses.filter(
+      (item) =>
+        item.formId === input.form?.formId &&
+        item.source === "general" &&
+        item.memberId === row.member.memberId,
+    );
+    const personalSubmissionIds = new Set(
+      input.recipients
+        .filter((item) => item.formId === input.form?.formId)
+        .map((item) => item.submissionId)
+        .filter(Boolean),
+    );
+    const generalSubmissions = submissions.filter(
+      (item) =>
+        item.formId === input.form?.formId &&
+        item.status === "applied" &&
+        item.appliedMemberId === row.member.memberId &&
+        !item.appliedMemberCreated &&
+        !personalSubmissionIds.has(item.submissionId),
+    );
+    const responseConflict = Boolean(
+      ((personalResponse || personalSubmission) &&
+        (generalResponses.length || generalSubmissions.length)) ||
+        generalResponses.length + generalSubmissions.length > 1,
+    );
+    const generalResponse = generalResponses[0];
+    const generalSubmission = generalSubmissions[0];
+    const response = personalResponse || generalResponse;
+    const submission = personalSubmission || generalSubmission;
     const responded = Boolean(
-      !recipient?.revokedAt && (recipient?.respondedAt || response || submission),
+      (!recipient?.revokedAt && (recipient?.respondedAt || personalResponse || personalSubmission)) ||
+        generalResponse ||
+        generalSubmission,
     );
     const requested =
       !recipient?.revokedAt &&
       (Boolean(recipient?.linkCopiedAt) ||
         ["sent", "uncertain"].includes(previousDeliveryStatus));
     let status = "Not requested";
-    if (recipient?.revokedAt) status = "Revoked";
+    if (recipient?.revokedAt && !generalResponse && !generalSubmission) status = "Revoked";
+    else if (responseConflict) status = "Review conflict";
     else if (responded) status = "Responded";
     else if (requested) status = "Awaiting response";
     const attempts =
@@ -78,11 +111,18 @@ export const getAvailabilityFormProgress = (
       responded,
       status,
       delivery,
-      hasResponseDetails: Boolean(response || submission),
-      occurrenceAvailability:
-        response?.occurrenceAvailability ||
-        submission?.occurrenceAvailability ||
-        {},
+      responseConflict,
+      hasResponseDetails: !responseConflict && Boolean(response || submission),
+      availabilitySource: responseConflict
+        ? undefined
+        : generalResponse || generalSubmission
+          ? "general"
+          : response || submission
+            ? "personalized"
+            : undefined,
+      occurrenceAvailability: responseConflict
+        ? {}
+        : response?.occurrenceAvailability || submission?.occurrenceAvailability || {},
     };
   });
 

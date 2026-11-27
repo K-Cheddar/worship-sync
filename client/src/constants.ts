@@ -7,8 +7,8 @@ import { buildTieredFontSizePresets } from "./utils/fontSizePresets";
 export const MAX_INITIAL_SESSION_RETRIES = 5;
 export const MAX_REPLICATION_AUTH_RETRIES = 3;
 
-/** No `dbProgress` change while below 100% → show stuck-recovery UI (wall-clock). */
-export const STUCK_DB_PROGRESS_MS = 15_000;
+/** Show a calm slow-startup note after 15 seconds without meaningful activity. */
+export const SLOW_STARTUP_MESSAGE_DELAY_MS = 15_000;
 
 // ============================================================================
 // Display Window Constants

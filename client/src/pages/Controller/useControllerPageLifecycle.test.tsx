@@ -7,8 +7,8 @@ import userEvent from "@testing-library/user-event";
 import { Provider } from "react-redux";
 import { Link, MemoryRouter, Outlet, Route, Routes } from "react-router-dom";
 import store, { type RootState } from "../../store/store";
-import { ControllerInfoContext } from "../../context/controllerInfo";
-import { GlobalInfoContext } from "../../context/globalInfo";
+import { ControllerInfoContext, setGlobalContentDatabase } from "../../context/controllerInfo";
+import { GlobalInfoContext, globalFireDbInfo } from "../../context/globalInfo";
 import { itemListsSlice } from "../../store/itemListsSlice";
 import {
   acknowledgeOutlineSave,
@@ -17,6 +17,7 @@ import {
   moveItemListRows,
   retryItemListLoad,
   setItemListIsLoading,
+  updateItemList,
 } from "../../store/itemListSlice";
 import { overlaySlice } from "../../store/overlaySlice";
 import { overlaysSlice } from "../../store/overlaysSlice";
@@ -274,6 +275,67 @@ describe("useControllerPageLifecycle selected outline loading", () => {
       expect.objectContaining({ id: "overlay-1", name: "Current overlay" }),
     ]);
     expect(getOverlaysByIds).not.toHaveBeenCalled();
+  });
+
+  it("saves a retained local draft when a realtime update makes its conflict compatible", async () => {
+    const base = [
+      { _id: "song-a", listId: "a", name: "Base A", type: "song" },
+      { _id: "song-b", listId: "b", name: "Base B", type: "song" },
+    ];
+    const remoteEdit = { ...base[0], name: "Remote A" };
+    const localEdit = { ...base[0], name: "Local A" };
+    const localAddition = { _id: "song-local", listId: "local", name: "Local addition", type: "song" };
+    const remoteAddition = { _id: "song-remote", listId: "remote", name: "Remote addition", type: "song" };
+    let current: Record<string, any> = { _id: "outline", _rev: "1-base", items: base, overlays: [] };
+    const db = {
+      name: `outline-realtime-conflict-${Date.now()}-${Math.random()}`,
+      get: jest.fn(async (id: string) => id === "outline" ? { ...current } : undefined),
+      put: jest.fn(async (doc: Record<string, any>) => {
+        current = { ...doc, _rev: "4-saved" };
+        return { ok: true, rev: "4-saved" };
+      }),
+    } as any;
+    const updater = new EventTarget();
+    const previousChurch = globalFireDbInfo.churchId;
+    let unmount: (() => void) | undefined;
+    try {
+      globalFireDbInfo.churchId = "church-a";
+      setGlobalContentDatabase(db, {
+        databaseKey: getOutlineDatabaseKey(db),
+        churchId: "church-a",
+        accountId: "account-a",
+      });
+      store.dispatch(itemListsSlice.actions.initiateItemLists([{ _id: "outline", name: "Sunday" }]));
+      const view = renderHook(() => useControllerPageLifecycle(), { wrapper: ({ children }) => (
+        <Provider store={store}>
+          <ControllerInfoContext.Provider value={{ db, cloud: {}, updater } as any}>
+            <GlobalInfoContext.Provider value={{ churchId: "church-a", access: "full" } as any}>{children}</GlobalInfoContext.Provider>
+          </ControllerInfoContext.Provider>
+        </Provider>
+      ) });
+      unmount = view.unmount;
+      await waitFor(() => expect(store.getState().undoable.present.itemList.list).toEqual(base));
+
+      act(() => store.dispatch(updateItemList([localEdit, base[1], localAddition])));
+      current = { ...current, _rev: "2-remote", items: [remoteEdit, base[1], remoteAddition] };
+      act(() => updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "outline", _rev: "2-remote" }] })));
+      await waitFor(() => expect(store.getState().undoable.present.itemList.remoteConflicts.outline).toBeDefined());
+      expect(db.put).not.toHaveBeenCalled();
+
+      current = { ...current, _rev: "3-delete", items: [remoteEdit, base[1]] };
+      act(() => updater.dispatchEvent(new CustomEvent("update", { detail: [{ _id: "outline", _rev: "3-delete" }] })));
+      await waitFor(() => expect(store.getState().undoable.present.itemList.remoteConflicts.outline).toBeUndefined());
+      await waitFor(() => expect(db.put).toHaveBeenCalledTimes(1), { timeout: 4000 });
+
+      expect(db.put.mock.calls[0][0].items).toEqual([localEdit, base[1], localAddition]);
+      expect(db.put.mock.calls[0][0].items.map((item: { listId: string }) => item.listId)).not.toContain("remote");
+      expect(store.getState().undoable.present.itemList.hasPendingUpdate).toBe(false);
+    } finally {
+      unmount?.();
+      setGlobalContentDatabase(undefined);
+      globalFireDbInfo.churchId = previousChurch;
+      store.dispatch({ type: "RESET_CONTROLLER_SESSION" });
+    }
   });
 
   it("does not reread or show a loading skeleton when the selected outline is only renamed remotely", async () => {

@@ -112,7 +112,7 @@ import {
   hasVerifiedInitialContentReplication,
   subscribeToContentActivity,
 } from "../../utils/contentReplicationActivity";
-import { reconcileConcurrentOutlineMoves } from "../../utils/persistServiceListField";
+import { outlineRevisionToken, reconcileConcurrentOutlineMoves } from "../../utils/persistServiceListField";
 
 type PendingMediaReplicationChange = {
   revision: number;
@@ -204,19 +204,22 @@ export const useControllerPageLifecycle = () => {
     controllerId: activeControllerId,
     scope: outlineScope,
     database: db,
+    churchId: churchId ?? "",
     generation: 0,
   });
   if (
     selectedOutlineIdentityRef.current.listId !== selectedListId ||
     selectedOutlineIdentityRef.current.controllerId !== activeControllerId ||
     selectedOutlineIdentityRef.current.scope !== outlineScope ||
-    selectedOutlineIdentityRef.current.database !== db
+    selectedOutlineIdentityRef.current.database !== db ||
+    selectedOutlineIdentityRef.current.churchId !== (churchId ?? "")
   ) {
     selectedOutlineIdentityRef.current = {
       listId: selectedListId,
       controllerId: activeControllerId,
       scope: outlineScope,
       database: db,
+      churchId: churchId ?? "",
       generation: selectedOutlineIdentityRef.current.generation + 1,
     };
   }
@@ -390,16 +393,42 @@ export const useControllerPageLifecycle = () => {
             if (cloud) {
               const remoteItems = formatItemList(update.items || [], cloud);
               const itemListState = (store.getState() as RootState).undoable.present.itemList;
+              const priorConflict = itemListState.remoteConflicts?.[update._id];
+              const wasBlockingConflict = Boolean(priorConflict && !priorConflict.resolutionChoice);
+              const revisionToken = outlineRevisionToken(
+                (update as DBItemListDetails & { _rev?: string })._rev,
+                (update as DBItemListDetails & { _conflicts?: string[] })._conflicts ?? [],
+              );
               if (
                 itemListState.isInitialized && itemListState.loadedOutlineId === update._id &&
-                !outlineItemsEqual(itemListState.syncBaseline, remoteItems)
+                (!outlineItemsEqual(itemListState.syncBaseline, remoteItems) ||
+                  Boolean(itemListState.pendingRevisionResolutions?.[update._id]))
               ) {
                 dispatch(updateItemListFromRemote({
                   outlineId: update._id,
                   items: remoteItems,
+                  revisionToken,
                 }));
                 if (itemListState.isLoading) {
                   dispatch(setItemListIsLoading(false));
+                }
+                const latest = (store.getState() as RootState).undoable.present;
+                const latestItemList = latest.itemList;
+                const nextConflict = latestItemList.remoteConflicts?.[update._id];
+                if (
+                  wasBlockingConflict && isCurrentUpdate() &&
+                  databaseRef.current === dbAtRead &&
+                  selectedOutlineIdentityRef.current.generation === selectionIdentity.generation &&
+                  latest.itemLists.selectedList?._id === update._id &&
+                  latestItemList.outlineOwnerKey === itemListState.outlineOwnerKey &&
+                  latestItemList.loadedOutlineId === update._id &&
+                  latestItemList.hasPendingUpdate &&
+                  !(nextConflict && !nextConflict.resolutionChoice)
+                ) {
+                  // Reconciliation already chose the safe compatible merge.
+                  // Wake the existing save listener for the retained draft;
+                  // never persist a still-blocked candidate here.
+                  dispatch(forceItemListUpdate());
                 }
               }
             }
@@ -1046,11 +1075,19 @@ export const useControllerPageLifecycle = () => {
           dispatch(updateItemListFromRemote({
             outlineId: selectedListId,
             items: formattedItems,
+            revisionToken: outlineRevisionToken(
+              (response as DBItemListDetails & { _rev?: string })._rev,
+              (response as DBItemListDetails & { _conflicts?: string[] })._conflicts ?? [],
+            ),
           }));
         } else {
           dispatch(initiateItemList({
             items: formattedItems,
             outlineId: selectedListId,
+            revisionToken: outlineRevisionToken(
+              (response as DBItemListDetails & { _rev?: string })._rev,
+              (response as DBItemListDetails & { _conflicts?: string[] })._conflicts ?? [],
+            ),
           }));
         }
         const hydratedItemList = (store.getState() as RootState).undoable.present.itemList;

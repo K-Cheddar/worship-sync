@@ -174,6 +174,9 @@ export const getAllCreditsHistory = async (
   return map;
 };
 
+const sameOrderedStrings = (left: readonly string[] | undefined, right: readonly string[]) =>
+  left?.length === right.length && right.every((value, index) => left[index] === value);
+
 /** Persist credit history docs for the given headings. Call after credits mirror/history sync (debounced save) so creditsHistory in state is updated. */
 export const putCreditHistoryDocs = async (
   db: PouchDB.Database,
@@ -188,6 +191,7 @@ export const putCreditHistoryDocs = async (
     let doc: DBCreditHistory;
     try {
       const existing = (await db.get(id)) as DBCreditHistory;
+      if (existing.heading === heading && sameOrderedStrings(existing.lines, lines)) continue;
       doc = {
         ...existing,
         heading,
@@ -219,6 +223,7 @@ export const putCreditHistoryDoc = async (
   let doc: DBCreditHistory;
   try {
     const existing = (await db.get(id)) as DBCreditHistory;
+    if (existing.heading === heading && sameOrderedStrings(existing.lines, lines)) return;
     doc = {
       ...existing,
       heading,
@@ -287,6 +292,7 @@ export const putOverlayHistoryDocs = async (
     let doc: DBOverlayHistory;
     try {
       const existing = (await db.get(id)) as DBOverlayHistory;
+      if (existing.key === key && sameOrderedStrings(existing.values, values)) continue;
       doc = {
         ...existing,
         key: key as OverlayHistoryKey,
@@ -318,6 +324,7 @@ export const putOverlayHistoryDoc = async (
   let doc: DBOverlayHistory;
   try {
     const existing = (await db.get(id)) as DBOverlayHistory;
+    if (existing.key === key && sameOrderedStrings(existing.values, values)) return;
     doc = {
       ...existing,
       key: key as OverlayHistoryKey,

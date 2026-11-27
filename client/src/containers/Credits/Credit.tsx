@@ -21,12 +21,13 @@ import {
 import { useGSAP } from "@gsap/react";
 import { deleteCredit, updateCredit } from "../../store/creditsSlice";
 import store, { broadcastCreditsUpdate } from "../../store/store";
-import { ControllerInfoContext } from "../../context/controllerInfo";
+import { ControllerInfoContext, globalDb } from "../../context/controllerInfo";
+import { getContentDatabaseSessionToken } from "../../utils/contentReplicationActivity";
 import { putCreditDoc } from "../../utils/dbUtils";
 import { recordAppliedCreditVersion } from "../../utils/creditVersions";
 import { flushCreditsHistoryFromLatestList } from "../../utils/creditsHistoryFlush";
 import Input from "../../components/Input/Input";
-import { getCreditsDocId, type DBCredits } from "../../types";
+import { saveCreditOrder } from "../../utils/saveCreditOrder";
 import CreditHistoryTextArea from "./CreditHistoryTextArea";
 import {
   creditRowSelectedClass,
@@ -68,6 +69,12 @@ const Credit = ({
 }: CreditProps) => {
   const dispatch = useDispatch();
   const { db } = useContext(ControllerInfoContext) ?? {};
+
+  const deletionOwner = useRef<object | null>(null);
+  useEffect(() => {
+    deletionOwner.current = {};
+    return () => { deletionOwner.current = null; };
+  }, [db, outlineId, id]);
 
   const [isDeleting, setIsDeleting] = useState(false);
   const [draftHeading, setDraftHeading] = useState(heading);
@@ -240,22 +247,23 @@ const Credit = ({
       () => store.getState(),
       db,
     );
+    const owner = deletionOwner.current;
+    const sessionToken = db ? getContentDatabaseSessionToken(db.name) : null;
     setIsDeleting(true);
     setTimeout(async () => {
       if (db && outlineId) {
         try {
-          const existingCredits: DBCredits = await db.get(
-            getCreditsDocId(outlineId),
-          );
-          const creditIds = existingCredits.creditIds.filter((x) => x !== id);
-          existingCredits.creditIds = creditIds;
-          existingCredits.updatedAt = new Date().toISOString();
-          await db.put(existingCredits);
-          broadcastCreditsUpdate([existingCredits]);
+          const saved = await saveCreditOrder(db, outlineId, [id], []);
+          if (saved &&
+              globalDb === db &&
+              getContentDatabaseSessionToken(db.name) === sessionToken) {
+            broadcastCreditsUpdate([saved]);
+          }
         } catch (e) {
           console.error("Failed to remove credit from list", e);
         }
       }
+      if (deletionOwner.current !== owner) return;
       dispatch(deleteCredit(id));
       setIsDeleting(false);
     }, 500);

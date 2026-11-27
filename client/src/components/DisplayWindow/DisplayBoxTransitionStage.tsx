@@ -24,6 +24,7 @@ import {
   type LaneBackgroundMedia,
 } from "./laneBackgroundMedia";
 import { logVideoCue } from "../../utils/videoBackgroundPlayback";
+import { recordPresentationDiagnostic } from "../../utils/presentationDiagnostics";
 import { useServiceVideoCandidates } from "../../hooks/useServiceVideoCandidates";
 import { useResourceGovernorPolicy } from "../../hooks/useResourceGovernorPolicy";
 import {
@@ -67,6 +68,8 @@ export type DisplayBoxTransitionSnapshot = {
   key: string;
   boxes: Box[];
   time?: number;
+  itemId?: string;
+  slideIndex?: number;
   timerInfo?: TimerInfo;
   backgroundMedia: LaneBackgroundMedia;
 };
@@ -827,6 +830,18 @@ const DisplayBoxTransitionStage = ({
         posterReadyAtSelection: false,
         preparedSurfaceReadyAtSelection: false,
       });
+      recordPresentationDiagnostic({
+        event: "transition.requested",
+        outputId: mediaPlayback?.outputId,
+        itemId: snapshot.itemId,
+        slideIndex: snapshot.slideIndex,
+        reason:
+          state.phase === "animating"
+            ? "new_slide_interrupts_animation"
+            : state.phase === "preparing"
+              ? "new_slide_replaces_pending"
+              : "new_slide",
+      });
     }
 
     // The latest operator request must take over immediately. Preserve one
@@ -1274,6 +1289,36 @@ const DisplayBoxTransitionStage = ({
     isLanePaintReady(incomingLaneId, incomingSnapshot, state.mode),
   );
 
+  const lastBlockedRequestKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      state.phase !== "preparing" ||
+      incomingPaintReady ||
+      !incomingSnapshot ||
+      lastBlockedRequestKeyRef.current === incomingSnapshot.key
+    ) {
+      return;
+    }
+    lastBlockedRequestKeyRef.current = incomingSnapshot.key;
+    const hasImageBackground = incomingSnapshot.boxes.some((box) =>
+      Boolean(box.background || box.mediaInfo?.background),
+    );
+    recordPresentationDiagnostic({
+      event: "transition.blocked",
+      outputId: mediaPlayback?.outputId,
+      itemId: incomingSnapshot.itemId,
+      slideIndex: incomingSnapshot.slideIndex,
+      reason: hasImageBackground
+        ? "incoming_image_or_box_not_paint_ready"
+        : `incoming_${incomingSnapshot.backgroundMedia.kind}_not_paint_ready`,
+    });
+  }, [
+    incomingPaintReady,
+    incomingSnapshot,
+    mediaPlayback?.outputId,
+    state.phase,
+  ]);
+
   useLayoutEffect(() => {
     if (state.phase !== "preparing" || !incomingPaintReady) return;
 
@@ -1497,6 +1542,13 @@ const DisplayBoxTransitionStage = ({
             requestSentAtRef.current == null
               ? undefined
               : performance.now() - requestSentAtRef.current,
+        });
+        recordPresentationDiagnostic({
+          event: "transition.completed",
+          outputId: mediaPlaybackRef.current?.outputId,
+          itemId: incomingSnapshot.itemId,
+          slideIndex: incomingSnapshot.slideIndex,
+          reason: `mode_${mode}`,
         });
         const completedMedia = incomingSnapshot.backgroundMedia;
         const outgoingMediaKey = getLanePreparedMediaKey(

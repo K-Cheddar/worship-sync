@@ -49,6 +49,7 @@ const Stream = () => {
       prevBoxes={prevStreamInfo.slide?.boxes || []}
       outputId={output.id}
       currentItemId={streamInfo.itemId}
+      slideIndex={streamInfo.slideIndex}
       displayType={streamInfo.displayType}
       participantOverlayInfo={streamInfo.participantOverlayInfo}
       prevParticipantOverlayInfo={prevStreamInfo.participantOverlayInfo}

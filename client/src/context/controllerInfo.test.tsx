@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { Provider, useSelector } from "react-redux";
 import { MemoryRouter } from "react-router-dom";
 import store from "../store/store";
+import { flushItemCacheChanges } from "../store/itemCacheSync";
 import ControllerInfoProvider, {
   canRetrySync413,
   cancelSongV2CleanupMaintenance,
@@ -13,13 +14,32 @@ import ControllerInfoProvider, {
 import { GlobalInfoContext } from "./globalInfo";
 import { createMockGlobalContext } from "../test/mocks";
 import { hasSuccessfulInitialContentReplication } from "../utils/contentReplicationActivity";
+import * as startupDiagnostics from "../utils/startupDiagnostics";
+import { getReplicationDiagnosticsSnapshot } from "../utils/replicationDiagnostics";
+
+jest.mock("../utils/startupDiagnostics", () => {
+  const actual = jest.requireActual("../utils/startupDiagnostics");
+  return {
+    ...actual,
+    getStartupDiagnosticMode: jest.fn(() => "off"),
+    isStartupDiagnosticsActive: jest.fn(() => false),
+    recordStartupDiagnostic: jest.fn(),
+    beginStartupReplication: jest.fn(() => ({
+      recordBatch: jest.fn(),
+      recordRetry: jest.fn(),
+      finish: jest.fn(),
+    })),
+  };
+});
 
 const mockPouchInstances: Array<{
   name: string;
   get: jest.Mock;
+  info: jest.Mock;
   put: jest.Mock;
   destroy: jest.Mock;
   bulkDocs: jest.Mock;
+  originalBulkDocs: jest.Mock;
   allDocs: jest.Mock;
   changes: jest.Mock;
   sync: jest.Mock;
@@ -35,7 +55,14 @@ const liveSyncOwners: string[] = [];
 const liveSyncOptions: Array<Record<string, unknown>> = [];
 const replicationCalls: Array<{ name: string; options?: Record<string, unknown> }> = [];
 const initialPullHandles: Array<{ emit: (event: string, value?: any) => void }> = [];
+const changeFeedHandles: Array<{
+  databaseName: string;
+  emit: (event: string, value?: any) => void;
+}> = [];
 let completeInitialPullAutomatically = true;
+let localPouchConstructorFailureName: string | null = null;
+let deferredLocalItemSnapshot: Promise<unknown> | null = null;
+const verifiedCheckpointDatabaseNames = new Set<string>();
 
 const createSyncHandle = (completeAfterSetup = false) => {
   const listeners = new Map<string, (value?: any) => void>();
@@ -54,22 +81,39 @@ const createSyncHandle = (completeAfterSetup = false) => {
 
 jest.mock("pouchdb-browser", () => {
   const PouchDBMock = jest.fn().mockImplementation((name: string) => {
+    if (name === localPouchConstructorFailureName) {
+      throw new Error("Local PouchDB initialization failed");
+    }
     const localDocs = new Map<string, Record<string, unknown>>();
+    const originalBulkDocs = jest.fn().mockResolvedValue([]);
     const instance = {
       name,
       get: jest.fn(async (id: string) => {
+        if (
+          id === "_local/worship-sync-initial-content-replication-v1" &&
+          verifiedCheckpointDatabaseNames.has(name)
+        ) {
+          return {
+            _id: id,
+            localDatabaseName: name,
+            sourceDatabaseName: name,
+            complete: true,
+          };
+        }
         const doc = localDocs.get(id);
         if (!doc) throw Object.assign(new Error("missing"), { status: 404, name: "not_found" });
         return { ...doc };
       }),
+      info: jest.fn().mockResolvedValue({ doc_count: 0 }),
       put: jest.fn(async (doc: Record<string, unknown>) => {
         const stored = { ...doc, _rev: "1-local" };
         localDocs.set(String(doc._id), stored);
         return { ok: true, id: doc._id, rev: "1-local" };
       }),
       destroy: jest.fn().mockResolvedValue(undefined),
-      bulkDocs: jest.fn().mockResolvedValue([]),
-      allDocs: jest.fn().mockImplementation(async () => ({ update_seq: 0, rows: mockLocalItemDocs.map((doc) => ({ doc })) })),
+      bulkDocs: originalBulkDocs,
+      originalBulkDocs,
+      allDocs: jest.fn().mockImplementation(() => deferredLocalItemSnapshot ?? Promise.resolve({ update_seq: 0, rows: mockLocalItemDocs.map((doc) => ({ doc })) })),
       sync: jest.fn((_remote: unknown, options?: Record<string, unknown>) => {
         liveSyncOwners.push(name);
         liveSyncOptions.push(options ?? {});
@@ -82,11 +126,15 @@ jest.mock("pouchdb-browser", () => {
         to: jest.fn((_target: unknown, options?: Record<string, unknown>) => {
           replicationCalls.push({ name, options });
           const handle = createSyncHandle(completeInitialPullAutomatically);
-          if (options?.batch_size === 150) initialPullHandles.push(handle);
+          if (!name.includes("bibles")) initialPullHandles.push(handle);
           return handle;
         }),
       },
-      changes: jest.fn(() => createSyncHandle()),
+      changes: jest.fn(() => {
+        const handle = createSyncHandle();
+        changeFeedHandles.push({ databaseName: name, emit: handle.emit });
+        return handle;
+      }),
     };
     mockPouchInstances.push(instance);
     return instance;
@@ -109,12 +157,37 @@ const Probe = () => {
       <div data-testid="message">{context?.connectionStatus.message}</div>
       <div data-testid="has-db">{context?.db ? "yes" : "no"}</div>
       <div data-testid="bootstrap-ready">{context?.bootstrapReady ? "yes" : "no"}</div>
+      <div data-testid="startup-stage">{context?.startupInfo?.stage}</div>
+      <div data-testid="startup-failure">{context?.startupInfo?.failure?.kind}</div>
       <button type="button" onClick={() => context?.pullFromRemote()}>Pull</button>
     </div>
   );
 };
 
 describe("ControllerInfoProvider", () => {
+  const renderAuthenticatedStartup = (path = "/workstation/operator") => render(
+    <Provider store={store}>
+      <GlobalInfoContext.Provider value={createMockGlobalContext({
+        loginState: "success",
+        sessionKind: "workstation",
+        database: "startup-test-church",
+      }) as any}>
+        <MemoryRouter initialEntries={[path]}>
+          <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+        </MemoryRouter>
+      </GlobalInfoContext.Provider>
+    </Provider>,
+  );
+
+  const resolveCouchSession = () => {
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+  };
+
   beforeEach(() => {
     mockLocalItemDocs = [];
     mockPouchInstances.length = 0;
@@ -124,7 +197,14 @@ describe("ControllerInfoProvider", () => {
     liveSyncOptions.length = 0;
     replicationCalls.length = 0;
     initialPullHandles.length = 0;
+    changeFeedHandles.length = 0;
     completeInitialPullAutomatically = true;
+    localPouchConstructorFailureName = null;
+    deferredLocalItemSnapshot = null;
+    verifiedCheckpointDatabaseNames.clear();
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("off");
+    jest.mocked(startupDiagnostics.isStartupDiagnosticsActive).mockReturnValue(false);
+    jest.mocked(startupDiagnostics.recordStartupDiagnostic).mockClear();
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -136,6 +216,8 @@ describe("ControllerInfoProvider", () => {
   });
 
   afterEach(() => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("off");
+    jest.mocked(startupDiagnostics.isStartupDiagnosticsActive).mockReturnValue(false);
     jest.restoreAllMocks();
     jest.useRealTimers();
   });
@@ -158,7 +240,10 @@ describe("ControllerInfoProvider", () => {
     const localDb = mockPouchInstances.find((instance) => instance.name === "worship-sync-offline-church")!;
     expect(localDb.allDocs).toHaveBeenCalledTimes(1);
     const feed = localDb.changes.mock.results[0].value;
-    act(() => feed.emit("change", { seq: 1, id: "song", doc: { _id: "song", type: "song", name: "Local edit" } }));
+    await act(async () => {
+      feed.emit("change", { seq: 1, id: "song", doc: { _id: "song", type: "song", name: "Local edit" } });
+      await flushItemCacheChanges(localDb as never);
+    });
     expect(screen.getByTestId("cache-name")).toHaveTextContent("Local edit");
     mockLocalItemDocs = [{ _id: "song", type: "song", name: "New session" }];
     act(() => { store.dispatch({ type: "RESET" }); });
@@ -213,6 +298,179 @@ describe("ControllerInfoProvider", () => {
       ]),
     );
   });
+
+  it("skips both database initializations without starting session retries", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("skip-databases");
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(screen.getByTestId("startup-stage")).toHaveTextContent("idle"));
+    expect(mockPouchInstances).toHaveLength(0);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(screen.getByTestId("has-db")).toHaveTextContent("no");
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "startup",
+      "database-plan",
+      expect.objectContaining({
+        mode: "skip-databases",
+        content: false,
+        bible: false,
+        contentInitialPullBatchSize: 150,
+        contentInitialPullBatchesLimit: 15,
+        bibleInitialPullBatchSize: 1000,
+        bibleInitialPullBatchesLimit: 25,
+      }),
+    );
+  });
+
+  it("initializes content only with the original baseline settings", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("content-only");
+    resolveCouchSession();
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(replicationCalls).toHaveLength(1));
+    expect(replicationCalls[0].name).not.toContain("bibles");
+    expect(replicationCalls[0].options).toEqual(expect.objectContaining({
+      batch_size: 150,
+      batches_limit: 15,
+      selector: { _id: { $ne: "media" } },
+    }));
+    await waitFor(() => expect(screen.getByTestId("startup-stage")).toHaveTextContent("completed"));
+    expect(startupDiagnostics.recordStartupDiagnostic).not.toHaveBeenCalledWith(
+      "startup",
+      "application.ready",
+      expect.anything(),
+    );
+  });
+
+  it("runs a full content pull without hydrating the cache or starting live consumers", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("replication-only");
+    resolveCouchSession();
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(replicationCalls).toHaveLength(1));
+    expect(replicationCalls[0].options).toEqual(expect.objectContaining({
+      batch_size: 150,
+      batches_limit: 15,
+      selector: { _id: { $ne: "media" } },
+    }));
+    await waitFor(() => expect(screen.getByTestId("startup-stage")).toHaveTextContent("completed"));
+
+    const localContentDb = mockPouchInstances.find(({ name }) => name === "worship-sync-startup-test-church");
+    expect(localContentDb?.allDocs).not.toHaveBeenCalled();
+    expect(localContentDb?.sync).not.toHaveBeenCalled();
+    expect(mockPouchInstances.some(({ name }) => name.includes("bibles"))).toBe(false);
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "redux",
+      "item-cache-subscriber.skipped",
+      { mode: "replication-only" },
+    );
+  });
+
+  it("initializes Bible only when its authenticated database session is ready", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("bible-only");
+    resolveCouchSession();
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(replicationCalls).toHaveLength(1));
+    expect(replicationCalls[0].name).toContain("bibles");
+    expect(replicationCalls[0].options).toEqual(expect.objectContaining({
+      batch_size: 1000,
+      batches_limit: 25,
+    }));
+    expect(mockPouchInstances.some((instance) => instance.name === "worship-sync-startup-test-church")).toBe(false);
+  });
+
+  it("passes the production settings to both initial pulls with no stored mode", async () => {
+    const diagnostics = jest.requireActual<typeof startupDiagnostics>("../utils/startupDiagnostics");
+    expect(sessionStorage.getItem(diagnostics.STARTUP_DIAGNOSTIC_STORAGE_KEY)).toBeNull();
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockImplementation(diagnostics.getStartupDiagnosticMode);
+    resolveCouchSession();
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(replicationCalls).toHaveLength(2));
+    expect(replicationCalls.find(({ name }) => !name.includes("bibles"))?.options).toMatchObject({
+      batch_size: 150, batches_limit: 15, selector: { _id: { $ne: "media" } },
+    });
+    expect(replicationCalls.find(({ name }) => name.includes("bibles"))?.options).toMatchObject({
+      batch_size: 1000, batches_limit: 25,
+    });
+  });
+
+  it("waits for content's initial pull before opening the Bible database in sequential mode", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("sequential");
+    resolveCouchSession();
+    completeInitialPullAutomatically = false;
+    let resolveItemSnapshot!: (value: unknown) => void;
+    deferredLocalItemSnapshot = new Promise((resolve) => { resolveItemSnapshot = resolve; });
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(mockPouchInstances.find(({ name }) => name === "worship-sync-startup-test-church")?.allDocs).toHaveBeenCalled());
+    expect(replicationCalls).toHaveLength(0);
+    expect(mockPouchInstances.some((instance) => instance.name === "worship-sync-bibles")).toBe(false);
+
+    await act(async () => {
+      resolveItemSnapshot({ update_seq: 0, rows: [] });
+    });
+    await waitFor(() => expect(replicationCalls).toHaveLength(1));
+    expect(replicationCalls[0].name).not.toContain("bibles");
+    expect(replicationCalls[0].options).toEqual(expect.objectContaining({
+      batch_size: 150,
+      batches_limit: 15,
+    }));
+    expect(mockPouchInstances.some((instance) => instance.name === "worship-sync-bibles")).toBe(false);
+
+    await act(async () => {
+      initialPullHandles[0].emit("complete", { ok: true });
+    });
+    await waitFor(() => expect(replicationCalls).toHaveLength(2));
+    expect(replicationCalls[1].name).toContain("bibles");
+    expect(replicationCalls[1].options).toEqual(expect.objectContaining({
+      batch_size: 1000,
+      batches_limit: 25,
+    }));
+    await waitFor(() => expect(screen.getByTestId("startup-stage")).toHaveTextContent("completed"));
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "startup",
+      "application.ready",
+      expect.objectContaining({ sessionKind: "authenticated" }),
+    );
+  });
+
+  it("keeps subsequent Bible synchronization active with the original settings", async () => {
+    resolveCouchSession();
+    const { unmount } = renderAuthenticatedStartup();
+
+    await waitFor(() => expect(
+      replicationCalls.some(({ name }) => name.includes("bibles")),
+    ).toBe(true));
+    await waitFor(() => expect(
+      changeFeedHandles.some(({ databaseName }) => databaseName.includes("bibles")),
+    ).toBe(true));
+    expect(replicationCalls.find(({ name }) => name.includes("bibles"))?.options).toEqual(
+      expect.objectContaining({ batch_size: 1000, batches_limit: 25 }),
+    );
+
+    jest.useFakeTimers();
+    try {
+      const bibleChangeFeed = changeFeedHandles.find(({ databaseName }) =>
+        databaseName.includes("bibles"),
+      )!;
+      act(() => bibleChangeFeed.emit("change"));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(10_000);
+      });
+      const bibleLiveSyncIndex = liveSyncOwners.lastIndexOf("worship-sync-bibles");
+      expect(bibleLiveSyncIndex).toBeGreaterThanOrEqual(0);
+      expect(liveSyncOptions[bibleLiveSyncIndex]).toEqual(expect.objectContaining({
+        retry: true,
+        batch_size: 1000,
+        batches_limit: 25,
+      }));
+    } finally {
+      unmount();
+      jest.useRealTimers();
+    }
+  });
 });
 
 describe("controller replication 413 batch policy", () => {
@@ -225,7 +483,10 @@ describe("controller replication 413 batch policy", () => {
     liveSyncOptions.length = 0;
     replicationCalls.length = 0;
     initialPullHandles.length = 0;
+    changeFeedHandles.length = 0;
     completeInitialPullAutomatically = true;
+    localPouchConstructorFailureName = null;
+    verifiedCheckpointDatabaseNames.clear();
     global.fetch = jest.fn() as jest.Mock;
     (global as unknown as { BroadcastChannel: typeof BroadcastChannel }).BroadcastChannel =
       jest.fn().mockImplementation(() => ({
@@ -352,8 +613,10 @@ describe("controller replication 413 batch policy", () => {
     await waitFor(() => expect(initialPullHandles.length).toBeGreaterThan(0));
     expect(hasSuccessfulInitialContentReplication(databaseName)).toBe(false);
     expect(screen.getByTestId("has-db")).toHaveTextContent("yes");
-    act(() => initialPullHandles.at(-1)!.emit("change", { pending: 0 }));
-    expect(screen.getByTestId("progress")).toHaveTextContent("100");
+    act(() => initialPullHandles.at(-1)!.emit("change", { pending: 12, docs: [{ _id: "song" }] }));
+    expect(screen.getByTestId("progress")).toHaveTextContent("0");
+    act(() => initialPullHandles.at(-1)!.emit("change", { pending: 0, docs: [{ _id: "song" }] }));
+    expect(screen.getByTestId("progress")).toHaveTextContent("99");
     expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
     act(() => initialPullHandles.at(-1)!.emit("paused", { status: 0, message: "offline" }));
     expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
@@ -369,6 +632,209 @@ describe("controller replication 413 batch policy", () => {
         sourceDatabaseName: databaseName,
         complete: true,
       }),
+    );
+  });
+
+  it("bounds expensive content initial-pull writes and marks diagnostics complete only after a checkpoint", async () => {
+    completeInitialPullAutomatically = false;
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("normal");
+    jest.mocked(startupDiagnostics.isStartupDiagnosticsActive).mockReturnValue(true);
+    const databaseName = "worship-sync-startup-test-church";
+    (global.fetch as jest.Mock).mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    const view = render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext({
+          loginState: "success",
+          sessionKind: "workstation",
+          database: "startup-test-church",
+        }) as any}>
+          <MemoryRouter initialEntries={["/workstation/operator"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => expect(initialPullHandles.length).toBeGreaterThan(0));
+    const localDb = mockPouchInstances.find((instance) => instance.name === databaseName)!;
+    localDb.originalBulkDocs.mockImplementation(async () => []);
+    const docs = Array.from({ length: 8 }, (_, index) => {
+      const ids = Array.from({ length: 1000 }, (_, depth) => `history-${depth}-${index}`);
+      return {
+        _id: "complex-document",
+        _rev: `1000-revision-${index}`,
+        _revisions: { start: 1000, ids },
+        type: "credits",
+        body: `content-${index}`,
+      };
+    });
+
+    let result: unknown[] = [];
+    await act(async () => {
+      result = await localDb.bulkDocs({ docs, new_edits: false });
+    });
+
+    expect(localDb.originalBulkDocs).toHaveBeenCalledTimes(2);
+    expect(localDb.originalBulkDocs.mock.calls.map(([request]) =>
+      (request as { docs: unknown[] }).docs.length)).toEqual([4, 4]);
+    expect(result).toEqual([]);
+    expect(getReplicationDiagnosticsSnapshot(true).expensiveBatches.at(-1)?.outcome)
+      .toBe("writes-complete");
+
+    act(() => initialPullHandles.at(-1)!.emit("checkpoint", { checkpoint: "local-sequence" }));
+    expect(getReplicationDiagnosticsSnapshot(true).expensiveBatches.at(-1)?.outcome)
+      .toBe("complete");
+    expect(getReplicationDiagnosticsSnapshot(true).boundedWriteStatistics.transactions)
+      .toBeGreaterThanOrEqual(2);
+    view.unmount();
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("off");
+    jest.mocked(startupDiagnostics.isStartupDiagnosticsActive).mockReturnValue(false);
+  });
+
+  it("keeps a previously verified local database ready while the server is unavailable", async () => {
+    jest.useFakeTimers();
+    completeInitialPullAutomatically = false;
+    verifiedCheckpointDatabaseNames.add("worship-sync-offline-ready");
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: false }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ database: "offline-ready" }) as any}
+        >
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("yes");
+    });
+    expect(screen.getByTestId("progress")).toHaveTextContent("100");
+    expect(screen.getByTestId("has-db")).toHaveTextContent("yes");
+    expect(initialPullHandles).toHaveLength(0);
+    jest.clearAllTimers();
+  });
+
+  it("exposes failed initial replication results without granting readiness", async () => {
+    completeInitialPullAutomatically = false;
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => expect(initialPullHandles.length).toBeGreaterThan(0));
+    act(() =>
+      initialPullHandles.at(-1)!.emit("complete", {
+        ok: false,
+        errors: [{ status: 500, name: "server_error" }],
+      }),
+    );
+
+    expect(screen.getByTestId("bootstrap-ready")).toHaveTextContent("no");
+    expect(screen.getByTestId("startup-failure")).toHaveTextContent("replication");
+    expect(screen.getByTestId("startup-stage")).toHaveTextContent("failed");
+    expect(liveSyncHandles).toHaveLength(0);
+  });
+
+  it("exposes a terminal local database initialization failure", async () => {
+    localPouchConstructorFailureName = "worship-sync-local-failure";
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: true }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider
+          value={createMockGlobalContext({ database: "local-failure" }) as any}
+        >
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("startup-failure")).toHaveTextContent(
+        "local-storage",
+      );
+    });
+    expect(screen.getByTestId("startup-stage")).toHaveTextContent("failed");
+    expect(screen.getByTestId("progress")).toBeEmptyDOMElement();
+  });
+
+  it("keeps automatic server retries going before exposing a recovery action", async () => {
+    jest.useFakeTimers();
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: false }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await act(async () => {
+      await jest.runAllTimersAsync();
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+    expect(screen.getByTestId("startup-failure")).toHaveTextContent(
+      "server-connection",
+    );
+    expect(screen.getByTestId("message")).toHaveTextContent(
+      "couldn't connect to the server after 5 retries",
+    );
+  });
+
+  it("identifies exhausted session authentication failures separately from network failures", async () => {
+    jest.useFakeTimers();
+    (global.fetch as jest.Mock).mockResolvedValue({
+      headers: { get: () => "application/json" },
+      json: async () => ({ success: false, failureKind: "authentication" }),
+    });
+    render(
+      <Provider store={store}>
+        <GlobalInfoContext.Provider value={createMockGlobalContext() as any}>
+          <MemoryRouter initialEntries={["/controller"]}>
+            <ControllerInfoProvider><Probe /></ControllerInfoProvider>
+          </MemoryRouter>
+        </GlobalInfoContext.Provider>
+      </Provider>,
+    );
+
+    await act(async () => {
+      await jest.runAllTimersAsync();
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(6);
+    expect(screen.getByTestId("startup-failure")).toHaveTextContent(
+      "authentication",
+    );
+    expect(screen.getByTestId("message")).toHaveTextContent(
+      "couldn't verify its database session",
     );
   });
 

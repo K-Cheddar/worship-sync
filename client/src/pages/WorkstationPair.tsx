@@ -12,6 +12,7 @@ import { isElectron } from "../utils/environment";
 import { getPairingCodeErrorMessage } from "../utils/authUserMessages";
 import { getAuthRedirectToFromState } from "../utils/authRedirectPath";
 import { GlobalInfoContext } from "../context/globalInfo";
+import { recordStartupDiagnostic } from "../utils/startupDiagnostics";
 import type { DevicePairingRequestStartResponse, RedeemDisplayPairingResponse, RedeemWorkstationPairingResponse } from "../api/authTypes";
 
 const WorkstationPair = ({ lockedPairType }: { lockedPairType: "workstation" | "display" }) => {
@@ -38,6 +39,7 @@ const WorkstationPair = ({ lockedPairType }: { lockedPairType: "workstation" | "
   useEffect(() => { setPairingCode(tokenFromQuery); }, [tokenFromQuery]);
 
   const finishPairing = useCallback(async (response: RedeemWorkstationPairingResponse | RedeemDisplayPairingResponse) => {
+    recordStartupDiagnostic("auth", "pairing.completed", { deviceKind: lockedPairType });
     if (lockedPairType === "display") {
       const displayResponse = response as RedeemDisplayPairingResponse;
       clearWorkstationToken(); setDisplayToken(displayResponse.credential); await context?.refreshAuthBootstrap();

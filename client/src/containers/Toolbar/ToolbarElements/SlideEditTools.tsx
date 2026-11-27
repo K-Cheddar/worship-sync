@@ -31,7 +31,6 @@ import {
 import { useDispatch, useSelector } from "../../../hooks";
 import { useLocation } from "react-router-dom";
 import {
-  updateBoxProperties,
   updateBibleFontMode,
 } from "../../../utils/formatter";
 import {
@@ -222,11 +221,13 @@ const SlideEditTools = ({
   quickBrightnessTarget,
   quickBibleModeTarget,
   drawerTarget,
+  applyToAll = true,
 }: {
   quickFontSizeTarget: HTMLElement | null;
   quickBrightnessTarget: HTMLElement | null;
   quickBibleModeTarget: HTMLElement | null;
   drawerTarget: HTMLElement | null;
+  applyToAll?: boolean;
 }) => {
   const location = useLocation();
   const dispatch = useDispatch();
@@ -354,6 +355,7 @@ const SlideEditTools = ({
       arrangementId:
         type === "song" ? arrangements[selectedArrangement]?.id : undefined,
       boxIndex: selectedBox,
+      applyToAll,
     };
   }, [
     arrangements,
@@ -364,6 +366,7 @@ const SlideEditTools = ({
     slide?.id,
     slide?.name,
     type,
+    applyToAll,
   ]);
 
   const isCurrentTarget = useCallback(
@@ -435,9 +438,10 @@ const SlideEditTools = ({
         ...target,
         properties: { fontSize: clamped },
         formatItem: true,
+        newPageFontSizePx: type === "song" ? clamped : undefined,
       });
     },
-    [getSelectedTarget, isCurrentTarget, runWithFormatting]
+    [getSelectedTarget, isCurrentTarget, runWithFormatting, type]
   );
 
   const _updateFontSize = (val: number) => {
@@ -557,24 +561,29 @@ const SlideEditTools = ({
   const _updateBrightness = (val: number) => {
     const _val = Math.max(Math.min(val, 100), 10);
     setBrightness(_val);
-    const updatedItem = updateBoxProperties({
-      updatedProperties: { brightness: _val },
-      item,
-      shouldUpdateBgOnly: true,
-      shouldApplyToAll: true,
-      shouldSkipTitleSlide: false,
+    const target = getSelectedTarget();
+    if (!target) return;
+    runWithFormatting(target.owner, {
+      kind: "boxProperties",
+      ...target,
+      properties: { brightness: _val },
+      applyToAll: target.applyToAll,
+      updateBackgroundOnly: true,
+      skipTitleSlide: false,
     });
-    updateItem(updatedItem);
   };
 
   const _updateKeepAspectRatio = (val: boolean) => {
     setShouldKeepAspectRatio(val);
-    const updatedItem = updateBoxProperties({
-      updatedProperties: { shouldKeepAspectRatio: val },
-      item,
-      shouldUpdateBgOnly: true,
+    const target = getSelectedTarget();
+    if (!target) return;
+    runWithFormatting(target.owner, {
+      kind: "boxProperties",
+      ...target,
+      properties: { shouldKeepAspectRatio: val },
+      applyToAll: target.applyToAll,
+      updateBackgroundOnly: true,
     });
-    updateItem(updatedItem);
   };
 
   const _updateFontColor = (val: string) => {
@@ -611,7 +620,7 @@ const SlideEditTools = ({
           kind: "boxProperties",
           ...target,
           properties: { fontColor: val },
-          applyToAll: true,
+          applyToAll: target.applyToAll,
         },
       }));
     });
@@ -672,7 +681,7 @@ const SlideEditTools = ({
       ...target,
       properties: { isBold: !isBold },
       formatItem: true,
-      applyToAll: true,
+      applyToAll: target.applyToAll,
     });
   };
 
@@ -685,7 +694,7 @@ const SlideEditTools = ({
       ...target,
       properties: { isItalic: !isItalic },
       formatItem: true,
-      applyToAll: true,
+      applyToAll: target.applyToAll,
     });
   };
 
@@ -698,7 +707,7 @@ const SlideEditTools = ({
       ...target,
       properties: { align },
       formatItem: true,
-      applyToAll: true,
+      applyToAll: target.applyToAll,
     });
   };
 

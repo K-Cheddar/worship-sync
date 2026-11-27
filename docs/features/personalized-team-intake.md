@@ -4,7 +4,7 @@
 
 **Approval source:** Current user request dated 2026-10-23
 
-**Last reviewed:** 2026-10-23
+**Last reviewed:** 2026-11-24
 
 ## Purpose
 
@@ -20,6 +20,9 @@ A volunteer opens their recipient-bound link and sees the existing form. Enabled
 - The public form displays an existing personal-information input only when the form enables it and the preview says the linked member is missing it. It renders no personal-information section when no enabled personal field is missing.
 - Submission accepts only enabled fields that remain missing on the current member. It uses existing normalization and validation, ignores blank values, and does not replace populated fields.
 - The same behavior applies to recipient-bound `general_intake` and `team_availability` links. Existing availability forms remain availability-only under their current form rules; empty personal inputs do not block those responses.
+- Dedicated availability personalized links continue to identify the volunteer from the validated recipient credential and do not ask for identity fields again. Their shared saved welcome message is the same wording shown on the form's general link.
+- Dedicated availability general links collect required first and last names and an optional normalized email independently of `enabledFields`. They are separate, unverified submissions: matching suggestions are restricted to the form's Team scope, and only an administrator's explicit selection can apply one to an existing member.
+- Dedicated availability responses merge only submitted service-date answers into member availability. Missing dates in older partial records are not reinterpreted as unavailable.
 - Firestore transaction and fallback writes update the linked roster member. Adding an email keeps its contact index current.
 - Non-personalized forms retain their existing field visibility and submission behavior.
 
@@ -27,7 +30,8 @@ A volunteer opens their recipient-bound link and sees the existing form. Enabled
 
 - Recipient token identity, membership scope, authorization, and form response behavior remain authoritative.
 - This change does not add a profile editor, endpoint, phone-number collection, or SMS consent behavior.
-- Availability responses, positions, scheduling preferences, blockout dates, notes, and other existing submission behavior remain unchanged.
+- Availability form messaging, identity collection for general links, and manual general-response review follow the dedicated availability contract in [Availability form text messages](team-availability-sms.md). This does not add identity questions to personalized availability links or change their recipient-bound application.
+- Public roster data, general-link authorization, positions, scheduling preferences, blockout dates, notes, and unrelated general-intake behavior remain unchanged.
 - Broader public service, schedule, and team access behavior remains outside this contract.
 
 ## Important scenarios

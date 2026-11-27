@@ -55,7 +55,10 @@ import FormActionButtons from "../components/FormActionButtons";
 import EntityRow from "../components/EntityRow";
 import Checkbox from "../../../components/Checkbox/Checkbox";
 import Modal from "../../../components/Modal/Modal";
-import { DEFAULT_INTAKE_FORM_COPY } from "../intakeFormCopy";
+import {
+  DEFAULT_INTAKE_FORM_COPY,
+  DEFAULT_TEAM_AVAILABILITY_WELCOME,
+} from "../intakeFormCopy";
 import {
   recurringAvailabilityLabel,
   servingFrequencyLabel,
@@ -90,6 +93,7 @@ import { useTeamsNavigationGuard } from "../TeamsNavigationGuardContext";
 import { useTeamsPage } from "../TeamsPageContext";
 import {
   intakeSubmissionNeedsAction,
+  selectAvailabilitySubmissionMemberMatch,
   selectIntakeExactMemberMatch,
   selectIntakeMemberMatch,
   selectNewestIntakeSubmissions,
@@ -1172,24 +1176,38 @@ const IntakeManager = ({
     }
   };
 
+  const selectedFormReviewSubmissions = useMemo(() => {
+    if (activeSelectedForm?.purpose !== "team_availability") {
+      return selectedFormSubmissions;
+    }
+    const personalSubmissionIds = new Set(
+      selectedFormRecipients.map((recipient) => recipient.submissionId).filter(Boolean),
+    );
+    return selectedFormSubmissions.filter(
+      (submission) => !personalSubmissionIds.has(submission.submissionId),
+    );
+  }, [activeSelectedForm, selectedFormRecipients, selectedFormSubmissions]);
+
   const filteredSubmissions = useMemo(
     () =>
-      selectedFormSubmissions.filter((submission) =>
+      selectedFormReviewSubmissions.filter((submission) =>
         submissionMatchesStatusFilter(submission.status, statusFilter),
       ),
-    [selectedFormSubmissions, statusFilter],
+    [selectedFormReviewSubmissions, statusFilter],
   );
 
   const selectedFormNeedsActionCount = useMemo(
-    () => selectedFormSubmissions.filter(intakeSubmissionNeedsAction).length,
-    [selectedFormSubmissions],
+    () => selectedFormReviewSubmissions.filter(intakeSubmissionNeedsAction).length,
+    [selectedFormReviewSubmissions],
   );
 
   // Open submissions whose name exactly matches one active member; these are
   // the only ones safe to link without a person reviewing each match.
   const exactMatchTargets = useMemo(
     () =>
-      selectedFormSubmissions
+      activeSelectedForm?.purpose === "team_availability"
+        ? []
+        : selectedFormReviewSubmissions
         .filter(intakeSubmissionNeedsAction)
         .flatMap((submission) => {
           const member = selectIntakeExactMemberMatch(
@@ -1198,7 +1216,7 @@ const IntakeManager = ({
           );
           return member ? [{ submission, member }] : [];
         }),
-    [selectedFormSubmissions, activeMembers],
+    [activeSelectedForm, selectedFormReviewSubmissions, activeMembers],
   );
 
   // Aggregate views so an admin can scan every submitter's notes or blockout
@@ -1206,7 +1224,7 @@ const IntakeManager = ({
   // the form regardless of the status filter.
   const allSubmissionNotes = useMemo(
     () =>
-      selectedFormSubmissions.flatMap((submission) => {
+      selectedFormReviewSubmissions.flatMap((submission) => {
         const notes = (submission.notes || "").trim();
         return notes
           ? [
@@ -1218,12 +1236,12 @@ const IntakeManager = ({
             ]
           : [];
       }),
-    [selectedFormSubmissions],
+    [selectedFormReviewSubmissions],
   );
 
   const allSubmissionBlockouts = useMemo(
     () =>
-      selectedFormSubmissions.flatMap((submission) => {
+      selectedFormReviewSubmissions.flatMap((submission) => {
         const labels = (submission.blockoutRanges || [])
           .map((range) =>
             formatPlainDateRangeLabel(range.startDate, range.endDate),
@@ -1239,7 +1257,7 @@ const IntakeManager = ({
             ]
           : [];
       }),
-    [selectedFormSubmissions],
+    [selectedFormReviewSubmissions],
   );
 
   // occurrenceId (`serviceId@startsAt`) -> the form's label/date for it, so the
@@ -1413,7 +1431,11 @@ const IntakeManager = ({
       : activeSelectedForm?.name || "Intake form";
 
   const renderSubmissionCard = (submission: TeamIntakeSubmission) => {
-    const suggestedMember = selectIntakeMemberMatch(submission, activeMembers);
+    const availabilitySubmission = activeSelectedForm?.purpose === "team_availability";
+    const matchCandidates = availabilitySubmission ? applicableMembers : activeMembers;
+    const suggestedMember = availabilitySubmission
+      ? selectAvailabilitySubmissionMemberMatch(submission, matchCandidates)
+      : selectIntakeMemberMatch(submission, matchCandidates);
     const selectedMemberId =
       selectedMemberBySubmission[submission.submissionId] ??
       suggestedMember?.memberId ??
@@ -1448,6 +1470,16 @@ const IntakeManager = ({
     const submissionName =
       `${submission.title || ""} ${submission.firstName} ${submission.lastName}`.trim() ||
       "Anonymous response";
+    const duplicateSubmission = Boolean(
+      availabilitySubmission &&
+        submission.email?.trim() &&
+        selectedFormReviewSubmissions.some(
+          (other) =>
+            other.submissionId !== submission.submissionId &&
+            other.normalizedName === submission.normalizedName &&
+            other.email?.trim().toLowerCase() === submission.email?.trim().toLowerCase(),
+        ),
+    );
     const isExpanded = expandedSubmissionIds.has(submission.submissionId);
 
     return (
@@ -1478,7 +1510,11 @@ const IntakeManager = ({
           <span className="shrink-0 text-xs text-gray-400">
             {submission.status === "applied" && linkedMember
               ? <>
-                  {submission.appliedMemberCreated ? "Created " : "Linked to "}
+                  {submission.appliedMemberCreated
+                    ? "Created "
+                    : availabilitySubmission
+                      ? "Applied to "
+                      : "Linked to "}
                   <MemberNameWithIndicator
                     name={memberName(linkedMember)}
                     memberId={linkedMember.memberId}
@@ -1508,6 +1544,11 @@ const IntakeManager = ({
                     name={memberName(suggestedMember)}
                     memberId={suggestedMember.memberId}
                   />
+                </p>
+              ) : null}
+              {duplicateSubmission ? (
+                <p className="mt-1 text-xs text-amber-200" role="note">
+                  Another response has the same name and email. Review both before applying one.
                 </p>
               ) : null}
             </div>
@@ -1598,7 +1639,7 @@ const IntakeManager = ({
                 {canLinkSubmission ? (
                   <>
                     <Select
-                      label="Match member"
+                       label={availabilitySubmission ? "Match existing member" : "Match member"}
                       hideLabel
                       className="min-w-48"
                       value={selectedMemberId}
@@ -1608,7 +1649,7 @@ const IntakeManager = ({
                           [submission.submissionId]: String(memberId),
                         }))
                       }
-                      options={activeMembers.map((member) => ({
+                       options={matchCandidates.map((member) => ({
                         label: (
                           <MemberNameWithIndicator
                             name={memberName(member)}
@@ -1637,9 +1678,9 @@ const IntakeManager = ({
                         )
                       }
                     >
-                      Link to member
+                      {availabilitySubmission ? "Apply to member" : "Link to member"}
                     </Button>
-                    <Button
+                    {!availabilitySubmission ? <Button
                       variant="tertiary"
                       svg={Plus}
                       iconSize="sm"
@@ -1663,7 +1704,7 @@ const IntakeManager = ({
                       }
                     >
                       Create member
-                    </Button>
+                    </Button> : null}
                   </>
                 ) : null}
                 <Button
@@ -1851,53 +1892,72 @@ const IntakeManager = ({
           }
         />
       )}
-      {!isAvailabilityFormEditor ? <fieldset className="space-y-3">
+      <fieldset className="space-y-3">
         <legend className="p-1 text-sm font-semibold">Form wording</legend>
         <p className="px-1 text-xs text-gray-400">
           Customize what people read on the public form. Leave a field blank to
-          use the default wording shown in each box.
+          use the default wording shown below.
         </p>
         <TextArea
           label="Welcome message"
           value={draft.welcomeMessage || ""}
-          placeholder={DEFAULT_INTAKE_FORM_COPY.welcome}
+          placeholder={isAvailabilityFormEditor
+            ? DEFAULT_TEAM_AVAILABILITY_WELCOME
+            : DEFAULT_INTAKE_FORM_COPY.welcome}
           textareaClassName="min-h-16"
           onChange={(welcomeMessage) =>
             setDraft((d) => ({ ...d, welcomeMessage }))
           }
         />
-        <Input
-          label="Positions message"
-          value={draft.positionsMessage || ""}
-          placeholder={DEFAULT_INTAKE_FORM_COPY.positions}
-          onChange={(positionsMessage) =>
-            setDraft((d) => ({
-              ...d,
-              positionsMessage: String(positionsMessage),
-            }))
-          }
-        />
-        <Input
-          label="Availability message"
-          value={draft.availabilityMessage || ""}
-          placeholder={DEFAULT_INTAKE_FORM_COPY.availability}
-          onChange={(availabilityMessage) =>
-            setDraft((d) => ({
-              ...d,
-              availabilityMessage: String(availabilityMessage),
-            }))
-          }
-        />
-        <Input
-          label="Notes message"
-          value={draft.notesMessage || ""}
-          placeholder={DEFAULT_INTAKE_FORM_COPY.notes}
-          onChange={(notesMessage) =>
-            setDraft((d) => ({ ...d, notesMessage: String(notesMessage) }))
-          }
-        />
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+          <p className="text-xs text-gray-400">
+            Default: {isAvailabilityFormEditor
+              ? DEFAULT_TEAM_AVAILABILITY_WELCOME
+              : DEFAULT_INTAKE_FORM_COPY.welcome}
+          </p>
+          <Button
+            type="button"
+            variant="textLink"
+            padding="px-1 py-0.5"
+            disabled={!draft.welcomeMessage}
+            onClick={() => setDraft((current) => ({ ...current, welcomeMessage: "" }))}
+          >
+            Reset to default
+          </Button>
+        </div>
+        {!isAvailabilityFormEditor ? <>
+          <Input
+            label="Positions message"
+            value={draft.positionsMessage || ""}
+            placeholder={DEFAULT_INTAKE_FORM_COPY.positions}
+            onChange={(positionsMessage) =>
+              setDraft((d) => ({
+                ...d,
+                positionsMessage: String(positionsMessage),
+              }))
+            }
+          />
+          <Input
+            label="Availability message"
+            value={draft.availabilityMessage || ""}
+            placeholder={DEFAULT_INTAKE_FORM_COPY.availability}
+            onChange={(availabilityMessage) =>
+              setDraft((d) => ({
+                ...d,
+                availabilityMessage: String(availabilityMessage),
+              }))
+            }
+          />
+          <Input
+            label="Notes message"
+            value={draft.notesMessage || ""}
+            placeholder={DEFAULT_INTAKE_FORM_COPY.notes}
+            onChange={(notesMessage) =>
+              setDraft((d) => ({ ...d, notesMessage: String(notesMessage) }))
+            }
+          />
+        </> : null}
       </fieldset>
-        : null}
       {editing && canEdit && !isAvailabilityFormEditor ? (
         <Button
           variant="secondary"
@@ -2222,7 +2282,7 @@ const IntakeManager = ({
               {exactMatchTargets.length === 1 ? "" : "es"}
             </Button>
           ) : null}
-          {selectedFormSubmissions.length > 0 ? (
+          {selectedFormReviewSubmissions.length > 0 ? (
             <>
               <Button
                 variant="textLink"
@@ -2315,7 +2375,7 @@ const IntakeManager = ({
         </div>
       ) : null}
       <div className="space-y-3">
-        {selectedFormSubmissions.length === 0 ? (
+        {selectedFormReviewSubmissions.length === 0 ? (
           <p className="text-sm text-gray-300">No submissions yet.</p>
         ) : filteredSubmissions.length === 0 ? (
           renderFilteredSubmissionsEmptyState()
@@ -2442,7 +2502,7 @@ const IntakeManager = ({
           privacySafe: availabilityOnly, onBatchUpdated: handleAvailabilityBatchUpdated,
           onClose: () => setShowSendForm(false),
         }}
-        submissionReview={!availabilityOnly && selectedFormSubmissions.length ? <details className="mt-5 border-t border-gray-700 pt-3"><summary className="cursor-pointer text-sm text-gray-300">Review intake submissions ({selectedFormSubmissions.length})</summary><div className="mt-4 space-y-3">{renderSubmissionsPanel(true)}</div></details> : null}
+        submissionReview={!availabilityOnly && selectedFormReviewSubmissions.length ? <details className="mt-5 border-t border-gray-700 pt-3"><summary className="cursor-pointer text-sm text-gray-300">{activeSelectedForm.purpose === "team_availability" ? "Review availability link responses" : "Review intake submissions"} ({selectedFormReviewSubmissions.length})</summary><div className="mt-4 space-y-3">{renderSubmissionsPanel(true)}</div></details> : null}
       />
     </div>;
   }

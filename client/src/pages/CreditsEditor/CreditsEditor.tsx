@@ -68,17 +68,7 @@ import {
   setInitialItemList,
   updateItemListsFromRemote,
 } from "../../store/itemListsSlice";
-import { useStuckDbProgress } from "../../hooks/useStuckDbProgress";
-import {
-  DbStartupConnectionFailedPanel,
-  DbStartupStuckRecoveryPanel,
-} from "../../components/ControllerPageShell/DbProgressStartupRecoveryUi";
-import {
-  BOOTSTRAP_LOADING_MESSAGES,
-  RotatingLoadingMessage,
-  STUCK_LOADING_MESSAGES,
-  WorshipSyncLoadingContent,
-} from "../../components/LoadingScreenPresentation";
+import ControllerLoadingOverlay from "../../components/ControllerPageShell/ControllerLoadingOverlay";
 import { GlobalInfoContext } from "../../context/globalInfo";
 import Button from "../../components/Button/Button";
 import {
@@ -172,15 +162,14 @@ const CreditsEditor = ({
     db,
     dbProgress,
     connectionStatus,
+    startupInfo,
+    subscribeToStartupActivity,
     isMobile = false,
     setIsMobile,
     updater,
     pullFromRemote,
   } = useContext(ControllerInfoContext) ?? {};
 
-  const dbProgressValue = dbProgress ?? 0;
-  const isConnectionFailed = connectionStatus?.status === "failed";
-  const isStartupStuck = useStuckDbProgress(dbProgressValue, isConnectionFailed);
   const { churchId, firebaseDb, access } = useContext(GlobalInfoContext) || {};
   const canEditCredits = !isViewOnlyAccess(access);
   const dispatch = useDispatch();
@@ -419,7 +408,10 @@ const CreditsEditor = ({
           recordAppliedCreditVersion(doc._id, doc._rev);
         }
 
-        dispatch(initiateCreditsList(credits));
+        dispatch(initiateCreditsList(credits, {
+          database: db.name,
+          outlineId,
+        }));
 
         const historyMap = await getAllCreditsHistory(db);
         if (cancelled) return;
@@ -446,7 +438,7 @@ const CreditsEditor = ({
       } catch (error: unknown) {
         if (cancelled) return;
         console.error(error);
-        dispatch(initiateCreditsList([]));
+        dispatch(initiateCreditsList([], { database: db.name, outlineId }));
         dispatch(initiateCreditsHistory({}));
       } finally {
         if (!cancelled) {
@@ -845,46 +837,13 @@ const CreditsEditor = ({
         </div>
       )}
 
-      {!embeddedInOverlayController && dbProgressValue !== 100 && (
-        <div
-          data-testid="loading-overlay"
-          className="fixed inset-0 z-[60] flex h-dvh min-h-0 w-full flex-col items-center justify-center gap-6 bg-homepage-canvas px-4 text-white"
-          aria-busy={!isConnectionFailed}
-        >
-          <WorshipSyncLoadingContent>
-            {isConnectionFailed ? (
-              <DbStartupConnectionFailedPanel
-                message={connectionStatus?.message}
-              />
-            ) : (
-              <>
-                <RotatingLoadingMessage
-                  messages={
-                    isStartupStuck
-                      ? STUCK_LOADING_MESSAGES
-                      : BOOTSTRAP_LOADING_MESSAGES
-                  }
-                />
-                {connectionStatus?.status === "retrying" && (
-                  <p className="text-sm text-yellow-300">
-                    Connection failed. Retrying...
-                  </p>
-                )}
-                {!isStartupStuck && dbProgressValue > 0 && (
-                  <p className="text-xs text-gray-400">
-                    Database sync: {dbProgressValue}%
-                  </p>
-                )}
-                {isStartupStuck && (
-                  <DbStartupStuckRecoveryPanel
-                    dbProgress={dbProgressValue}
-                    connectionStatus={connectionStatus}
-                  />
-                )}
-              </>
-            )}
-          </WorshipSyncLoadingContent>
-        </div>
+      {!embeddedInOverlayController && (
+        <ControllerLoadingOverlay
+          dbProgress={dbProgress}
+          connectionStatus={connectionStatus}
+          startupInfo={startupInfo}
+          subscribeToStartupActivity={subscribeToStartupActivity}
+        />
       )}
 
       <div className="flex min-h-0 flex-1 gap-2 px-4 pb-4">

@@ -189,7 +189,7 @@ describe("active song library refresh", () => {
     env.database.get.mockResolvedValue(remote);
     env.store.dispatch(env.item.setActiveItem({ ...baseline, listId: "outline-entry", contentOwner: owner }));
 
-    env.store.dispatch(env.docs.applyItemDocumentChange({ id: baseline._id, doc: remote }));
+    env.store.dispatch(env.docs.applyItemDocumentChanges([{ id: baseline._id, doc: remote }]));
     await flush();
 
     const active = env.store.getState().undoable.present.item;

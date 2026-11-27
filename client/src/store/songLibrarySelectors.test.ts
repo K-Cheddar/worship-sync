@@ -49,6 +49,19 @@ describe("selectSongLibrary", () => {
       isLoading: true,
     });
   });
+
+  it("does not remap or resort songs when only diagnostics change", () => {
+    const firstState = createState({ documents: [songDoc("song-1", "Song 1")] });
+    const firstSongs = selectSongLibrary(firstState).songs;
+    const nextState = {
+      allDocs: {
+        ...firstState.allDocs,
+        songLibraryDiagnostics: [{ songId: "other-song", rootId: "root", code: "read-failed" as const, message: "retry" }],
+      },
+    } as RootState;
+
+    expect(selectSongLibrary(nextState).songs).toBe(firstSongs);
+  });
 });
 
 

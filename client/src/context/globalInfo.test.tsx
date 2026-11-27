@@ -1320,6 +1320,88 @@ describe("GlobalInfoProvider presentation listener contracts", () => {
     expect(mockDispatch).toHaveBeenCalledTimes(4);
   });
 
+  it("keeps a newer local monitor slide after a delayed Firebase event", async () => {
+    localStorage.setItem("loggedIn", "true");
+    localStorage.setItem("user", "Test User");
+    localStorage.setItem("database", "main");
+    (authApi.getAuthBootstrap as jest.Mock).mockResolvedValue(
+      loggedInHumanBootstrap,
+    );
+    renderProvider();
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const presentationStore = require("../store/store").default;
+    const previousImplementation = mockDispatch.getMockImplementation();
+    mockDispatch.mockImplementation((action) => {
+      if (action?.type === "debouncedUpdateMonitor") {
+        presentationStore.dispatch(action);
+      }
+      return action;
+    });
+    const localMonitorInfo = {
+      displayType: "monitor",
+      name: "Same-machine monitor slide",
+      type: "song",
+      slide: { id: "local-slide", name: "Local slide", type: "Verse", boxes: [] },
+      time: 602,
+    };
+    const delayedFirebaseInfo = {
+      ...localMonitorInfo,
+      name: "Delayed Firebase slide",
+      time: 601,
+    };
+
+    try {
+      mockDispatch.mockClear();
+      await waitFor(() =>
+        expect(
+          onValueCallbacks.has(
+            "churches/church-1/data/presentation/monitorInfo",
+          ),
+        ).toBe(true),
+      );
+      localStorage.setItem("monitorInfo", JSON.stringify(localMonitorInfo));
+      act(() => {
+        window.dispatchEvent(
+          new StorageEvent("storage", {
+            key: "monitorInfo",
+            newValue: localStorage.getItem("monitorInfo"),
+          }),
+        );
+      });
+
+      await waitFor(() =>
+        expect(
+          presentationStore.getState().presentation.outputs.monitor.info,
+        ).toMatchObject({ name: "Same-machine monitor slide", time: 602 }),
+      );
+      expect(mockDispatch).toHaveBeenCalledWith({
+        type: "debouncedUpdateMonitor",
+        payload: localMonitorInfo,
+      });
+
+      act(() =>
+        onValueCallbacks
+          .get("churches/church-1/data/presentation/monitorInfo")
+          ?.(snapshotFor(delayedFirebaseInfo)),
+      );
+      await waitFor(() =>
+        expect(mockDispatch).toHaveBeenCalledWith({
+          type: "debouncedUpdateMonitor",
+          payload: delayedFirebaseInfo,
+        }),
+      );
+      await waitFor(() =>
+        expect(
+          presentationStore.getState().presentation.outputs.monitor.info,
+        ).toMatchObject({ name: "Same-machine monitor slide", time: 602 }),
+      );
+    } finally {
+      mockDispatch.mockImplementation(
+        previousImplementation ?? (() => undefined),
+      );
+    }
+  });
+
   it("cold-hydrates presentation keys from localStorage when the storage listener attaches", async () => {
     const projectorInfo = { name: "Live Projector", time: 501 };
     const monitorInfo = { name: "Live Monitor", time: 502 };

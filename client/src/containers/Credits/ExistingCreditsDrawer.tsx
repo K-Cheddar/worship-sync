@@ -8,9 +8,7 @@ import {
 } from "../../utils/dbUtils";
 import {
   DBCredit,
-  DBCredits,
   CreditsInfo,
-  getCreditsDocId,
 } from "../../types";
 import { cn } from "../../utils/cnHelper";
 import Button from "../../components/Button/Button";
@@ -18,7 +16,10 @@ import Input from "../../components/Input/Input";
 import DeleteModal from "../../components/Modal/DeleteModal";
 import { useDispatch, useSelector } from "../../hooks";
 import { addCredit, deleteCredit } from "../../store/creditsSlice";
-import { broadcastCreditsUpdate, RootState } from "../../store/store";
+import store, { broadcastCreditsUpdate, RootState } from "../../store/store";
+import { saveCreditOrder } from "../../utils/saveCreditOrder";
+import { getContentDatabaseSessionToken } from "../../utils/contentReplicationActivity";
+import { globalDb } from "../../context/controllerInfo";
 
 type ExistingCreditsDrawerProps = {
   isOpen: boolean;
@@ -135,27 +136,39 @@ const ExistingCreditsDrawer = ({
   );
   const unusedCount = unusedCredits.length;
 
+  const isCurrentDatabase = (database: PouchDB.Database, sessionToken: symbol | null) =>
+    globalDb === database &&
+    getContentDatabaseSessionToken(database.name) === sessionToken;
+
+  const isCurrentOwner = (database: PouchDB.Database, ownerOutlineId: string, sessionToken: symbol | null) => {
+    const state = store.getState() as RootState;
+    const currentOutlineId = state.undoable.present.itemLists.selectedList?._id ??
+      state.undoable.present.itemLists.activeList?._id;
+    const creditsOwner = state.undoable.present.credits.indexOwner;
+    return isCurrentDatabase(database, sessionToken) &&
+      currentOutlineId === ownerOutlineId &&
+      creditsOwner?.database === database.name &&
+      creditsOwner.outlineId === ownerOutlineId;
+  };
+
   const confirmDelete = async () => {
     if (!db || !creditToDelete || !outlineId) return;
     const toDelete = creditToDelete;
+    const sessionToken = getContentDatabaseSessionToken(db.name);
     setCreditToDelete(null);
     try {
-      const existingCredits: DBCredits = await db.get(
-        getCreditsDocId(outlineId),
+      const savedIndex = await saveCreditOrder(
+        db,
+        outlineId,
+        currentListIds,
+        currentListIds.filter((id) => id !== toDelete.id),
       );
-      const hadInIndex = existingCredits.creditIds.includes(toDelete.id);
-      if (hadInIndex) {
-        existingCredits.creditIds = existingCredits.creditIds.filter(
-          (x) => x !== toDelete.id,
-        );
-        existingCredits.updatedAt = new Date().toISOString();
-        await db.put(existingCredits);
-        broadcastCreditsUpdate([existingCredits]);
-      }
+      if (savedIndex && isCurrentDatabase(db, sessionToken)) broadcastCreditsUpdate([savedIndex]);
 
       const creditDoc = await db.get(toDelete._id);
       await db.remove(creditDoc);
 
+      if (!isCurrentOwner(db, outlineId, sessionToken)) return;
       setCredits((prev) => prev.filter((c) => c._id !== toDelete._id));
 
       if (currentListIds.includes(toDelete.id)) {
@@ -174,31 +187,26 @@ const ExistingCreditsDrawer = ({
 
   const confirmDeleteAllUnused = async () => {
     if (!db || !outlineId || unusedCount === 0) return;
+    const sessionToken = getContentDatabaseSessionToken(db.name);
     setShowDeleteAllUnusedModal(false);
     const toRemove = [...unusedCredits];
     const removeLogicalIds = new Set(toRemove.map((c) => c.id));
 
     try {
-      const existingCredits: DBCredits = await db.get(
-        getCreditsDocId(outlineId),
+      const savedIndex = await saveCreditOrder(
+        db,
+        outlineId,
+        currentListIds,
+        currentListIds.filter((id) => !removeLogicalIds.has(id)),
       );
-      const hadAnyInIndex = existingCredits.creditIds.some((id) =>
-        removeLogicalIds.has(id),
-      );
-      if (hadAnyInIndex) {
-        existingCredits.creditIds = existingCredits.creditIds.filter(
-          (x) => !removeLogicalIds.has(x),
-        );
-        existingCredits.updatedAt = new Date().toISOString();
-        await db.put(existingCredits);
-        broadcastCreditsUpdate([existingCredits]);
-      }
+      if (savedIndex && isCurrentDatabase(db, sessionToken)) broadcastCreditsUpdate([savedIndex]);
 
       for (const c of toRemove) {
         const doc = await db.get(c._id);
         await db.remove(doc);
       }
 
+      if (!isCurrentOwner(db, outlineId, sessionToken)) return;
       const removedDocIds = new Set(toRemove.map((c) => c._id));
       setCredits((prev) => prev.filter((c) => !removedDocIds.has(c._id)));
 
