@@ -3,6 +3,17 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { Link, MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import ControllerContextWrapper from "./ControllerContextWrapper";
+import * as startupDiagnostics from "./utils/startupDiagnostics";
+
+jest.mock("./utils/startupDiagnostics", () => {
+  const actual = jest.requireActual("./utils/startupDiagnostics");
+  return {
+    ...actual,
+    getStartupDiagnosticMode: jest.fn(() => "normal"),
+    isStartupDiagnosticsActive: jest.fn(() => true),
+    recordStartupDiagnostic: jest.fn(),
+  };
+});
 
 jest.mock("./context/controllerInfo", () => ({
   __esModule: true,
@@ -45,6 +56,11 @@ const CurrentRoute = () => {
 };
 
 describe("ControllerContextWrapper route lifetimes", () => {
+  beforeEach(() => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("normal");
+    jest.mocked(startupDiagnostics.recordStartupDiagnostic).mockClear();
+  });
+
   it("keeps speculative warming in controller views and keeps the capture manager across viewer and home routes", async () => {
     const user = userEvent.setup();
     render(
@@ -83,5 +99,30 @@ describe("ControllerContextWrapper route lifetimes", () => {
     await user.click(screen.getByRole("link", { name: "Home" }));
     expect(screen.queryByTestId("list-warm-publisher")).not.toBeInTheDocument();
     expect(screen.getByTestId("capture-manager")).toBeInTheDocument();
+  });
+
+  it("skips operational route managers during replication-only diagnostics", () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("replication-only");
+    render(
+      <MemoryRouter initialEntries={["/controller/outline"]}>
+        <Routes>
+          <Route element={<ControllerContextWrapper />}>
+            <Route path="/controller/*" element={<CurrentRoute />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("/controller/outline")).toBeInTheDocument();
+    expect(screen.queryByTestId("capture-manager")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("list-warm-publisher")).not.toBeInTheDocument();
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "manager",
+      "controller-route-managers.skipped",
+      expect.objectContaining({
+        localImageUploads: false,
+        desktopVideoDownloads: false,
+      }),
+    );
   });
 });

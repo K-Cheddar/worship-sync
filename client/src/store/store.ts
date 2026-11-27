@@ -78,9 +78,6 @@ import {
   DBItemLists,
   DBOverlay,
   DBOverlayTemplates,
-  DBPreferences,
-  DBQuickLinksDoc,
-  DBMonitorSettingsDoc,
   MONITOR_SETTINGS_POUCH_ID,
   PREFERENCES_POUCH_ID,
   QUICK_LINKS_POUCH_ID,
@@ -97,6 +94,7 @@ import {
 } from "../types";
 import { allDocsSlice } from "./allDocsSlice";
 import { selectSongLibrary } from "./songLibrarySelectors";
+import { saveCreditOrder } from "../utils/saveCreditOrder";
 import { creditsSlice } from "./creditsSlice";
 import {
   timersSlice,
@@ -3917,6 +3915,7 @@ listenerMiddleware.startListening({
     const dbAtStart = db;
     if (!snapshotCredits.isInitialized) return;
     if (!dbAtStart) return;
+    const contentSessionAtStart = getContentDatabaseSessionToken(dbAtStart.name);
     const fireDbAtStart = globalFireDbInfo.db;
     const fireChurchIdAtStart = globalFireDbInfo.churchId;
 
@@ -3924,6 +3923,27 @@ listenerMiddleware.startListening({
       preDelay.undoable.present.itemLists.selectedList?._id ??
       preDelay.undoable.present.itemLists.activeList?._id;
     if (!snapshotOutlineId) return;
+
+    const owner = snapshotCredits.indexOwner;
+    if (owner && (owner.database !== dbAtStart.name || owner.outlineId !== snapshotOutlineId)) return;
+    const before = (listenerApi.getOriginalState() as RootState).undoable.present.credits;
+    const beforeIds = before.list.map(credit => credit.id);
+    const intendedIds = snapshotCredits.list.map(credit => credit.id);
+
+    // The Firebase debounce may be superseded by any outline. An accepted order edit
+    // belongs to this index and must finish even if another outline is selected.
+    const indexSave = !_.isEqual(beforeIds, intendedIds)
+      ? saveCreditOrder(dbAtStart, snapshotOutlineId, beforeIds, intendedIds)
+          .then(saved => {
+            if (saved &&
+                db === dbAtStart &&
+                globalFireDbInfo.churchId === fireChurchIdAtStart &&
+                getContentDatabaseSessionToken(dbAtStart.name) === contentSessionAtStart) {
+              broadcastCreditsUpdate([saved]);
+            }
+          })
+          .catch(error => console.error("credits index save failed", error))
+      : undefined;
 
     listenerApi.dispatch(
       autosaveIndicatorSlice.actions.beginKeyedDebouncedSave(
@@ -3948,8 +3968,6 @@ listenerMiddleware.startListening({
         afterDelayCredits.isInitialized
           ? afterDelayCredits
           : snapshotCredits;
-
-      const { list } = creditsForPersist;
 
       const fireDb = fireDbAtStart;
       const fireChurchId = fireChurchIdAtStart;
@@ -4005,33 +4023,8 @@ listenerMiddleware.startListening({
           scheduleName,
         );
       }
-
-      const now = new Date().toISOString();
-      const creditIds = list.map((c) => c.id);
-      const docsToBroadcast: DBCredits[] = [];
-
-      try {
-        await ensureCreditsIndexDoc(dbAtStart, snapshotOutlineId);
-        const db_credits: DBCredits = await dbAtStart.get(
-          getCreditsDocId(snapshotOutlineId),
-        );
-        db_credits.creditIds = creditIds;
-        db_credits.updatedAt = now;
-        await dbAtStart.put(db_credits);
-        docsToBroadcast.push(db_credits);
-      } catch (e) {
-        console.error("credits index save failed", e);
-      }
-
-      if (db !== dbAtStart || globalFireDbInfo.churchId !== fireChurchIdAtStart) return;
-      safePostMessage({
-        type: "update",
-        data: {
-          docs: docsToBroadcast,
-          hostId: globalHostId,
-        },
-      });
     } finally {
+      await indexSave;
       listenerApi.dispatch(
         autosaveIndicatorSlice.actions.endKeyedDebouncedSave(
           AUTOSAVE_DEBOUNCE_KEYS.credits,
@@ -4547,102 +4540,31 @@ listenerMiddleware.startListening({
         );
       }
 
-      const pouchDb = dbAtStart;
-      const now = new Date().toISOString();
-
-      const getDoc = async (id: string) => {
-        try {
-          return await pouchDb.get(id);
-        } catch (e) {
-          if ((e as { status?: number }).status === 404) return null;
-          throw e;
-        }
-      };
-
+      const updates = [
+        { _id: PREFERENCES_POUCH_ID, docType: "preferences", preferences },
+        { _id: QUICK_LINKS_POUCH_ID, docType: "quickLinks", quickLinks },
+        { _id: MONITOR_SETTINGS_POUCH_ID, docType: "monitorSettings", monitorSettings },
+      ] as const;
+      const saved = [];
       try {
-        const p0 = (await getDoc(PREFERENCES_POUCH_ID)) as DBPreferences | null;
-        const prefsToPut = (
-          p0
-            ? {
-                ...p0,
-                preferences,
-                updatedAt: now,
-                docType: "preferences" as const,
-              }
-            : {
-                _id: PREFERENCES_POUCH_ID,
-                preferences,
-                createdAt: now,
-                updatedAt: now,
-                docType: "preferences" as const,
-              }
-        ) as DBPreferences;
-        const prefsRes = await pouchDb.put(prefsToPut);
-        const prefsOut = {
-          ...prefsToPut,
-          _rev: (prefsRes as { rev: string }).rev,
-        } as DBPreferences;
-
-        const ql0 = (await getDoc(
-          QUICK_LINKS_POUCH_ID,
-        )) as DBQuickLinksDoc | null;
-        const qlToPut = (
-          ql0
-            ? {
-                ...ql0,
-                quickLinks,
-                updatedAt: now,
-                docType: "quickLinks" as const,
-              }
-            : {
-                _id: QUICK_LINKS_POUCH_ID,
-                quickLinks,
-                createdAt: now,
-                updatedAt: now,
-                docType: "quickLinks" as const,
-              }
-        ) as DBQuickLinksDoc;
-        const qlRes = await pouchDb.put(qlToPut);
-        const qlOut = {
-          ...qlToPut,
-          _rev: (qlRes as { rev: string }).rev,
-        } as DBQuickLinksDoc;
-
-        const m0 = (await getDoc(
-          MONITOR_SETTINGS_POUCH_ID,
-        )) as DBMonitorSettingsDoc | null;
-        const monToPut = (
-          m0
-            ? {
-                ...m0,
-                monitorSettings,
-                updatedAt: now,
-                docType: "monitorSettings" as const,
-              }
-            : {
-                _id: MONITOR_SETTINGS_POUCH_ID,
-                monitorSettings,
-                createdAt: now,
-                updatedAt: now,
-                docType: "monitorSettings" as const,
-              }
-        ) as DBMonitorSettingsDoc;
-        const monRes = await pouchDb.put(monToPut);
-        const monOut = {
-          ...monToPut,
-          _rev: (monRes as { rev: string }).rev,
-        } as DBMonitorSettingsDoc;
-
-        if (db !== dbAtStart) return;
-        safePostMessage({
-          type: "update",
-          data: {
-            docs: [prefsOut, qlOut, monOut],
-            hostId: globalHostId,
-          },
-        });
+        for (const fields of updates) {
+          let existing;
+          try {
+            existing = await dbAtStart.get<Record<string, unknown>>(fields._id);
+          } catch (error) {
+            if ((error as { status?: number }).status !== 404) throw error;
+          }
+          if (existing && Object.entries(fields).every(([key, value]) => _.isEqual(existing[key], value))) continue;
+          const now = new Date().toISOString();
+          const doc = { ...(existing ?? { createdAt: now }), ...fields, updatedAt: now };
+          const result = await dbAtStart.put(doc);
+          saved.push({ ...doc, _rev: result.rev });
+        }
       } catch (error) {
         console.error(error);
+      }
+      if (saved.length && db === dbAtStart && globalFireDbInfo.churchId === fireChurchIdAtStart) {
+        safePostMessage({ type: "update", data: { docs: saved, hostId: globalHostId } });
       }
     } finally {
       listenerApi.dispatch(
@@ -4742,6 +4664,8 @@ listenerMiddleware.startListening({
     try {
       const db_templates: DBOverlayTemplates =
         await dbAtStart.get("overlay-templates");
+      if (_.isEqual(db_templates.templatesByType, templatesByType) &&
+          _.isEqual(db_templates.defaultTemplateIdsByType, defaultTemplateIdsByType)) return;
       db_templates.templatesByType = templatesByType;
       db_templates.defaultTemplateIdsByType = defaultTemplateIdsByType;
       db_templates.updatedAt = new Date().toISOString();
@@ -5030,6 +4954,7 @@ listenerMiddleware.startListening({
       if (dbAtStart) {
         try {
           const db_services: DBServices = await dbAtStart.get("services");
+          if (_.isEqual(db_services.list, list)) return;
           db_services.list = list;
           db_services.updatedAt = new Date().toISOString();
           await dbAtStart.put(db_services);

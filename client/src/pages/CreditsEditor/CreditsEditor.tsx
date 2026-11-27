@@ -408,7 +408,10 @@ const CreditsEditor = ({
           recordAppliedCreditVersion(doc._id, doc._rev);
         }
 
-        dispatch(initiateCreditsList(credits));
+        dispatch(initiateCreditsList(credits, {
+          database: db.name,
+          outlineId,
+        }));
 
         const historyMap = await getAllCreditsHistory(db);
         if (cancelled) return;
@@ -435,7 +438,7 @@ const CreditsEditor = ({
       } catch (error: unknown) {
         if (cancelled) return;
         console.error(error);
-        dispatch(initiateCreditsList([]));
+        dispatch(initiateCreditsList([], { database: db.name, outlineId }));
         dispatch(initiateCreditsHistory({}));
       } finally {
         if (!cancelled) {

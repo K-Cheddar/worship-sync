@@ -2,15 +2,14 @@ import {
   getSettledHeapUsageMb,
   getStartupDiagnosticMode,
   resolveStartupDatabasePlan,
-  resolveStartupReplicationOptions,
   shouldShowStartupDiagnosticsPanel,
   STARTUP_DIAGNOSTIC_MODES,
   type StartupDiagnosticMode,
 } from "./startupDiagnostics";
 
 describe("startup diagnostic isolation modes", () => {
-  it("defaults to diagnostics-enabled normal mode when no mode was selected", () => {
-    expect(getStartupDiagnosticMode()).toBe("normal");
+  it("defaults to diagnostics off when no mode was selected", () => {
+    expect(getStartupDiagnosticMode()).toBe("off");
   });
 
   it("locks only database-isolation routes and keeps pairing and operator setup available", () => {
@@ -19,11 +18,12 @@ describe("startup diagnostic isolation modes", () => {
     expect(shouldShowStartupDiagnosticsPanel("bible-only", "/login/desktop-sso-complete")).toBe(false);
     expect(shouldShowStartupDiagnosticsPanel("skip-databases", "/workstation/operator")).toBe(false);
     expect(shouldShowStartupDiagnosticsPanel("content-only", "/home")).toBe(true);
+    expect(shouldShowStartupDiagnosticsPanel("replication-only", "/home")).toBe(true);
     expect(shouldShowStartupDiagnosticsPanel("bible-only", "/controller")).toBe(true);
     expect(shouldShowStartupDiagnosticsPanel("skip-databases", "/projector")).toBe(true);
   });
 
-  it.each(["normal", "off", "bounded-batches", "reduced-batches", "sequential"] as const)(
+  it.each(["normal", "off", "sequential"] as const)(
     "keeps regular application routes available in %s mode",
     (mode) => {
       expect(shouldShowStartupDiagnosticsPanel(mode, "/home")).toBe(false);
@@ -41,9 +41,8 @@ describe("startup diagnostic isolation modes", () => {
       "normal",
       "skip-databases",
       "content-only",
+      "replication-only",
       "bible-only",
-      "bounded-batches",
-      "reduced-batches",
       "sequential",
     ]);
   });
@@ -56,45 +55,11 @@ describe("startup diagnostic isolation modes", () => {
     ["normal", { content: true, bible: true, sequential: false }],
     ["skip-databases", { content: false, bible: false, sequential: false }],
     ["content-only", { content: true, bible: false, sequential: false }],
+    ["replication-only", { content: true, bible: false, sequential: false }],
     ["bible-only", { content: false, bible: true, sequential: false }],
-    ["bounded-batches", { content: true, bible: true, sequential: false }],
-    ["reduced-batches", { content: true, bible: true, sequential: false }],
     ["sequential", { content: true, bible: true, sequential: true }],
   ])("uses the intended database policy for %s", (mode, expected) => {
     expect(resolveStartupDatabasePlan(mode)).toEqual(expected);
-  });
-
-  it("uses the original per-database baseline and preserves it when diagnostics are off", () => {
-    expect(resolveStartupReplicationOptions("normal", "content")).toEqual({
-      batch_size: 150,
-      batches_limit: 15,
-    });
-    expect(resolveStartupReplicationOptions("normal", "bible")).toEqual({
-      batch_size: 1000,
-      batches_limit: 25,
-    });
-    expect(resolveStartupReplicationOptions("off", "content")).toEqual({
-      batch_size: 150,
-      batches_limit: 15,
-    });
-    expect(resolveStartupReplicationOptions("off", "bible")).toEqual({
-      batch_size: 1000,
-      batches_limit: 25,
-    });
-  });
-
-  it.each([
-    ["bounded-batches", 100, 2],
-    ["reduced-batches", 25, 2],
-  ] as const)("uses %s settings for both databases", (mode, batchSize, batchesLimit) => {
-    expect(resolveStartupReplicationOptions(mode, "content")).toEqual({
-      batch_size: batchSize,
-      batches_limit: batchesLimit,
-    });
-    expect(resolveStartupReplicationOptions(mode, "bible")).toEqual({
-      batch_size: batchSize,
-      batches_limit: batchesLimit,
-    });
   });
 
   it("reports a settled heap estimate only after five recent samples", () => {

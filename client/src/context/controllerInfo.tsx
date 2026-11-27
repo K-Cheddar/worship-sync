@@ -48,7 +48,7 @@ import {
   recordStartupAggregate,
   recordStartupDiagnostic,
   resolveStartupDatabasePlan,
-  resolveStartupReplicationOptions,
+  REPLICATION_OPTIONS,
   type StartupDatabaseKind,
   type StartupReplicationRun,
 } from "../utils/startupDiagnostics";
@@ -577,14 +577,8 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, [databaseSessionKey, initialStartupMetadata]);
 
   useEffect(() => {
-    const contentReplicationOptions = resolveStartupReplicationOptions(
-      startupDiagnosticMode,
-      "content",
-    );
-    const bibleReplicationOptions = resolveStartupReplicationOptions(
-      startupDiagnosticMode,
-      "bible",
-    );
+    const contentReplicationOptions = REPLICATION_OPTIONS.content;
+    const bibleReplicationOptions = REPLICATION_OPTIONS.bible;
     recordStartupDiagnostic("startup", "database-plan", {
       mode: startupDiagnosticMode,
       content: startupDatabasePlan.content,
@@ -592,11 +586,11 @@ const ControllerInfoProvider = ({ children }: any) => {
       sequential: startupDatabasePlan.sequential,
       contentInitialPullBatchSize: contentReplicationOptions.batch_size,
       contentInitialPullBatchesLimit: contentReplicationOptions.batches_limit,
-      contentInitialPullMaximumDocumentsInFlight:
+      contentInitialPullNominalQueuedChangeRows:
         contentReplicationOptions.batch_size * contentReplicationOptions.batches_limit,
       bibleInitialPullBatchSize: bibleReplicationOptions.batch_size,
       bibleInitialPullBatchesLimit: bibleReplicationOptions.batches_limit,
-      bibleInitialPullMaximumDocumentsInFlight:
+      bibleInitialPullNominalQueuedChangeRows:
         bibleReplicationOptions.batch_size * bibleReplicationOptions.batches_limit,
     });
   }, [startupDatabasePlan.bible, startupDatabasePlan.content, startupDatabasePlan.sequential, startupDiagnosticMode]);
@@ -624,6 +618,13 @@ const ControllerInfoProvider = ({ children }: any) => {
   }, [loginState, databaseSessionKey]);
 
   useEffect(() => {
+    if (startupDiagnosticMode === "replication-only") {
+      setItemCacheHydratedFor(null);
+      recordStartupDiagnostic("redux", "item-cache-subscriber.skipped", {
+        mode: startupDiagnosticMode,
+      });
+      return;
+    }
     const expectedName = isGuestSession ? GUEST_DATABASE_NAME : `worship-sync-${activeDatabaseKey}`;
     if (!db || db.name !== expectedName || dbSessionRef.current !== databaseSessionKey || !(isGuestSession || isAuthenticatedSession)) {
       dispatch(resetItemCache());
@@ -648,7 +649,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         ? { onHydrated: () => setItemCacheHydratedFor(owner) }
         : {}),
     });
-  }, [db, activeDatabaseKey, databaseSessionKey, cacheSession, isGuestSession, isAuthenticatedSession, isSequentialStartup, dispatch, reduxStore]);
+  }, [db, activeDatabaseKey, databaseSessionKey, cacheSession, isGuestSession, isAuthenticatedSession, isSequentialStartup, startupDiagnosticMode, dispatch, reduxStore]);
 
   const updater = useRef(new EventTarget());
   const syncRef = useRef<any>(null);
@@ -986,10 +987,7 @@ const ControllerInfoProvider = ({ children }: any) => {
         .on("change", () => {
           if (syncTimeout) clearTimeout(syncTimeout);
           syncTimeout = setTimeout(() => {
-            const replicationOptions = resolveStartupReplicationOptions(
-              startupDiagnosticMode,
-              "bible",
-            );
+            const replicationOptions = REPLICATION_OPTIONS.bible;
             const diagnosticRun = beginStartupReplication("bible", {
               kind: "live-sync",
               batchSize: replicationOptions.batch_size,
@@ -1033,7 +1031,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           }
         });
     },
-    [getCouchSession, startupDiagnosticMode]
+    [getCouchSession]
   );
 
   useEffect(() => {
@@ -1550,21 +1548,18 @@ const ControllerInfoProvider = ({ children }: any) => {
         setReplicationPhase(sessionAtStart, "preparing");
         noteStartupActivity(sessionAtStart, true);
         const progressForThisReplication = createReplicationProgressTracker();
-        const replicationOptions = resolveStartupReplicationOptions(
-          startupDiagnosticMode,
-          "content",
-        );
+        const replicationOptions = REPLICATION_OPTIONS.content;
         initialPullDiagnosticRun = beginStartupReplication("content", {
           batchSize: replicationOptions.batch_size,
           batchesLimit: replicationOptions.batches_limit,
         });
 
-        replicateRef.current = remoteDb.replicate
-          .to(localDb, {
-            retry: true,
-            ...replicationOptions,
-            selector: { _id: { $ne: "media" } },
-          })
+        const initialReplication = remoteDb.replicate.to(localDb, {
+          retry: true,
+          ...replicationOptions,
+          selector: { _id: { $ne: "media" } },
+        });
+        replicateRef.current = initialReplication
           .on("change", (info) => {
             if (!isCurrentSession()) return;
             const change = info as { pending?: unknown; docs?: unknown[] };
@@ -1647,7 +1642,15 @@ const ControllerInfoProvider = ({ children }: any) => {
               diagnostic: sanitizeStartupDiagnostic(error),
             });
           })
-          .on("complete", (result: { status?: string; ok?: boolean; errors?: unknown[] }) => {
+          .on("complete", (result: {
+            status?: string;
+            ok?: boolean;
+            errors?: unknown[];
+            docs_read?: number;
+            docs_written?: number;
+            doc_write_failures?: number;
+            last_seq?: unknown;
+          }) => {
             initialPullDiagnosticRun?.finish(
               result?.status === "cancelled" ? "cancelled" : "complete",
             );
@@ -1685,11 +1688,15 @@ const ControllerInfoProvider = ({ children }: any) => {
                 // safely wait for another successful initial pull.
                 console.error("Could not save the local content replication checkpoint:", error);
               }
-              const cacheDrainStartedAt = performance.now();
-              await flushItemCacheChanges(localDb);
-              recordStartupDiagnostic("content", "item-cache.pending-batches-drained", {
-                durationMs: Math.round(performance.now() - cacheDrainStartedAt),
-              });
+              if (startupDiagnosticMode === "replication-only") {
+                recordStartupDiagnostic("content", "item-cache.hydration-skipped");
+              } else {
+                const cacheDrainStartedAt = performance.now();
+                await flushItemCacheChanges(localDb);
+                recordStartupDiagnostic("content", "item-cache.pending-batches-drained", {
+                  durationMs: Math.round(performance.now() - cacheDrainStartedAt),
+                });
+              }
               if (!isCurrentSession()) return;
               contentDatabaseSession.markInitialReplicationComplete();
               if (isSequentialStartup) {
@@ -1707,12 +1714,21 @@ const ControllerInfoProvider = ({ children }: any) => {
               noteStartupActivity(sessionAtStart, true);
               initialRemoteDatabaseRef.current = localDb;
               contentDbRef.current = localDb;
-              scheduleSongV2CleanupMaintenance(localDb, true);
-              if (broadcastDatabaseKey) {
-                updateGlobalBroadcast(broadcastDatabaseKey);
-              }
-              if (isAuthenticatedSession) {
-                syncDb(localDb, remoteDb, activeDatabaseKey);
+              if (startupDiagnosticMode === "replication-only") {
+                recordStartupDiagnostic("content", "replication-only.completed", {
+                  docsRead: (result as { docs_read?: number }).docs_read ?? null,
+                  docsWritten: (result as { docs_written?: number }).docs_written ?? null,
+                  documentWriteFailures: (result as { doc_write_failures?: number }).doc_write_failures ?? null,
+                  lastSequence: (result as { last_seq?: string | number }).last_seq ?? null,
+                });
+              } else {
+                scheduleSongV2CleanupMaintenance(localDb, true);
+                if (broadcastDatabaseKey) {
+                  updateGlobalBroadcast(broadcastDatabaseKey);
+                }
+                if (isAuthenticatedSession) {
+                  syncDb(localDb, remoteDb, activeDatabaseKey);
+                }
               }
             })();
           });
@@ -1839,10 +1855,7 @@ const ControllerInfoProvider = ({ children }: any) => {
           return authRecovery;
         };
 
-        const replicationOptions = resolveStartupReplicationOptions(
-          startupDiagnosticMode,
-          "bible",
-        );
+        const replicationOptions = REPLICATION_OPTIONS.bible;
         biblePullDiagnosticRun = beginStartupReplication("bible", {
           batchSize: replicationOptions.batch_size,
           batchesLimit: replicationOptions.batches_limit,

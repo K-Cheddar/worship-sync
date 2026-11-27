@@ -334,6 +334,30 @@ describe("ControllerInfoProvider", () => {
     );
   });
 
+  it("runs a full content pull without hydrating the cache or starting live consumers", async () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("replication-only");
+    resolveCouchSession();
+    renderAuthenticatedStartup();
+
+    await waitFor(() => expect(replicationCalls).toHaveLength(1));
+    expect(replicationCalls[0].options).toEqual(expect.objectContaining({
+      batch_size: 150,
+      batches_limit: 15,
+      selector: { _id: { $ne: "media" } },
+    }));
+    await waitFor(() => expect(screen.getByTestId("startup-stage")).toHaveTextContent("completed"));
+
+    const localContentDb = mockPouchInstances.find(({ name }) => name === "worship-sync-startup-test-church");
+    expect(localContentDb?.allDocs).not.toHaveBeenCalled();
+    expect(localContentDb?.sync).not.toHaveBeenCalled();
+    expect(mockPouchInstances.some(({ name }) => name.includes("bibles"))).toBe(false);
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "redux",
+      "item-cache-subscriber.skipped",
+      { mode: "replication-only" },
+    );
+  });
+
   it("initializes Bible only when its authenticated database session is ready", async () => {
     jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("bible-only");
     resolveCouchSession();
@@ -348,39 +372,20 @@ describe("ControllerInfoProvider", () => {
     expect(mockPouchInstances.some((instance) => instance.name === "worship-sync-startup-test-church")).toBe(false);
   });
 
-  it("uses the bounded queue for both database initial pulls", async () => {
-    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("bounded-batches");
+  it("passes the production settings to both initial pulls with no stored mode", async () => {
+    const diagnostics = jest.requireActual<typeof startupDiagnostics>("../utils/startupDiagnostics");
+    expect(sessionStorage.getItem(diagnostics.STARTUP_DIAGNOSTIC_STORAGE_KEY)).toBeNull();
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockImplementation(diagnostics.getStartupDiagnosticMode);
     resolveCouchSession();
     renderAuthenticatedStartup();
 
     await waitFor(() => expect(replicationCalls).toHaveLength(2));
-    expect(replicationCalls.map(({ options }) => [options?.batch_size, options?.batches_limit])).toEqual([
-      [100, 2],
-      [100, 2],
-    ]);
-    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
-      "startup",
-      "database-plan",
-      expect.objectContaining({
-        mode: "bounded-batches",
-        contentInitialPullBatchSize: 100,
-        contentInitialPullBatchesLimit: 2,
-        bibleInitialPullBatchSize: 100,
-        bibleInitialPullBatchesLimit: 2,
-      }),
-    );
-  });
-
-  it("uses smaller batch and queue settings for both databases", async () => {
-    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("reduced-batches");
-    resolveCouchSession();
-    renderAuthenticatedStartup();
-
-    await waitFor(() => expect(replicationCalls).toHaveLength(2));
-    expect(replicationCalls.map(({ options }) => [options?.batch_size, options?.batches_limit])).toEqual([
-      [25, 2],
-      [25, 2],
-    ]);
+    expect(replicationCalls.find(({ name }) => !name.includes("bibles"))?.options).toMatchObject({
+      batch_size: 150, batches_limit: 15, selector: { _id: { $ne: "media" } },
+    });
+    expect(replicationCalls.find(({ name }) => name.includes("bibles"))?.options).toMatchObject({
+      batch_size: 1000, batches_limit: 25,
+    });
   });
 
   it("waits for content's initial pull before opening the Bible database in sequential mode", async () => {
