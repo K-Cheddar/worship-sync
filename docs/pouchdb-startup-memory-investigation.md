@@ -1,8 +1,8 @@
 # PouchDB startup memory investigation
 
-> Status note, November 27, 2026. The browser method instrumentation and payload sizing mode described below have been removed from the application. The retained startup diagnostics are opt-in, tab-scoped, and default to off. The isolated conflict benchmark results and remaining production verification are recorded in [credits replication benchmark](credits-replication-benchmark.md).
+> Status note, November 27, 2026. Selective bounded writes for expensive content initial-pull revision groups and batch-level diagnostics are now implemented. Exact credits fixture replays passed correctness checks; four-revision runs sampled 314–425 MiB, including interrupted/resumed runs. The implementation keeps the original feed batch settings. Full desktop startup and low-end Android staging acceptance remain outstanding; results and instructions are in [credits replication benchmark](credits-replication-benchmark.md).
 
-**Scope:** investigation on branch `in-progress`. Production replication settings, PouchDB behavior, and dependencies remain unchanged. Startup diagnostics remain available for explicit, session-scoped investigations; the revision inspector is read-only.
+**Scope:** investigation and implementation on branch `in-progress`. PouchDB and replication option values are unchanged. The content initial-pull target writer now selectively bounds complex revision groups. Startup diagnostics are opt-in and default to off; the revision inspector is read-only.
 
 ## Findings so far
 
@@ -39,7 +39,7 @@ The large conflict cluster and deep histories are **confirmed inputs**, not a co
 2. **Repeated revision-tree serialization and local merge work (confirmed hot functions; amplification unmeasured).** The profiled JSON functions encode/decode metadata; the `bulkDocs` path merges each same-ID leaf and encodes metadata for storage. The isolated benchmark measures metadata codec time and tree size, but it does not identify a peak operation in the full app.
 3. **Large ordinary bodies (real but insufficient alone).** The biggest observed leaf bodies were roughly 0.49 MB and 0.45 MB. Many song revisions together could make a queued batch substantial, but the inspector does not prove they were live together at the stall.
 4. **Application cache and other consumers (still open).** Prior cache diagnostics showed about 1.77 seconds total cache work. The opt-in `replication-only` mode can isolate the initial content pull, but no fresh-profile comparison on the saved church fixture has been completed.
-5. **Adapter-wide response retention or attachment processing (still open).** The scan did not show a single huge body. A targeted Chrome Performance trace may help identify response retention or attachment work; the retained startup snapshot no longer records per-operation PouchDB timings or payload sizes. No PouchDB fork or dependency change is justified by the available evidence.
+5. **Adapter-wide response retention or attachment processing (still open).** The scan did not show a single huge body. A targeted Chrome Performance trace may help identify response retention or attachment work. The new snapshot records batch-level remote response, IndexedDB write, processing, and sampled-heap timings; it does not instrument every PouchDB operation or serialize payload sizes. No PouchDB fork or dependency change is justified by the available evidence.
 
 ### Upstream version check
 
@@ -65,14 +65,29 @@ The script pages the full feed and measures current leaf bodies, with request ch
 
 ## Fresh-profile startup diagnostics
 
-Use a new browser profile with an empty IndexedDB for a fresh-sync measurement. Do not reset a profile containing local edits or pending changes. Before signing in, set the diagnostic mode in that tab's DevTools Console and reload:
+Use a new browser profile with an empty IndexedDB for a fresh-sync measurement against staging. Do not reset a profile containing local edits or pending changes. For a full startup measurement, set the diagnostic mode in that tab's DevTools Console and reload:
+
+```js
+sessionStorage.setItem("worshipsync.startup-diagnostics.mode", "normal");
+location.reload();
+```
+
+Diagnostics are opt-in and scoped to that browser tab. Production Sentry reporting of significant replication batches works independently of detailed mode. The supported snapshot is available at `window.__worshipSyncStartupDiagnostics.snapshot()`. To export it in Chrome or Edge DevTools, run:
+
+```js
+copy(JSON.stringify(window.__worshipSyncStartupDiagnostics.snapshot(), null, 2));
+```
+
+The snapshot includes expensive replication batches, likely document contributors, bounded-write statistics, processing and write timings, five-second heap samples, long-task totals, and recovered suspected interruptions. Contributor document IDs appear only in this local detailed snapshot; keep the exported file private. Heap sampling can miss brief peaks, and `performance.memory` is browser-specific. If unsupported, heap fields are `null` and the remaining workload timings are still collected.
+
+Use `replication-only` in a separate fresh profile to isolate the complete content pull from the Bible database, item cache, and live sync:
 
 ```js
 sessionStorage.setItem("worshipsync.startup-diagnostics.mode", "replication-only");
 location.reload();
 ```
 
-Diagnostics are opt-in and scoped to that browser tab. The supported snapshot is available at `window.__worshipSyncStartupDiagnostics.snapshot()`. It reports five-second heap samples, long-task totals, lightweight startup events, and active replication counters. It no longer instruments PouchDB methods or measures per-batch payload sizes; do not expect `currentBatch`, `activeOperations`, or exact document IDs in the snapshot. Heap sampling can miss brief peaks, and `performance.memory` is browser-specific.
+If startup is interrupted, reload the same profile and church, then inspect `recoveredInterruptedReplicationBatches` in the snapshot. A pending record becomes `suspected-interruption` after five minutes without a live two-minute session lease; the page rechecks automatically. It is a suspected interruption, not proof of a browser crash. Switching accounts or churches cancels this tab's unfinished entries and clears the old scope's history when no other tab is active; another active tab's history is preserved.
 
 The initial content pull continues to use `batch_size: 150` and `batches_limit: 15`, and Bible uses `1000` and `25`. These settings do not change with diagnostic mode. Existing live-sync settings are unchanged. To return the test tab to normal startup, set the key to `off` (or remove it) and reload:
 
@@ -81,13 +96,14 @@ sessionStorage.setItem("worshipsync.startup-diagnostics.mode", "off");
 location.reload();
 ```
 
-Compare runs only when the browser/build, dataset, and profile conditions match. Development builds, DevTools recording, and heap sampling affect timing and memory. The synthetic conflict benchmark and its limitations are in [credits replication benchmark](credits-replication-benchmark.md); a target-device run with the saved church fixture remains required.
+Compare runs only when the browser/build, dataset, and profile conditions match. Development builds, DevTools recording, and heap sampling affect timing and memory. The exact saved-fixture benchmark and its limitations are in [credits replication benchmark](credits-replication-benchmark.md). Keep the fixture local and run fresh desktop and Android validation through staging; never run a PouchDB replication benchmark against production because it can write checkpoints.
 
 ## Changes and verification
 
-- Startup diagnostics are opt-in, session-scoped, and default to `off`. Their retained measurements are low-overhead aggregates and sampled heap/long-task data.
+- Startup diagnostics are opt-in, session-scoped, and default to `off`. Expensive-batch summaries are stored only for candidate batches; local history is capped at 15 entries, 16 KiB, and 14 days.
 - The production initial-pull settings remain content `150 by 15` and Bible `1000 by 25`; live-sync settings are unchanged.
 - `scripts/inspect-couchdb-revisions.mjs` hashes document IDs by default and uses read-only GET plus `_bulk_get` requests.
-- No automatic conflict cleanup, tombstone purge, history-limit change, or permanent PouchDB write-batching change was made. The isolated bounded-write result remains experimental.
+- Complex content initial-pull revision groups use four-revision sequential writes when there are at least 8 incoming leaves and their estimated history complexity is at least 8,000. Ordinary documents retain bulk writes. Winning revisions, losing revisions, tombstones, attachments and revision histories are preserved.
+- No automatic conflict cleanup, tombstone purge, or history-limit change was made. The selected strategy passed the isolated exact-fixture correctness and resume checks; full desktop and low-end Android staging validation are still required.
 
 Focused tests, type checks, lint, and build results are recorded in the implementation handoff. They do not replace the required low-end Android fresh-sync verification.

@@ -47,11 +47,18 @@ import {
   isStartupDiagnosticsActive,
   recordStartupAggregate,
   recordStartupDiagnostic,
+  beginReplicationBatchDiagnostics,
+  configureReplicationDiagnosticScope,
+  finishReplicationBatchDiagnostics,
+  markReplicationBatchCheckpoint,
+  recordReplicationWriteTransaction,
   resolveStartupDatabasePlan,
   REPLICATION_OPTIONS,
+  type ReplicationBatchDiagnosticToken,
   type StartupDatabaseKind,
   type StartupReplicationRun,
 } from "../utils/startupDiagnostics";
+import { installBoundedRevisionWrites } from "../utils/revisionReplication";
 
 export type ConnectionStatus = {
   status: "connecting" | "retrying" | "failed" | "connected";
@@ -402,7 +409,7 @@ const ControllerInfoProvider = ({ children }: any) => {
   // A full Redux session reset retires the feed even if the database name is unchanged.
   const cacheSession = useSelector((state) => state.allDocs.session);
 
-  const { database, churchId, userId, loginState, logout, setLoginState, login } =
+  const { database, churchId, userId, device, loginState, logout, setLoginState, login } =
     useContext(GlobalInfoContext) || {};
 
   const isAuthenticatedSession = loginState === "success";
@@ -595,6 +602,28 @@ const ControllerInfoProvider = ({ children }: any) => {
     });
   }, [startupDatabasePlan.bible, startupDatabasePlan.content, startupDatabasePlan.sequential, startupDiagnosticMode]);
 
+  useEffect(() => {
+    let active = true;
+    const scopeSessionKey = databaseSessionKey;
+    void configureReplicationDiagnosticScope({
+      churchId: churchId || "",
+      accountId: contentAccountId,
+      databaseKey: activeDatabaseKey,
+      deviceId: device?.deviceId,
+    }).then(({ recoveredInterruptedBatches }) => {
+      if (!active || databaseSessionRef.current !== scopeSessionKey) return;
+      if (recoveredInterruptedBatches > 0) {
+        recordStartupDiagnostic("content", "replication.interrupted-batches-recovered", {
+          count: recoveredInterruptedBatches,
+          reportKind: "suspected-interruption",
+        });
+      }
+    }).catch(() => {
+      // Diagnostic scope setup is optional and cannot block database startup.
+    });
+    return () => { active = false; };
+  }, [activeDatabaseKey, churchId, contentAccountId, databaseSessionKey, device?.deviceId]);
+
   // Update broadcast channel when database changes
   useEffect(() => {
     if (broadcastDatabaseKey) {
@@ -665,6 +694,13 @@ const ControllerInfoProvider = ({ children }: any) => {
   const remoteDbRef = useRef<PouchDB.Database | null>(null);
   const syncRetryRef = useRef(0);
   const replicateRef = useRef<any>(null);
+  const initialContentRevisionWritesRef = useRef<ReturnType<typeof installBoundedRevisionWrites> | null>(null);
+  const initialContentCheckpointTokensRef = useRef<ReplicationBatchDiagnosticToken[]>([]);
+  const initialContentFetchTimingRef = useRef({
+    totalDurationMs: 0,
+    requestCount: 0,
+    lastBatchDurationMs: 0,
+  });
   const bibleSyncRef = useRef<any>(null);
   const bibleSyncRetryRef = useRef(0);
   const bibleReplicateRef = useRef<any>(null);
@@ -674,6 +710,19 @@ const ControllerInfoProvider = ({ children }: any) => {
   );
   const lastSessionFailureDiagnosticRef = useRef<string | undefined>(undefined);
   const prevLocalDbIdentityRef = useRef<string | null>(null);
+
+  const cancelInitialContentReplication = useCallback(async () => {
+    const revisionWrites = initialContentRevisionWritesRef.current;
+    revisionWrites?.cancel();
+    initialContentRevisionWritesRef.current = null;
+    revisionWrites?.restore();
+    initialContentCheckpointTokensRef.current.splice(0).forEach((token) =>
+      markReplicationBatchCheckpoint(token, "cancelled"),
+    );
+    const replication = replicateRef.current;
+    replicateRef.current = null;
+    await replication?.cancel();
+  }, []);
 
   const getCouchSession = useCallback(async (
     canCommit: () => boolean = () => true,
@@ -1443,6 +1492,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     ) return;
     let cancelled = false;
     let initialPullDiagnosticRun: StartupReplicationRun | null = null;
+    let revisionWritesForThisPull: ReturnType<typeof installBoundedRevisionWrites> | null = null;
     const sessionAtStart = databaseSessionKey;
     const isCurrentSession = () => !cancelled && databaseSessionRef.current === sessionAtStart;
     const localDb = db;
@@ -1506,7 +1556,7 @@ const ControllerInfoProvider = ({ children }: any) => {
             ),
           });
           initialPullDiagnosticRun?.finish("cancelled");
-          replicateRef.current?.cancel();
+          await cancelInitialContentReplication();
         })().finally(() => {
           authRecovery = null;
         });
@@ -1519,10 +1569,19 @@ const ControllerInfoProvider = ({ children }: any) => {
         let remoteDb: PouchDB.Database;
         try {
           remoteDb = new PouchDB(remoteUrl, {
-            fetch: (url, options: any) => {
+            fetch: async (url, options: any) => {
               const opts = options ?? {};
               opts.credentials = "include";
-              return fetch(url, opts);
+              const startedAt = performance.now();
+              try {
+                return await fetch(url, opts);
+              } finally {
+                if (initialContentRevisionWritesRef.current) {
+                  const durationMs = Math.max(0, performance.now() - startedAt);
+                  initialContentFetchTimingRef.current.totalDurationMs += durationMs;
+                  initialContentFetchTimingRef.current.requestCount += 1;
+                }
+              }
             },
           });
           recordStartupDiagnostic("content", "remote-client.created");
@@ -1540,7 +1599,8 @@ const ControllerInfoProvider = ({ children }: any) => {
         contentLiveSyncDiagnosticRunRef.current?.finish("replaced");
         contentLiveSyncDiagnosticRunRef.current = null;
         syncRef.current?.cancel();
-        replicateRef.current?.cancel();
+        await cancelInitialContentReplication();
+        if (!isCurrentSession()) return;
         initialContentReplicationActivityRef.current?.release();
         const activePullActivity = trackContentReplication(localDb.name);
         pullActivity = activePullActivity;
@@ -1548,11 +1608,71 @@ const ControllerInfoProvider = ({ children }: any) => {
         setReplicationPhase(sessionAtStart, "preparing");
         noteStartupActivity(sessionAtStart, true);
         const progressForThisReplication = createReplicationProgressTracker();
+        let latestPendingChangeRows: number | null = null;
         const replicationOptions = REPLICATION_OPTIONS.content;
         initialPullDiagnosticRun = beginStartupReplication("content", {
           batchSize: replicationOptions.batch_size,
           batchesLimit: replicationOptions.batches_limit,
         });
+        initialContentCheckpointTokensRef.current = [];
+        initialContentFetchTimingRef.current = {
+          totalDurationMs: 0,
+          requestCount: 0,
+          lastBatchDurationMs: 0,
+        };
+        const revisionWrites = installBoundedRevisionWrites(
+          localDb as unknown as { bulkDocs: (...args: unknown[]) => Promise<unknown[]> },
+          {
+            isCancelled: () => !isCurrentSession(),
+            onBatchStart: (summary, boundedWriteProcessingActivated) => {
+              const fetchTiming = initialContentFetchTimingRef.current;
+              const fetchHeadersDurationMs = Math.max(
+                0,
+                fetchTiming.totalDurationMs - fetchTiming.lastBatchDurationMs,
+              );
+              fetchTiming.lastBatchDurationMs = fetchTiming.totalDurationMs;
+              return beginReplicationBatchDiagnostics(
+                summary,
+                boundedWriteProcessingActivated,
+                {
+                  databaseCategory: "content",
+                  replicationKind: "initial-pull",
+                  pendingChangeRows: latestPendingChangeRows,
+                  fetchHeadersDurationMs,
+                  detailed: isStartupDiagnosticsActive(),
+                },
+              );
+            },
+            onTransaction: (token, transaction) => {
+              if (token && typeof token === "object" && "summary" in token) {
+                recordReplicationWriteTransaction(
+                  token as ReplicationBatchDiagnosticToken,
+                  transaction,
+                );
+              }
+            },
+            onBatchFinish: (token, summary, metrics, outcome) => {
+              if (!token || typeof token !== "object" || !("summary" in token)) return;
+              const diagnosticToken = token as ReplicationBatchDiagnosticToken;
+              finishReplicationBatchDiagnostics(
+                diagnosticToken,
+                summary,
+                metrics,
+                outcome,
+              );
+              if (outcome === "complete") {
+                initialContentCheckpointTokensRef.current.push(diagnosticToken);
+              } else {
+                markReplicationBatchCheckpoint(
+                  diagnosticToken,
+                  outcome === "cancelled" ? "cancelled" : "failure",
+                );
+              }
+            },
+          },
+        );
+        revisionWritesForThisPull = revisionWrites;
+        initialContentRevisionWritesRef.current = revisionWrites;
 
         const initialReplication = remoteDb.replicate.to(localDb, {
           retry: true,
@@ -1563,6 +1683,9 @@ const ControllerInfoProvider = ({ children }: any) => {
           .on("change", (info) => {
             if (!isCurrentSession()) return;
             const change = info as { pending?: unknown; docs?: unknown[] };
+            latestPendingChangeRows = Number.isFinite(change.pending)
+              ? Number(change.pending)
+              : null;
             initialPullDiagnosticRun?.recordBatch(change.docs?.length ?? 0);
             noteStartupActivity(sessionAtStart);
             if (Array.isArray(change.docs) && change.docs.length > 0) {
@@ -1594,6 +1717,13 @@ const ControllerInfoProvider = ({ children }: any) => {
                 : current,
             );
           })
+          .on("checkpoint" as any, (info: { checkpoint?: unknown }) => {
+            if (!info || !Object.prototype.hasOwnProperty.call(info, "checkpoint")) return;
+            const checkpointedBatch = initialContentCheckpointTokensRef.current.shift();
+            if (checkpointedBatch) {
+              markReplicationBatchCheckpoint(checkpointedBatch, "complete");
+            }
+          })
           .on("paused", (error?: unknown) => {
             if (!isCurrentSession()) return;
             if (error) {
@@ -1621,9 +1751,16 @@ const ControllerInfoProvider = ({ children }: any) => {
           })
           .on("error", async (error: any) => {
             initialPullDiagnosticRun?.finish("error");
+            initialContentCheckpointTokensRef.current.splice(0).forEach((token) =>
+              markReplicationBatchCheckpoint(token, "failure"),
+            );
+            if (initialContentRevisionWritesRef.current === revisionWrites) {
+              revisionWrites.restore();
+              initialContentRevisionWritesRef.current = null;
+            }
             if (!isCurrentSession()) return;
             pullFailed = true;
-            console.error("Replication error:", error);
+            console.error("Replication error:", sanitizeStartupDiagnostic(error));
             if (error.status === 401 || error.status === 403) {
               await recoverInitialReplicationSession();
               return;
@@ -1654,6 +1791,18 @@ const ControllerInfoProvider = ({ children }: any) => {
             initialPullDiagnosticRun?.finish(
               result?.status === "cancelled" ? "cancelled" : "complete",
             );
+            const terminalBatchOutcome = result?.status === "cancelled"
+              ? "cancelled"
+              : result?.ok === false || result?.errors?.length
+                ? "failure"
+                : "complete";
+            initialContentCheckpointTokensRef.current.splice(0).forEach((token) =>
+              markReplicationBatchCheckpoint(token, terminalBatchOutcome),
+            );
+            if (initialContentRevisionWritesRef.current === revisionWrites) {
+              revisionWrites.restore();
+              initialContentRevisionWritesRef.current = null;
+            }
             if (!isCurrentSession() || pullFailed) return;
             if (
               result?.status === "cancelled" ||
@@ -1686,7 +1835,10 @@ const ControllerInfoProvider = ({ children }: any) => {
                 // The current session is still ready from the successful pull;
                 // without this local-only record, a later offline restart will
                 // safely wait for another successful initial pull.
-                console.error("Could not save the local content replication checkpoint:", error);
+                console.error(
+                  "Could not save the local content replication checkpoint:",
+                  sanitizeStartupDiagnostic(error),
+                );
               }
               if (startupDiagnosticMode === "replication-only") {
                 recordStartupDiagnostic("content", "item-cache.hydration-skipped");
@@ -1734,12 +1886,20 @@ const ControllerInfoProvider = ({ children }: any) => {
           });
       } catch (error) {
         initialPullDiagnosticRun?.finish("error");
+        if (revisionWritesForThisPull &&
+          initialContentRevisionWritesRef.current === revisionWritesForThisPull) {
+          revisionWritesForThisPull.restore();
+          initialContentRevisionWritesRef.current = null;
+        }
+        initialContentCheckpointTokensRef.current.splice(0).forEach((token) =>
+          markReplicationBatchCheckpoint(token, "failure"),
+        );
         pullActivity?.release();
         if (initialContentReplicationActivityRef.current === pullActivity) {
           initialContentReplicationActivityRef.current = null;
         }
         if (isCurrentSession()) {
-          console.error("Error connecting content replication:", error);
+          console.error("Error connecting content replication:", sanitizeStartupDiagnostic(error));
           setStartupFailure(sessionAtStart, {
             kind: "remote-database",
             message: "WorshipSync couldn't prepare database synchronization. Check your server connection, then reload WorshipSync.",
@@ -1752,11 +1912,11 @@ const ControllerInfoProvider = ({ children }: any) => {
     return () => {
       cancelled = true;
       initialPullDiagnosticRun?.finish("cancelled");
-      replicateRef.current?.cancel();
+      void cancelInitialContentReplication();
       initialContentReplicationActivityRef.current?.release();
       initialContentReplicationActivityRef.current = null;
     };
-  }, [shouldInitializeContentDatabase, db, hasCouchSession, isAuthenticatedSession, canStartContentPull, isSequentialStartup, databaseSessionKey, activeDatabaseKey, broadcastDatabaseKey, isGuestSession, initialPullRestartVersion, syncDb, getCouchSession, noteStartupActivity, setStartupFailure, setReplicationPhase, startupDiagnosticMode]);
+  }, [shouldInitializeContentDatabase, db, hasCouchSession, isAuthenticatedSession, canStartContentPull, isSequentialStartup, databaseSessionKey, activeDatabaseKey, broadcastDatabaseKey, isGuestSession, initialPullRestartVersion, syncDb, getCouchSession, noteStartupActivity, setStartupFailure, setReplicationPhase, startupDiagnosticMode, cancelInitialContentReplication]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1990,7 +2150,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     contentLiveSyncDiagnosticRunRef.current = null;
     await syncRef.current?.cancel();
     await bibleSyncRef.current?.cancel();
-    await replicateRef.current?.cancel();
+    await cancelInitialContentReplication();
     await bibleReplicateRef.current?.cancel();
     manualContentPullRef.current?.cancel();
     contentSyncActivityRef.current?.release();
@@ -2031,7 +2191,7 @@ const ControllerInfoProvider = ({ children }: any) => {
     }
     setIsDbSetup(false);
     setIsBibleDbSetup(false);
-  }, [db, bibleDb, dispatch]);
+  }, [db, bibleDb, dispatch, cancelInitialContentReplication]);
 
   useEffect(() => {
     const prev = prevLocalDbIdentityRef.current;
@@ -2098,7 +2258,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       initialContentReplicationActivityRef.current?.release();
       initialContentReplicationActivityRef.current = null;
       bibleSyncRef.current?.cancel();
-      replicateRef.current?.cancel();
+      void cancelInitialContentReplication();
       bibleReplicateRef.current?.cancel();
       manualContentPullRef.current?.cancel();
       remoteDbRef.current = null;
@@ -2106,7 +2266,7 @@ const ControllerInfoProvider = ({ children }: any) => {
       manualContentPullActivityRef.current = null;
       manualContentPullRef.current = null;
     };
-  }, []);
+  }, [cancelInitialContentReplication]);
 
   const value = useMemo(
     () => ({

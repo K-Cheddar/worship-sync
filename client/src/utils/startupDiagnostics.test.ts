@@ -66,4 +66,12 @@ describe("startup diagnostic isolation modes", () => {
     expect(getSettledHeapUsageMb([1, 2, 3, 4])).toBeNull();
     expect(getSettledHeapUsageMb([10, 7, 9, 4, 8, 6])).toBe(7);
   });
+
+  it("exposes replication diagnostics through the existing startup snapshot", () => {
+    const snapshot = window.__worshipSyncStartupDiagnostics?.snapshot();
+
+    expect(snapshot).toHaveProperty("expensiveReplicationBatches");
+    expect(snapshot).toHaveProperty("boundedRevisionWriteStatistics");
+    expect(snapshot).toHaveProperty("recoveredInterruptedReplicationBatches");
+  });
 });

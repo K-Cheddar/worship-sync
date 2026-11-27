@@ -1,3 +1,15 @@
+import {
+  beginReplicationBatchDiagnostics,
+  configureReplicationDiagnosticScope,
+  finishReplicationBatchDiagnostics,
+  getReplicationDiagnosticsSnapshot,
+  markReplicationBatchCheckpoint,
+  recordReplicationHeapSample,
+  recordReplicationWriteTransaction,
+  type ReplicationBatchDiagnosticToken,
+  type ReplicationDiagnosticIdentity,
+} from "./replicationDiagnostics";
+
 export const STARTUP_DIAGNOSTIC_STORAGE_KEY = "worshipsync.startup-diagnostics.mode";
 export const STARTUP_DIAGNOSTIC_SAMPLE_INTERVAL_MS = 5_000;
 const MAX_DIAGNOSTIC_EVENTS = 200;
@@ -243,10 +255,30 @@ const getSnapshot = () => ({
     maxMs: Math.round(longTaskMaxMs),
   },
   recentEvents: snapshotEvents(),
+  ...(() => {
+    const replication = getReplicationDiagnosticsSnapshot(currentMode !== "off");
+    return {
+      expensiveReplicationBatches: replication.expensiveBatches,
+      boundedRevisionWriteStatistics: replication.boundedWriteStatistics,
+      recoveredInterruptedReplicationBatches: replication.recoveredInterruptedBatches,
+    };
+  })(),
   aggregates: Object.fromEntries(
     [...diagnosticAggregates].map(([subsystem, metrics]) => [subsystem, { ...metrics }]),
   ),
 });
+
+export {
+  beginReplicationBatchDiagnostics,
+  configureReplicationDiagnosticScope,
+  finishReplicationBatchDiagnostics,
+  markReplicationBatchCheckpoint,
+  recordReplicationWriteTransaction,
+};
+export type {
+  ReplicationBatchDiagnosticToken,
+  ReplicationDiagnosticIdentity,
+};
 
 export const setStartupDiagnosticMode = (mode: StartupDiagnosticMode) => {
   if (!isStartupDiagnosticMode(mode) || typeof window === "undefined") {
@@ -279,10 +311,13 @@ if (typeof window !== "undefined") {
   };
 }
 
-if (isStartupDiagnosticsActive() && typeof window !== "undefined") {
-  recordStartupDiagnostic("runtime", "diagnostics.enabled", { mode: currentMode });
+if (typeof window !== "undefined") {
+  const diagnosticsEnabled = isStartupDiagnosticsActive();
+  if (diagnosticsEnabled) {
+    recordStartupDiagnostic("runtime", "diagnostics.enabled", { mode: currentMode });
+  }
 
-  if (typeof PerformanceObserver !== "undefined") {
+  if (diagnosticsEnabled && typeof PerformanceObserver !== "undefined") {
     try {
       const observer = new PerformanceObserver((list) => {
         list.getEntries().forEach((entry) => {
@@ -302,7 +337,7 @@ if (isStartupDiagnosticsActive() && typeof window !== "undefined") {
   }).memory;
   heapSupported = Boolean(memory);
 
-  if (memory) window.setInterval(() => {
+  if (diagnosticsEnabled || import.meta.env.PROD) window.setInterval(() => {
     const currentMemory = (performance as Performance & {
       memory?: { usedJSHeapSize: number; totalJSHeapSize: number; jsHeapSizeLimit: number };
     }).memory;
@@ -320,6 +355,7 @@ if (isStartupDiagnosticsActive() && typeof window !== "undefined") {
         recentHeapSamples.shift();
       }
     }
+    recordReplicationHeapSample(heapUsedMb);
     recordStartupDiagnostic("runtime", "memory.sample", {
       heapSupported,
       heapUsedMb,

@@ -14,6 +14,7 @@ type FakeChild = ChildProcess & { stdout: PassThrough; stderr: PassThrough };
 class FakeMuxRequest extends Writable {
   readonly chunks: Buffer[] = [];
   timeoutCallback?: () => void;
+  resetOnDestroyWithoutError = false;
   readonly setTimeout = jest.fn((_milliseconds: number, callback: () => void) => {
     this.timeoutCallback = callback;
     return this;
@@ -31,6 +32,13 @@ class FakeMuxRequest extends Writable {
   _final(callback: (error?: Error | null) => void) {
     callback();
     if (this.autoRespond) setTimeout(() => this.respond(), 0);
+  }
+
+  override destroy(error?: Error | null) {
+    if (!error && this.resetOnDestroyWithoutError && !this.destroyed) {
+      this.emit("error", Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }));
+    }
+    return super.destroy(error);
   }
 
   respond() {
@@ -121,6 +129,7 @@ describe("VideoDownloader job lifecycle", () => {
   let downloadOutputChunks: { stdout: string[]; stderr: string[] } | undefined;
   let muxResponseStatus: number;
   let muxAutoRespond: boolean;
+  let muxResetOnDestroyWithoutError: boolean;
   let muxRequests: FakeMuxRequest[];
   let muxRequestUrls: string[];
   let muxRequestOptions: Array<{ headers?: Record<string, string>; lookup?: (...args: any[]) => void }>;
@@ -156,6 +165,7 @@ describe("VideoDownloader job lifecycle", () => {
     downloadOutputChunks = undefined;
     muxResponseStatus = 200;
     muxAutoRespond = true;
+    muxResetOnDestroyWithoutError = false;
     muxRequests = [];
     muxRequestUrls = [];
     muxRequestOptions = [];
@@ -217,6 +227,7 @@ describe("VideoDownloader job lifecycle", () => {
       spawnProcess,
       requestMux: ((url: string, options: { headers?: Record<string, string>; lookup?: (...args: any[]) => void }) => {
         const request = new FakeMuxRequest(muxResponseStatus, muxAutoRespond);
+        request.resetOnDestroyWithoutError = muxResetOnDestroyWithoutError;
         if (muxRequestFailure) {
           const failure = muxRequestFailure;
           muxRequestFailure = undefined;
@@ -526,6 +537,7 @@ describe("VideoDownloader job lifecycle", () => {
     const warn = jest.spyOn(console, "warn").mockImplementation(() => undefined);
     beforeMuxRequest = () => writeFileSync(path, "x");
     muxAutoRespond = false;
+    muxResetOnDestroyWithoutError = true;
 
     try {
       await expect(downloader.uploadToMux(jobId, "https://upload.mux.com/truncated"))

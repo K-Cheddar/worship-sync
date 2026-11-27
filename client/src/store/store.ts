@@ -791,6 +791,26 @@ const hasPresentationUpdateDelta = (delta: PresentationUpdatePatch) =>
       : true,
   );
 
+const refreshPresentationUpdateDelta = (
+  delta: PresentationUpdatePatch,
+  current: PresentationUpdate,
+): PresentationUpdatePatch => {
+  const refreshed = Object.fromEntries(
+    Object.keys(delta)
+      .filter((key) => key !== "outputs")
+      .map((key) => [key, current[key as keyof PresentationUpdate]]),
+  ) as PresentationUpdatePatch;
+  if (delta.outputs) {
+    refreshed.outputs = Object.fromEntries(
+      Object.keys(delta.outputs).map((outputId) => [
+        outputId,
+        current.outputs[outputId] ?? null,
+      ]),
+    );
+  }
+  return refreshed;
+};
+
 let pendingPresentationPublication:
   | {
       churchId: string | undefined;
@@ -5046,10 +5066,14 @@ listenerMiddleware.startListening({
     const publication = pendingPresentationPublication;
     if (!publication || publication.churchId !== churchIdAtStart) return;
     pendingPresentationPublication = undefined;
+    const state = listenerApi.getState() as RootState;
     await syncPresentationSnapshot(
-      listenerApi.getState() as RootState,
+      state,
       publication.triggerAction || action.type,
-      publication.delta,
+      refreshPresentationUpdateDelta(
+        publication.delta,
+        createPresentationUpdate(state),
+      ),
     );
   },
 });
