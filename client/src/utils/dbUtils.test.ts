@@ -487,6 +487,29 @@ describe("dbUtils", () => {
     );
   });
 
+  it("skips credit history writes when heading and ordered lines already match", async () => {
+    const db = createDb();
+    db.get.mockResolvedValue({
+      _id: getCreditHistoryDocId("Speakers"),
+      _rev: "7-current",
+      heading: "Speakers",
+      lines: ["Alice", "Bob"],
+    });
+
+    await putCreditHistoryDocs(
+      db as unknown as PouchDB.Database,
+      { Speakers: ["Alice", "Bob"] },
+      ["Speakers"],
+    );
+    await putCreditHistoryDoc(
+      db as unknown as PouchDB.Database,
+      "Speakers",
+      ["Alice", "Bob"],
+    );
+
+    expect(db.put).not.toHaveBeenCalled();
+  });
+
   it("removes credit history docs and ignores 404", async () => {
     const db = createDb();
     db.get.mockResolvedValue({
@@ -1731,6 +1754,27 @@ describe("dbUtils", () => {
     expect(db.put).toHaveBeenCalledWith(
       expect.objectContaining({ values: ["https://example.com"] }),
     );
+  });
+
+  it("skips overlay history writes when key and ordered values already match", async () => {
+    const db = createDb();
+    const key = "participant.name";
+    const id = getOverlayHistoryDocId(key as any);
+    db.get.mockResolvedValue({
+      _id: id,
+      _rev: "4-current",
+      key,
+      values: ["Alice", "Bob"],
+    });
+
+    await putOverlayHistoryDocs(
+      db as unknown as PouchDB.Database,
+      { [key]: ["Alice", "Bob"] },
+      [key],
+    );
+    await putOverlayHistoryDoc(db as unknown as PouchDB.Database, key, ["Alice", "Bob"]);
+
+    expect(db.put).not.toHaveBeenCalled();
   });
 
   it("getAllCreditDocsForOutline includes docs with no docType (legacy)", async () => {

@@ -8538,6 +8538,49 @@ describe("store module", () => {
     expect(updateMock).not.toHaveBeenCalled();
   });
 
+  it("refreshes a queued presentation delta after a newer remote slide applies", async () => {
+    jest.useFakeTimers();
+    const { store, presentationSlice, updateMock } = loadStoreWithPresentationSync();
+    const remotePresentation = createScreenPresentation(
+      "projector",
+      Date.now() + 60_000,
+      { name: "Newer remote slide" },
+    );
+
+    store.dispatch(presentationSlice.actions.toggleProjectorTransmitting());
+    store.dispatch({
+      type: "debouncedUpdateProjector",
+      payload: remotePresentation,
+    });
+    await flushListenerEffects();
+    await jest.advanceTimersByTimeAsync(5);
+
+    store.dispatch(
+      presentationSlice.actions.updateProjector(
+        createScreenPresentation("projector", Date.now(), {
+          name: "Older local slide",
+        }),
+      ),
+    );
+    await flushListenerEffects();
+    await jest.advanceTimersByTimeAsync(5);
+    await flushListenerEffects();
+
+    expect(
+      toLegacyPresentationShape(store.getState().presentation).projectorInfo,
+    ).toMatchObject({ name: "Newer remote slide" });
+
+    await jest.advanceTimersByTimeAsync(5);
+    await flushListenerEffects();
+
+    expect(updateMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        projectorInfo: expect.objectContaining({ name: "Newer remote slide" }),
+      }),
+    );
+  });
+
   it("applies only newer remote projector updates", async () => {
     const { store, presentationSlice } = loadStoreWithPresentationSync();
 

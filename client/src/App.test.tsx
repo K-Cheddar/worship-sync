@@ -212,13 +212,13 @@ jest.mock("./context/globalInfo", () => {
 jest.mock("./ControllerContextWrapper", () => {
   const React = require("react");
   const { Outlet, useNavigate } = require("react-router-dom");
-  const MockControllerContextWrapper = () => {
+  const MockControllerContextWrapper = ({ children }: { children?: React.ReactNode }) => {
     const navigate = useNavigate();
     React.useEffect(() => {
       mockControllerWrapperLifecycle.mount();
       return () => mockControllerWrapperLifecycle.unmount();
     }, []);
-    return <><button type="button" data-testid="go-to-board-controller" onClick={() => navigate("/boards/controller")}>Open board controller</button><Outlet /></>;
+    return <><button type="button" data-testid="go-to-board-controller" onClick={() => navigate("/boards/controller")}>Open board controller</button>{children ?? <Outlet />}</>;
   };
   return { __esModule: true, default: MockControllerContextWrapper };
 });
@@ -289,6 +289,24 @@ describe("App Component", () => {
       "changed",
       { route: "home" },
     );
+  });
+
+  it("locks operator routes in replication-only mode and explains its isolation scope", () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("replication-only");
+    expect(startupDiagnostics.getStartupDiagnosticMode()).toBe("replication-only");
+    expect(startupDiagnostics.shouldShowStartupDiagnosticsPanel("replication-only", "/controller")).toBe(true);
+    render(
+      <GlobalInfoContext.Provider value={createMockGlobalContext({ bootstrapStatus: "ready" })}>
+        <MemoryRouter initialEntries={["/controller"]}><AppRoutes /></MemoryRouter>
+      </GlobalInfoContext.Provider>,
+    );
+
+    expect(screen.getByRole("heading", { name: "Startup diagnostics" })).toBeInTheDocument();
+    expect(screen.getByText(/without the item-cache subscriber, Bible database, or app managers/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Test mode")).toHaveValue("replication-only");
+    expect(screen.queryByLabelText(/Estimate document payload sizes/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Sign in" })).toHaveAttribute("href", "/login");
+    expect(screen.queryByTestId("controller-page")).not.toBeInTheDocument();
   });
 
   it("locks isolated display routes without painting an opaque stream background", () => {
@@ -421,6 +439,30 @@ describe("App Component", () => {
 
   test("renders without crashing", () => {
     renderApp();
+  });
+
+  test("skips application-wide consumers in replication-only diagnostic mode", () => {
+    jest.mocked(startupDiagnostics.getStartupDiagnosticMode).mockReturnValue("replication-only");
+    jest.mocked(startupDiagnostics.recordStartupDiagnostic).mockClear();
+    renderApp();
+
+    expect(startupDiagnostics.recordStartupDiagnostic).toHaveBeenCalledWith(
+      "manager",
+      "app-global-managers.skipped",
+      expect.objectContaining({
+        chat: false,
+        routePersistence: false,
+        displayOutputsSync: false,
+        controllerProfilesSync: false,
+        timerManager: false,
+        rehearsalPlaybackProvider: false,
+      }),
+    );
+    expect(startupDiagnostics.recordStartupDiagnostic).not.toHaveBeenCalledWith(
+      "manager",
+      "app-global-managers.mounted",
+      expect.anything(),
+    );
   });
 
   test("renders app entry page by default", () => {

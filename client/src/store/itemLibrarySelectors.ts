@@ -52,7 +52,7 @@ const createItemEntrySelector = (
     const mappingDurationMs = performance.now() - startedAt;
     const unchanged = previousResult !== undefined &&
       previousResult.length === entries.length &&
-      entries.every((entry, index) => entry === previousResult?.[index]);
+      entries.every((entry) => previousEntriesById.get(entry._id) === entry);
     let sortingDurationMs = 0;
     let result = previousResult;
     if (!unchanged) {

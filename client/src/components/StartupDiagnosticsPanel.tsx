@@ -14,19 +14,14 @@ const modeLabels: Record<StartupDiagnosticMode, string> = {
   normal: "Normal authenticated startup",
   "skip-databases": "Authenticated startup, databases paused",
   "content-only": "Content database only",
+  "replication-only": "Content replication only, no app cache",
   "bible-only": "Bible database only",
-  "bounded-batches": "Both databases, bounded batches",
-  "reduced-batches": "Both databases, reduced batches",
   sequential: "Content, then Bible",
 };
 
 const StartupDiagnosticsPanel = () => {
   const activeMode = getStartupDiagnosticMode();
   const [selectedMode, setSelectedMode] = useState(activeMode);
-
-  const applyMode = () => {
-    setStartupDiagnosticMode(selectedMode);
-  };
 
   return (
     <AuthScreenMain>
@@ -44,8 +39,13 @@ const StartupDiagnosticsPanel = () => {
           Application routes that need both databases are locked for this isolation test. Workstation pairing, sign-in, and operator selection remain available.
           Startup events appear in Chrome DevTools with the label <code>[WorshipSync startup]</code>.
         </p>
+        {selectedMode === "replication-only" ? (
+          <p className="mt-3 text-sm text-gray-300">
+            This mode pulls content with the normal 150 by 15 settings, without the item-cache subscriber, Bible database, or app managers. Authentication and database permissions stay active.
+          </p>
+        ) : null}
         <p className="mt-3 text-sm text-gray-300">
-          Select a mode in Chrome DevTools to reload into another experiment. Normal, bounded, reduced, and sequential modes open the regular application.
+          Select a mode in Chrome DevTools to reload into another experiment. Normal and sequential modes open the regular application.
         </p>
         <label className="mt-5 block text-sm font-medium" htmlFor="startup-diagnostic-mode">
           Test mode
@@ -60,12 +60,17 @@ const StartupDiagnosticsPanel = () => {
             <option key={mode} value={mode}>{modeLabels[mode]}</option>
           ))}
         </select>
-        <Button className="mt-4 w-full justify-center" onClick={applyMode}>
+        <Button className="mt-4 w-full justify-center" onClick={() => setStartupDiagnosticMode(selectedMode)}>
           {selectedMode === "off" ? "Turn off diagnostics and reload" : "Apply mode and reload"}
         </Button>
-        <Link className="mt-4 inline-flex text-sm font-medium text-cyan-200 underline" to="/workstation/pair">
-          Pair a workstation
-        </Link>
+        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-2">
+          <Link className="inline-flex text-sm font-medium text-cyan-200 underline" to="/login">
+            Sign in
+          </Link>
+          <Link className="inline-flex text-sm font-medium text-cyan-200 underline" to="/workstation/pair">
+            Pair a workstation
+          </Link>
+        </div>
       </section>
     </AuthScreenMain>
   );

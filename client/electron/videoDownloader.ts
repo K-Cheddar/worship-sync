@@ -964,14 +964,17 @@ export class VideoDownloader extends EventEmitter {
           finish(new Error("The local video ended before all bytes were read."), "file-read-failed", undefined, "file-read");
         }
       };
+      const handleRequestClose = () => {
+        request.removeListener("error", handleRequestError);
+      };
       cleanupListeners = () => {
         request.removeListener("response", handleResponse);
-        request.removeListener("error", handleRequestError);
         uploadStream.removeListener("error", handleStreamError);
         uploadStream.removeListener("end", handleStreamEnd);
       };
       request.once("response", handleResponse);
-      request.once("error", handleRequestError);
+      request.on("error", handleRequestError);
+      request.once("close", handleRequestClose);
       uploadStream.once("error", handleStreamError);
       uploadStream.once("end", handleStreamEnd);
       uploadStream.pipe(request);

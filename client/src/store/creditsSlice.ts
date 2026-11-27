@@ -287,6 +287,7 @@ const dummyList = [
 // ];
 
 type CreditsState = {
+  indexOwner?: { database: string; outlineId: string };
   list: CreditsInfo[];
   /** Visible rows mirrored for RTDB live display (synced under `credits/publishedList` in Firebase). */
   liveCredits: CreditsInfo[];
@@ -357,17 +358,21 @@ export const creditsSlice = createSlice({
         visible,
       );
     },
-    initiateCreditsList: (state, action: PayloadAction<CreditsInfo[]>) => {
-      if (action.payload.length === 0) {
-        state.list = dummyList;
-      } else {
-        state.list = action.payload.map((credit) => ({
-          ...credit,
-          id: credit.id || generateRandomId(),
-        }));
-      }
-      state.initialList = state.list.map((credit) => credit.id);
-      state.isInitialized = true;
+    initiateCreditsList: {
+      prepare: (credits: CreditsInfo[], owner?: CreditsState["indexOwner"]) => ({ payload: credits, meta: owner }),
+      reducer: (state, action: PayloadAction<CreditsInfo[], string, CreditsState["indexOwner"]>) => {
+        state.indexOwner = action.meta;
+        if (action.payload.length === 0) {
+          state.list = dummyList;
+        } else {
+          state.list = action.payload.map((credit) => ({
+            ...credit,
+            id: credit.id || generateRandomId(),
+          }));
+        }
+        state.initialList = state.list.map((credit) => credit.id);
+        state.isInitialized = true;
+      },
     },
     initiateLiveCredits: (
       state,

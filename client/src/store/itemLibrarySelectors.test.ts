@@ -44,20 +44,24 @@ it("keeps the unified library stable when Bible, heading, and service-time docum
 
 it("reuses unchanged projections and skips sorting when only hidden content changes", () => {
   const initialState = allDocsSlice.reducer(undefined, allDocsSlice.actions.hydrateItemCache([
-    { _id: "custom", type: "free", name: "Custom", background: "same" },
+    { _id: "song", type: "song", name: "Zulu song", background: "same" },
+    { _id: "custom", type: "free", name: "Alpha custom", background: "same" },
   ] as DBItem[]));
   const initialRoot = { allDocs: initialState } as RootState;
   const initialLibrary = selectUnifiedItemLibrary(initialRoot);
-  const initialEntry = initialLibrary[0];
+  const initialEntries = [...initialLibrary];
+  expect(initialLibrary.map((entry) => entry._id)).toEqual(["custom", "song"]);
 
   const nextState = allDocsSlice.reducer(initialState, allDocsSlice.actions.applyItemDocumentChange({
-    id: "custom",
-    doc: { _id: "custom", type: "free", name: "Custom", background: "same", slides: [{ id: "new-slide" }], _rev: "2-b" } as unknown as DBItem,
+    id: "song",
+    doc: { _id: "song", type: "song", name: "Zulu song", background: "same", slides: [{ id: "new-slide" }], _rev: "2-b" } as unknown as DBItem,
   }));
   const nextLibrary = selectUnifiedItemLibrary({ allDocs: nextState } as RootState);
 
   expect(nextLibrary).toBe(initialLibrary);
-  expect(nextLibrary[0]).toBe(initialEntry);
+  expect(nextLibrary).toEqual(initialEntries);
+  expect(nextLibrary[0]).toBe(initialEntries[0]);
+  expect(nextLibrary[1]).toBe(initialEntries[1]);
 });
 
 it("treats omitted cache categories as empty lists", () => {

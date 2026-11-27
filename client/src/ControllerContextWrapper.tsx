@@ -24,7 +24,7 @@ const ControllerContextWrapper = ({ children }: { children?: ReactNode }) => {
   const { pathname } = useLocation();
   const warmsLocalVideoList = !children && needsLocalVideoListWarming(pathname);
   const skipStartupManagers = isStartupDiagnosticsActive() &&
-    getStartupDiagnosticMode() === "skip-databases";
+    ["skip-databases", "replication-only"].includes(getStartupDiagnosticMode());
 
   useEffect(() => {
     recordStartupDiagnostic(

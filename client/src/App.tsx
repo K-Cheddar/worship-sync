@@ -628,18 +628,32 @@ export const AppRoutes = () => {
 };
 
 const App: React.FC = () => {
+  const isReplicationOnlyDiagnosticMode =
+    getStartupDiagnosticMode() === "replication-only";
+  const isElectronCaptureHost =
+    Boolean(window.__ELECTRON__) &&
+    window.location.hash.startsWith("#/local-video-capture-host");
+  const skipGlobalManagers =
+    isReplicationOnlyDiagnosticMode && !isElectronCaptureHost;
+
   useEffect(() => {
-    recordStartupDiagnostic("manager", "app-global-managers.mounted", {
-      chat: true,
-      chatWindowHost: true,
-      routePersistence: true,
-      displayOutputsSync: true,
-      controllerProfilesSync: true,
-      timerManager: true,
-      rehearsalPlaybackProvider: true,
-      rehearsalPlayerHost: true,
-    });
-  }, []);
+    recordStartupDiagnostic(
+      "manager",
+      skipGlobalManagers
+        ? "app-global-managers.skipped"
+        : "app-global-managers.mounted",
+      {
+        chat: !skipGlobalManagers,
+        chatWindowHost: !skipGlobalManagers,
+        routePersistence: !skipGlobalManagers,
+        displayOutputsSync: !skipGlobalManagers,
+        controllerProfilesSync: !skipGlobalManagers,
+        timerManager: !skipGlobalManagers,
+        rehearsalPlaybackProvider: !skipGlobalManagers,
+        rehearsalPlayerHost: !skipGlobalManagers,
+      },
+    );
+  }, [skipGlobalManagers]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -653,9 +667,22 @@ const App: React.FC = () => {
       window.history.replaceState({}, document.title, url.toString());
     }
   }, []);
-  const isElectronCaptureHost =
-    Boolean(window.__ELECTRON__) &&
-    window.location.hash.startsWith("#/local-video-capture-host");
+  if (skipGlobalManagers) {
+    return (
+      <Provider store={store}>
+        <Router>
+          <GlobalInfoProvider>
+            <FloatingWindowZIndexProvider>
+              <ToastProvider>
+                <AppRoutes />
+              </ToastProvider>
+            </FloatingWindowZIndexProvider>
+          </GlobalInfoProvider>
+        </Router>
+      </Provider>
+    );
+  }
+
   return (
     <Provider store={store}>
       <Router>
