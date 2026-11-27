@@ -1,3 +1,19 @@
+## [2.53.3](https://github.com/K-Cheddar/worship-sync/compare/v2.53.2...v2.53.3) (2026-11-27)
+
+
+### Bug Fixes
+
+* align stream slide thumbnails ([f975986](https://github.com/K-Cheddar/worship-sync/commit/f9759860d7004bc4c12277f5b0f2ae666a1cce9d))
+* Applying multiple fixes and tests ([119c90d](https://github.com/K-Cheddar/worship-sync/commit/119c90dd0b6a82c7b949060bd12790ab1539f81d))
+* clear compatible realtime outline conflicts ([c1a0984](https://github.com/K-Cheddar/worship-sync/commit/c1a098484046a789ba8156fc31a41685bae1b5b2))
+* continued optimization ([5c5f2d4](https://github.com/K-Cheddar/worship-sync/commit/5c5f2d4089a1b108d73bbcb4292c2ef081fdc498))
+* **home:** scale tile titles with interface zoom ([0c8abb3](https://github.com/K-Cheddar/worship-sync/commit/0c8abb374ca3f480e0ec21bf96330c3437c8d1f1))
+* improve performance ([e8c9d4c](https://github.com/K-Cheddar/worship-sync/commit/e8c9d4c673d729373ddebee3cb574cc3ceb8475e))
+* Improve slides ([c8b5a77](https://github.com/K-Cheddar/worship-sync/commit/c8b5a77d754bfd45653ecc567a93672bbcfbac05))
+* minor fixes ([f2d8d9b](https://github.com/K-Cheddar/worship-sync/commit/f2d8d9bddc751053ff078cc7338b67c5e9db529e))
+* resolve failing PR checks ([75a1c07](https://github.com/K-Cheddar/worship-sync/commit/75a1c0787e8bc78c95a3ff9fc40219fc7dd5ae86))
+* update startup diagnostics ([48f9bb3](https://github.com/K-Cheddar/worship-sync/commit/48f9bb3aadf130f902e11bf5a3818a867f6601da))
+
 ## [2.53.2](https://github.com/K-Cheddar/worship-sync/compare/v2.53.1...v2.53.2) (2026-11-20)
 
 
